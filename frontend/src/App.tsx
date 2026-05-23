@@ -1,6 +1,7 @@
 import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react"
 import { Routes, Route, Navigate } from "react-router-dom"
 import { ThreePaneLayout } from "@/core/layout/ThreePaneLayout"
+import { DashboardHome } from "@/modules/dashboard/pages/DashboardHome"
 import { FluxDashboard } from "@/modules/flux/pages/FluxDashboard"
 import { HomePage } from "@/marketing/HomePage"
 
@@ -21,9 +22,9 @@ export default function App() {
             <SignedIn>
               <ThreePaneLayout>
                 <Routes>
-                  <Route index element={<Navigate to="flux" replace />} />
-                  <Route path="flux" element={<FluxDashboard />} />
-                  <Route path="flux/:tbId" element={<FluxDashboard />} />
+                  <Route index element={<DashboardHome />} />
+                  <Route path="flux"         element={<FluxDashboard />} />
+                  <Route path="flux/:tbId"   element={<FluxDashboard />} />
                 </Routes>
               </ThreePaneLayout>
             </SignedIn>
@@ -31,9 +32,9 @@ export default function App() {
         }
       />
 
-      {/* Catch-all: redirect old /flux links into the app */}
+      {/* Legacy redirects */}
       <Route path="/flux/*" element={<Navigate to="/app/flux" replace />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*"       element={<Navigate to="/" replace />} />
     </Routes>
   )
 }

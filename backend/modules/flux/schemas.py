@@ -21,12 +21,31 @@ class TrialBalanceResponse(BaseModel):
     period_prior: date
     status: str
     materiality_threshold: Decimal
+    error_detail: str | None = None
     created_at: datetime
 
 
-class VarianceResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class UploadPreview(BaseModel):
+    """Returned after a file is uploaded — shows headers and sample rows for column mapping."""
+    headers: list[str]
+    sample_rows: list[list[str | float | None]]
+    detected_mapping: dict[str, str | None]
 
+
+class ColumnMappingBody(BaseModel):
+    """Column mapping from user's header names to our canonical fields."""
+    mapping: dict[str, str]   # keys: account_number, account_name, current_balance, prior_balance
+
+
+class ParseResult(BaseModel):
+    """Result of parsing the trial balance with confirmed column mapping."""
+    accounts_created: int
+    variances_created: int
+    material_count: int
+
+
+class VarianceResponse(BaseModel):
+    """Flattened variance view combining Variance + Account + Narrative."""
     id: uuid.UUID
     account_id: uuid.UUID
     account_number: str
@@ -42,10 +61,14 @@ class VarianceResponse(BaseModel):
     narrative: str | None
     confidence_score: Decimal | None
 
-    @field_serializer("dollar_variance", "current_balance", "prior_balance")
-    def serialize_decimal(self, v: Decimal) -> str:
-        # Return as string to preserve precision across JSON serialization
-        return str(v)
+    @field_serializer("dollar_variance", "current_balance", "prior_balance",
+                      "pct_variance", "confidence_score")
+    def serialize_decimal(self, v: Decimal | None) -> str | None:
+        return str(v) if v is not None else None
+
+    @field_serializer("materiality_threshold", mode="plain", check_fields=False)
+    def _ignore(self, v: object) -> object:
+        return v
 
 
 class NarrativeUpdate(BaseModel):

@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     # CORS — comma-separated origins; overridden in prod via env var
     cors_origins: str = "http://localhost:5173"
 
+    # QuickBooks Online OAuth2 — empty strings disable QBO integration
+    qbo_client_id: str = ""
+    qbo_client_secret: str = ""
+    # Where QBO redirects after OAuth — must match Intuit developer app settings
+    qbo_redirect_uri: str = "http://localhost:8000/api/oauth/qbo/callback"
+    # True = sandbox (development), False = production
+    qbo_sandbox: bool = True
+
     @field_validator("database_url")
     @classmethod
     def require_asyncpg_driver(cls, v: str) -> str:
@@ -57,6 +65,20 @@ class Settings(BaseSettings):
     @property
     def r2_endpoint_url(self) -> str:
         return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+
+    @property
+    def qbo_enabled(self) -> bool:
+        return bool(self.qbo_client_id and self.qbo_client_secret)
+
+    @property
+    def qbo_environment(self) -> str:
+        return "sandbox" if self.qbo_sandbox else "production"
+
+    @property
+    def qbo_base_url(self) -> str:
+        if self.qbo_sandbox:
+            return "https://sandbox-quickbooks.api.intuit.com"
+        return "https://quickbooks.api.intuit.com"
 
 
 settings = Settings()

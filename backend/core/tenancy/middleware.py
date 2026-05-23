@@ -13,8 +13,10 @@ from core.db.session import AsyncSessionLocal
 from models.tenant import Tenant
 from models.user import User
 
-# Routes that do not require authentication
+# Routes that do not require authentication (exact paths or prefixes)
 _PUBLIC_PATHS = {"/api/health", "/docs", "/redoc", "/openapi.json"}
+# Path prefixes that are always public (e.g. OAuth callbacks from third parties)
+_PUBLIC_PREFIXES = {"/api/oauth/"}
 
 
 class TenantMiddleware(BaseHTTPMiddleware):
@@ -34,7 +36,12 @@ class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.url.path in _PUBLIC_PATHS or not request.url.path.startswith("/api/"):
+        is_public = (
+            request.url.path in _PUBLIC_PATHS
+            or not request.url.path.startswith("/api/")
+            or any(request.url.path.startswith(p) for p in _PUBLIC_PREFIXES)
+        )
+        if is_public:
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization", "")

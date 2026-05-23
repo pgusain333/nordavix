@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 290 64" role="img" aria-label="nordavix">
+  <g transform="translate(0,8)">
+    <rect x="0.75" y="0.75" width="46.5" height="46.5" rx="9.5" fill="#0E1112"></rect>
+    <path d="M15 34 L15 17 M15 21 Q15 17 19 17 L29 17 Q33 17 33 21 L33 34" fill="none" stroke="#F7F5F0" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"></path>
+    <circle cx="33" cy="34" r="2.6" fill="#5BB089"></circle>
+  </g>
+  <text x="58" y="48" style="font-family: 'Space Grotesk', 'Inter', sans-serif; font-size: 48px; font-weight: 500; letter-spacing: -0.030em" fill="#0E1112">nordavix<tspan fill="#3E8F66">.</tspan></text>
+</svg>

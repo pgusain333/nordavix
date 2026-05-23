@@ -14,16 +14,15 @@ interface ThreePaneLayoutProps {
  * ┌─────────────┬──────────────────────────────┬──────────────┐
  * │  Left Nav   │       Center Workspace        │  Right Pane  │
  * │   (240px)   │         (flex-1)              │   (320px)    │
- * │  dark, fixed│  scrollable, main content     │  context,    │
+ * │  white, fx  │  scrollable, main content     │  context,    │
  * │             │                               │  collapsible │
  * └─────────────┴──────────────────────────────┴──────────────┘
  *
  * The right pane is optional — only rendered when `rightPane` is provided.
- * ThreePaneLayout renders ClerkApiWirer which wires auth tokens into axios.
  */
 export function ThreePaneLayout({ children, rightPane, rightPaneTitle }: ThreePaneLayoutProps) {
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
+    <div className="flex h-screen overflow-hidden bg-ink-50">
       {/* Wire Clerk tokens into the API client on mount */}
       <ClerkApiWirer />
 
@@ -34,10 +33,10 @@ export function ThreePaneLayout({ children, rightPane, rightPaneTitle }: ThreePa
       </main>
 
       {rightPane && (
-        <aside className="flex h-screen w-80 shrink-0 flex-col border-l border-slate-200 bg-white">
+        <aside className="flex h-screen w-80 shrink-0 flex-col border-l border-ink-100 bg-white">
           {rightPaneTitle && (
-            <div className="flex items-center px-4 py-3 border-b border-slate-200">
-              <h2 className="text-sm font-semibold text-slate-700">{rightPaneTitle}</h2>
+            <div className="flex items-center px-4 py-3 border-b border-ink-100">
+              <h2 className="text-sm font-semibold text-ink">{rightPaneTitle}</h2>
             </div>
           )}
           <div className="flex-1 overflow-y-auto p-4">{rightPane}</div>

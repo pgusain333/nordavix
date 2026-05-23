@@ -6,20 +6,41 @@ export default {
   theme: {
     extend: {
       colors: {
-        fav: { DEFAULT: "#16a34a", light: "#dcfce7", text: "#15803d" },
-        unfav: { DEFAULT: "#dc2626", light: "#fee2e2", text: "#b91c1c" },
-        material: { DEFAULT: "#92400e", light: "#fef3c7" },
-        nav: {
-          bg: "#0a0f1e",
-          border: "#1e293b",
-          active: "#1e3a5f",
-          text: "#94a3b8",
-          "text-active": "#f8fafc",
-          "text-hover": "#e2e8f0",
+        // ── Nordavix design tokens ───────────────────────────────────────────
+        ink: {
+          DEFAULT: "#0E1112",
+          50:  "#F7F5F0",   // cream — bg, card fill
+          100: "#EDECEA",   // border default
+          200: "#D4D2CE",   // border strong / dividers
+          400: "#8C8B88",   // muted text, placeholder
+          600: "#4A4946",   // secondary text
+          900: "#0E1112",
         },
-        // Marketing palette
+        cream: "#F7F5F0",
+        green: {
+          DEFAULT: "#3E8F66",
+          light:   "#5BB089",
+          50:      "#EEF7F2",
+          100:     "#C8E8D5",
+          500:     "#3E8F66",
+          600:     "#2E7A55",
+        },
+        // ── Variance semantics ────────────────────────────────────────────────
+        fav:      { DEFAULT: "#16a34a", light: "#dcfce7", text: "#15803d" },
+        unfav:    { DEFAULT: "#dc2626", light: "#fee2e2", text: "#b91c1c" },
+        material: { DEFAULT: "#92400e", light: "#fef3c7" },
+        // ── App shell navigation (white / light) ──────────────────────────────
+        nav: {
+          bg:            "#FFFFFF",
+          border:        "#EDECEA",
+          active:        "#F0F0EE",
+          text:          "#6B6966",
+          "text-active": "#0E1112",
+          "text-hover":  "#0E1112",
+        },
+        // ── Marketing palette (homepage) ──────────────────────────────────────
         brand: {
-          50: "#eff6ff",
+          50:  "#eff6ff",
           100: "#dbeafe",
           400: "#60a5fa",
           500: "#3b82f6",
@@ -28,7 +49,13 @@ export default {
         },
       },
       fontFamily: {
+        sans: ["'Space Grotesk'", "Inter", "system-ui", "sans-serif"],
         mono: ["'JetBrains Mono'", "'Fira Code'", "ui-monospace", "monospace"],
+      },
+      boxShadow: {
+        card:        "0 1px 3px rgba(14,17,18,0.08), 0 1px 2px rgba(14,17,18,0.04)",
+        "card-hover":"0 4px 12px rgba(14,17,18,0.10), 0 1px 3px rgba(14,17,18,0.06)",
+        modal:       "0 20px 60px rgba(14,17,18,0.18), 0 4px 16px rgba(14,17,18,0.08)",
       },
       animation: {
         "float-up": "float-up 4s ease-in-out infinite",
@@ -37,10 +64,11 @@ export default {
         "blob-delay": "blob 12s ease-in-out 4s infinite",
         "glow-pulse": "glow-pulse 2.5s ease-in-out infinite",
         "flow-dash": "flow-dash 2s linear infinite",
-        "spin-slow": "spin-slow 20s linear infinite",
-        "fade-in-up": "fade-in-up 0.7s ease-out forwards",
-        "marquee": "marquee 30s linear infinite",
+        "spin-slow":   "spin-slow 20s linear infinite",
+        "fade-in-up":  "fade-in-up 0.7s ease-out forwards",
+        "marquee":     "marquee 30s linear infinite",
         "type-cursor": "type-cursor 1s step-end infinite",
+        "slide-in":    "slide-in 0.25s ease-out forwards",
       },
       keyframes: {
         "float-up": {
@@ -78,7 +106,11 @@ export default {
         },
         "type-cursor": {
           "0%, 100%": { opacity: "1" },
-          "50%": { opacity: "0" },
+          "50%":      { opacity: "0" },
+        },
+        "slide-in": {
+          "0%":   { opacity: "0", transform: "translateX(-8px)" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
         },
       },
     },
