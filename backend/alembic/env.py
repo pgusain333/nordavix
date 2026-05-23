@@ -22,7 +22,8 @@ target_metadata = Base.metadata
 # Pull DATABASE_URL from environment, overriding the blank value in alembic.ini
 _db_url = os.environ.get("DATABASE_URL", "")
 if _db_url:
-    config.set_main_option("sqlalchemy.url", _db_url)
+    # configparser uses % for interpolation — escape literal % by doubling
+    config.set_main_option("sqlalchemy.url", _db_url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:
