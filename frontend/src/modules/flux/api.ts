@@ -1,10 +1,11 @@
 /**
- * Nordavix Flux API client — typed wrappers around axios calls.
+ * Nordavix Flux API client — typed wrappers around apiClient (axios instance).
  *
- * All functions talk to the backend at /api/flux/*.
- * Auth headers are injected by ClerkApiWirer on mount.
+ * All functions talk to the backend at VITE_API_BASE_URL/api/flux/*.
+ * Auth headers are injected automatically by the apiClient interceptor
+ * which gets the Clerk session token via ClerkApiWirer on mount.
  */
-import axios from "axios"
+import { apiClient } from "@/core/api/client"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -69,24 +70,20 @@ export interface QboConnection {
   connected_at: string
 }
 
-// ── Client ────────────────────────────────────────────────────────────────────
-
-const BASE = "/api"
-
 // ── Trial Balances ────────────────────────────────────────────────────────────
 
 async function listTrialBalances(): Promise<TrialBalance[]> {
-  const { data } = await axios.get<TrialBalance[]>(`${BASE}/flux/trial-balances`)
+  const { data } = await apiClient.get<TrialBalance[]>("/api/flux/trial-balances")
   return data
 }
 
 async function createTrialBalance(body: TrialBalanceCreate): Promise<TrialBalance> {
-  const { data } = await axios.post<TrialBalance>(`${BASE}/flux/trial-balances`, body)
+  const { data } = await apiClient.post<TrialBalance>("/api/flux/trial-balances", body)
   return data
 }
 
 async function getTrialBalance(id: string): Promise<TrialBalance> {
-  const { data } = await axios.get<TrialBalance>(`${BASE}/flux/trial-balances/${id}`)
+  const { data } = await apiClient.get<TrialBalance>(`/api/flux/trial-balances/${id}`)
   return data
 }
 
@@ -95,8 +92,8 @@ async function getTrialBalance(id: string): Promise<TrialBalance> {
 async function uploadFile(id: string, file: File): Promise<UploadPreview> {
   const form = new FormData()
   form.append("file", file)
-  const { data } = await axios.post<UploadPreview>(
-    `${BASE}/flux/trial-balances/${id}/upload`,
+  const { data } = await apiClient.post<UploadPreview>(
+    `/api/flux/trial-balances/${id}/upload`,
     form,
     { headers: { "Content-Type": "multipart/form-data" } }
   )
@@ -104,37 +101,37 @@ async function uploadFile(id: string, file: File): Promise<UploadPreview> {
 }
 
 async function parseColumns(id: string, mapping: ColumnMapping): Promise<ParseResult> {
-  const { data } = await axios.post<ParseResult>(
-    `${BASE}/flux/trial-balances/${id}/parse`,
+  const { data } = await apiClient.post<ParseResult>(
+    `/api/flux/trial-balances/${id}/parse`,
     { mapping }
   )
   return data
 }
 
 async function runFlux(id: string): Promise<{ task_id: string; status: string }> {
-  const { data } = await axios.post(`${BASE}/flux/trial-balances/${id}/run`)
+  const { data } = await apiClient.post(`/api/flux/trial-balances/${id}/run`)
   return data
 }
 
 // ── Variances ─────────────────────────────────────────────────────────────────
 
 async function listVariances(tbId: string): Promise<VarianceRow[]> {
-  const { data } = await axios.get<VarianceRow[]>(
-    `${BASE}/flux/trial-balances/${tbId}/variances`
+  const { data } = await apiClient.get<VarianceRow[]>(
+    `/api/flux/trial-balances/${tbId}/variances`
   )
   return data
 }
 
 async function approveVariance(tbId: string, varId: string): Promise<VarianceRow> {
-  const { data } = await axios.post<VarianceRow>(
-    `${BASE}/flux/trial-balances/${tbId}/variances/${varId}/approve`
+  const { data } = await apiClient.post<VarianceRow>(
+    `/api/flux/trial-balances/${tbId}/variances/${varId}/approve`
   )
   return data
 }
 
 async function updateNarrative(tbId: string, varId: string, content: string): Promise<VarianceRow> {
-  const { data } = await axios.put<VarianceRow>(
-    `${BASE}/flux/trial-balances/${tbId}/variances/${varId}/narrative`,
+  const { data } = await apiClient.put<VarianceRow>(
+    `/api/flux/trial-balances/${tbId}/variances/${varId}/narrative`,
     { content }
   )
   return data
@@ -143,11 +140,14 @@ async function updateNarrative(tbId: string, varId: string, content: string): Pr
 // ── Export ────────────────────────────────────────────────────────────────────
 
 function exportUrl(tbId: string): string {
-  return `${BASE}/flux/trial-balances/${tbId}/export`
+  const base = import.meta.env.VITE_API_BASE_URL ?? ""
+  return `${base}/api/flux/trial-balances/${tbId}/export`
 }
 
 async function exportExcel(tbId: string, fileName?: string): Promise<void> {
-  const { data } = await axios.get(exportUrl(tbId), { responseType: "blob" })
+  const { data } = await apiClient.get(`/api/flux/trial-balances/${tbId}/export`, {
+    responseType: "blob",
+  })
   const url = URL.createObjectURL(new Blob([data]))
   const a = document.createElement("a")
   a.href = url
@@ -160,7 +160,7 @@ async function exportExcel(tbId: string, fileName?: string): Promise<void> {
 
 async function getQboConnection(): Promise<QboConnection | null> {
   try {
-    const { data } = await axios.get<QboConnection>(`${BASE}/qbo/connection`)
+    const { data } = await apiClient.get<QboConnection>("/api/qbo/connection")
     return data
   } catch {
     return null
@@ -168,14 +168,15 @@ async function getQboConnection(): Promise<QboConnection | null> {
 }
 
 function qboConnectUrl(): string {
-  return `${BASE}/oauth/qbo/connect`
+  const base = import.meta.env.VITE_API_BASE_URL ?? ""
+  return `${base}/api/oauth/qbo/connect`
 }
 
 async function fetchQboTrialBalance(
   startDate: string,
   endDate:   string
 ): Promise<TrialBalance> {
-  const { data } = await axios.get<TrialBalance>(`${BASE}/qbo/trial-balance`, {
+  const { data } = await apiClient.get<TrialBalance>("/api/qbo/trial-balance", {
     params: { start_date: startDate, end_date: endDate }
   })
   return data

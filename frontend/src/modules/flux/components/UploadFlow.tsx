@@ -20,7 +20,6 @@ import {
   AlertTriangle,
   ArrowRight,
   ArrowLeft,
-  ChevronDown,
 } from "lucide-react"
 import { api, type ColumnMapping, type UploadPreview, type TrialBalance } from "@/modules/flux/api"
 import { Button, Input, Select, Spinner } from "@/core/ui/components"
@@ -443,7 +442,7 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
 
             {/* Mapping dropdowns */}
             <div className="space-y-3 mb-6">
-              {FIELDS.map(({ key, label, hint }) => (
+              {FIELDS.map(({ key, label }) => (
                 <Select
                   key={key}
                   id={`map-${key}`}

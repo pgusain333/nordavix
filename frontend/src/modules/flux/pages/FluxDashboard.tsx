@@ -13,13 +13,12 @@
  *   status = parsed | ready_for_review | complete  → VarianceTable
  *   status = error         → error state
  */
-import { useState, useEffect } from "react"
+import { useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   BarChart3,
   Plus,
-  ChevronRight,
   AlertCircle,
   RefreshCw,
   Download,
@@ -27,7 +26,7 @@ import {
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
 import { VarianceTable } from "@/modules/flux/components/VarianceTable"
-import { Button, Badge, Spinner } from "@/core/ui/components"
+import { Button, Spinner } from "@/core/ui/components"
 import { cn } from "@/core/ui/utils"
 
 const STATUS_COLORS: Record<string, string> = {
