@@ -120,16 +120,16 @@ export function DashboardHome() {
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
-        className="relative overflow-hidden px-8 pt-8 pb-6"
+        className="relative overflow-hidden px-4 sm:px-8 pt-6 sm:pt-8 pb-4 sm:pb-6"
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
       >
         {/* Subtle gradient orb */}
         <div className="pointer-events-none absolute -top-16 -right-16 h-48 w-48 rounded-full opacity-[0.06]"
           style={{ background: "radial-gradient(circle, var(--green) 0%, transparent 70%)" }} />
 
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-theme">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-theme truncate">
               {getGreeting(displayName)}
             </h1>
             <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>{formatDate()}</p>
@@ -149,7 +149,7 @@ export function DashboardHome() {
         </div>
       </motion.div>
 
-      <div className="flex-1 px-8 py-6 max-w-5xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-8 py-6 max-w-5xl w-full mx-auto space-y-5">
 
         {/* ── Stat cards ──────────────────────────────────────────────────────── */}
         <motion.div

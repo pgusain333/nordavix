@@ -5,6 +5,7 @@ import {
   BarChart3, Clock, Lock, ChevronRight, Star, TrendingUp,
   Brain, Download, Upload, Eye, Sparkles,
 } from "lucide-react"
+import { ThemeToggle } from "@/core/theme/ThemeToggle"
 
 // ── Scroll-reveal hook ────────────────────────────────────────────────────────
 function useInView(threshold = 0.15) {
@@ -191,7 +192,7 @@ function HeroFlow() {
   )
 }
 
-// ── Navbar (light, always white) ──────────────────────────────────────────────
+// ── Navbar ────────────────────────────────────────────────────────────────────
 function Navbar() {
   const [scrolled, setScrolled] = useState(false)
   useEffect(() => {
@@ -203,13 +204,16 @@ function Navbar() {
   return (
     <nav className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${
       scrolled
-        ? "bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm py-3"
-        : "bg-white/80 backdrop-blur-sm py-5"
-    }`}>
+        ? "backdrop-blur-md border-b border-slate-100 dark:border-slate-800 shadow-sm py-3"
+        : "backdrop-blur-sm py-5"
+    }`}
+      style={{ background: scrolled ? "var(--surface)" : "transparent" }}
+    >
       <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-sm">N</div>
-          <span className="font-bold text-slate-900 text-lg tracking-tight">Nordavix</span>
+          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 dark:hidden" />
+          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 hidden dark:block" />
+          <span className="font-bold text-lg tracking-tight text-theme">nordavix<span style={{ color: "var(--green)" }}>.</span></span>
         </div>
         <div className="hidden md:flex items-center gap-8">
           {[
@@ -217,18 +221,30 @@ function Navbar() {
             { label: "How it works", href: "#how-it-works" },
             { label: "Pricing", href: "#pricing" },
           ].map((item) => (
-            <a key={item.label} href={item.href} className="text-sm text-slate-600 hover:text-slate-900 transition-colors">
+            <a key={item.label} href={item.href}
+              className="text-sm transition-colors"
+              style={{ color: "var(--text-2)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
+            >
               {item.label}
             </a>
           ))}
         </div>
         <div className="flex items-center gap-3">
-          <Link to="/app" className="hidden md:block text-sm text-slate-600 hover:text-slate-900 transition-colors px-4 py-2">
+          <ThemeToggle />
+          <Link to="/app"
+            className="hidden md:block text-sm transition-colors px-4 py-2"
+            style={{ color: "var(--text-2)" }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
+          >
             Sign in
           </Link>
           <Link
             to="/app"
-            className="text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors shadow-sm shadow-blue-200"
+            className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
+            style={{ background: "var(--green)" }}
           >
             Get started free
           </Link>
@@ -268,14 +284,18 @@ function HeroSection() {
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-4 animate-fade-in-up animation-delay-700">
           <Link
             to="/app"
-            className="group flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-3.5 rounded-xl transition-all duration-200 shadow-lg shadow-blue-200 text-base"
+            className="group flex items-center gap-2 text-white font-semibold px-8 py-3.5 rounded-xl transition-opacity hover:opacity-90 shadow-lg text-base"
+            style={{ background: "var(--green)" }}
           >
             Start for free
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </Link>
           <a
             href="#how-it-works"
-            className="flex items-center gap-2 bg-white border border-slate-200 hover:border-slate-300 text-slate-700 hover:text-slate-900 font-medium px-8 py-3.5 rounded-xl transition-all duration-200 shadow-sm text-base"
+            className="flex items-center gap-2 font-medium px-8 py-3.5 rounded-xl transition-all duration-200 shadow-sm text-base"
+            style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", color: "var(--text-2)" }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
           >
             See how it works
           </a>
@@ -303,7 +323,7 @@ function HeroSection() {
 function StatsBar() {
   const { ref, inView } = useInView()
   return (
-    <section ref={ref} className="bg-blue-600 py-12 px-6">
+    <section ref={ref} className="py-12 px-6" style={{ background: "var(--green)" }}>
       <div className="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8">
         {[
           { value: 90, suffix: "%", label: "Time saved on flux commentary" },
@@ -317,7 +337,7 @@ function StatsBar() {
             >
               {inView ? <Counter to={stat.value} suffix={stat.suffix} /> : `0${stat.suffix}`}
             </div>
-            <div className="text-xs text-blue-100 leading-snug">{stat.label}</div>
+            <div className="text-xs leading-snug" style={{ color: "rgba(255,255,255,0.75)" }}>{stat.label}</div>
           </div>
         ))}
       </div>
@@ -559,7 +579,8 @@ function ProductPreviewSection() {
 
           <div className="flex items-center justify-between px-4 py-2 border-t border-slate-800/60 bg-slate-900/40">
             <span className="text-[10px] text-slate-600">4 material variances · 2 anomalies detected · 1 awaiting review</span>
-            <button className="text-[10px] bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-md transition-colors">
+            <button className="text-[10px] text-white px-3 py-1 rounded-md transition-opacity hover:opacity-90"
+              style={{ background: "var(--green)" }}>
               Export Excel
             </button>
           </div>
@@ -616,7 +637,7 @@ function ComparisonSection() {
                   {[row.manual, row.checklist, row.nordavix].map((val, j) => (
                     <td key={j} className="text-center px-4 py-3">
                       {val
-                        ? <CheckCircle2 className={`w-4 h-4 mx-auto ${j === 2 ? "text-blue-600" : "text-slate-300"}`} />
+                        ? <CheckCircle2 className={`w-4 h-4 mx-auto ${j === 2 ? "text-[var(--green)]" : "text-slate-300"}`} />
                         : <div className="w-4 h-px bg-slate-200 mx-auto" />
                       }
                     </td>
@@ -631,11 +652,12 @@ function ComparisonSection() {
   )
 }
 
-// ── CTA section (DARK blue gradient) ─────────────────────────────────────────
+// ── CTA section ───────────────────────────────────────────────────────────────
 function CTASection() {
   const { ref, inView } = useInView(0.2)
   return (
-    <section id="pricing" className="py-24 px-6 bg-gradient-to-br from-blue-700 via-blue-800 to-slate-900">
+    <section id="pricing" className="py-24 px-6"
+      style={{ background: "linear-gradient(135deg, #2d6a4f 0%, var(--green) 40%, #1a3a2a 100%)" }}>
       <div
         ref={ref}
         className={`max-w-3xl mx-auto text-center transition-all duration-700 ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
@@ -647,13 +669,14 @@ function CTASection() {
         <h2 className="text-3xl md:text-5xl font-bold text-white mb-4 tracking-tight">
           Start automating your close today
         </h2>
-        <p className="text-blue-100 mb-8 max-w-lg mx-auto">
+        <p className="mb-8 max-w-lg mx-auto" style={{ color: "rgba(255,255,255,0.8)" }}>
           Join accounting teams already saving hours every close. No credit card. No commitment. Cancel any time.
         </p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <Link
             to="/app"
-            className="group flex items-center justify-center gap-2 bg-white hover:bg-blue-50 text-blue-700 font-semibold px-10 py-4 rounded-xl transition-all duration-200 shadow-xl text-base"
+            className="group flex items-center justify-center gap-2 bg-white font-semibold px-10 py-4 rounded-xl transition-all duration-200 shadow-xl text-base hover:opacity-90"
+            style={{ color: "var(--green)" }}
           >
             Get started free
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
@@ -665,7 +688,7 @@ function CTASection() {
             { icon: Lock, text: "Data never shared" },
             { icon: Clock, text: "5-min setup" },
           ].map(({ icon: Icon, text }) => (
-            <div key={text} className="flex items-center gap-1.5 text-xs text-blue-200">
+            <div key={text} className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(255,255,255,0.7)" }}>
               <Icon className="w-3 h-3" />
               {text}
             </div>
@@ -684,8 +707,8 @@ function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
           <div className="md:col-span-2">
             <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-xs">N</div>
-              <span className="font-bold text-white">Nordavix</span>
+              <img src="/logo-mark-dark.svg" alt="Nordavix" className="h-7 w-7" />
+              <span className="font-bold text-white">nordavix<span style={{ color: "var(--green)" }}>.</span></span>
             </div>
             <p className="text-sm text-slate-500 leading-relaxed max-w-xs">
               AI-powered month-end close automation for controllers and accounting teams.

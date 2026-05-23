@@ -1,14 +1,8 @@
 /**
  * Nordavix design system — core UI primitives.
  *
- * Design tokens:
- *   ink (#0E1112) default button bg, white text
- *   green (#3E8F66 / #5BB089) active / accent state
- *   Space Grotesk font (inherited from body)
- *
- * Button heights: sm=26px, default=32px, lg=40px
- * Icon stroke: 1.6, icon size: 22px
- * Selection controls: green-500 when active
+ * All buttons: green background, white text (brand standard).
+ * Dark mode: all form elements use CSS var tokens.
  */
 import { type VariantProps, cva } from "class-variance-authority"
 import { forwardRef, type ReactNode, type InputHTMLAttributes, type HTMLAttributes } from "react"
@@ -18,25 +12,27 @@ import { cn } from "@/core/ui/utils"
 
 const buttonVariants = cva(
   [
-    "inline-flex items-center justify-center gap-1.5 font-medium transition-colors",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/20",
+    "inline-flex items-center justify-center gap-1.5 font-semibold transition-all duration-150",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)]/30",
     "disabled:pointer-events-none disabled:opacity-40",
-    "rounded-[6px] whitespace-nowrap select-none",
+    "rounded-[8px] whitespace-nowrap select-none",
   ].join(" "),
   {
     variants: {
       variant: {
-        default:     "bg-ink text-white hover:bg-ink/88 active:bg-ink/80",
-        green:       "bg-green text-white hover:bg-green-600 active:bg-green-600",
-        outline:     "border border-ink-100 text-ink bg-transparent hover:bg-ink-50 active:bg-ink-100",
-        ghost:       "text-ink hover:bg-ink-50 active:bg-ink-100",
-        destructive: "bg-unfav text-white hover:bg-unfav/90",
-        link:        "text-green underline-offset-4 hover:underline p-0 h-auto font-normal",
+        // Primary — green bg, white text (brand standard for all CTAs)
+        default:     "bg-[var(--green)] text-white hover:opacity-90 active:opacity-80 shadow-sm",
+        green:       "bg-[var(--green)] text-white hover:opacity-90 active:opacity-80 shadow-sm",
+        // Outline — visible in both light and dark mode
+        outline:     "border border-[var(--border-strong)] text-[var(--text)] bg-transparent hover:bg-[var(--surface-2)] active:bg-[var(--border)]",
+        ghost:       "text-[var(--text-2)] bg-transparent hover:bg-[var(--surface-2)] active:bg-[var(--border)]",
+        destructive: "bg-[#dc2626] text-white hover:bg-[#b91c1c] shadow-sm",
+        link:        "text-[var(--green)] underline-offset-4 hover:underline p-0 h-auto font-normal shadow-none",
       },
       size: {
         sm:       "h-[26px] px-2.5 text-xs",
-        default:  "h-8 px-3 text-sm",
-        lg:       "h-10 px-4 text-sm",
+        default:  "h-8 px-3.5 text-sm",
+        lg:       "h-10 px-5 text-sm",
         icon:     "h-8 w-8 p-0",
         "icon-sm":"h-[26px] w-[26px] p-0",
         "icon-lg":"h-10 w-10 p-0",
@@ -65,21 +61,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       {...props}
     >
       {loading ? (
-        <svg
-          className="animate-spin h-3.5 w-3.5 shrink-0"
-          fill="none"
-          viewBox="0 0 24 24"
-        >
-          <circle
-            className="opacity-25"
-            cx="12" cy="12" r="10"
-            stroke="currentColor" strokeWidth="4"
-          />
-          <path
-            className="opacity-75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-          />
+        <svg className="animate-spin h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
       ) : icon ? (
         <span className="shrink-0">{icon}</span>
@@ -97,16 +81,16 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default:    "bg-ink-100 text-ink-600",
-        pending:    "bg-ink-100 text-ink-600",
-        generating: "bg-material-light text-material",
-        generated:  "bg-green-50 text-green",
-        approved:   "bg-green-50 text-green-600",
-        edited:     "bg-blue-50 text-blue-700",
-        flagged:    "bg-unfav-light text-unfav",
-        material:   "bg-material-light text-material font-semibold",
-        soon:       "bg-ink-100 text-ink-400 uppercase tracking-widest text-[9px]",
-        error:      "bg-unfav-light text-unfav",
+        default:    "bg-[var(--surface-2)] text-[var(--text-2)]",
+        pending:    "bg-[var(--surface-2)] text-[var(--text-2)]",
+        generating: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+        generated:  "bg-[var(--green-subtle)] text-[var(--green)]",
+        approved:   "bg-[var(--green-subtle)] text-[var(--green)]",
+        edited:     "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+        flagged:    "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+        material:   "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 font-semibold",
+        soon:       "bg-[var(--surface-2)] text-[var(--text-muted)] uppercase tracking-widest text-[9px]",
+        error:      "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400",
       },
     },
     defaultVariants: { variant: "default" },
@@ -128,10 +112,10 @@ function Badge({ className, variant = "default", dot, children, ...props }: Badg
       {dot && (
         <span className={cn(
           "inline-block h-1.5 w-1.5 rounded-full",
-          variant === "approved" || variant === "generated" ? "bg-green" :
-          variant === "flagged" || variant === "error" ? "bg-unfav" :
-          variant === "generating" ? "bg-material" :
-          "bg-ink-400"
+          variant === "approved" || variant === "generated" ? "bg-[var(--green)]" :
+          variant === "flagged" || variant === "error" ? "bg-red-500" :
+          variant === "generating" || variant === "material" ? "bg-amber-500" :
+          "bg-[var(--border-strong)]"
         )} />
       )}
       {children}
@@ -170,22 +154,19 @@ interface CheckboxProps extends InputHTMLAttributes<HTMLInputElement> {
 
 function Checkbox({ className, label, id, ...props }: CheckboxProps) {
   return (
-    <label
-      className="flex items-center gap-2 cursor-pointer select-none"
-      htmlFor={id}
-    >
+    <label className="flex items-center gap-2 cursor-pointer select-none" htmlFor={id}>
       <input
         type="checkbox"
         id={id}
         className={cn(
-          "h-4 w-4 rounded border-[1.5px] border-ink-200 cursor-pointer",
-          "checked:bg-green checked:border-green focus:ring-2 focus:ring-green/20",
-          "accent-green transition-colors",
+          "h-4 w-4 rounded border-[1.5px] border-[var(--border-strong)] cursor-pointer",
+          "checked:bg-[var(--green)] checked:border-[var(--green)]",
+          "focus:ring-2 focus:ring-[var(--green)]/20 accent-[var(--green)] transition-colors",
           className
         )}
         {...props}
       />
-      {label && <span className="text-sm text-ink">{label}</span>}
+      {label && <span className="text-sm text-theme">{label}</span>}
     </label>
   )
 }
@@ -198,20 +179,17 @@ interface RadioProps extends InputHTMLAttributes<HTMLInputElement> {
 
 function Radio({ className, label, id, ...props }: RadioProps) {
   return (
-    <label
-      className="flex items-center gap-2 cursor-pointer select-none"
-      htmlFor={id}
-    >
+    <label className="flex items-center gap-2 cursor-pointer select-none" htmlFor={id}>
       <input
         type="radio"
         id={id}
         className={cn(
-          "h-4 w-4 border-[1.5px] border-ink-200 cursor-pointer accent-green",
+          "h-4 w-4 border-[1.5px] border-[var(--border-strong)] cursor-pointer accent-[var(--green)]",
           className
         )}
         {...props}
       />
-      {label && <span className="text-sm text-ink">{label}</span>}
+      {label && <span className="text-sm text-theme">{label}</span>}
     </label>
   )
 }
@@ -220,11 +198,7 @@ function Radio({ className, label, id, ...props }: RadioProps) {
 
 function Spinner({ className }: { className?: string }) {
   return (
-    <svg
-      className={cn("animate-spin h-5 w-5 text-ink-400", className)}
-      fill="none"
-      viewBox="0 0 24 24"
-    >
+    <svg className={cn("animate-spin h-5 w-5", className)} fill="none" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
@@ -233,13 +207,16 @@ function Spinner({ className }: { className?: string }) {
 
 // ── Card ──────────────────────────────────────────────────────────────────────
 
-function Card({ className, children, ...props }: HTMLAttributes<HTMLDivElement>) {
+function Card({ className, children, style, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn(
-        "bg-white rounded-lg border border-ink-100 shadow-card",
-        className
-      )}
+      className={cn("rounded-xl", className)}
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        boxShadow: "var(--card-shadow)",
+        ...style,
+      }}
       {...props}
     >
       {children}
@@ -258,24 +235,29 @@ function Select({ className, label, error, id, children, ...props }: SelectProps
   return (
     <div className="flex flex-col gap-1">
       {label && (
-        <label htmlFor={id} className="text-xs font-medium text-ink-600">
+        <label htmlFor={id} className="text-xs font-medium" style={{ color: "var(--text-2)" }}>
           {label}
         </label>
       )}
       <select
         id={id}
         className={cn(
-          "h-8 rounded-[6px] border border-ink-100 bg-white px-2.5 text-sm text-ink",
-          "focus:outline-none focus:ring-2 focus:ring-green/20 focus:border-green",
+          "h-9 rounded-[8px] px-2.5 text-sm",
+          "focus:outline-none focus:ring-2 focus:ring-[var(--green)]/20",
           "disabled:opacity-40",
-          error && "border-unfav",
+          error && "ring-1 ring-red-500",
           className
         )}
+        style={{
+          background: "var(--surface)",
+          border: `1px solid ${error ? "#dc2626" : "var(--border-strong)"}`,
+          color: "var(--text)",
+        }}
         {...props}
       >
         {children}
       </select>
-      {error && <p className="text-xs text-unfav">{error}</p>}
+      {error && <p className="text-xs text-red-500">{error}</p>}
     </div>
   )
 }
@@ -284,30 +266,36 @@ function Select({ className, label, error, id, children, ...props }: SelectProps
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string
+  hint?: string
   error?: string
 }
 
-function Input({ className, label, error, id, ...props }: InputProps) {
+function Input({ className, label, hint, error, id, ...props }: InputProps) {
   return (
     <div className="flex flex-col gap-1">
       {label && (
-        <label htmlFor={id} className="text-xs font-medium text-ink-600">
+        <label htmlFor={id} className="text-xs font-medium" style={{ color: "var(--text-2)" }}>
           {label}
         </label>
       )}
       <input
         id={id}
         className={cn(
-          "h-8 rounded-[6px] border border-ink-100 bg-white px-2.5 text-sm text-ink",
-          "placeholder:text-ink-400",
-          "focus:outline-none focus:ring-2 focus:ring-green/20 focus:border-green",
+          "h-9 rounded-[8px] px-2.5 text-sm w-full",
+          "focus:outline-none focus:ring-2 focus:ring-[var(--green)]/20",
           "disabled:opacity-40",
-          error && "border-unfav",
+          "placeholder:opacity-40",
           className
         )}
+        style={{
+          background: "var(--surface)",
+          border: `1px solid ${error ? "#dc2626" : "var(--border-strong)"}`,
+          color: "var(--text)",
+        }}
         {...props}
       />
-      {error && <p className="text-xs text-unfav">{error}</p>}
+      {hint && !error && <p className="text-xs" style={{ color: "var(--text-muted)" }}>{hint}</p>}
+      {error && <p className="text-xs text-red-500">{error}</p>}
     </div>
   )
 }

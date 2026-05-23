@@ -45,25 +45,29 @@ function StepBar({ step, steps }: { step: number; steps: string[] }) {
             <div
               className={cn(
                 "h-7 w-7 rounded-full flex items-center justify-center text-xs font-semibold transition-colors",
-                i < step  ? "bg-green text-white" :
-                i === step ? "bg-ink text-white" :
-                             "bg-ink-100 text-ink-400"
               )}
+              style={
+                i < step
+                  ? { background: "var(--green)", color: "#fff" }
+                  : i === step
+                  ? { background: "var(--text)", color: "var(--surface)" }
+                  : { background: "var(--surface-2)", color: "var(--text-muted)" }
+              }
             >
               {i < step ? <CheckCircle2 size={14} strokeWidth={2} /> : i + 1}
             </div>
-            <span className={cn(
-              "text-[10px] font-medium whitespace-nowrap hidden sm:block",
-              i === step ? "text-ink" : "text-ink-400"
-            )}>
+            <span
+              className="text-[10px] font-medium whitespace-nowrap hidden sm:block"
+              style={{ color: i === step ? "var(--text)" : "var(--text-muted)" }}
+            >
               {label}
             </span>
           </div>
           {i < steps.length - 1 && (
-            <div className={cn(
-              "w-8 sm:w-14 h-px mx-1 mt-[-10px]",
-              i < step ? "bg-green" : "bg-ink-100"
-            )} />
+            <div
+              className="w-8 sm:w-14 h-px mx-1 mt-[-10px]"
+              style={{ background: i < step ? "var(--green)" : "var(--border)" }}
+            />
           )}
         </div>
       ))}
@@ -107,7 +111,12 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
       setStep(2)
       setError(null)
     },
-    onError: () => setError("Failed to create trial balance. Please try again."),
+    onError: (err: unknown) => {
+      // Show the actual API error so the user knows what went wrong
+      const msg = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail
+      setError(msg ?? "Failed to create analysis. Check your connection and try again.")
+    },
   })
 
   const uploadFile = useMutation({
@@ -194,8 +203,8 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
         {/* ── Step 0: Choose Source ── */}
         {step === 0 && (
           <div>
-            <h2 className="text-base font-semibold text-ink mb-1">Choose your data source</h2>
-            <p className="text-sm text-ink-400 mb-6">
+            <h2 className="text-base font-semibold text-theme mb-1">Choose your data source</h2>
+            <p className="text-sm mb-6" style={{ color: "var(--text-muted)" }}>
               Upload an Excel or CSV trial balance, or pull directly from QuickBooks Online.
             </p>
             <div className="grid grid-cols-2 gap-4 mb-6">
@@ -222,18 +231,21 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
           </div>
         )}
 
-        {/* ── Step 1: TB Details ── */}
+        {/* ── Step 1: TB Details (upload path) ── */}
         {step === 1 && source === "upload" && (
           <div>
             <button
               onClick={() => setStep(0)}
-              className="flex items-center gap-1.5 text-xs text-ink-400 hover:text-ink mb-5 transition-colors"
+              className="flex items-center gap-1.5 text-xs mb-5 transition-colors"
+              style={{ color: "var(--text-muted)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
             >
               <ArrowLeft size={14} strokeWidth={1.6} />
               Back
             </button>
-            <h2 className="text-base font-semibold text-ink mb-1">Trial balance details</h2>
-            <p className="text-sm text-ink-400 mb-6">
+            <h2 className="text-base font-semibold text-theme mb-1">Trial balance details</h2>
+            <p className="text-sm mb-6" style={{ color: "var(--text-muted)" }}>
               Name this run and set the analysis periods.
             </p>
             {error && <ErrorMsg msg={error} onClose={() => setError(null)} />}
@@ -248,14 +260,14 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
               <div className="grid grid-cols-2 gap-4">
                 <Input
                   id="cur-period"
-                  label="Current period end"
+                  label="Current period end date"
                   type="date"
                   value={curPeriod}
                   onChange={(e) => setCurPeriod(e.target.value)}
                 />
                 <Input
                   id="prior-period"
-                  label="Prior period end"
+                  label="Prior period end date"
                   type="date"
                   value={priorPeriod}
                   onChange={(e) => setPriorPeriod(e.target.value)}
@@ -263,15 +275,13 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
               </div>
               <Input
                 id="threshold"
-                label="Materiality threshold ($)"
+                label="Materiality threshold"
+                hint="Variances above this amount will be flagged for AI commentary."
                 type="number"
                 placeholder="5000"
                 value={threshold}
                 onChange={(e) => setThreshold(e.target.value)}
               />
-              <p className="text-xs text-ink-400">
-                Variances above this dollar amount will be flagged as material and prioritized for AI commentary.
-              </p>
             </div>
             <Button
               className="w-full mt-6"
@@ -285,23 +295,30 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
           </div>
         )}
 
-        {/* QBO path — step 1 */}
+        {/* ── Step 1: QBO path ── */}
         {step === 1 && source === "qbo" && (
           <div>
             <button
               onClick={() => setStep(0)}
-              className="flex items-center gap-1.5 text-xs text-ink-400 hover:text-ink mb-5 transition-colors"
+              className="flex items-center gap-1.5 text-xs mb-5 transition-colors"
+              style={{ color: "var(--text-muted)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
             >
               <ArrowLeft size={14} strokeWidth={1.6} />
               Back
             </button>
-            <h2 className="text-base font-semibold text-ink mb-1">Connect QuickBooks Online</h2>
-            <p className="text-sm text-ink-400 mb-6">
+            <h2 className="text-base font-semibold text-theme mb-1">Connect QuickBooks Online</h2>
+            <p className="text-sm mb-6" style={{ color: "var(--text-muted)" }}>
               Authorize Nordavix to read your QuickBooks trial balance reports.
             </p>
+
+            {error && <ErrorMsg msg={error} onClose={() => setError(null)} />}
+
             {qboConnected ? (
-              <div className="rounded-lg border border-green-100 bg-green-50 p-4 mb-6">
-                <p className="text-sm text-green-600 font-medium flex items-center gap-2">
+              <div className="rounded-lg p-4 mb-6"
+                style={{ background: "var(--green-subtle)", border: "1px solid var(--green)" }}>
+                <p className="text-sm font-medium flex items-center gap-2" style={{ color: "var(--green)" }}>
                   <CheckCircle2 size={16} strokeWidth={1.6} />
                   QuickBooks is connected
                 </p>
@@ -310,11 +327,12 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
               <Button
                 className="w-full"
                 onClick={async () => {
+                  setError(null)
                   try {
                     const url = await api.getQboConnectUrl()
                     window.location.href = url
                   } catch {
-                    setError("Could not reach QuickBooks. Please try again.")
+                    setError("Could not reach QuickBooks authorization. Please try again.")
                   }
                 }}
                 icon={<Zap size={16} strokeWidth={1.6} />}
@@ -323,7 +341,7 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
               </Button>
             )}
             {qboConnected && (
-              <p className="text-xs text-ink-400 text-center mt-4">
+              <p className="text-xs text-center mt-4" style={{ color: "var(--text-muted)" }}>
                 QuickBooks TB import coming in the next release.
               </p>
             )}
@@ -335,25 +353,27 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
           <div>
             <button
               onClick={() => setStep(1)}
-              className="flex items-center gap-1.5 text-xs text-ink-400 hover:text-ink mb-5 transition-colors"
+              className="flex items-center gap-1.5 text-xs mb-5 transition-colors"
+              style={{ color: "var(--text-muted)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
             >
               <ArrowLeft size={14} strokeWidth={1.6} />
               Back
             </button>
-            <h2 className="text-base font-semibold text-ink mb-1">Upload trial balance file</h2>
-            <p className="text-sm text-ink-400 mb-6">
-              Excel (.xlsx, .xls) or CSV format. Your file must have account number,
-              account name, current and prior period balance columns.
+            <h2 className="text-base font-semibold text-theme mb-1">Upload trial balance file</h2>
+            <p className="text-sm mb-6" style={{ color: "var(--text-muted)" }}>
+              Excel (.xlsx, .xls) or CSV format. Your file should have columns for account number,
+              account name, current period balance, and prior period balance.
             </p>
             {error && <ErrorMsg msg={error} onClose={() => setError(null)} />}
 
             <div
-              className={cn(
-                "border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer",
-                dragOver   ? "border-green bg-green-50" :
-                file       ? "border-green bg-green-50" :
-                             "border-ink-200 hover:border-ink-400 bg-ink-50"
-              )}
+              className="border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer"
+              style={{
+                borderColor: dragOver || file ? "var(--green)" : "var(--border-strong)",
+                background:  dragOver || file ? "var(--green-subtle)" : "var(--surface-2)",
+              }}
               onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
               onDragLeave={() => setDragOver(false)}
               onDrop={onDrop}
@@ -371,11 +391,14 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
               />
               {file ? (
                 <div className="flex flex-col items-center gap-2">
-                  <FileSpreadsheet size={32} strokeWidth={1.6} className="text-green" />
-                  <p className="text-sm font-medium text-ink">{file.name}</p>
-                  <p className="text-xs text-ink-400">{(file.size / 1024).toFixed(0)} KB</p>
+                  <FileSpreadsheet size={32} strokeWidth={1.6} style={{ color: "var(--green)" }} />
+                  <p className="text-sm font-medium text-theme">{file.name}</p>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>{(file.size / 1024).toFixed(0)} KB</p>
                   <button
-                    className="text-xs text-ink-400 hover:text-unfav mt-1"
+                    className="text-xs mt-1 transition-colors"
+                    style={{ color: "var(--text-muted)" }}
+                    onMouseEnter={e => (e.currentTarget.style.color = "#dc2626")}
+                    onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
                     onClick={(e) => { e.stopPropagation(); setFile(null) }}
                   >
                     Remove
@@ -383,10 +406,10 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-2">
-                  <Upload size={32} strokeWidth={1.6} className="text-ink-400" />
-                  <p className="text-sm font-medium text-ink">Drop your file here</p>
-                  <p className="text-xs text-ink-400">or click to browse</p>
-                  <p className="text-xs text-ink-200 mt-1">xlsx · xls · csv</p>
+                  <Upload size={32} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} />
+                  <p className="text-sm font-medium text-theme">Drop your file here</p>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>or click to browse</p>
+                  <p className="text-xs mt-1" style={{ color: "var(--border-strong)" }}>xlsx · xls · csv</p>
                 </div>
               )}
             </div>
@@ -408,24 +431,29 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
           <div>
             <button
               onClick={() => setStep(2)}
-              className="flex items-center gap-1.5 text-xs text-ink-400 hover:text-ink mb-5 transition-colors"
+              className="flex items-center gap-1.5 text-xs mb-5 transition-colors"
+              style={{ color: "var(--text-muted)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
             >
               <ArrowLeft size={14} strokeWidth={1.6} />
               Back
             </button>
-            <h2 className="text-base font-semibold text-ink mb-1">Map your columns</h2>
-            <p className="text-sm text-ink-400 mb-6">
+            <h2 className="text-base font-semibold text-theme mb-1">Map your columns</h2>
+            <p className="text-sm mb-6" style={{ color: "var(--text-muted)" }}>
               We auto-detected column mappings based on your headers. Please confirm or adjust.
             </p>
             {error && <ErrorMsg msg={error} onClose={() => setError(null)} />}
 
             {/* Preview sample */}
-            <div className="mb-6 rounded-lg border border-ink-100 overflow-x-auto">
+            <div className="mb-6 rounded-lg overflow-x-auto"
+              style={{ border: "1px solid var(--border)" }}>
               <table className="text-xs w-full">
                 <thead>
-                  <tr className="border-b border-ink-100 bg-ink-50">
+                  <tr style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
                     {preview.headers.map((h) => (
-                      <th key={h} className="text-left px-3 py-2 font-medium text-ink-600 whitespace-nowrap">
+                      <th key={h} className="text-left px-3 py-2 font-medium whitespace-nowrap"
+                        style={{ color: "var(--text-2)" }}>
                         {h}
                       </th>
                     ))}
@@ -433,9 +461,10 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
                 </thead>
                 <tbody>
                   {preview.sample_rows.slice(0, 3).map((row, i) => (
-                    <tr key={i} className={i < 2 ? "border-b border-ink-100" : ""}>
+                    <tr key={i} style={i < 2 ? { borderBottom: "1px solid var(--border)" } : {}}>
                       {row.map((cell, j) => (
-                        <td key={j} className="px-3 py-2 text-ink-600 tabular-nums whitespace-nowrap">
+                        <td key={j} className="px-3 py-2 tabular-nums whitespace-nowrap"
+                          style={{ color: "var(--text-2)" }}>
                           {cell ?? "—"}
                         </td>
                       ))}
@@ -481,13 +510,15 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
         {step === 4 && (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <div className="relative h-16 w-16 mb-6">
-              <div className="absolute inset-0 rounded-full bg-green-50 animate-ping opacity-30" />
-              <div className="relative h-16 w-16 rounded-full bg-green-50 flex items-center justify-center">
-                <Spinner className="text-green h-7 w-7" />
+              <div className="absolute inset-0 rounded-full animate-ping opacity-30"
+                style={{ background: "var(--green-subtle)" }} />
+              <div className="relative h-16 w-16 rounded-full flex items-center justify-center"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                <Spinner className="h-7 w-7" />
               </div>
             </div>
-            <h2 className="text-base font-semibold text-ink mb-2">Generating AI commentary…</h2>
-            <p className="text-sm text-ink-400 max-w-xs leading-relaxed">
+            <h2 className="text-base font-semibold text-theme mb-2">Generating AI commentary…</h2>
+            <p className="text-sm max-w-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
               We're analyzing your trial balance and generating variance explanations.
               This typically takes 30–60 seconds.
             </p>
@@ -497,13 +528,13 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
                 "Computing variance materiality",
                 "Queuing AI narrative generation",
                 "Awaiting commentary…",
-              ].map((step, i) => (
-                <div key={i} className="flex items-center gap-2.5 text-xs text-ink-400">
-                  <div className={cn(
-                    "h-1.5 w-1.5 rounded-full shrink-0",
-                    i < 3 ? "bg-green" : "bg-ink-200 animate-pulse"
-                  )} />
-                  {step}
+              ].map((label, i) => (
+                <div key={i} className="flex items-center gap-2.5 text-xs" style={{ color: "var(--text-muted)" }}>
+                  <div
+                    className={cn("h-1.5 w-1.5 rounded-full shrink-0", i >= 3 && "animate-pulse")}
+                    style={{ background: i < 3 ? "var(--green)" : "var(--border-strong)" }}
+                  />
+                  {label}
                 </div>
               ))}
             </div>
@@ -529,40 +560,40 @@ function SourceCard({
 }) {
   return (
     <button
-      className={cn(
-        "relative flex flex-col items-start text-left p-5 rounded-xl border-2 transition-all",
-        selected
-          ? "border-green bg-green-50 shadow-card"
-          : "border-ink-100 bg-white hover:border-ink-200 hover:bg-ink-50"
-      )}
+      className="relative flex flex-col items-start text-left p-5 rounded-xl transition-all"
+      style={{
+        border: `2px solid ${selected ? "var(--green)" : "var(--border)"}`,
+        background: selected ? "var(--green-subtle)" : "var(--surface)",
+        boxShadow: selected ? "var(--card-shadow)" : "none",
+      }}
+      onMouseEnter={e => { if (!selected) (e.currentTarget as HTMLElement).style.borderColor = "var(--border-strong)" }}
+      onMouseLeave={e => { if (!selected) (e.currentTarget as HTMLElement).style.borderColor = "var(--border)" }}
       onClick={onClick}
     >
       {badge && (
-        <span className={cn(
-          "absolute top-3 right-3 text-[10px] font-medium px-1.5 py-0.5 rounded-full",
-          selected ? "bg-green text-white" : "bg-ink-100 text-ink-400"
-        )}>
+        <span
+          className="absolute top-3 right-3 text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+          style={selected
+            ? { background: "var(--green)", color: "#fff" }
+            : { background: "var(--surface-2)", color: "var(--text-muted)" }}
+        >
           {badge}
         </span>
       )}
-      <div className={cn(
-        "mb-3 transition-colors",
-        selected ? "text-green" : "text-ink-400"
-      )}>
+      <div className="mb-3 transition-colors" style={{ color: selected ? "var(--green)" : "var(--text-muted)" }}>
         {icon}
       </div>
-      <p className={cn(
-        "text-sm font-semibold mb-1",
-        selected ? "text-green-600" : "text-ink"
-      )}>
+      <p className="text-sm font-semibold mb-1"
+        style={{ color: selected ? "var(--green)" : "var(--text)" }}>
         {title}
       </p>
-      <p className="text-xs text-ink-400 leading-relaxed">{description}</p>
+      <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>{description}</p>
       {selected && (
         <CheckCircle2
           size={16}
           strokeWidth={1.6}
-          className="absolute bottom-3 right-3 text-green"
+          className="absolute bottom-3 right-3"
+          style={{ color: "var(--green)" }}
         />
       )}
     </button>
@@ -571,10 +602,11 @@ function SourceCard({
 
 function ErrorMsg({ msg, onClose }: { msg: string; onClose: () => void }) {
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-unfav-light bg-unfav-light p-3 mb-4">
-      <AlertTriangle size={16} strokeWidth={1.6} className="text-unfav shrink-0 mt-0.5" />
-      <p className="text-sm text-unfav flex-1">{msg}</p>
-      <button onClick={onClose} className="text-unfav hover:opacity-70">
+    <div className="flex items-start gap-2 rounded-lg p-3 mb-4"
+      style={{ background: "#fee2e2", border: "1px solid #fca5a5" }}>
+      <AlertTriangle size={16} strokeWidth={1.6} className="shrink-0 mt-0.5" style={{ color: "#dc2626" }} />
+      <p className="text-sm flex-1" style={{ color: "#b91c1c" }}>{msg}</p>
+      <button onClick={onClose} style={{ color: "#dc2626" }} className="hover:opacity-70 transition-opacity">
         <X size={14} />
       </button>
     </div>

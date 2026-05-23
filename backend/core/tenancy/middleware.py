@@ -57,27 +57,28 @@ class TenantMiddleware(BaseHTTPMiddleware):
         clerk_org_id: str | None = claims.get("org_id")  # type: ignore[assignment]
         clerk_user_id: str | None = claims.get("sub")  # type: ignore[assignment]
 
-        if not clerk_org_id or not clerk_user_id:
-            return JSONResponse(
-                {"detail": "Token must belong to an organization. Create or join one first."},
-                status_code=403,
-            )
+        if not clerk_user_id:
+            return JSONResponse({"detail": "Invalid token: missing user ID"}, status_code=401)
+
+        # Fall back to a user-scoped pseudo-org when no org is selected.
+        # This lets solo users (no Clerk org) use the app — their tenant is keyed on their user ID.
+        effective_org_id = clerk_org_id or f"user_{clerk_user_id}"
 
         # Bootstrap queries use skip_tenant_filter because current_tenant_id is not set yet.
         skip = {"skip_tenant_filter": True}
         async with AsyncSessionLocal() as session:
             tenant_result = await session.execute(
-                select(Tenant).where(Tenant.clerk_org_id == clerk_org_id),
+                select(Tenant).where(Tenant.clerk_org_id == effective_org_id),
                 execution_options=skip,
             )
             tenant = tenant_result.scalar_one_or_none()
 
             if tenant is None:
-                # First time this org hits the API — provision their tenant record.
+                # First time this org/user hits the API — provision their tenant record.
                 tenant = Tenant(
                     id=uuid.uuid4(),
-                    clerk_org_id=clerk_org_id,
-                    name=clerk_org_id,  # Will be updated via settings once org name is synced
+                    clerk_org_id=effective_org_id,
+                    name=effective_org_id,
                 )
                 session.add(tenant)
                 await session.flush()
