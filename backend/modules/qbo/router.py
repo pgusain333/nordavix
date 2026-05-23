@@ -84,7 +84,7 @@ async def qbo_callback(
     code:     str = Query(...),
     realm_id: str = Query(..., alias="realmId"),
     state:    str = Query(...),
-    error:    str | None = Query(None),
+    error:    str | None = Query(default=None),
 ) -> RedirectResponse:
     """
     QBO redirects here after user authorization (no Clerk auth — public endpoint).
@@ -215,7 +215,7 @@ async def get_qbo_connection(
 async def fetch_qbo_trial_balance(
     start_date: str = Query(..., description="Period start date YYYY-MM-DD"),
     end_date:   str = Query(..., description="Period end date YYYY-MM-DD"),
-    tenant_id: CurrentTenantId = Depends(),
+    tenant_id: CurrentTenantId,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Fetch a Trial Balance report from QBO for the given date range."""
