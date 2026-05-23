@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-slate-950 text-slate-50;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+}
+
+@layer utilities {
+  .animation-delay-200  { animation-delay: 200ms; }
+  .animation-delay-400  { animation-delay: 400ms; }
+  .animation-delay-700  { animation-delay: 700ms; }
+  .animation-delay-1000 { animation-delay: 1000ms; }
+  .animation-delay-2000 { animation-delay: 2000ms; }
+  .animation-delay-4000 { animation-delay: 4000ms; }
+
+  .glass {
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .glass-light {
+    background: rgba(30, 41, 59, 0.5);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 50%, #38bdf8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glow-blue {
+    box-shadow: 0 0 40px rgba(59, 130, 246, 0.25), 0 0 80px rgba(59, 130, 246, 0.1);
+  }
+
+  .glow-blue-sm {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.2);
+  }
+}

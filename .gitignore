@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Build outputs
+frontend/dist/
+frontend/.vite/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# Python packaging artifacts
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Alembic — keep versions but not cache
+__pycache__/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Fly.io generated
+.fly/

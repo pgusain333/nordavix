@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend — lint, typecheck, migrate, test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nordavix_test
+          POSTGRES_USER: nordavix
+          POSTGRES_PASSWORD: nordavix_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://nordavix:nordavix_test@localhost:5432/nordavix_test
+      TEST_DATABASE_URL: postgresql+asyncpg://nordavix:nordavix_test@localhost:5432/nordavix_test
+      REDIS_URL: redis://localhost:6379/0
+      # Dummy values for settings validation — real secrets never in CI env
+      CLERK_SECRET_KEY: sk_test_ci
+      CLERK_PUBLISHABLE_KEY: pk_test_ci
+      CLERK_JWKS_URL: https://example.clerk.accounts.dev/.well-known/jwks.json
+      R2_ACCOUNT_ID: ci
+      R2_ACCESS_KEY_ID: ci
+      R2_SECRET_ACCESS_KEY: ci
+      R2_BUCKET_NAME: ci
+      R2_PUBLIC_URL: https://example.r2.dev
+      ANTHROPIC_API_KEY: sk-ant-ci
+      SENTRY_DSN: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type check (mypy)
+        run: mypy . --ignore-missing-imports
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Test
+        run: pytest --cov=. --cov-report=xml -q
+
+  frontend:
+    name: Frontend — typecheck, build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci
+          VITE_API_BASE_URL: http://localhost:8000
+        run: npm run typecheck
+
+      - name: Build
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci
+          VITE_API_BASE_URL: http://localhost:8000
+        run: npm run build
