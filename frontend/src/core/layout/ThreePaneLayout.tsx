@@ -1,49 +1,70 @@
-import { ReactNode } from "react"
+import { ReactNode, useState } from "react"
+import { Menu, X } from "lucide-react"
 import { LeftNav } from "./LeftNav"
 import { ClerkApiWirer } from "@/core/auth/ClerkProvider"
+import { ThemeToggle } from "@/core/theme/ThemeToggle"
 
 interface ThreePaneLayoutProps {
   children: ReactNode
-  rightPane?: ReactNode
-  rightPaneTitle?: string
 }
 
-/**
- * Root layout for all authenticated pages.
- *
- * ┌─────────────┬──────────────────────────────┬──────────────┐
- * │  Left Nav   │       Center Workspace        │  Right Pane  │
- * │   (240px)   │         (flex-1)              │   (320px)    │
- * │  white, fx  │  scrollable, main content     │  context,    │
- * │             │                               │  collapsible │
- * └─────────────┴──────────────────────────────┴──────────────┘
- *
- * The right pane is optional — only rendered when `rightPane` is provided.
- */
-export function ThreePaneLayout({ children, rightPane, rightPaneTitle }: ThreePaneLayoutProps) {
+export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+
   return (
     <div className="flex h-screen overflow-hidden bg-theme">
-      {/* Wire Clerk tokens into the API client on mount */}
       <ClerkApiWirer />
 
-      <LeftNav />
+      {/* ── Desktop sidebar ── */}
+      <div className="hidden lg:flex">
+        <LeftNav />
+      </div>
 
-      <main className="flex flex-1 flex-col overflow-hidden min-w-0">
-        {children}
-      </main>
-
-      {rightPane && (
-        <aside className="flex h-screen w-80 shrink-0 flex-col border-theme"
-          style={{ background: "var(--surface)", borderLeft: "1px solid var(--border)" }}>
-          {rightPaneTitle && (
-            <div className="flex items-center px-4 py-3 border-theme"
-              style={{ borderBottom: "1px solid var(--border)" }}>
-              <h2 className="text-sm font-semibold text-theme">{rightPaneTitle}</h2>
-            </div>
-          )}
-          <div className="flex-1 overflow-y-auto p-4">{rightPane}</div>
-        </aside>
+      {/* ── Mobile nav overlay ── */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
+          onClick={() => setMobileNavOpen(false)}
+        />
       )}
+      <div
+        className={[
+          "fixed inset-y-0 left-0 z-50 lg:hidden transition-transform duration-300 ease-in-out",
+          mobileNavOpen ? "translate-x-0" : "-translate-x-full",
+        ].join(" ")}
+      >
+        <LeftNav onClose={() => setMobileNavOpen(false)} />
+      </div>
+
+      {/* ── Main content ── */}
+      <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+
+        {/* Mobile top bar */}
+        <div
+          className="flex lg:hidden items-center justify-between px-4 py-3 shrink-0"
+          style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
+        >
+          <button
+            onClick={() => setMobileNavOpen(true)}
+            className="flex items-center justify-center h-8 w-8 rounded-lg transition-colors text-theme-2"
+            style={{ background: "var(--surface-2)" }}
+          >
+            {mobileNavOpen ? <X size={18} strokeWidth={1.6} /> : <Menu size={18} strokeWidth={1.6} />}
+          </button>
+          <div className="flex items-center gap-1.5">
+            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-6 w-6 dark:hidden" />
+            <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-6 w-6 hidden dark:block" />
+            <span className="text-sm font-semibold text-theme tracking-tight">
+              nordavix<span style={{ color: "var(--green)" }}>.</span>
+            </span>
+          </div>
+          <ThemeToggle />
+        </div>
+
+        <main className="flex flex-1 flex-col overflow-hidden min-w-0">
+          {children}
+        </main>
+      </div>
     </div>
   )
 }

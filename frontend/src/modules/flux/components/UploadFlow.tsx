@@ -309,8 +309,13 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
             ) : (
               <Button
                 className="w-full"
-                onClick={() => {
-                  window.location.href = api.qboConnectUrl()
+                onClick={async () => {
+                  try {
+                    const url = await api.getQboConnectUrl()
+                    window.location.href = url
+                  } catch {
+                    setError("Could not reach QuickBooks. Please try again.")
+                  }
                 }}
                 icon={<Zap size={16} strokeWidth={1.6} />}
               >

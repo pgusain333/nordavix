@@ -167,9 +167,11 @@ async function getQboConnection(): Promise<QboConnection | null> {
   }
 }
 
-function qboConnectUrl(): string {
-  const base = import.meta.env.VITE_API_BASE_URL ?? ""
-  return `${base}/api/oauth/qbo/connect`
+async function getQboConnectUrl(): Promise<string> {
+  // The backend generates the Intuit OAuth URL with the tenant's encoded state.
+  // We must call it with auth headers (apiClient) — browser can't navigate there directly.
+  const { data } = await apiClient.get<{ url: string }>("/api/qbo/connect-url")
+  return data.url
 }
 
 async function fetchQboTrialBalance(
@@ -202,6 +204,6 @@ export const api = {
   exportExcel,
   // QBO
   getQboConnection,
-  qboConnectUrl,
+  getQboConnectUrl,
   fetchQboTrialBalance,
 }

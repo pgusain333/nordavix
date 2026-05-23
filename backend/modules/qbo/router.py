@@ -191,6 +191,32 @@ async def qbo_callback(
 
 # ── QBO API endpoints (auth required) ─────────────────────────────────────────
 
+@qbo_router.get("/connect-url")
+async def get_qbo_connect_url(
+    tenant_id: CurrentTenantId,
+) -> dict:
+    """
+    Return the Intuit OAuth2 authorization URL as JSON.
+    The frontend calls this with its auth token, then redirects the browser to the returned URL.
+    This avoids the browser navigating directly to /connect without a JWT.
+    """
+    if not settings.qbo_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="QuickBooks integration is not configured."
+        )
+    state = _encode_state(tenant_id)
+    params = {
+        "client_id":     settings.qbo_client_id,
+        "response_type": "code",
+        "scope":         _QBO_SCOPES,
+        "redirect_uri":  settings.qbo_redirect_uri,
+        "state":         state,
+    }
+    url = f"{_AUTH_BASE}?{urlencode(params)}"
+    return {"url": url}
+
+
 @qbo_router.get("/connection")
 async def get_qbo_connection(
     tenant_id: CurrentTenantId,

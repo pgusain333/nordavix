@@ -1,18 +1,12 @@
 /**
  * Left navigation sidebar — Nordavix app shell.
- *
- * Design: theme-aware (light/dark), green active accent.
- * Icons: Lucide, 22px, strokeWidth=1.6
+ * Theme-aware, mobile-ready (accepts onClose for overlay dismiss).
  */
 import { NavLink, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
-  LayoutDashboard,
-  BarChart3,
-  Scale,
-  FileText,
-  ArrowLeftRight,
-  type LucideIcon,
+  LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
+  X, type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/core/ui/utils"
 import { Badge } from "@/core/ui/components"
@@ -26,38 +20,50 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard",       path: "/app",                icon: LayoutDashboard, available: true  },
-  { label: "Flux Analysis",   path: "/app/flux",           icon: BarChart3,       available: true  },
-  { label: "Reconciliations", path: "/app/reconciliations",icon: Scale,           available: false },
-  { label: "Workpapers",      path: "/app/workpapers",     icon: FileText,        available: false },
-  { label: "Intercompany",    path: "/app/intercompany",   icon: ArrowLeftRight,  available: false },
+  { label: "Dashboard",       path: "/app",                 icon: LayoutDashboard, available: true  },
+  { label: "Flux Analysis",   path: "/app/flux",            icon: BarChart3,       available: true  },
+  { label: "Reconciliations", path: "/app/reconciliations", icon: Scale,           available: false },
+  { label: "Workpapers",      path: "/app/workpapers",      icon: FileText,        available: false },
+  { label: "Intercompany",    path: "/app/intercompany",    icon: ArrowLeftRight,  available: false },
 ]
 
-export function LeftNav() {
+interface Props {
+  onClose?: () => void
+}
+
+export function LeftNav({ onClose }: Props) {
   const { organization } = useOrganization()
   const { user } = useUser()
   const navigate = useNavigate()
 
   return (
-    <aside className="flex h-screen w-60 shrink-0 flex-col" style={{
-      background: "var(--nav-bg)",
-      borderRight: "1px solid var(--nav-border)",
-    }}>
-
+    <aside
+      className="flex h-screen w-60 shrink-0 flex-col"
+      style={{ background: "var(--nav-bg)", borderRight: "1px solid var(--nav-border)" }}
+    >
       {/* Brand */}
-      <button
-        onClick={() => navigate("/app")}
-        className="flex items-center gap-2.5 px-4 py-[18px] w-full text-left transition-colors"
-        style={{ borderBottom: "1px solid var(--nav-border)" }}
-        onMouseEnter={e => (e.currentTarget.style.background = "var(--nav-active)")}
-        onMouseLeave={e => (e.currentTarget.style.background = "")}
-      >
-        <img src="/logo-mark-light.svg" alt="Nordavix" className="h-7 w-7 shrink-0 dark:hidden" />
-        <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-7 w-7 shrink-0 hidden dark:block" />
-        <span className="text-[15px] font-semibold tracking-tight text-theme">
-          nordavix<span style={{ color: "var(--green)" }}>.</span>
-        </span>
-      </button>
+      <div className="flex items-center justify-between px-4 py-[18px]"
+        style={{ borderBottom: "1px solid var(--nav-border)" }}>
+        <button
+          onClick={() => { navigate("/app"); onClose?.() }}
+          className="flex items-center gap-2.5 min-w-0 flex-1"
+        >
+          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-7 w-7 shrink-0 dark:hidden" />
+          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-7 w-7 shrink-0 hidden dark:block" />
+          <span className="text-[15px] font-semibold tracking-tight text-theme truncate">
+            nordavix<span style={{ color: "var(--green)" }}>.</span>
+          </span>
+        </button>
+        {/* Mobile close button */}
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="lg:hidden ml-2 flex items-center justify-center h-7 w-7 rounded-md text-theme-muted hover:text-theme transition-colors"
+          >
+            <X size={16} strokeWidth={1.6} />
+          </button>
+        )}
+      </div>
 
       {/* Org name */}
       {organization && (
@@ -75,7 +81,7 @@ export function LeftNav() {
             return (
               <div
                 key={item.path}
-                className="flex items-center justify-between rounded-md px-3 py-2 text-sm cursor-not-allowed opacity-40"
+                className="flex items-center justify-between rounded-md px-3 py-2 text-sm cursor-not-allowed opacity-35"
                 style={{ color: "var(--nav-text)" }}
               >
                 <span className="flex items-center gap-2.5">
@@ -87,41 +93,26 @@ export function LeftNav() {
             )
           }
 
-          const isIndex = item.path === "/app"
-
           return (
             <NavLink
               key={item.path}
               to={item.path}
-              end={isIndex}
+              end={item.path === "/app"}
+              onClick={() => onClose?.()}
               className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-all duration-150",
-                  isActive ? "font-medium" : ""
-                )
+                cn("flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-all duration-150",
+                  isActive ? "font-medium" : "")
               }
               style={({ isActive }) => isActive
                 ? { background: "var(--nav-active)", color: "var(--nav-text-act)" }
                 : { color: "var(--nav-text)" }
               }
-              onMouseEnter={e => {
-                const el = e.currentTarget
-                if (!el.classList.contains("active")) el.style.background = "var(--nav-active)"
-              }}
-              onMouseLeave={e => {
-                const el = e.currentTarget
-                if (!el.getAttribute("aria-current")) el.style.background = ""
-              }}
             >
               {({ isActive }) => (
                 <>
-                  <Icon
-                    size={22}
-                    strokeWidth={1.6}
-                    className="shrink-0 transition-colors"
-                    style={{ color: isActive ? "var(--green)" : "var(--nav-text)" }}
-                  />
-                  {item.label}
+                  <Icon size={22} strokeWidth={1.6} className="shrink-0"
+                    style={{ color: isActive ? "var(--green)" : "var(--nav-text)" }} />
+                  <span className="truncate">{item.label}</span>
                   {isActive && (
                     <span className="ml-auto h-1.5 w-1.5 rounded-full shrink-0"
                       style={{ background: "var(--green)" }} />
@@ -133,14 +124,12 @@ export function LeftNav() {
         })}
       </nav>
 
-      {/* Bottom: theme toggle + user */}
+      {/* Bottom: theme + user */}
       <div className="px-3 py-3 space-y-3" style={{ borderTop: "1px solid var(--nav-border)" }}>
-        {/* Theme toggle */}
         <div className="flex items-center justify-between px-1">
           <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Theme</span>
           <ThemeToggle />
         </div>
-        {/* User */}
         <div className="flex items-center gap-3 px-1">
           <UserButton appearance={{ elements: { avatarBox: "h-7 w-7" } }} />
           <span className="text-xs truncate" style={{ color: "var(--nav-text)" }}>
