@@ -213,10 +213,10 @@ async def get_qbo_connection(
 
 @qbo_router.get("/trial-balance")
 async def fetch_qbo_trial_balance(
-    start_date: str = Query(..., description="Period start date YYYY-MM-DD"),
-    end_date:   str = Query(..., description="Period end date YYYY-MM-DD"),
     tenant_id: CurrentTenantId,
     db: AsyncSession = Depends(get_db),
+    start_date: str = Query(..., description="Period start date YYYY-MM-DD"),
+    end_date:   str = Query(..., description="Period end date YYYY-MM-DD"),
 ) -> dict:
     """Fetch a Trial Balance report from QBO for the given date range."""
     result = await db.execute(
