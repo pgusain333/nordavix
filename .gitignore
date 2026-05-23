@@ -47,3 +47,5 @@ htmlcov/
 
 # Fly.io generated
 .fly/
+
+.vercel

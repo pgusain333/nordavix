@@ -49,7 +49,7 @@ export default {
         },
       },
       fontFamily: {
-        sans: ["'Space Grotesk'", "Inter", "system-ui", "sans-serif"],
+        sans: ["'Plus Jakarta Sans'", "Inter", "system-ui", "sans-serif"],
         mono: ["'JetBrains Mono'", "'Fira Code'", "ui-monospace", "monospace"],
       },
       boxShadow: {

@@ -1,23 +1,27 @@
 /**
- * Post-login dashboard — "Good morning, [Name]." style.
- * Shows close progress, open variances, AI-generated count, and recent flux runs.
+ * Post-login dashboard — animated, theme-aware.
+ * Framer Motion staggered entrance, animated counters, smooth transitions.
  */
+import { useEffect, useRef, useState } from "react"
 import { useUser } from "@clerk/clerk-react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
+import { motion } from "framer-motion"
 import {
   BarChart3,
   CheckCircle2,
   AlertTriangle,
   Sparkles,
-  Clock,
   ArrowRight,
   Upload,
   Zap,
+  TrendingUp,
 } from "lucide-react"
 import { api } from "@/modules/flux/api"
 import { Button } from "@/core/ui/components"
 import { cn } from "@/core/ui/utils"
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function getGreeting(name: string): string {
   const hour = new Date().getHours()
@@ -29,21 +33,52 @@ function getGreeting(name: string): string {
 
 function formatDate(): string {
   return new Date().toLocaleDateString("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
   })
 }
 
-const TB_STATUS_COLORS: Record<string, string> = {
-  pending:          "bg-ink-100",
-  processing:       "bg-material-light",
-  parsed:           "bg-blue-50",
-  ready_for_review: "bg-blue-50",
-  generating:       "bg-material-light",
-  complete:         "bg-green-50",
-  error:            "bg-unfav-light",
+// ── Animated counter hook ──────────────────────────────────────────────────────
+
+function useCountUp(target: number, duration = 800) {
+  const [val, setVal] = useState(0)
+  const raf = useRef<number>(0)
+
+  useEffect(() => {
+    if (target === 0) { setVal(0); return }
+    const start = performance.now()
+    const tick = (now: number) => {
+      const p = Math.min((now - start) / duration, 1)
+      const ease = 1 - Math.pow(1 - p, 3)
+      setVal(Math.round(target * ease))
+      if (p < 1) raf.current = requestAnimationFrame(tick)
+    }
+    raf.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf.current)
+  }, [target, duration])
+
+  return val
+}
+
+// ── Animation variants ─────────────────────────────────────────────────────────
+
+const fadeUp = {
+  hidden:  { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.45, ease: "easeOut" as const } },
+}
+
+const stagger = {
+  hidden:  {},
+  visible: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } },
+}
+
+const TB_STATUS_COLORS: Record<string, { bg: string; dot: string; text: string }> = {
+  pending:          { bg: "var(--surface-2)", dot: "var(--border-strong)", text: "var(--text-muted)" },
+  processing:       { bg: "#fef3c7",          dot: "#f59e0b",              text: "#92400e" },
+  parsed:           { bg: "#dbeafe",          dot: "#3b82f6",              text: "#1d4ed8" },
+  ready_for_review: { bg: "#dbeafe",          dot: "#3b82f6",              text: "#1d4ed8" },
+  generating:       { bg: "#fef3c7",          dot: "#f59e0b",              text: "#92400e" },
+  complete:         { bg: "var(--green-subtle)", dot: "var(--green)", text: "var(--green)" },
+  error:            { bg: "#fee2e2",          dot: "#dc2626",              text: "#b91c1c" },
 }
 
 const TB_STATUS_LABELS: Record<string, string> = {
@@ -56,222 +91,254 @@ const TB_STATUS_LABELS: Record<string, string> = {
   error:            "Error",
 }
 
+// ── Main component ─────────────────────────────────────────────────────────────
+
 export function DashboardHome() {
   const { user } = useUser()
-  const navigate = useNavigate()
+  const navigate  = useNavigate()
 
   const { data: trialBalances = [], isLoading } = useQuery({
     queryKey: ["trial-balances"],
-    queryFn:  () => api.listTrialBalances(),
+    queryFn:  api.listTrialBalances,
     staleTime: 30_000,
   })
 
   const displayName = user?.fullName ?? user?.firstName ?? "there"
-
-  // Derived stats
   const total      = trialBalances.length
-  const complete   = trialBalances.filter((tb) => tb.status === "complete").length
-  const inReview   = trialBalances.filter((tb) =>
-    ["ready_for_review", "parsed"].includes(tb.status)
-  ).length
-  const generating = trialBalances.filter((tb) =>
-    ["generating", "processing"].includes(tb.status)
-  ).length
-
+  const complete   = trialBalances.filter(tb => tb.status === "complete").length
+  const inReview   = trialBalances.filter(tb => ["ready_for_review","parsed"].includes(tb.status)).length
+  const generating = trialBalances.filter(tb => ["generating","processing"].includes(tb.status)).length
   const progressPct = total > 0 ? Math.round((complete / total) * 100) : 0
 
   const recentTBs = [...trialBalances].slice(0, 6)
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto bg-ink-50">
-      {/* Header */}
-      <div className="bg-white border-b border-ink-100 px-8 pt-8 pb-6">
-        <p className="text-2xl font-semibold text-ink tracking-tight">
-          {getGreeting(displayName)}
-        </p>
-        <p className="text-sm text-ink-400 mt-1">{formatDate()}</p>
-      </div>
+    <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
 
-      <div className="flex-1 px-8 py-6 space-y-6 max-w-5xl w-full mx-auto">
+      {/* ── Hero header ─────────────────────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+        className="relative overflow-hidden px-8 pt-8 pb-6"
+        style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
+      >
+        {/* Subtle gradient orb */}
+        <div className="pointer-events-none absolute -top-16 -right-16 h-48 w-48 rounded-full opacity-[0.06]"
+          style={{ background: "radial-gradient(circle, var(--green) 0%, transparent 70%)" }} />
 
-        {/* Stat Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            icon={<BarChart3 size={22} strokeWidth={1.6} className="text-ink-400" />}
-            label="Close Progress"
-            value={total > 0 ? `${progressPct}%` : "—"}
-            sub={total > 0 ? `${complete} of ${total} complete` : "No runs yet"}
-            accent="green"
-          />
-          <StatCard
-            icon={<AlertTriangle size={22} strokeWidth={1.6} className="text-material" />}
-            label="In Review"
-            value={inReview > 0 ? String(inReview) : "—"}
-            sub={inReview === 1 ? "1 run needs review" : `${inReview} runs need review`}
-            accent="amber"
-          />
-          <StatCard
-            icon={<Sparkles size={22} strokeWidth={1.6} className="text-green" />}
-            label="AI Generating"
-            value={generating > 0 ? String(generating) : "—"}
-            sub={generating > 0 ? "Narratives in progress" : "All caught up"}
-            accent="neutral"
-          />
-          <StatCard
-            icon={<CheckCircle2 size={22} strokeWidth={1.6} className="text-green" />}
-            label="Complete"
-            value={String(complete)}
-            sub={complete === 1 ? "1 run finalized" : `${complete} runs finalized`}
-            accent="green"
-          />
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-theme">
+              {getGreeting(displayName)}
+            </h1>
+            <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>{formatDate()}</p>
+          </div>
+          {total > 0 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.3, duration: 0.4 }}
+              className="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+            >
+              <TrendingUp size={13} strokeWidth={2} />
+              Close cycle active
+            </motion.div>
+          )}
         </div>
+      </motion.div>
 
-        {/* Progress bar */}
+      <div className="flex-1 px-8 py-6 max-w-5xl w-full mx-auto space-y-5">
+
+        {/* ── Stat cards ──────────────────────────────────────────────────────── */}
+        <motion.div
+          variants={stagger}
+          initial="hidden"
+          animate="visible"
+          className="grid grid-cols-2 lg:grid-cols-4 gap-4"
+        >
+          <StatCard
+            icon={<BarChart3 size={20} strokeWidth={1.6} />}
+            iconColor="var(--text-muted)"
+            label="Progress"
+            value={total > 0 ? progressPct : null}
+            suffix="%"
+            sub={total > 0 ? `${complete} of ${total} complete` : "No runs yet"}
+            accentColor="var(--green)"
+          />
+          <StatCard
+            icon={<AlertTriangle size={20} strokeWidth={1.6} />}
+            iconColor="#f59e0b"
+            label="In Review"
+            value={inReview || null}
+            sub={inReview === 1 ? "1 run needs review" : inReview > 1 ? `${inReview} runs need review` : "Nothing pending"}
+            accentColor="#f59e0b"
+          />
+          <StatCard
+            icon={<Sparkles size={20} strokeWidth={1.6} />}
+            iconColor="var(--green)"
+            label="AI Running"
+            value={generating || null}
+            sub={generating > 0 ? "Narratives in progress" : "All caught up"}
+            accentColor="var(--green)"
+            pulse={generating > 0}
+          />
+          <StatCard
+            icon={<CheckCircle2 size={20} strokeWidth={1.6} />}
+            iconColor="var(--green)"
+            label="Complete"
+            value={complete || null}
+            sub={complete === 1 ? "1 run finalized" : complete > 1 ? `${complete} finalized` : "None yet"}
+            accentColor="var(--green)"
+          />
+        </motion.div>
+
+        {/* ── Progress bar ────────────────────────────────────────────────────── */}
         {total > 0 && (
-          <div className="bg-white rounded-lg border border-ink-100 shadow-card p-5">
+          <motion.div
+            variants={fadeUp}
+            initial="hidden"
+            animate="visible"
+            transition={{ delay: 0.35 }}
+            className="rounded-xl p-5"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
+          >
             <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium text-ink">Close Cycle Progress</span>
-              <span className="text-sm font-semibold text-ink">{progressPct}%</span>
+              <span className="text-sm font-semibold text-theme">Close Cycle Progress</span>
+              <span className="text-sm font-bold tabular-nums" style={{ color: "var(--green)" }}>
+                {progressPct}%
+              </span>
             </div>
-            <div className="h-2 rounded-full bg-ink-100 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-green transition-all duration-700"
-                style={{ width: `${progressPct}%` }}
+            <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
+              <motion.div
+                className="h-full rounded-full"
+                style={{ background: "var(--green)" }}
+                initial={{ width: 0 }}
+                animate={{ width: `${progressPct}%` }}
+                transition={{ delay: 0.5, duration: 0.9, ease: [0.25, 0.46, 0.45, 0.94] }}
               />
             </div>
-            <div className="flex items-center gap-4 mt-3 text-xs text-ink-400">
-              <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-green" />
-                {complete} Complete
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-material" />
-                {inReview} In review
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-ink-200" />
-                {total - complete - inReview} Pending
-              </span>
+            <div className="flex items-center gap-5 mt-3">
+              {[
+                { color: "var(--green)", label: `${complete} Complete` },
+                { color: "#f59e0b",      label: `${inReview} In review` },
+                { color: "var(--border-strong)", label: `${total - complete - inReview} Pending` },
+              ].map(({ color, label }) => (
+                <span key={label} className="flex items-center gap-1.5 text-xs" style={{ color: "var(--text-muted)" }}>
+                  <span className="h-2 w-2 rounded-full" style={{ background: color }} />
+                  {label}
+                </span>
+              ))}
             </div>
-          </div>
+          </motion.div>
         )}
 
-        {/* Recent Flux Runs */}
-        <div className="bg-white rounded-lg border border-ink-100 shadow-card">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-ink-100">
-            <h2 className="text-sm font-semibold text-ink">Flux Analysis Runs</h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate("/app/flux")}
-              className="gap-1"
-            >
-              View all
-              <ArrowRight size={14} strokeWidth={1.6} />
+        {/* ── Recent Flux Runs ─────────────────────────────────────────────────── */}
+        <motion.div
+          variants={fadeUp}
+          initial="hidden"
+          animate="visible"
+          transition={{ delay: 0.45 }}
+          className="rounded-xl overflow-hidden"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
+        >
+          <div className="flex items-center justify-between px-5 py-4"
+            style={{ borderBottom: "1px solid var(--border)" }}>
+            <h2 className="text-sm font-semibold text-theme">Flux Analysis Runs</h2>
+            <Button variant="ghost" size="sm" onClick={() => navigate("/app/flux")}
+              className="gap-1 text-xs">
+              View all <ArrowRight size={13} strokeWidth={1.6} />
             </Button>
           </div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="flex items-center gap-2 text-sm text-ink-400">
-                <Clock size={16} strokeWidth={1.6} className="animate-spin" />
-                Loading…
-              </div>
+            <div className="flex flex-col gap-2 p-5">
+              {[1,2,3].map(i => (
+                <div key={i} className="h-10 rounded-lg animate-pulse" style={{ background: "var(--surface-2)" }} />
+              ))}
             </div>
           ) : recentTBs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
-              <div className="h-12 w-12 rounded-full bg-ink-50 flex items-center justify-center mb-3">
-                <BarChart3 size={22} strokeWidth={1.6} className="text-ink-400" />
+            <div className="flex flex-col items-center justify-center py-14 px-6 text-center">
+              <div className="h-12 w-12 rounded-2xl flex items-center justify-center mb-4"
+                style={{ background: "var(--surface-2)" }}>
+                <BarChart3 size={22} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} />
               </div>
-              <p className="text-sm font-medium text-ink mb-1">No flux runs yet</p>
-              <p className="text-xs text-ink-400 max-w-xs leading-relaxed">
-                Upload a trial balance or connect QuickBooks to generate your first AI-powered flux commentary.
+              <p className="text-sm font-semibold text-theme mb-1">No flux runs yet</p>
+              <p className="text-xs leading-relaxed max-w-xs" style={{ color: "var(--text-muted)" }}>
+                Upload a trial balance or connect QuickBooks to generate AI-powered variance commentary.
               </p>
-              <div className="flex gap-2 mt-4">
-                <Button
-                  size="sm"
-                  onClick={() => navigate("/app/flux")}
-                >
-                  Start first run
-                </Button>
-              </div>
+              <Button size="sm" className="mt-5" onClick={() => navigate("/app/flux")}>
+                Start first run
+              </Button>
             </div>
           ) : (
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-ink-100 text-xs text-ink-400 font-medium">
+                <tr className="text-xs font-medium" style={{ borderBottom: "1px solid var(--border)", color: "var(--text-muted)" }}>
                   <th className="text-left px-5 py-2.5">Name</th>
                   <th className="text-left px-3 py-2.5">Period</th>
                   <th className="text-left px-3 py-2.5">Status</th>
-                  <th className="text-right px-5 py-2.5"></th>
+                  <th className="px-5 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {recentTBs.map((tb, i) => (
-                  <tr
-                    key={tb.id}
-                    className={cn(
-                      "hover:bg-ink-50 transition-colors cursor-pointer",
-                      i < recentTBs.length - 1 && "border-b border-ink-100"
-                    )}
-                    onClick={() => navigate(`/app/flux/${tb.id}`)}
-                  >
-                    <td className="px-5 py-3 font-medium text-ink">{tb.name}</td>
-                    <td className="px-3 py-3 text-ink-600 tabular-nums">
-                      {new Date(tb.period_current).toLocaleDateString("en-US", {
-                        month: "short", year: "numeric"
-                      })}
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                        TB_STATUS_COLORS[tb.status] ?? "bg-ink-100",
-                        tb.status === "complete" ? "text-green-600" :
-                        tb.status === "error" ? "text-unfav" :
-                        ["generating", "processing"].includes(tb.status) ? "text-material" :
-                        "text-ink-600"
-                      )}>
-                        <span className={cn(
-                          "h-1.5 w-1.5 rounded-full",
-                          tb.status === "complete" ? "bg-green" :
-                          tb.status === "error" ? "bg-unfav" :
-                          ["generating", "processing"].includes(tb.status) ? "bg-material" :
-                          "bg-ink-400"
-                        )} />
-                        {TB_STATUS_LABELS[tb.status] ?? tb.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <ArrowRight size={14} strokeWidth={1.6} className="text-ink-400 inline" />
-                    </td>
-                  </tr>
-                ))}
+                {recentTBs.map((tb, i) => {
+                  const s = TB_STATUS_COLORS[tb.status] ?? TB_STATUS_COLORS.pending
+                  return (
+                    <motion.tr
+                      key={tb.id}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.5 + i * 0.06, duration: 0.3 }}
+                      className={cn("cursor-pointer transition-colors")}
+                      style={i < recentTBs.length - 1 ? { borderBottom: "1px solid var(--border)" } : {}}
+                      onClick={() => navigate(`/app/flux/${tb.id}`)}
+                      onMouseEnter={e => (e.currentTarget.style.background = "var(--surface-2)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "")}
+                    >
+                      <td className="px-5 py-3 font-medium text-theme">{tb.name}</td>
+                      <td className="px-3 py-3 tabular-nums text-xs" style={{ color: "var(--text-2)" }}>
+                        {new Date(tb.period_current).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+                          style={{ background: s.bg, color: s.text }}>
+                          <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.dot }} />
+                          {TB_STATUS_LABELS[tb.status] ?? tb.status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <ArrowRight size={14} strokeWidth={1.6} style={{ color: "var(--text-muted)", display: "inline" }} />
+                      </td>
+                    </motion.tr>
+                  )
+                })}
               </tbody>
             </table>
           )}
-        </div>
+        </motion.div>
 
-        {/* Quick Actions */}
-        <div className="bg-white rounded-lg border border-ink-100 shadow-card p-5">
-          <h2 className="text-sm font-semibold text-ink mb-4">Quick Actions</h2>
+        {/* ── Quick Actions ────────────────────────────────────────────────────── */}
+        <motion.div
+          variants={fadeUp}
+          initial="hidden"
+          animate="visible"
+          transition={{ delay: 0.55 }}
+          className="rounded-xl p-5"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
+        >
+          <h2 className="text-sm font-semibold text-theme mb-4">Quick Actions</h2>
           <div className="flex flex-wrap gap-3">
-            <Button
-              size="default"
-              onClick={() => navigate("/app/flux")}
-              icon={<Upload size={16} strokeWidth={1.6} />}
-            >
+            <Button onClick={() => navigate("/app/flux")} icon={<Upload size={15} strokeWidth={1.6} />}>
               Upload Trial Balance
             </Button>
-            <Button
-              variant="outline"
-              size="default"
-              onClick={() => navigate("/app/flux?connect=qbo")}
-              icon={<Zap size={16} strokeWidth={1.6} />}
-            >
+            <Button variant="outline" onClick={() => navigate("/app/flux?connect=qbo")}
+              icon={<Zap size={15} strokeWidth={1.6} />}>
               Connect QuickBooks
             </Button>
           </div>
-        </div>
+        </motion.div>
 
       </div>
     </div>
@@ -281,29 +348,58 @@ export function DashboardHome() {
 // ── StatCard ──────────────────────────────────────────────────────────────────
 
 interface StatCardProps {
-  icon:   React.ReactNode
-  label:  string
-  value:  string
-  sub:    string
-  accent: "green" | "amber" | "neutral"
+  icon:        React.ReactNode
+  iconColor:   string
+  label:       string
+  value:       number | null
+  suffix?:     string
+  sub:         string
+  accentColor: string
+  pulse?:      boolean
 }
 
-function StatCard({ icon, label, value, sub, accent }: StatCardProps) {
+function StatCard({ icon, iconColor, label, value, suffix = "", sub, accentColor, pulse }: StatCardProps) {
+  const counted = useCountUp(value ?? 0, 900)
+
   return (
-    <div className="bg-white rounded-lg border border-ink-100 shadow-card p-5">
+    <motion.div
+      variants={fadeUp}
+      whileHover={{ y: -2, transition: { duration: 0.2 } }}
+      className="rounded-xl p-5 cursor-default"
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        boxShadow: "var(--card-shadow)",
+        transitionProperty: "box-shadow",
+        transitionDuration: "0.2s",
+      }}
+      onMouseEnter={e => ((e.currentTarget as HTMLDivElement).style.boxShadow = "var(--card-shadow-hover)")}
+      onMouseLeave={e => ((e.currentTarget as HTMLDivElement).style.boxShadow = "var(--card-shadow)")}
+    >
       <div className="flex items-start justify-between mb-3">
-        <div className="h-9 w-9 rounded-lg bg-ink-50 flex items-center justify-center">
-          {icon}
+        <div className="h-9 w-9 rounded-xl flex items-center justify-center"
+          style={{ background: "var(--surface-2)", color: iconColor }}>
+          {pulse ? (
+            <span className="relative flex h-9 w-9 items-center justify-center">
+              <span className="absolute inline-flex h-full w-full rounded-full opacity-30 animate-ping"
+                style={{ background: accentColor }} />
+              <span className="relative" style={{ color: iconColor }}>{icon}</span>
+            </span>
+          ) : icon}
         </div>
-        {accent === "green" && value !== "—" && (
-          <span className="text-[10px] font-semibold text-green uppercase tracking-wider">
-            On track
-          </span>
+      </div>
+
+      <div className="text-2xl font-bold tracking-tight tabular-nums text-theme">
+        {value === null ? (
+          <span style={{ color: "var(--border-strong)" }}>—</span>
+        ) : (
+          <>{counted}{suffix}</>
         )}
       </div>
-      <p className="text-2xl font-semibold text-ink tracking-tight tabular-nums">{value}</p>
-      <p className="text-xs text-ink-400 mt-1">{sub}</p>
-      <p className="text-[11px] font-medium text-ink-600 mt-2 uppercase tracking-wider">{label}</p>
-    </div>
+      <p className="text-[11px] mt-1 leading-snug" style={{ color: "var(--text-muted)" }}>{sub}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wider mt-2.5" style={{ color: "var(--text-muted)" }}>
+        {label}
+      </p>
+    </motion.div>
   )
 }

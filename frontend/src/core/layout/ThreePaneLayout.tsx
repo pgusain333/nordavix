@@ -22,7 +22,7 @@ interface ThreePaneLayoutProps {
  */
 export function ThreePaneLayout({ children, rightPane, rightPaneTitle }: ThreePaneLayoutProps) {
   return (
-    <div className="flex h-screen overflow-hidden bg-ink-50">
+    <div className="flex h-screen overflow-hidden bg-theme">
       {/* Wire Clerk tokens into the API client on mount */}
       <ClerkApiWirer />
 
@@ -33,10 +33,12 @@ export function ThreePaneLayout({ children, rightPane, rightPaneTitle }: ThreePa
       </main>
 
       {rightPane && (
-        <aside className="flex h-screen w-80 shrink-0 flex-col border-l border-ink-100 bg-white">
+        <aside className="flex h-screen w-80 shrink-0 flex-col border-theme"
+          style={{ background: "var(--surface)", borderLeft: "1px solid var(--border)" }}>
           {rightPaneTitle && (
-            <div className="flex items-center px-4 py-3 border-b border-ink-100">
-              <h2 className="text-sm font-semibold text-ink">{rightPaneTitle}</h2>
+            <div className="flex items-center px-4 py-3 border-theme"
+              style={{ borderBottom: "1px solid var(--border)" }}>
+              <h2 className="text-sm font-semibold text-theme">{rightPaneTitle}</h2>
             </div>
           )}
           <div className="flex-1 overflow-y-auto p-4">{rightPane}</div>

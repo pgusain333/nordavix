@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { BrowserRouter } from "react-router-dom"
 import App from "./App"
 import DevShell from "./DevShell"
+import { ThemeProvider } from "@/core/theme/ThemeProvider"
 import "./index.css"
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string
@@ -23,11 +24,13 @@ if (!root) throw new Error("Root element not found")
 if (IS_DEV_PLACEHOLDER) {
   createRoot(root).render(
     <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <DevShell />
-        </BrowserRouter>
-      </QueryClientProvider>
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <BrowserRouter>
+            <DevShell />
+          </BrowserRouter>
+        </QueryClientProvider>
+      </ThemeProvider>
     </StrictMode>,
   )
 } else {
@@ -36,13 +39,15 @@ if (IS_DEV_PLACEHOLDER) {
   }
   createRoot(root).render(
     <StrictMode>
-      <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
-        <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </QueryClientProvider>
-      </ClerkProvider>
+      <ThemeProvider>
+        <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
+          <QueryClientProvider client={queryClient}>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </QueryClientProvider>
+        </ClerkProvider>
+      </ThemeProvider>
     </StrictMode>,
   )
 }
