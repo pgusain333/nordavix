@@ -118,9 +118,13 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     col.accessor("account_number", {
       header: "Account No.",
       size:   90,
-      cell: (c) => (
-        <span className="font-mono text-xs" style={{ color: "var(--text-2)" }}>{c.getValue()}</span>
-      ),
+      cell: (c) => {
+        const v = c.getValue() ?? ""
+        // Hide synthetic qbo-id placeholders — show a dash so the user
+        // sees clearly that this account isn't numbered in QBO.
+        const display = !v || v.startsWith("qbo-") ? "—" : v
+        return <span className="font-mono text-xs" style={{ color: "var(--text-2)" }}>{display}</span>
+      },
     }),
     col.accessor("account_name", {
       header: "Account Name",

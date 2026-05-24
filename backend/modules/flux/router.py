@@ -181,15 +181,21 @@ async def create_trial_balance_from_qbo(
     # 3b) Pull the Account list so we can use the proper AcctNum from QBO
     # instead of relying on whatever the TrialBalance report shows as the row
     # label (which is often just the account name, no number).
+    # IMPORTANT: pass `query` via httpx `params=` so it's URL-encoded properly
+    # — the previous f-string approach turned spaces into URL breaks and the
+    # whole query silently returned 0 results.
     qbo_acct_lookup: dict[str, dict] = {}
     try:
         token = await _get_valid_token(conn, db)
-        q = "SELECT Id, Name, AcctNum, AccountType FROM Account WHERE Active = true MAXRESULTS 1000"
-        url = f"{settings.qbo_base_url}/v3/company/{conn.realm_id}/query?query={q}&minorversion=65"
+        url = f"{settings.qbo_base_url}/v3/company/{conn.realm_id}/query"
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 url,
                 headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                params={
+                    "query": "SELECT Id, Name, AcctNum, AccountType FROM Account WHERE Active = true MAXRESULTS 1000",
+                    "minorversion": "65",
+                },
             )
         if resp.status_code == 200:
             for a in resp.json().get("QueryResponse", {}).get("Account", []) or []:

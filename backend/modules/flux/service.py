@@ -454,9 +454,10 @@ def parse_qbo_trial_balance_report(
         qbo_id = id_map.get(key)
         qbo_record = qbo_acct_lookup.get(str(qbo_id)) if qbo_id else None
 
+        qbo_acct_type = (qbo_record or {}).get("AccountType") if qbo_record else None
         if qbo_record:
             # Trust the canonical QBO record — it has the proper AcctNum + Name.
-            acct_num  = str(qbo_record.get("AcctNum") or "").strip() or "NO-NUM"
+            acct_num  = str(qbo_record.get("AcctNum") or "").strip()
             acct_name = str(qbo_record.get("Name") or "").strip() or key.strip()
         else:
             # No QBO record available — fall back to splitting the row label.
@@ -465,11 +466,14 @@ def parse_qbo_trial_balance_report(
                 acct_num  = parts[0].strip()
                 acct_name = parts[1].strip() if len(parts) > 1 else acct_num
             else:
-                # Pure name with no embedded number: keep account_number blank-ish
-                # (use a stable marker so two same-name accounts don't collide
-                # AND so the UI shows something meaningful).
-                acct_num  = "NO-NUM"
+                acct_num  = ""           # genuinely no account number
                 acct_name = key.strip()
+
+        # account_number is NOT NULL in the schema — fall back to the qbo id
+        # so rows stay unique even when AcctNum is blank for this account.
+        # The frontend will render "" → "—" so the user doesn't see this token.
+        if not acct_num:
+            acct_num = f"qbo-{qbo_id}" if qbo_id else acct_name[:50]
 
         fs_category, fs_line = classify_account(acct_num, overrides)
         accounts.append({
@@ -479,7 +483,8 @@ def parse_qbo_trial_balance_report(
             "prior_balance":  pri_bal,
             "fs_category":    fs_category,
             "fs_line":        fs_line,
-            "qbo_account_id": qbo_id,  # may be None for upload-sourced
+            "qbo_account_id": qbo_id,        # may be None for upload-sourced
+            "qbo_account_type": qbo_acct_type,  # for downstream txn filter
         })
     return accounts
 
