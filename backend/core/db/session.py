@@ -37,7 +37,7 @@ def _apply_tenant_filter(execute_state: object) -> None:
     Fires for both sync and async sessions because AsyncSession wraps a
     sync Session internally.
     """
-    from sqlalchemy.orm.context import ORMExecuteState  # avoid import cycle at module level
+    from sqlalchemy.orm import ORMExecuteState  # avoid import cycle at module level
 
     state: ORMExecuteState = execute_state  # type: ignore[assignment]
 
