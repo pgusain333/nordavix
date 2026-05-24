@@ -341,8 +341,17 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
                   try {
                     const url = await api.getQboConnectUrl()
                     window.location.href = url
-                  } catch {
-                    setError("Could not reach QuickBooks authorization. Please try again.")
+                  } catch (e: unknown) {
+                    // Surface the actual cause so we can debug
+                    let detail = "unknown error"
+                    if (typeof e === "object" && e !== null) {
+                      const ex = e as { response?: { status?: number; data?: { detail?: string } }; message?: string }
+                      if (ex.response?.status === 503) detail = ex.response.data?.detail ?? "QBO integration is not configured on the server."
+                      else if (ex.response?.status === 401) detail = "Your session expired. Please reload and sign in again."
+                      else if (ex.response?.status) detail = `Server returned ${ex.response.status}: ${ex.response.data?.detail ?? ex.message ?? "unknown"}`
+                      else if (ex.message) detail = ex.message
+                    }
+                    setError(`Could not reach QuickBooks authorization. ${detail}`)
                   }
                 }}
                 icon={<Zap size={16} strokeWidth={1.6} />}

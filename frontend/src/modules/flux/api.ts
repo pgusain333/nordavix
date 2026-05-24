@@ -87,6 +87,14 @@ async function getTrialBalance(id: string): Promise<TrialBalance> {
   return data
 }
 
+async function resetTrialBalance(id: string): Promise<void> {
+  await apiClient.post(`/api/flux/trial-balances/${id}/reset`)
+}
+
+async function deleteTrialBalance(id: string): Promise<void> {
+  await apiClient.delete(`/api/flux/trial-balances/${id}`)
+}
+
 // ── Upload & Parse ────────────────────────────────────────────────────────────
 
 async function uploadFile(id: string, file: File): Promise<UploadPreview> {
@@ -191,6 +199,8 @@ export const api = {
   listTrialBalances,
   createTrialBalance,
   getTrialBalance,
+  resetTrialBalance,
+  deleteTrialBalance,
   // Upload & Parse
   uploadFile,
   parseColumns,

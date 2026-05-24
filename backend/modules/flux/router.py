@@ -20,7 +20,7 @@ from decimal import Decimal
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser
@@ -524,3 +524,79 @@ async def export_excel(
             "Content-Disposition": f'attachment; filename="{safe_name}_flux.xlsx"'
         },
     )
+
+
+# ── Reset & Delete ──────────────────────────────────────────────────────────────
+
+async def _wipe_tb_children(tb_id: uuid.UUID, db: AsyncSession) -> None:
+    """
+    Hard-delete every Account/Variance/Narrative belonging to this TB.
+    Order: narratives → variances → accounts (FK-safe even without cascades).
+    """
+    # Subquery: variances for this TB
+    var_subq = (
+        select(Variance.id)
+        .join(Account, Variance.account_id == Account.id)
+        .where(Account.trial_balance_id == tb_id)
+        .subquery()
+    )
+    await db.execute(delete(Narrative).where(Narrative.variance_id.in_(select(var_subq))))
+
+    # Variances next
+    acct_subq = (
+        select(Account.id).where(Account.trial_balance_id == tb_id).subquery()
+    )
+    await db.execute(delete(Variance).where(Variance.account_id.in_(select(acct_subq))))
+
+    # Then accounts
+    await db.execute(delete(Account).where(Account.trial_balance_id == tb_id))
+
+
+@router.post("/trial-balances/{tb_id}/reset", status_code=status.HTTP_200_OK)
+async def reset_trial_balance(
+    tb_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Reset an analysis to its just-created state:
+      - Wipe all parsed data (accounts, variances, narratives)
+      - Clear uploaded file reference + column mapping
+      - Reset status to "pending" so the user can re-upload
+
+    Preserves: name, period_current, period_prior, materiality_threshold, created_by.
+    """
+    tb_result = await db.execute(select(TrialBalance).where(TrialBalance.id == tb_id))
+    tb = tb_result.scalar_one_or_none()
+    if tb is None:
+        raise HTTPException(status_code=404, detail="Trial balance not found")
+
+    await _wipe_tb_children(tb_id, db)
+
+    tb.status = "pending"
+    tb.r2_key = None
+    tb.column_mapping = {}
+    tb.fs_line_mapping = {}
+    tb.error_detail = None
+    await db.commit()
+    return {"id": str(tb_id), "status": "pending", "message": "Analysis reset — ready for re-upload."}
+
+
+@router.delete("/trial-balances/{tb_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_trial_balance(
+    tb_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Hard-delete an entire analysis and all its children.
+    Use with care — there is no undo.
+    """
+    tb_result = await db.execute(select(TrialBalance).where(TrialBalance.id == tb_id))
+    tb = tb_result.scalar_one_or_none()
+    if tb is None:
+        raise HTTPException(status_code=404, detail="Trial balance not found")
+
+    await _wipe_tb_children(tb_id, db)
+    await db.delete(tb)
+    await db.commit()

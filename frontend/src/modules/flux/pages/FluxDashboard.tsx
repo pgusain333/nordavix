@@ -18,7 +18,7 @@
  */
 import { useEffect, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Plus,
@@ -27,6 +27,8 @@ import {
   Download,
   X,
   History,
+  RotateCcw,
+  Trash2,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
@@ -72,6 +74,9 @@ export function FluxDashboard() {
 
   /** Controls the mobile slide-in analyses list overlay */
   const [showMobileHistory, setShowMobileHistory] = useState(false)
+
+  /** Two-step confirm for destructive actions: null | "reset" | "delete" */
+  const [pendingAction, setPendingAction] = useState<"reset" | "delete" | null>(null)
 
   // List of all TBs
   const { data: tbs = [], isLoading: tbsLoading } = useQuery({
@@ -137,6 +142,47 @@ export function FluxDashboard() {
 
   function handleExport() {
     if (tbId) api.exportExcel(tbId)
+  }
+
+  // Reset wipes the data; the user stays on this analysis and re-uploads.
+  const resetMut = useMutation({
+    mutationFn: (id: string) => api.resetTrialBalance(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trial-balances"] })
+      qc.invalidateQueries({ queryKey: ["variances", tbId] })
+      setPendingAction(null)
+    },
+    onError: () => setPendingAction(null),
+  })
+
+  // Delete removes the analysis entirely; we navigate away.
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.deleteTrialBalance(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trial-balances"] })
+      setPendingAction(null)
+      navigate("/app/flux", { replace: true })
+    },
+    onError: () => setPendingAction(null),
+  })
+
+  // Auto-clear the pending-confirm state after 4s of inactivity
+  useEffect(() => {
+    if (!pendingAction) return
+    const t = setTimeout(() => setPendingAction(null), 4_000)
+    return () => clearTimeout(t)
+  }, [pendingAction])
+
+  function handleReset() {
+    if (!tbId) return
+    if (pendingAction === "reset") resetMut.mutate(tbId)
+    else setPendingAction("reset")
+  }
+
+  function handleDelete() {
+    if (!tbId) return
+    if (pendingAction === "delete") deleteMut.mutate(tbId)
+    else setPendingAction("delete")
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -325,6 +371,40 @@ export function FluxDashboard() {
                   style={{ background: STATUS_DOT[selectedTb.status] ?? "var(--border-strong)" }} />
                 {STATUS_LABELS[selectedTb.status] ?? selectedTb.status}
               </span>
+            )}
+            {/* Reset: only meaningful when the TB has data to wipe */}
+            {selectedTb && selectedTb.status !== "pending" && (
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<RotateCcw size={14} strokeWidth={1.6} />}
+                onClick={handleReset}
+                title={pendingAction === "reset" ? "Click again to confirm" : "Wipe uploaded data — keeps the analysis, lets you re-upload"}
+                style={pendingAction === "reset"
+                  ? { borderColor: "#f59e0b", color: "#92400e" }
+                  : undefined}
+              >
+                <span className="hidden sm:inline">
+                  {pendingAction === "reset" ? "Confirm reset?" : "Reset"}
+                </span>
+              </Button>
+            )}
+            {/* Delete: always available on a selected TB */}
+            {selectedTb && (
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Trash2 size={14} strokeWidth={1.6} />}
+                onClick={handleDelete}
+                title={pendingAction === "delete" ? "Click again to confirm" : "Delete this analysis permanently"}
+                style={pendingAction === "delete"
+                  ? { borderColor: "#dc2626", color: "#dc2626" }
+                  : undefined}
+              >
+                <span className="hidden sm:inline">
+                  {pendingAction === "delete" ? "Confirm delete?" : "Delete"}
+                </span>
+              </Button>
             )}
             {showVarianceTable && (
               <Button variant="outline" size="sm" icon={<Download size={14} strokeWidth={1.6} />} onClick={handleExport}>
