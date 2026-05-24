@@ -36,6 +36,7 @@ import {
   Sparkles,
   Upload,
   Plus,
+  Edit2,
   FileText,
   Download,
   ShieldCheck,
@@ -1071,21 +1072,48 @@ function InlineSubledgerForm({
   // the prior period) ± reconciling items = closing subledger. This
   // anchors the reconciliation to the prior close + activity rather than
   // letting the user type any number that makes the variance disappear.
-  const openingBalance = prior ? parseFloat(prior.subledger_total) : 0
+  //
+  // When there's no prior reconciliation yet (first time opening this
+  // account), fall back to the dashboard's computed subledger value —
+  // that's the AR/AP aging total or the GL fallback the user already
+  // sees in the row, so the two views agree from the start. Eventually
+  // the seed comes from an onboarding step (books starting date +
+  // initial subledger balances) — see the setup-wizard roadmap.
+  const openingBalance = prior
+    ? parseFloat(prior.subledger_total)
+    : parseFloat(account.subledger_balance || "0")
   const computedSubledger = openingBalance + selectedSum
 
   // Manual reconciling item form — for items that don't exist in QBO yet
   // (outstanding bank checks, deposits in transit, journal entries not
-  // posted). Adds straight into selectedItemMap with a synthetic txn_id.
+  // posted). Adds straight into selectedItemMap with a synthetic txn_id
+  // prefixed "manual-" so the UI can render edit/delete affordances.
   const [showManualForm, setShowManualForm] = useState(false)
+  const [editingManualId, setEditingManualId] = useState<string | null>(null)
   const [manualMemo, setManualMemo] = useState("")
   const [manualAmount, setManualAmount] = useState("")
   const [manualDate, setManualDate] = useState(periodEnd)
 
-  function addManualItem() {
+  function resetManualForm() {
+    setManualMemo("")
+    setManualAmount("")
+    setManualDate(periodEnd)
+    setEditingManualId(null)
+    setShowManualForm(false)
+  }
+
+  function startEditManualItem(item: ReconcilingItem) {
+    setEditingManualId(item.txn_id)
+    setManualMemo(item.memo || "")
+    setManualAmount(item.amount)
+    setManualDate(item.txn_date || periodEnd)
+    setShowManualForm(true)
+  }
+
+  function saveManualItem() {
     const amt = parseFloat(manualAmount)
     if (!Number.isFinite(amt) || amt === 0) return
-    const id = `manual-${crypto.randomUUID()}`
+    const id = editingManualId ?? `manual-${crypto.randomUUID()}`
     const item: ReconcilingItem = {
       txn_id:     id,
       txn_type:   "Manual",
@@ -1096,9 +1124,16 @@ function InlineSubledgerForm({
       entity:     "",
     }
     setSelectedItemMap((prev) => ({ ...prev, [id]: item }))
-    setManualMemo("")
-    setManualAmount("")
-    setShowManualForm(false)
+    resetManualForm()
+  }
+
+  function deleteManualItem(id: string) {
+    setSelectedItemMap((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    if (editingManualId === id) resetManualForm()
   }
 
   // Auto-set the source label when rolling forward so the reviewer sees
@@ -1240,7 +1275,7 @@ function InlineSubledgerForm({
           </span>
           <button
             type="button"
-            onClick={() => setShowManualForm((v) => !v)}
+            onClick={() => showManualForm ? resetManualForm() : setShowManualForm(true)}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
             style={{
               background: showManualForm ? "var(--surface-2)" : "var(--green-subtle)",
@@ -1248,7 +1283,9 @@ function InlineSubledgerForm({
               border: "1px solid var(--green)",
             }}>
             <Plus size={11} strokeWidth={2} />
-            {showManualForm ? "Cancel" : "Add manual item"}
+            {showManualForm
+              ? "Cancel"
+              : "Add manual item"}
           </button>
         </div>
 
@@ -1294,9 +1331,9 @@ function InlineSubledgerForm({
                 style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
               />
             </label>
-            <Button size="sm" type="button" onClick={addManualItem}
+            <Button size="sm" type="button" onClick={saveManualItem}
               disabled={!parseFloat(manualAmount) || !manualMemo.trim()}>
-              Add
+              {editingManualId ? "Update" : "Add"}
             </Button>
           </div>
         )}
@@ -1356,6 +1393,130 @@ function InlineSubledgerForm({
         )}
       </div>
 
+      {/* ── Wide subledger build-up ────────────────────────────────
+          Opening (rolled forward or current dashboard value) ± each
+          selected reconciling item = closing subledger. List of items
+          included so user sees what makes up the balance; manual items
+          carry edit + delete affordances. Pure calculation — the closing
+          value flows into the variance strip and the save. */}
+      <div className="rounded-xl mb-4 overflow-hidden"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <div className="px-4 py-2 flex items-center justify-between"
+          style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+          <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+            Subledger build-up
+          </span>
+          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+            Opening ± reconciling items = closing
+          </span>
+        </div>
+        <div className="px-4 py-3 space-y-1.5 text-sm">
+          {/* Opening line */}
+          <div className="flex items-center justify-between">
+            <span style={{ color: "var(--text-2)" }}>
+              Opening balance
+              <span className="ml-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                {prior
+                  ? `Rolled forward from ${prior.period_end}`
+                  : "From dashboard (set books-start in onboarding to anchor properly)"}
+              </span>
+            </span>
+            <span className="tabular-nums font-semibold text-theme">{fmtMoney(openingBalance)}</span>
+          </div>
+
+          {/* Per-item lines (collapsible if very long) */}
+          {selectedItems.length === 0 ? (
+            <p className="text-[11px] py-1.5 italic" style={{ color: "var(--text-muted)" }}>
+              No reconciling items selected. Tick QBO entries above or use “Add manual item”.
+            </p>
+          ) : (
+            <ul className="space-y-0.5 max-h-48 overflow-y-auto">
+              {selectedItems.map((it) => {
+                const isManual = it.txn_id.startsWith("manual-")
+                const amt = parseFloat(it.amount) || 0
+                return (
+                  <li key={it.txn_id}
+                    className="flex items-center gap-2 py-1 px-1 text-xs rounded"
+                    style={{ background: "transparent" }}>
+                    <span style={{ color: amt >= 0 ? "var(--green)" : "#ef4444" }}>
+                      {amt >= 0 ? "+" : "−"}
+                    </span>
+                    {isManual && (
+                      <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded"
+                        style={{ background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b" }}>
+                        Manual
+                      </span>
+                    )}
+                    <span className="flex-1 truncate text-theme">
+                      {it.memo || it.txn_type}
+                      <span className="ml-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                        {it.txn_type}{it.txn_number ? ` · #${it.txn_number}` : ""}
+                        {it.txn_date ? ` · ${it.txn_date}` : ""}
+                      </span>
+                    </span>
+                    <span className="tabular-nums font-semibold whitespace-nowrap"
+                      style={{ color: amt >= 0 ? "var(--green)" : "#ef4444" }}>
+                      {amt >= 0 ? "+" : ""}{fmtMoney(amt)}
+                    </span>
+                    {isManual ? (
+                      <>
+                        <button type="button"
+                          onClick={() => startEditManualItem(it)}
+                          className="h-5 w-5 inline-flex items-center justify-center rounded"
+                          title="Edit"
+                          style={{ color: "var(--text-muted)" }}>
+                          <Edit2 size={11} strokeWidth={1.8} />
+                        </button>
+                        <button type="button"
+                          onClick={() => deleteManualItem(it.txn_id)}
+                          className="h-5 w-5 inline-flex items-center justify-center rounded"
+                          title="Delete"
+                          style={{ color: "#ef4444" }}>
+                          <X size={12} strokeWidth={1.8} />
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button"
+                        onClick={() => toggleItem(it)}
+                        className="h-5 w-5 inline-flex items-center justify-center rounded"
+                        title="Untick from selection"
+                        style={{ color: "var(--text-muted)" }}>
+                        <X size={12} strokeWidth={1.8} />
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          {/* Items subtotal */}
+          {selectedItems.length > 0 && (
+            <div className="flex items-center justify-between pt-1"
+              style={{ borderTop: "1px dashed var(--border)" }}>
+              <span style={{ color: "var(--text-2)" }}>
+                Items subtotal ({selectedItems.length})
+              </span>
+              <span className="tabular-nums font-semibold"
+                style={{ color: selectedSum >= 0 ? "var(--green)" : "#ef4444" }}>
+                {selectedSum >= 0 ? "+" : ""}{fmtMoney(selectedSum)}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Closing line — the saved subledger total */}
+        <div className="px-4 py-2.5 flex items-center justify-between"
+          style={{ borderTop: "2px solid var(--border-strong)", background: "var(--green-subtle)" }}>
+          <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--green)" }}>
+            = Closing subledger
+          </span>
+          <span className="tabular-nums text-base font-bold" style={{ color: "var(--green)" }}>
+            {fmtMoney(computedSubledger)}
+          </span>
+        </div>
+      </div>
+
       {/* ── Lower two-column area: entry fields | evidence ────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="space-y-3">
@@ -1385,48 +1546,6 @@ function InlineSubledgerForm({
                 )}
               </div>
             )}
-
-            {/* Subledger build-up — opening + selected items = closing.
-                Pure calculation, no typing. Shows the math line by line
-                so the user understands how the closing number was reached.
-                Theme-aware colors so it works in both light and dark. */}
-            <div className="rounded-lg overflow-hidden"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              <div className="px-3 py-2"
-                style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
-                <span className="text-[10px] font-semibold uppercase tracking-wide"
-                  style={{ color: "var(--text-muted)" }}>
-                  Subledger build-up
-                </span>
-              </div>
-              <div className="px-3 py-2 space-y-1 text-xs">
-                <div className="flex items-center justify-between">
-                  <span style={{ color: "var(--text-2)" }}>
-                    Opening balance
-                    {prior ? ` (from ${prior.period_end})` : " (no prior period)"}
-                  </span>
-                  <span className="tabular-nums font-medium text-theme">{fmtMoney(openingBalance)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span style={{ color: "var(--text-2)" }}>
-                    {selectedSum >= 0 ? "+ " : "− "}Reconciling items ({selectedItems.length})
-                  </span>
-                  <span className="tabular-nums font-medium"
-                    style={{ color: selectedSum >= 0 ? "var(--green)" : "#ef4444" }}>
-                    {selectedSum >= 0 ? "+" : ""}{fmtMoney(selectedSum)}
-                  </span>
-                </div>
-              </div>
-              <div className="px-3 py-2 flex items-center justify-between"
-                style={{ borderTop: "2px solid var(--border-strong)", background: "var(--green-subtle)" }}>
-                <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--green)" }}>
-                  = Closing subledger
-                </span>
-                <span className="tabular-nums text-base font-bold" style={{ color: "var(--green)" }}>
-                  {fmtMoney(computedSubledger)}
-                </span>
-              </div>
-            </div>
 
             <label className="block">
               <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
