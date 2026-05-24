@@ -371,16 +371,22 @@ def parse_qbo_trial_balance_report(
     report_current: dict,
     report_prior: dict,
     overrides: dict[str, str],
+    *,
+    qbo_acct_lookup: dict[str, dict] | None = None,
 ) -> list[dict]:
     """
     Convert two QBO TrialBalance report JSON payloads (current + prior period)
     into the same account_dicts shape `parse_accounts_from_file` returns.
 
     QBO TrialBalance rows look like:
-        { ColData: [{value: "1010 Cash"}, {value: "12,500.00"}, {value: ""}] }
-    where the columns are typically [Account, Debit, Credit] — net balance is
-    Debit - Credit. The Account column embeds "<acctnum> <name>" so we split.
+        { ColData: [{value: "1010 Cash", id: "57"}, {value: "12,500.00"}, {value: ""}] }
+    The Account column carries the QBO Account.Id in `id`. We use that to
+    look up the canonical AcctNum + Name from `qbo_acct_lookup` (built by the
+    caller from a separate Account query) — that's much more reliable than
+    splitting "<acctnum> <name>" out of the report row label, since many QBO
+    instances render only the name in TB rows.
     """
+    qbo_acct_lookup = qbo_acct_lookup or {}
     def walk(rows: list[dict], out: list[dict]) -> None:
         for r in rows:
             sub = r.get("Rows", {}).get("Row", []) or []
@@ -440,20 +446,30 @@ def parse_qbo_trial_balance_report(
 
     accounts: list[dict] = []
     for key in set(current) | set(prior):
-        # Parse "1010 Cash" or "1010-Cash" into (number, name). Fall back to
-        # the whole string as the name if no leading numeric token.
-        parts = key.split(None, 1)
-        if parts and parts[0].replace(".", "").replace("-", "").isdigit():
-            acct_num  = parts[0].strip()
-            acct_name = parts[1].strip() if len(parts) > 1 else acct_num
-        else:
-            acct_num  = key.strip()[:50]
-            acct_name = key.strip()
-
         cur_bal = current.get(key, Decimal(0))
         pri_bal = prior.get(key, Decimal(0))
         if cur_bal == 0 and pri_bal == 0:
             continue
+
+        qbo_id = id_map.get(key)
+        qbo_record = qbo_acct_lookup.get(str(qbo_id)) if qbo_id else None
+
+        if qbo_record:
+            # Trust the canonical QBO record — it has the proper AcctNum + Name.
+            acct_num  = str(qbo_record.get("AcctNum") or "").strip() or "NO-NUM"
+            acct_name = str(qbo_record.get("Name") or "").strip() or key.strip()
+        else:
+            # No QBO record available — fall back to splitting the row label.
+            parts = key.split(None, 1)
+            if parts and parts[0].replace(".", "").replace("-", "").isdigit():
+                acct_num  = parts[0].strip()
+                acct_name = parts[1].strip() if len(parts) > 1 else acct_num
+            else:
+                # Pure name with no embedded number: keep account_number blank-ish
+                # (use a stable marker so two same-name accounts don't collide
+                # AND so the UI shows something meaningful).
+                acct_num  = "NO-NUM"
+                acct_name = key.strip()
 
         fs_category, fs_line = classify_account(acct_num, overrides)
         accounts.append({
@@ -463,7 +479,7 @@ def parse_qbo_trial_balance_report(
             "prior_balance":  pri_bal,
             "fs_category":    fs_category,
             "fs_line":        fs_line,
-            "qbo_account_id": id_map.get(key),  # may be None for upload-sourced
+            "qbo_account_id": qbo_id,  # may be None for upload-sourced
         })
     return accounts
 

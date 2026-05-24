@@ -178,9 +178,32 @@ async def create_trial_balance_from_qbo(
         await db.commit()
         raise HTTPException(status_code=502, detail=str(exc))
 
+    # 3b) Pull the Account list so we can use the proper AcctNum from QBO
+    # instead of relying on whatever the TrialBalance report shows as the row
+    # label (which is often just the account name, no number).
+    qbo_acct_lookup: dict[str, dict] = {}
+    try:
+        token = await _get_valid_token(conn, db)
+        q = "SELECT Id, Name, AcctNum, AccountType FROM Account WHERE Active = true MAXRESULTS 1000"
+        url = f"{settings.qbo_base_url}/v3/company/{conn.realm_id}/query?query={q}&minorversion=65"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+        if resp.status_code == 200:
+            for a in resp.json().get("QueryResponse", {}).get("Account", []) or []:
+                qbo_acct_lookup[str(a.get("Id"))] = a
+    except Exception:
+        # Best-effort: parser falls back to text-prefix parsing if lookup is empty
+        qbo_acct_lookup = {}
+
     # 4) Parse into account dicts and persist accounts + variances
     try:
-        account_dicts = parse_qbo_trial_balance_report(report_current, report_prior, tb.fs_line_mapping or {})
+        account_dicts = parse_qbo_trial_balance_report(
+            report_current, report_prior, tb.fs_line_mapping or {},
+            qbo_acct_lookup=qbo_acct_lookup,
+        )
     except Exception as exc:
         tb.status = "error"
         tb.error_detail = f"QBO report parse failed: {exc}"
@@ -605,10 +628,15 @@ async def list_variance_transactions(
         )).scalar_one_or_none()
         if tb is None:
             raise HTTPException(status_code=404, detail="Trial balance not found")
-        # Compute period start. If period_start fields weren't captured at TB
-        # creation, fall back to the first day of period_current's month.
-        from datetime import date as _date
-        period_start = _date(tb.period_current.year, tb.period_current.month, 1)
+
+        # The variance is GL(period_current) - GL(period_prior), so the
+        # transactions that *drove* the variance are everything posted between
+        # period_prior_end + 1 day and period_current_end inclusive. Using
+        # period_prior + 1 day catches all activity that contributed to the
+        # change in balance — no matter the comparison length (month vs month,
+        # quarter vs quarter, YTD vs YTD all work).
+        from datetime import timedelta
+        period_start = tb.period_prior + timedelta(days=1)
         try:
             await pull_transactions_for_variance(
                 db, tenant_id, var_id, acct.qbo_account_id,

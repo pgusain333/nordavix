@@ -34,6 +34,7 @@ import {
   Download,
   ListOrdered,
   RotateCcw,
+  X,
 } from "lucide-react"
 import { api, type VarianceRow, type VarianceTransactionsResponse } from "@/modules/flux/api"
 import { Button, Badge, StatusBadge, Spinner } from "@/core/ui/components"
@@ -115,7 +116,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   // ── Columns ────────────────────────────────────────────────────────────────
   const columns = useMemo(() => [
     col.accessor("account_number", {
-      header: "Account #",
+      header: "Account No.",
       size:   90,
       cell: (c) => (
         <span className="font-mono text-xs" style={{ color: "var(--text-2)" }}>{c.getValue()}</span>
@@ -621,6 +622,8 @@ function NarrativePanel({
 function VarianceTxnsSection({ tbId, varianceId }: { tbId: string; varianceId: string }) {
   const qc = useQueryClient()
   const [enabled, setEnabled] = useState(false)
+  /** Set of currently-selected transaction IDs for bulk actions */
+  const [selected, setSelected] = useState<Set<string>>(new Set())
 
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ["variance-txns", tbId, varianceId],
@@ -634,32 +637,85 @@ function VarianceTxnsSection({ tbId, varianceId }: { tbId: string; varianceId: s
     onSuccess: (fresh) => {
       qc.setQueryData(["variance-txns", tbId, varianceId], fresh)
       setEnabled(true)
+      setSelected(new Set())
     },
   })
 
+  // Cache patcher used by both single + bulk toggle paths
+  function patchTxn(updated: Awaited<ReturnType<typeof api.toggleVarianceTransactionCheck>>) {
+    qc.setQueryData<VarianceTransactionsResponse | undefined>(
+      ["variance-txns", tbId, varianceId],
+      (prev) => {
+        if (!prev) return prev
+        const transactions = prev.transactions.map((t) => t.id === updated.id ? updated : t)
+        return {
+          ...prev,
+          transactions,
+          checked_count: transactions.filter((t) => t.is_checked).length,
+        }
+      },
+    )
+  }
+
   const toggle = useMutation({
     mutationFn: (txnId: string) => api.toggleVarianceTransactionCheck(tbId, varianceId, txnId),
-    onSuccess: (updated) => {
-      // Patch the row inside the cached list so the UI reflects the new state instantly
-      qc.setQueryData<VarianceTransactionsResponse | undefined>(
-        ["variance-txns", tbId, varianceId],
-        (prev) => {
-          if (!prev) return prev
-          const transactions = prev.transactions.map((t) => t.id === updated.id ? updated : t)
-          return {
-            ...prev,
-            transactions,
-            checked_count: transactions.filter((t) => t.is_checked).length,
-          }
-        },
+    onSuccess: patchTxn,
+  })
+
+  /**
+   * Bulk action: flip selected rows to `target` (true=checked, false=unchecked).
+   * We hit the toggle endpoint individually but only for rows whose current
+   * state doesn't match the target — saves wasted writes + audit-log noise.
+   * Parallelism is bounded so we don't slam the API.
+   */
+  const bulkToggle = useMutation({
+    mutationFn: async (target: boolean) => {
+      if (!data) return
+      const candidates = data.transactions.filter(
+        (t) => selected.has(t.id) && t.is_checked !== target
       )
+      // Fire toggles 5 at a time
+      const queue = [...candidates]
+      const work = async () => {
+        while (queue.length) {
+          const t = queue.shift()
+          if (!t) break
+          try {
+            const updated = await api.toggleVarianceTransactionCheck(tbId, varianceId, t.id)
+            patchTxn(updated)
+          } catch {
+            // Swallow per-row errors — let the rest of the batch run
+          }
+        }
+      }
+      await Promise.all([work(), work(), work(), work(), work()])
     },
+    onSuccess: () => setSelected(new Set()),
   })
 
   const errDetail = (error as { response?: { data?: { detail?: string } }; message?: string } | undefined)
   const errMsg = errDetail?.response?.data?.detail ?? errDetail?.message
 
   const showFetchCTA = !enabled || (!data && !isLoading && !isFetching)
+  const allSelected = data && data.transactions.length > 0 && selected.size === data.transactions.length
+  const someSelected = selected.size > 0 && !allSelected
+
+  function toggleAll() {
+    if (!data) return
+    if (selected.size === data.transactions.length) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(data.transactions.map((t) => t.id)))
+    }
+  }
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
   return (
     <div className="rounded-lg" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
       <div className="px-4 py-2.5 flex items-center gap-2"
@@ -690,6 +746,41 @@ function VarianceTxnsSection({ tbId, varianceId }: { tbId: string; varianceId: s
         </div>
       )}
 
+      {/* Bulk-action toolbar appears whenever rows are selected */}
+      {data && selected.size > 0 && (
+        <div className="px-4 py-2 flex items-center gap-2 flex-wrap"
+          style={{ background: "var(--green-subtle)", borderBottom: "1px solid var(--border)" }}>
+          <span className="text-[11px] font-semibold" style={{ color: "var(--green)" }}>
+            {selected.size} selected
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
+            loading={bulkToggle.isPending}
+            onClick={() => bulkToggle.mutate(true)}
+          >
+            Mark as checked
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<X size={11} strokeWidth={1.8} />}
+            loading={bulkToggle.isPending}
+            onClick={() => bulkToggle.mutate(false)}
+          >
+            Mark as unchecked
+          </Button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="ml-auto text-[11px] font-medium"
+            style={{ color: "var(--text-muted)" }}
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {showFetchCTA ? (
         <p className="px-4 py-5 text-xs text-center" style={{ color: "var(--text-muted)" }}>
           Click <b>Pull transactions</b> to fetch the QBO postings that drove this variance.
@@ -698,13 +789,25 @@ function VarianceTxnsSection({ tbId, varianceId }: { tbId: string; varianceId: s
         <div className="py-6 flex items-center justify-center"><Spinner className="h-4 w-4" /></div>
       ) : !data || data.transactions.length === 0 ? (
         <p className="px-4 py-5 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-          No transactions found hitting this account in the period.
+          No transactions found hitting this account between {""}
+          <span className="font-mono">prior period end + 1</span> and current period end.
+          If you expected something here, try the Reset + re-run from QBO to make sure this analysis
+          captured the account's QBO id.
         </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr style={{ background: "var(--surface-2)" }}>
+                <th className="px-3 py-2 text-center" style={{ color: "var(--text-muted)", width: 30 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={!!allSelected}
+                    ref={(el) => { if (el) el.indeterminate = !!someSelected }}
+                    onChange={toggleAll}
+                  />
+                </th>
                 <th className="px-3 py-2 text-left font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
                 <th className="px-3 py-2 text-left font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
                 <th className="px-3 py-2 text-left font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
@@ -717,32 +820,48 @@ function VarianceTxnsSection({ tbId, varianceId }: { tbId: string; varianceId: s
               </tr>
             </thead>
             <tbody>
-              {data.transactions.map((t) => (
-                <tr key={t.id} style={{ borderTop: "1px solid var(--border)" }}>
-                  <td className="px-3 py-2 text-theme">{t.txn_type}</td>
-                  <td className="px-3 py-2 font-mono" style={{ color: "var(--text-2)" }}>{t.txn_number || "—"}</td>
-                  <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{t.txn_date || "—"}</td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium"
-                    style={{ color: parseFloat(t.amount) < 0 ? "#dc2626" : "var(--text)" }}>
-                    {formatAccounting(t.amount, 0)}
-                  </td>
-                  <td className="px-3 py-2 truncate max-w-[140px]" style={{ color: "var(--text-2)" }}>{t.entity_name || "—"}</td>
-                  <td className="px-3 py-2 truncate max-w-[200px]" style={{ color: "var(--text-muted)" }} title={t.memo}>{t.memo || "—"}</td>
-                  <td className="px-3 py-2 text-center">
-                    <button
-                      onClick={() => toggle.mutate(t.id)}
-                      disabled={toggle.isPending}
-                      className="h-5 w-5 inline-flex items-center justify-center rounded transition-colors"
-                      style={t.is_checked
-                        ? { background: "var(--green)", color: "#fff" }
-                        : { background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border-strong)" }}
-                      title={t.is_checked ? `Checked${t.checked_at ? ` on ${new Date(t.checked_at).toLocaleString()}` : ""}` : "Mark as checked"}
-                    >
-                      {t.is_checked ? <CheckCircle2 size={12} strokeWidth={2.2} /> : <Check size={12} strokeWidth={2.2} />}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {data.transactions.map((t) => {
+                const isSelected = selected.has(t.id)
+                return (
+                  <tr key={t.id}
+                    style={{
+                      borderTop: "1px solid var(--border)",
+                      background: isSelected ? "var(--green-subtle)" : "transparent",
+                    }}
+                  >
+                    <td className="px-3 py-2 text-center">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${t.txn_type} ${t.txn_number || ""}`}
+                        checked={isSelected}
+                        onChange={() => toggleOne(t.id)}
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-theme">{t.txn_type}</td>
+                    <td className="px-3 py-2 font-mono" style={{ color: "var(--text-2)" }}>{t.txn_number || "—"}</td>
+                    <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{t.txn_date || "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-medium"
+                      style={{ color: parseFloat(t.amount) < 0 ? "#dc2626" : "var(--text)" }}>
+                      {formatAccounting(t.amount, 0)}
+                    </td>
+                    <td className="px-3 py-2 truncate max-w-[140px]" style={{ color: "var(--text-2)" }}>{t.entity_name || "—"}</td>
+                    <td className="px-3 py-2 truncate max-w-[200px]" style={{ color: "var(--text-muted)" }} title={t.memo}>{t.memo || "—"}</td>
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => toggle.mutate(t.id)}
+                        disabled={toggle.isPending}
+                        className="h-5 w-5 inline-flex items-center justify-center rounded transition-colors"
+                        style={t.is_checked
+                          ? { background: "var(--green)", color: "#fff" }
+                          : { background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border-strong)" }}
+                        title={t.is_checked ? `Checked${t.checked_at ? ` on ${new Date(t.checked_at).toLocaleString()}` : ""}` : "Mark as checked"}
+                      >
+                        {t.is_checked ? <CheckCircle2 size={12} strokeWidth={2.2} /> : <Check size={12} strokeWidth={2.2} />}
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
