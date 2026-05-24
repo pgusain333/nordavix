@@ -35,6 +35,8 @@ import {
   ExternalLink,
   Sparkles,
   Upload,
+  Plus,
+  Trash,
   FileText,
   Download,
   ShieldCheck,
@@ -1074,6 +1076,33 @@ function InlineSubledgerForm({
   const selectedItems = Object.values(selectedItemMap)
   const selectedSum = selectedItems.reduce((n, it) => n + (parseFloat(it.amount) || 0), 0)
 
+  // Manual reconciling item form — for items that don't exist in QBO yet
+  // (outstanding bank checks, deposits in transit, journal entries not
+  // posted). Adds straight into selectedItemMap with a synthetic txn_id.
+  const [showManualForm, setShowManualForm] = useState(false)
+  const [manualMemo, setManualMemo] = useState("")
+  const [manualAmount, setManualAmount] = useState("")
+  const [manualDate, setManualDate] = useState(periodEnd)
+
+  function addManualItem() {
+    const amt = parseFloat(manualAmount)
+    if (!Number.isFinite(amt) || amt === 0) return
+    const id = `manual-${crypto.randomUUID()}`
+    const item: ReconcilingItem = {
+      txn_id:     id,
+      txn_type:   "Manual",
+      txn_number: "",
+      txn_date:   manualDate || periodEnd,
+      amount:     String(amt),
+      memo:       manualMemo.trim() || "Manual reconciling item",
+      entity:     "",
+    }
+    setSelectedItemMap((prev) => ({ ...prev, [id]: item }))
+    setManualMemo("")
+    setManualAmount("")
+    setShowManualForm(false)
+  }
+
   // Auto-roll-forward: once the prior-period closing loads, copy it into
   // the amount field — but only if (a) there's no existing override on
   // this period yet, and (b) the user hasn't typed anything themselves.
@@ -1162,73 +1191,119 @@ function InlineSubledgerForm({
         </button>
       </div>
 
-      {/* ── Variance box (wide, top) ─────────────────────────────────
-          GL vs Subledger up top and prominent so the user sees the gap
-          they need to explain before scrolling to the picker beneath it. */}
+      {/* ── Compact variance strip ───────────────────────────────────
+          Slim one-line summary so it doesn't eat vertical space in the
+          accordion. 4 inline metrics; background color flips green when
+          the gap is fully explained by selected reconciling items. */}
       {valid && (() => {
         const variance = parseFloat(account.gl_balance) - parsed
         const adjustedVariance = variance - selectedSum
         const tiedOut = Math.abs(adjustedVariance) < 0.5
         const hasGap = Math.abs(variance) >= 0.5
+        const Metric = ({ label, value, color }: { label: string; value: string; color?: string }) => (
+          <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+            <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</span>
+            <span className="text-sm font-bold tabular-nums" style={{ color: color ?? "var(--text)" }}>{value}</span>
+          </div>
+        )
         return (
-          <div className="rounded-xl p-4 mb-4"
+          <div className="rounded-lg px-3 py-2 mb-3 flex items-center justify-between gap-x-5 gap-y-1 flex-wrap"
             style={{
               background: tiedOut ? "var(--green-subtle)" : hasGap ? "#fef2f2" : "var(--surface)",
               border: `1px solid ${tiedOut ? "var(--green)" : hasGap ? "#fecaca" : "var(--border)"}`,
             }}>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div>
-                <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>GL balance</p>
-                <p className="text-base font-bold tabular-nums text-theme">{fmtMoney(account.gl_balance)}</p>
-              </div>
-              <div>
-                <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Subledger</p>
-                <p className="text-base font-bold tabular-nums text-theme">{fmtMoney(parsed)}</p>
-              </div>
-              <div>
-                <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                  Variance (GL − Sub)
-                </p>
-                <p className="text-base font-bold tabular-nums"
-                  style={{ color: hasGap ? "#dc2626" : "var(--green)" }}>
-                  {fmtMoney(variance)}
-                </p>
-              </div>
-              <div>
-                <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                  {tiedOut ? "Reconciled" : "Unexplained gap"}
-                </p>
-                <p className="text-base font-bold tabular-nums flex items-center gap-1"
-                  style={{ color: tiedOut ? "var(--green)" : "#dc2626" }}>
-                  {tiedOut && <CheckCircle2 size={14} strokeWidth={2.2} />}
-                  {fmtMoney(adjustedVariance)}
-                </p>
-              </div>
+            <Metric label="GL" value={fmtMoney(account.gl_balance)} />
+            <Metric label="Subledger" value={fmtMoney(parsed)} />
+            <Metric label="Variance" value={fmtMoney(variance)}
+              color={hasGap ? "#dc2626" : "var(--green)"} />
+            <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+              {tiedOut && <CheckCircle2 size={13} strokeWidth={2.2} style={{ color: "var(--green)" }} />}
+              <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                {tiedOut ? "Reconciled" : "Unexplained"}
+              </span>
+              <span className="text-sm font-bold tabular-nums"
+                style={{ color: tiedOut ? "var(--green)" : "#dc2626" }}>
+                {fmtMoney(adjustedVariance)}
+              </span>
             </div>
-            {selectedItems.length > 0 && (
-              <p className="text-[11px] mt-2 pt-2"
-                style={{ borderTop: "1px dashed var(--border)", color: "var(--text-muted)" }}>
-                {selectedItems.length} reconciling item{selectedItems.length === 1 ? "" : "s"} selected
-                · sum {fmtMoney(selectedSum)}
-              </p>
-            )}
           </div>
         )
       })()}
 
       {/* ── Reconciling items table (wide, just under variance) ─────
           Pulled live from QBO via /period-entries. Selecting items
-          closes the variance gap. Persists on the override on save. */}
+          closes the variance gap. Persists on the override on save.
+          Plus a manual-add form for items not yet in QBO (outstanding
+          bank checks, deposits in transit, missing JEs). */}
       <div className="mb-4">
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
           <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
             Reconciling items — current-period activity from QuickBooks
             {(periodEntries?.rows.length ?? 0) > 0 && ` · ${periodEntries!.rows.length}`}
           </span>
-          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-            Tick what explains GL − Subledger
-          </span>
+          <button
+            type="button"
+            onClick={() => setShowManualForm((v) => !v)}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+            style={{
+              background: showManualForm ? "var(--surface-2)" : "var(--green-subtle)",
+              color: "var(--green)",
+              border: "1px solid var(--green)",
+            }}>
+            <Plus size={11} strokeWidth={2} />
+            {showManualForm ? "Cancel" : "Add manual item"}
+          </button>
         </div>
+
+        {/* Manual add form — appears as an inline row above the table.
+            Used when the item isn't in QBO yet (outstanding check, deposit
+            in transit, etc.). Persists with the regular reconciling items. */}
+        {showManualForm && (
+          <div className="rounded-lg p-3 mb-2 flex items-end gap-2 flex-wrap"
+            style={{ background: "var(--surface)", border: "1px dashed var(--green)" }}>
+            <label className="flex-1 min-w-[140px]">
+              <span className="text-[9px] font-semibold uppercase tracking-wide block mb-1"
+                style={{ color: "var(--text-muted)" }}>Memo / description</span>
+              <input
+                type="text"
+                value={manualMemo}
+                onChange={(e) => setManualMemo(e.target.value)}
+                placeholder="e.g. Outstanding check #1234 to ABC Co"
+                className="w-full rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+              />
+            </label>
+            <label className="w-32">
+              <span className="text-[9px] font-semibold uppercase tracking-wide block mb-1"
+                style={{ color: "var(--text-muted)" }}>Amount (± signed)</span>
+              <input
+                type="number"
+                step="0.01"
+                value={manualAmount}
+                onChange={(e) => setManualAmount(e.target.value)}
+                placeholder="-500.00"
+                className="w-full rounded-md px-2 py-1.5 text-xs outline-none tabular-nums"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+              />
+            </label>
+            <label className="w-36">
+              <span className="text-[9px] font-semibold uppercase tracking-wide block mb-1"
+                style={{ color: "var(--text-muted)" }}>Date</span>
+              <input
+                type="date"
+                value={manualDate}
+                onChange={(e) => setManualDate(e.target.value)}
+                className="w-full rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+              />
+            </label>
+            <Button size="sm" type="button" onClick={addManualItem}
+              disabled={!parseFloat(manualAmount) || !manualMemo.trim()}>
+              Add
+            </Button>
+          </div>
+        )}
+
         {entriesLoading ? (
           <div className="py-3 flex items-center justify-center"><Spinner className="h-4 w-4" /></div>
         ) : (periodEntries?.rows.length ?? 0) === 0 ? (
@@ -1370,11 +1445,10 @@ function InlineSubledgerForm({
                 }}
               />
             </label>
-        </div>
 
-        <div className="space-y-3">
-          {/* Supporting evidence — attach the bank stmt / FA register PDF */}
-          <div className="space-y-2">
+          {/* Supporting evidence moved here (under entry fields) so the
+              right column can host the subledger build-up summary. */}
+          <div className="space-y-2 pt-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-semibold uppercase tracking-wide"
                   style={{ color: "var(--text-muted)" }}>
@@ -1464,7 +1538,108 @@ function InlineSubledgerForm({
                 <p className="text-[11px]" style={{ color: "#b91c1c" }}>{uploadError}</p>
               )}
             </div>
-          </div>{/* end right column */}
+          </div>{/* end LEFT column (entry fields + evidence) */}
+
+          {/* ── RIGHT column: subledger build-up summary ───────────
+              Top: list of currently-selected reconciling items.
+              Bottom: subledger total (the rolled-forward value the
+              account is being reconciled to). Lets the user see at a
+              glance what items they've picked and the target balance. */}
+          <div className="space-y-3 flex flex-col">
+            <div className="rounded-xl flex flex-col flex-1 overflow-hidden"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", minHeight: 280 }}>
+              <div className="px-3 py-2"
+                style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                  Subledger build-up
+                </p>
+                <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                  Reconciling items making up the balance
+                </p>
+              </div>
+
+              {/* Selected items list — scrollable */}
+              <div className="flex-1 overflow-y-auto" style={{ maxHeight: 240 }}>
+                {selectedItems.length === 0 ? (
+                  <p className="text-[11px] text-center px-4 py-8" style={{ color: "var(--text-muted)" }}>
+                    No reconciling items selected yet.<br />
+                    Tick entries above or use <em>Add manual item</em>.
+                  </p>
+                ) : (
+                  <ul>
+                    {selectedItems.map((it) => {
+                      const isManual = it.txn_id.startsWith("manual-")
+                      const amt = parseFloat(it.amount) || 0
+                      return (
+                        <li key={it.txn_id}
+                          className="px-3 py-1.5 text-[11px] flex items-center gap-2"
+                          style={{ borderBottom: "1px solid var(--border)" }}>
+                          <div className="flex-1 min-w-0">
+                            <p className="truncate text-theme">
+                              {isManual && (
+                                <span className="text-[9px] font-bold uppercase mr-1 px-1 py-0.5 rounded"
+                                  style={{ background: "#fef3c7", color: "#92400e" }}>
+                                  Manual
+                                </span>
+                              )}
+                              {it.memo || it.txn_type}
+                            </p>
+                            <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+                              {it.txn_type}{it.txn_number ? ` · #${it.txn_number}` : ""}
+                              {it.txn_date ? ` · ${it.txn_date}` : ""}
+                            </p>
+                          </div>
+                          <span className="tabular-nums text-xs font-semibold whitespace-nowrap"
+                            style={{ color: amt >= 0 ? "var(--green)" : "#dc2626" }}>
+                            {amt >= 0 ? "+" : ""}{fmtMoney(amt)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleItem(it)}
+                            className="h-5 w-5 inline-flex items-center justify-center rounded"
+                            title="Remove from selection"
+                            style={{ color: "var(--text-muted)" }}>
+                            <Trash size={10} strokeWidth={1.8} />
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              {/* Sum of selected items */}
+              {selectedItems.length > 0 && (
+                <div className="px-3 py-2 flex items-center justify-between"
+                  style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                  <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                    Items sum
+                  </span>
+                  <span className="tabular-nums text-xs font-bold text-theme">
+                    {fmtMoney(selectedSum)}
+                  </span>
+                </div>
+              )}
+
+              {/* Subledger total — the anchor everything reconciles to */}
+              <div className="px-3 py-3"
+                style={{ borderTop: "2px solid var(--border-strong)", background: "var(--green-subtle)" }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "var(--green)" }}>
+                    Subledger total
+                  </span>
+                  <span className="tabular-nums text-lg font-bold" style={{ color: "var(--green)" }}>
+                    {fmtMoney(parsed)}
+                  </span>
+                </div>
+                {!!prior && (
+                  <p className="text-[10px] mt-0.5" style={{ color: "var(--green)" }}>
+                    Rolled forward from {prior.period_end}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>{/* end RIGHT column */}
         </div>{/* end grid */}
 
       <div className="flex items-center justify-between gap-2 mt-4 pt-3"
