@@ -31,6 +31,7 @@ import {
   Sparkles,
   Filter,
   Download,
+  RefreshCw,
 } from "lucide-react"
 import { api, type VarianceRow } from "@/modules/flux/api"
 import { Button, Badge, StatusBadge, Spinner } from "@/core/ui/components"
@@ -82,6 +83,12 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
     },
   })
 
+  // ── Regenerate (per-variance AI rerun) ────────────────────────────────────
+  const regenerate = useMutation({
+    mutationFn: (varId: string) => api.regenerateNarrative(tbId, varId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["variances", tbId] }),
+  })
+
   // ── Filter data ────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     if (filter === "material") return rows.filter((r) => r.is_material)
@@ -97,14 +104,14 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
       header: "Account #",
       size:   90,
       cell: (c) => (
-        <span className="font-mono text-xs text-ink-600">{c.getValue()}</span>
+        <span className="font-mono text-xs" style={{ color: "var(--text-2)" }}>{c.getValue()}</span>
       ),
     }),
     col.accessor("account_name", {
       header: "Account Name",
       size:   200,
       cell: (c) => (
-        <span className="text-sm font-medium text-ink truncate max-w-[200px] block" title={c.getValue()}>
+        <span className="text-sm font-medium truncate max-w-[200px] block text-theme" title={c.getValue()}>
           {c.getValue()}
         </span>
       ),
@@ -113,14 +120,14 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
       header: "Category",
       size:   120,
       cell: (c) => (
-        <span className="text-xs text-ink-400">{c.getValue() ?? "—"}</span>
+        <span className="text-xs" style={{ color: "var(--text-muted)" }}>{c.getValue() ?? "—"}</span>
       ),
     }),
     col.accessor("current_balance", {
       header: "Current",
       size:   110,
       cell: (c) => (
-        <span className="tabular-nums text-sm text-right block">
+        <span className="tabular-nums text-sm text-right block text-theme">
           {formatAccounting(c.getValue(), 0)}
         </span>
       ),
@@ -129,7 +136,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
       header: "Prior",
       size:   110,
       cell: (c) => (
-        <span className="tabular-nums text-sm text-right block text-ink-400">
+        <span className="tabular-nums text-sm text-right block" style={{ color: "var(--text-muted)" }}>
           {formatAccounting(c.getValue(), 0)}
         </span>
       ),
@@ -140,10 +147,10 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
       cell: (c) => {
         const v = parseFloat(c.getValue())
         return (
-          <span className={cn(
-            "tabular-nums text-sm font-medium text-right block",
-            v > 0 ? "text-fav" : v < 0 ? "text-unfav" : "text-ink-400"
-          )}>
+          <span
+            className="tabular-nums text-sm font-medium text-right block"
+            style={{ color: v > 0 ? "var(--green)" : v < 0 ? "#dc2626" : "var(--text-muted)" }}
+          >
             {formatAccounting(c.getValue(), 0)}
           </span>
         )
@@ -155,10 +162,10 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
       cell: (c) => {
         const v = c.getValue() ? parseFloat(c.getValue()!) : null
         return (
-          <span className={cn(
-            "tabular-nums text-sm text-right block",
-            v && v > 0 ? "text-fav" : v && v < 0 ? "text-unfav" : "text-ink-400"
-          )}>
+          <span
+            className="tabular-nums text-sm text-right block"
+            style={{ color: v && v > 0 ? "var(--green)" : v && v < 0 ? "#dc2626" : "var(--text-muted)" }}
+          >
             {formatPct(c.getValue())}
           </span>
         )
@@ -239,19 +246,29 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
   ).length
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
       {/* Toolbar */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-ink-100 bg-white">
-        <div className="flex items-center gap-1 bg-ink-50 rounded-lg p-0.5">
+      <div
+        className="flex items-center gap-3 px-5 py-3"
+        style={{ borderBottom: "1px solid var(--border)", background: "var(--surface)" }}
+      >
+        <div
+          className="flex items-center gap-1 rounded-lg p-0.5"
+          style={{ background: "var(--surface-2)" }}
+        >
           {(["all", "material", "pending"] as const).map((f) => (
             <button
               key={f}
               className={cn(
                 "px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
-                filter === f
-                  ? "bg-white text-ink shadow-card"
-                  : "text-ink-400 hover:text-ink"
               )}
+              style={
+                filter === f
+                  ? { background: "var(--surface)", color: "var(--text)", boxShadow: "var(--card-shadow)" }
+                  : { color: "var(--text-muted)" }
+              }
+              onMouseEnter={(e) => { if (filter !== f) (e.currentTarget as HTMLElement).style.color = "var(--text)" }}
+              onMouseLeave={(e) => { if (filter !== f) (e.currentTarget as HTMLElement).style.color = "var(--text-muted)" }}
               onClick={() => setFilter(f)}
             >
               {f === "all"      ? `All (${rows.length})` :
@@ -273,23 +290,27 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto" style={{ background: "var(--bg)" }}>
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
-            <div className="flex items-center gap-2 text-sm text-ink-400">
+            <div className="flex items-center gap-2 text-sm" style={{ color: "var(--text-muted)" }}>
               <Spinner />
               Loading variances…
             </div>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-12">
-            <div className="h-12 w-12 rounded-full bg-ink-50 flex items-center justify-center mb-3">
-              <Filter size={22} strokeWidth={1.6} className="text-ink-400" />
+            <div
+              className="h-12 w-12 rounded-full flex items-center justify-center mb-3"
+              style={{ background: "var(--surface-2)" }}
+            >
+              <Filter size={22} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} />
             </div>
-            <p className="text-sm font-medium text-ink mb-1">No variances match this filter</p>
+            <p className="text-sm font-medium text-theme mb-1">No variances match this filter</p>
             <button
               onClick={() => setFilter("all")}
-              className="text-xs text-ink-400 hover:text-green underline"
+              className="text-xs underline"
+              style={{ color: "var(--text-muted)" }}
             >
               Show all
             </button>
@@ -297,16 +318,19 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
         ) : (
           <table className="w-full text-sm border-separate border-spacing-0">
             <thead className="sticky top-0 z-10">
-              <tr className="bg-ink-50">
+              <tr style={{ background: "var(--surface-2)" }}>
                 {table.getFlatHeaders().map((header) => (
                   <th
                     key={header.id}
                     className={cn(
-                      "px-3 py-2.5 text-left text-[11px] font-semibold text-ink-400 uppercase tracking-wide",
-                      "border-b border-ink-100 select-none",
-                      header.column.getCanSort() && "cursor-pointer hover:text-ink transition-colors"
+                      "px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide select-none",
+                      header.column.getCanSort() && "cursor-pointer transition-colors"
                     )}
-                    style={{ width: header.getSize() }}
+                    style={{
+                      width: header.getSize(),
+                      borderBottom: "1px solid var(--border)",
+                      color: "var(--text-muted)",
+                    }}
                     onClick={header.column.getToggleSortingHandler()}
                   >
                     <span className="flex items-center gap-1">
@@ -325,14 +349,35 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
               {table.getRowModel().rows.map((row) => {
                 const isExpanded = expandedRow === row.original.id
                 const isEditing  = editingRow === row.original.id
+                const isMaterial = row.original.is_material
                 return (
                   <Fragment key={row.id}>
                     <tr
-                      className={cn(
-                        "cursor-pointer transition-colors border-b border-ink-100",
-                        isExpanded ? "bg-ink-50" : "bg-white hover:bg-ink-50",
-                        row.original.is_material && !isExpanded && "bg-material-light/10"
-                      )}
+                      className="cursor-pointer transition-colors"
+                      style={{
+                        // Material rows get a subtle amber tint that works in both themes;
+                        // expanded rows pick up the secondary surface color.
+                        background: isExpanded
+                          ? "var(--surface-2)"
+                          : isMaterial
+                            ? "rgba(245, 158, 11, 0.08)"
+                            : "var(--surface)",
+                        borderBottom: "1px solid var(--border)",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isExpanded) {
+                          (e.currentTarget as HTMLElement).style.background = isMaterial
+                            ? "rgba(245, 158, 11, 0.14)"
+                            : "var(--surface-2)"
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isExpanded) {
+                          (e.currentTarget as HTMLElement).style.background = isMaterial
+                            ? "rgba(245, 158, 11, 0.08)"
+                            : "var(--surface)"
+                        }
+                      }}
                       onClick={() =>
                         setExpanded((p) => p === row.original.id ? null : row.original.id)
                       }
@@ -346,8 +391,12 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
 
                     {/* Expanded narrative row */}
                     {isExpanded && (
-                      <tr className="bg-ink-50">
-                        <td colSpan={columns.length} className="px-5 py-4 border-b border-ink-100">
+                      <tr style={{ background: "var(--surface-2)" }}>
+                        <td
+                          colSpan={columns.length}
+                          className="px-5 py-4"
+                          style={{ borderBottom: "1px solid var(--border)" }}
+                        >
                           <NarrativePanel
                             row={row.original}
                             isEditing={isEditing}
@@ -363,6 +412,8 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
                             })}
                             onCancel={() => setEditing(null)}
                             isSaving={editNarrative.isPending}
+                            onRegenerate={() => regenerate.mutate(row.original.id)}
+                            isRegenerating={regenerate.isPending && regenerate.variables === row.original.id}
                           />
                         </td>
                       </tr>
@@ -377,8 +428,11 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
 
       {/* Footer summary */}
       {!isLoading && rows.length > 0 && (
-        <div className="px-5 py-2.5 border-t border-ink-100 bg-white">
-          <p className="text-xs text-ink-400">
+        <div
+          className="px-5 py-2.5"
+          style={{ borderTop: "1px solid var(--border)", background: "var(--surface)" }}
+        >
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
             {rows.filter((r) => r.status === "approved").length} of {rows.length} variances approved
             {materialCount > 0 && ` · ${materialCount} material`}
           </p>
@@ -399,11 +453,14 @@ interface NarrativePanelProps {
   onSave:        () => void
   onCancel:      () => void
   isSaving:      boolean
+  onRegenerate:  () => void
+  isRegenerating:boolean
 }
 
 function NarrativePanel({
   row, isEditing, editContent, onEditContent,
   onEdit, onSave, onCancel, isSaving,
+  onRegenerate, isRegenerating,
 }: NarrativePanelProps) {
   const anomalyLabels: Record<string, string> = {
     new_account:        "New account",
@@ -417,7 +474,7 @@ function NarrativePanel({
       {/* Anomaly flags */}
       {row.anomaly_flags.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
-          <AlertTriangle size={14} strokeWidth={1.6} className="text-material shrink-0" />
+          <AlertTriangle size={14} strokeWidth={1.6} style={{ color: "#92400e" }} className="shrink-0" />
           {row.anomaly_flags.map((f) => (
             <Badge key={f} variant="material">
               {anomalyLabels[f] ?? f}
@@ -429,14 +486,17 @@ function NarrativePanel({
       {/* Narrative */}
       <div>
         <div className="flex items-center gap-1.5 mb-1.5">
-          <Sparkles size={13} strokeWidth={1.6} className="text-green" />
-          <span className="text-[11px] font-semibold text-ink-600 uppercase tracking-wide">
+          <Sparkles size={13} strokeWidth={1.6} style={{ color: "var(--green)" }} />
+          <span
+            className="text-[11px] font-semibold uppercase tracking-wide"
+            style={{ color: "var(--text-2)" }}
+          >
             {row.status === "generated" || row.status === "approved" || row.status === "edited"
               ? "AI Commentary"
               : "Commentary"}
           </span>
           {row.confidence_score && (
-            <span className="text-[10px] text-ink-400 ml-auto">
+            <span className="text-[10px] ml-auto" style={{ color: "var(--text-muted)" }}>
               Confidence: {(parseFloat(row.confidence_score) * 100).toFixed(0)}%
             </span>
           )}
@@ -445,9 +505,14 @@ function NarrativePanel({
         {isEditing ? (
           <div className="space-y-2">
             <textarea
-              className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink
-                         focus:outline-none focus:ring-2 focus:ring-green/20 focus:border-green
-                         resize-none min-h-[80px]"
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none resize-none min-h-[80px]"
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--border-strong)",
+                color: "var(--text)",
+              }}
+              onFocus={(e) => (e.currentTarget.style.borderColor = "var(--green)")}
+              onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border-strong)")}
               value={editContent}
               onChange={(e) => onEditContent(e.target.value)}
               rows={3}
@@ -472,28 +537,45 @@ function NarrativePanel({
             </div>
           </div>
         ) : (
-          <div className="flex items-start gap-2">
-            <p className={cn(
-              "text-sm leading-relaxed flex-1",
-              row.narrative ? "text-ink" : "text-ink-400 italic"
-            )}>
-              {row.narrative
-                ? row.narrative
-                : row.status === "generating"
-                  ? "AI commentary is being generated…"
-                  : row.status === "pending"
-                    ? "AI commentary will be generated for material variances."
-                    : "No commentary yet. Click edit to add your own."}
-            </p>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              onClick={onEdit}
-              title="Edit narrative"
-              className="shrink-0"
-            >
-              <Pencil size={13} strokeWidth={1.6} />
-            </Button>
+          <div className="space-y-2">
+            <div className="flex items-start gap-2">
+              <p
+                className="text-sm leading-relaxed flex-1"
+                style={{
+                  color: row.narrative ? "var(--text)" : "var(--text-muted)",
+                  fontStyle: row.narrative ? "normal" : "italic",
+                }}
+              >
+                {row.narrative
+                  ? row.narrative
+                  : row.status === "generating"
+                    ? "AI commentary is being generated…"
+                    : row.status === "pending"
+                      ? "AI commentary will be generated for material variances."
+                      : "No commentary yet. Click edit to add your own."}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onRegenerate}
+                loading={isRegenerating}
+                icon={!isRegenerating ? <Sparkles size={12} strokeWidth={1.8} /> : undefined}
+                title="Have the AI re-analyze this variance from scratch"
+              >
+                {row.narrative ? "Regenerate" : "Find reason"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onEdit}
+                icon={<Pencil size={12} strokeWidth={1.8} />}
+                title="Write or edit the commentary manually"
+              >
+                Edit
+              </Button>
+            </div>
           </div>
         )}
       </div>

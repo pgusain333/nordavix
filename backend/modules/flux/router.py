@@ -393,6 +393,39 @@ async def approve_variance(
     return {"id": str(var_id), "status": "approved"}
 
 
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/regenerate")
+async def regenerate_variance(
+    tb_id: uuid.UUID,
+    var_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Clear the existing narrative for a single variance and re-enqueue the AI task.
+    Lets the user request a fresh AI explanation for any variance, regardless of
+    whether it was previously material/pending.
+    """
+    # Confirm the variance belongs to the TB
+    stmt = (
+        select(Variance)
+        .join(Account, Variance.account_id == Account.id)
+        .where(Variance.id == var_id, Account.trial_balance_id == tb_id)
+    )
+    var_row = (await db.execute(stmt)).scalar_one_or_none()
+    if var_row is None:
+        raise HTTPException(status_code=404, detail="Variance not found")
+
+    # Wipe any existing narrative so the new one isn't blocked by the cache check
+    await db.execute(delete(Narrative).where(Narrative.variance_id == var_id))
+
+    # Reset status back to pending so the worker picks it up
+    var_row.status = "pending"
+    await db.commit()
+
+    generate_narrative_task.delay(str(var_id), str(tenant_id))
+    return {"id": str(var_id), "status": "queued"}
+
+
 @router.put("/trial-balances/{tb_id}/variances/{var_id}/narrative")
 async def update_narrative(
     tb_id: uuid.UUID,

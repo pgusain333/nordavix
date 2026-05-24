@@ -2,11 +2,12 @@
  * Left navigation sidebar — Nordavix app shell.
  * Theme-aware, mobile-ready (accepts onClose for overlay dismiss).
  */
+import { useEffect, useRef, useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
-  X, type LucideIcon,
+  X, Pencil, Check, type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/core/ui/utils"
 import { Badge } from "@/core/ui/components"
@@ -65,11 +66,9 @@ export function LeftNav({ onClose }: Props) {
         )}
       </div>
 
-      {/* Org name */}
+      {/* Org name — click to rename */}
       {organization && (
-        <div className="px-4 py-2" style={{ borderBottom: "1px solid var(--nav-border)" }}>
-          <p className="text-xs truncate" style={{ color: "var(--nav-text)" }}>{organization.name}</p>
-        </div>
+        <OrgNameInline organizationName={organization.name} onRename={(n) => organization.update({ name: n })} />
       )}
 
       {/* Navigation */}
@@ -138,5 +137,121 @@ export function LeftNav({ onClose }: Props) {
         </div>
       </div>
     </aside>
+  )
+}
+
+// ── OrgNameInline ───────────────────────────────────────────────────────────
+// Click the workspace name to rename. Enter saves; Esc cancels.
+// Wraps Clerk's `organization.update({ name })` so members with admin
+// permission can change the workspace label without leaving the app.
+
+interface OrgNameInlineProps {
+  organizationName: string
+  onRename: (name: string) => Promise<unknown>
+}
+
+function OrgNameInline({ organizationName, onRename }: OrgNameInlineProps) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(organizationName)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Stay in sync if Clerk updates the org from elsewhere
+  useEffect(() => { setValue(organizationName) }, [organizationName])
+
+  // Focus & select-all when entering edit mode
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [editing])
+
+  async function commit() {
+    const next = value.trim()
+    if (!next || next === organizationName) { setEditing(false); setValue(organizationName); return }
+    setSaving(true); setError(null)
+    try {
+      await onRename(next)
+      setEditing(false)
+    } catch {
+      // Most likely cause: user isn't an admin of this org
+      setError("Couldn't rename. You may not have permission.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function cancel() {
+    setValue(organizationName)
+    setEditing(false)
+    setError(null)
+  }
+
+  return (
+    <div
+      className="px-4 py-2 group relative"
+      style={{ borderBottom: "1px solid var(--nav-border)" }}
+    >
+      {editing ? (
+        <div className="flex items-center gap-1.5">
+          <input
+            ref={inputRef}
+            type="text"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit()
+              else if (e.key === "Escape") cancel()
+            }}
+            disabled={saving}
+            className="flex-1 min-w-0 rounded px-1.5 py-0.5 text-xs outline-none"
+            style={{
+              background: "var(--surface-2)",
+              border: "1px solid var(--border-strong)",
+              color: "var(--text)",
+            }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = "var(--green)")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border-strong)")}
+          />
+          <button
+            onClick={commit}
+            disabled={saving}
+            className="shrink-0 h-5 w-5 rounded flex items-center justify-center"
+            style={{ color: "var(--green)" }}
+            title="Save"
+          >
+            <Check size={13} strokeWidth={2.2} />
+          </button>
+          <button
+            onClick={cancel}
+            disabled={saving}
+            className="shrink-0 h-5 w-5 rounded flex items-center justify-center"
+            style={{ color: "var(--text-muted)" }}
+            title="Cancel"
+          >
+            <X size={13} strokeWidth={2.2} />
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setEditing(true)}
+          className="flex items-center gap-1.5 w-full text-left group/btn"
+          title="Click to rename workspace"
+        >
+          <p className="text-xs truncate flex-1" style={{ color: "var(--nav-text)" }}>{organizationName}</p>
+          <Pencil
+            size={11}
+            strokeWidth={1.8}
+            className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+            style={{ color: "var(--text-muted)" }}
+          />
+        </button>
+      )}
+      {error && (
+        <p className="text-[10px] mt-1" style={{ color: "#dc2626" }}>{error}</p>
+      )}
+    </div>
   )
 }

@@ -29,6 +29,7 @@ import {
   History,
   RotateCcw,
   Trash2,
+  Sparkles,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
@@ -164,6 +165,15 @@ export function FluxDashboard() {
       navigate("/app/flux", { replace: true })
     },
     onError: () => setPendingAction(null),
+  })
+
+  // Run AI analysis on all material+pending variances
+  const runFluxMut = useMutation({
+    mutationFn: (id: string) => api.runFlux(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trial-balances"] })
+      qc.invalidateQueries({ queryKey: ["variances", tbId] })
+    },
   })
 
   // Auto-clear the pending-confirm state after 4s of inactivity
@@ -406,14 +416,32 @@ export function FluxDashboard() {
                 </span>
               </Button>
             )}
+            {/* Find reasons: kicks off the AI variance-explanation pass.
+                Only meaningful when we have variances to explain. */}
+            {showVarianceTable && (
+              <Button
+                size="sm"
+                icon={<Sparkles size={14} strokeWidth={1.8} />}
+                loading={runFluxMut.isPending}
+                onClick={() => tbId && runFluxMut.mutate(tbId)}
+                title="Have the AI re-analyze every material variance"
+              >
+                <span className="hidden sm:inline">Find reasons</span>
+              </Button>
+            )}
             {showVarianceTable && (
               <Button variant="outline" size="sm" icon={<Download size={14} strokeWidth={1.6} />} onClick={handleExport}>
                 <span className="hidden sm:inline">Export</span>
               </Button>
             )}
-            <Button size="sm" icon={<Plus size={14} strokeWidth={1.6} />} onClick={handleNewAnalysis}>
-              <span className="hidden sm:inline">New Analysis</span>
-            </Button>
+            {/* "New Analysis" in header is only shown on mobile (desktop has + in sidebar) */}
+            <Button
+              size="sm"
+              icon={<Plus size={14} strokeWidth={1.6} />}
+              onClick={handleNewAnalysis}
+              className="lg:hidden"
+              title="Start a new analysis"
+            />
           </div>
         </div>
 

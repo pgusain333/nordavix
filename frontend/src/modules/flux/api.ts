@@ -145,6 +145,13 @@ async function updateNarrative(tbId: string, varId: string, content: string): Pr
   return data
 }
 
+async function regenerateNarrative(tbId: string, varId: string): Promise<{ id: string; status: string }> {
+  const { data } = await apiClient.post<{ id: string; status: string }>(
+    `/api/flux/trial-balances/${tbId}/variances/${varId}/regenerate`
+  )
+  return data
+}
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 function exportUrl(tbId: string): string {
@@ -209,6 +216,7 @@ export const api = {
   listVariances,
   approveVariance,
   updateNarrative,
+  regenerateNarrative,
   // Export
   exportUrl,
   exportExcel,
