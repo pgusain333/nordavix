@@ -375,7 +375,11 @@ async function uploadAccountEvidence(
     fd,
     {
       params: { period_end: periodEnd },
-      headers: { "Content-Type": "multipart/form-data" },
+      // Clear the default JSON Content-Type so axios detects FormData and
+      // writes "multipart/form-data; boundary=<...>" itself. Setting the
+      // header manually to "multipart/form-data" drops the boundary and the
+      // server can't split the body — that was the silent-upload bug.
+      headers: { "Content-Type": undefined as unknown as string },
     },
   )
   return data

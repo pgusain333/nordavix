@@ -93,6 +93,11 @@ export function ReconciliationsDashboard() {
   const [search, setSearch] = useState("")
   const [groupFilter, setGroupFilter] = useState<string>("all")
   const [showOnlyVariance, setShowOnlyVariance] = useState(false)
+  /** Status bucket the user is currently looking at. "open" = pending or
+   *  flagged (the close-in-progress queue). "reviewed" / "approved" are
+   *  done buckets. "all" shows everything. When you approve a row in
+   *  "open" it disappears from the list and shows up under "approved" — */
+  const [statusBucket, setStatusBucket] = useState<"open" | "reviewed" | "approved" | "all">("open")
   const [drawerAccount, setDrawerAccount] = useState<OverviewAccount | null>(null)
   const [drawerMode, setDrawerMode] = useState<"subledger" | "variance">("subledger")
   const [confirmClear, setConfirmClear] = useState(false)
@@ -202,17 +207,38 @@ export function ReconciliationsDashboard() {
     },
   })
 
+  // Counts per status bucket — used for the tab labels and for filtering.
+  const bucketCounts = useMemo(() => {
+    const c = { open: 0, reviewed: 0, approved: 0, all: overview?.accounts.length ?? 0 }
+    overview?.accounts.forEach((a) => {
+      if (a.review_status === "approved") c.approved++
+      else if (a.review_status === "reviewed") c.reviewed++
+      else c.open++  // pending and flagged
+    })
+    return c
+  }, [overview])
+
+  function inBucket(a: OverviewAccount): boolean {
+    if (statusBucket === "all") return true
+    if (statusBucket === "approved") return a.review_status === "approved"
+    if (statusBucket === "reviewed") return a.review_status === "reviewed"
+    // "open" = pending or flagged (whatever the close team still needs to act on)
+    return a.review_status === "pending" || a.review_status === "flagged"
+  }
+
   // Filtered + searched account list
   const filteredAccounts = useMemo(() => {
     if (!overview) return [] as OverviewAccount[]
     const q = search.trim().toLowerCase()
     return overview.accounts.filter((a) => {
+      if (!inBucket(a)) return false
       if (groupFilter !== "all" && a.group_label !== groupFilter) return false
       if (showOnlyVariance && Math.abs(parseFloat(a.variance)) < 0.5) return false
       if (q && !(a.account_name.toLowerCase().includes(q) || a.account_number.toLowerCase().includes(q))) return false
       return true
     })
-  }, [overview, search, groupFilter, showOnlyVariance])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overview, search, groupFilter, showOnlyVariance, statusBucket])
 
   const groupOptions = useMemo(() => {
     const set = new Set<string>()
@@ -387,6 +413,39 @@ export function ReconciliationsDashboard() {
               <Kpi label="Accounts with variance" value={String(varianceCount)} tone="var(--text)" />
             </div>
 
+            {/* Status buckets — clicking Approve on a row moves it from
+                Open to Approved, so the close-in-progress queue stays
+                clean. Default lands on Open so reviewers immediately see
+                "what's left to do" for the period. */}
+            <div className="flex items-center gap-1 flex-wrap rounded-lg p-1"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border)", width: "fit-content" }}>
+              {([
+                { key: "open",     label: "Open",     fg: "#b91c1c", bg: "#fef2f2" },
+                { key: "reviewed", label: "Reviewed", fg: "#1d4ed8", bg: "#dbeafe" },
+                { key: "approved", label: "Approved", fg: "var(--green)", bg: "var(--green-subtle)" },
+                { key: "all",      label: "All",      fg: "var(--text)", bg: "var(--surface)" },
+              ] as const).map((b) => {
+                const active = statusBucket === b.key
+                const count = bucketCounts[b.key]
+                return (
+                  <button
+                    key={b.key}
+                    onClick={() => { setStatusBucket(b.key); setSelected(new Set()) }}
+                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all"
+                    style={{
+                      background: active ? b.bg   : "transparent",
+                      color:      active ? b.fg   : "var(--text-muted)",
+                    }}
+                  >
+                    {b.label}
+                    <span className="text-[10px] tabular-nums opacity-80">
+                      {count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
             {/* Filters */}
             <div className="flex items-center gap-2 flex-wrap">
               <div className="relative flex-1 min-w-[180px] max-w-xs">
@@ -441,12 +500,16 @@ export function ReconciliationsDashboard() {
                   <p className="text-sm font-medium text-theme mb-1">
                     {overview?.accounts.length === 0
                       ? "QuickBooks didn't return any balance-sheet accounts for this period."
-                      : "No accounts match your filters."}
+                      : statusBucket === "open" && bucketCounts.open === 0
+                        ? "All open items cleared for this period."
+                        : "No accounts match your filters."}
                   </p>
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                     {overview?.accounts.length === 0
                       ? "Try a different period end, or sync again."
-                      : "Try clearing the search or changing the type filter."}
+                      : statusBucket === "open" && bucketCounts.open === 0
+                        ? `${bucketCounts.approved} approved · ${bucketCounts.reviewed} reviewed.`
+                        : "Try clearing the search or switching the status bucket."}
                   </p>
                 </div>
               ) : (
