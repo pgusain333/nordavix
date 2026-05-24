@@ -31,7 +31,6 @@ import {
   Sparkles,
   Filter,
   Download,
-  RefreshCw,
 } from "lucide-react"
 import { api, type VarianceRow } from "@/modules/flux/api"
 import { Button, Badge, StatusBadge, Spinner } from "@/core/ui/components"
