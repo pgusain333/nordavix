@@ -11,6 +11,7 @@
  */
 import { useState, useCallback, useRef } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { motion, AnimatePresence } from "framer-motion"
 import {
   Upload,
   FileSpreadsheet,
@@ -199,6 +200,15 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
         {step < 4 && (
           <StepBar step={step} steps={UPLOAD_STEPS} />
         )}
+
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={step}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+          >
 
         {/* ── Step 0: Choose Source ── */}
         {step === 0 && (
@@ -540,6 +550,9 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
             </div>
           </div>
         )}
+
+          </motion.div>
+        </AnimatePresence>
 
       </div>
     </div>

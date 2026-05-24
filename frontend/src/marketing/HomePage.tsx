@@ -214,11 +214,24 @@ function Navbar() {
     >
       <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          {/* dark:hidden → show in light mode → use dark-colored logo (visible on light bg) */}
-          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
-          {/* hidden dark:block → show in dark mode → use light-colored logo (visible on dark bg) */}
-          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
-          <span className="font-bold text-lg tracking-tight text-theme">nordavix<span style={{ color: "var(--green)" }}>.</span></span>
+          {/* When not scrolled: hero is always light → always use dark logo mark.
+              When scrolled: surface bg → switch by theme. */}
+          {scrolled ? (
+            <>
+              <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
+              <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
+            </>
+          ) : (
+            <img src="/logo-mark-dark.svg" alt="Nordavix" className="h-8 w-8" />
+          )}
+          {/* When not scrolled: hero bg is always light → force dark text.
+              When scrolled: use theme-aware var(--text). */}
+          <span
+            className="font-bold text-lg tracking-tight"
+            style={{ color: scrolled ? "var(--text)" : "#0E1112" }}
+          >
+            nordavix<span style={{ color: scrolled ? "var(--green)" : "#3E8F66" }}>.</span>
+          </span>
         </div>
         <div className="hidden md:flex items-center gap-8">
           {[
@@ -750,6 +763,10 @@ function Footer() {
         </div>
         <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-xs text-slate-600">© 2025 Nordavix. All rights reserved.</p>
+          {/* Force dark CSS vars so the toggle renders correctly on the always-dark footer */}
+          <div className="dark">
+            <ThemeToggle />
+          </div>
           <p className="text-xs text-slate-700">Built for accountants, by accountants.</p>
         </div>
       </div>

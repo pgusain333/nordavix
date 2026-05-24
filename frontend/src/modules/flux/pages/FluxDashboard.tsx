@@ -16,6 +16,7 @@
 import { useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { motion, AnimatePresence } from "framer-motion"
 import {
   BarChart3,
   Plus,
@@ -29,14 +30,16 @@ import { VarianceTable } from "@/modules/flux/components/VarianceTable"
 import { Button, Spinner } from "@/core/ui/components"
 import { cn } from "@/core/ui/utils"
 
-const STATUS_COLORS: Record<string, string> = {
-  pending:          "bg-ink-200",
-  processing:       "bg-material",
-  parsed:           "bg-blue-400",
-  ready_for_review: "bg-blue-400",
-  generating:       "bg-material",
-  complete:         "bg-green",
-  error:            "bg-unfav",
+// ── Status dot colours (inline styles — no Tailwind bg-* needed) ────────────
+
+const STATUS_DOT: Record<string, string> = {
+  pending:          "var(--border-strong)",
+  processing:       "#f59e0b",
+  parsed:           "#3b82f6",
+  ready_for_review: "#3b82f6",
+  generating:       "#f59e0b",
+  complete:         "var(--green)",
+  error:            "#dc2626",
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -48,6 +51,16 @@ const STATUS_LABELS: Record<string, string> = {
   complete:         "Complete",
   error:            "Error",
 }
+
+// ── Framer Motion variants ────────────────────────────────────────────────────
+
+const panelVariants = {
+  initial: { opacity: 0, y: 10 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.22, ease: "easeOut" as const } },
+  exit:    { opacity: 0, y: -10, transition: { duration: 0.15, ease: "easeIn" as const } },
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export function FluxDashboard() {
   const { tbId }   = useParams<{ tbId?: string }>()
@@ -116,24 +129,29 @@ export function FluxDashboard() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  const showUploadFlow = !tbId || (selectedTb && selectedTb.status === "pending")
+  const showUploadFlow    = !tbId || (selectedTb && selectedTb.status === "pending")
   const showVarianceTable = selectedTb &&
     ["parsed", "ready_for_review", "generating", "complete"].includes(selectedTb.status)
   const showProcessing = selectedTb && selectedTb.status === "processing"
   const showError      = selectedTb && selectedTb.status === "error"
+  const showEmpty      = !tbId && !tbsLoading && tbs.length === 0
+
+  // Key drives AnimatePresence exit+enter on content changes
+  const contentKey = showUploadFlow ? "upload"
+    : showProcessing ? "processing"
+    : showError      ? "error"
+    : showVarianceTable ? `variance-${tbId}`
+    : "empty"
 
   return (
     <div className="flex h-full overflow-hidden">
 
       {/* ── Left panel: TB list ── */}
-      <div className={cn(
-        "flex h-full shrink-0 flex-col",
-        // Mobile: full width when no TB selected, hidden when TB selected
-        "w-full lg:w-56",
-        tbId ? "hidden lg:flex" : "flex",
-        // Desktop: always show with border
-        "lg:border-r",
-      )}
+      <div
+        className={cn(
+          "flex h-full shrink-0 flex-col w-full lg:w-56 lg:border-r",
+          tbId ? "hidden lg:flex" : "flex",
+        )}
         style={{ background: "var(--surface)", borderColor: "var(--border)" }}
       >
         <div className="flex items-center justify-between px-3 py-3"
@@ -141,12 +159,7 @@ export function FluxDashboard() {
           <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
             Runs
           </span>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            title="New analysis"
-            onClick={handleNewAnalysis}
-          >
+          <Button size="icon-sm" variant="ghost" title="New analysis" onClick={handleNewAnalysis}>
             <Plus size={16} strokeWidth={1.6} />
           </Button>
         </div>
@@ -159,11 +172,8 @@ export function FluxDashboard() {
           ) : tbs.length === 0 ? (
             <div className="px-3 py-6 text-center">
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>No runs yet</p>
-              <button
-                className="text-xs mt-1 hover:underline"
-                style={{ color: "var(--green)" }}
-                onClick={handleNewAnalysis}
-              >
+              <button className="text-xs mt-1 hover:underline" style={{ color: "var(--green)" }}
+                onClick={handleNewAnalysis}>
                 Start first run
               </button>
             </div>
@@ -173,9 +183,7 @@ export function FluxDashboard() {
               return (
                 <button
                   key={tb.id}
-                  className={cn(
-                    "w-full text-left px-3 py-2.5 flex items-start gap-2 transition-colors",
-                  )}
+                  className="w-full text-left px-3 py-2.5 flex items-start gap-2 transition-colors duration-150"
                   style={isActive
                     ? { background: "var(--surface-2)", borderRight: "2px solid var(--green)" }
                     : {}}
@@ -183,23 +191,19 @@ export function FluxDashboard() {
                   onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "" }}
                   onClick={() => navigate(`/app/flux/${tb.id}`)}
                 >
-                  <span className={cn(
-                    "mt-1.5 h-1.5 w-1.5 rounded-full shrink-0",
-                    STATUS_COLORS[tb.status] ?? "bg-ink-200"
-                  )} />
+                  <span
+                    className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0"
+                    style={{ background: STATUS_DOT[tb.status] ?? "var(--border-strong)" }}
+                  />
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium truncate text-theme">
-                      {tb.name}
-                    </p>
+                    <p className="text-xs font-medium truncate text-theme">{tb.name}</p>
                     <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: "var(--text-muted)" }}>
-                      {new Date(tb.period_current).toLocaleDateString("en-US", {
-                        month: "short", year: "numeric"
-                      })}
+                      {new Date(tb.period_current).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                     </p>
                     <span className="text-[9px] font-semibold uppercase tracking-wider"
                       style={{ color:
-                        tb.status === "complete" ? "var(--green)" :
-                        tb.status === "error" ? "#dc2626" :
+                        tb.status === "complete"  ? "var(--green)" :
+                        tb.status === "error"     ? "#dc2626" :
                         ["generating","processing"].includes(tb.status) ? "#92400e" :
                         "var(--text-muted)"
                       }}>
@@ -213,11 +217,12 @@ export function FluxDashboard() {
         </div>
       </div>
 
-      {/* ── Right panel: content — hidden on mobile when no TB selected ── */}
-      <div className={cn(
-        "flex flex-1 flex-col overflow-hidden min-w-0",
-        !tbId ? "hidden lg:flex" : "flex",
-      )}
+      {/* ── Right panel ── */}
+      <div
+        className={cn(
+          "flex flex-1 flex-col overflow-hidden min-w-0",
+          !tbId ? "hidden lg:flex" : "flex",
+        )}
         style={{ background: "var(--bg)" }}
       >
         {/* Header */}
@@ -256,18 +261,15 @@ export function FluxDashboard() {
             {selectedTb && (
               <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
                 style={{
-                  background: selectedTb.status === "complete" ? "var(--green-subtle)" :
+                  background: selectedTb.status === "complete"  ? "var(--green-subtle)" :
                     selectedTb.status === "error" ? "#fee2e2" :
                     ["generating","processing"].includes(selectedTb.status) ? "#fef3c7" : "var(--surface-2)",
-                  color: selectedTb.status === "complete" ? "var(--green)" :
+                  color: selectedTb.status === "complete"  ? "var(--green)" :
                     selectedTb.status === "error" ? "#dc2626" :
                     ["generating","processing"].includes(selectedTb.status) ? "#92400e" : "var(--text-2)",
                 }}>
-                <span className="h-1.5 w-1.5 rounded-full" style={{
-                  background: selectedTb.status === "complete" ? "var(--green)" :
-                    selectedTb.status === "error" ? "#dc2626" :
-                    ["generating","processing"].includes(selectedTb.status) ? "#f59e0b" : "var(--border-strong)",
-                }} />
+                <span className="h-1.5 w-1.5 rounded-full"
+                  style={{ background: STATUS_DOT[selectedTb.status] ?? "var(--border-strong)" }} />
                 {STATUS_LABELS[selectedTb.status] ?? selectedTb.status}
               </span>
             )}
@@ -282,64 +284,75 @@ export function FluxDashboard() {
           </div>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-hidden">
+        {/* ── Animated content ── */}
+        <div className="flex-1 overflow-hidden relative">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={contentKey}
+              variants={panelVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              className="absolute inset-0 flex flex-col"
+            >
 
-          {showUploadFlow && (
-            <div className="h-full overflow-y-auto">
-              <UploadFlow onComplete={handleTbComplete} qboConnected={!!qboConn} />
-            </div>
-          )}
-
-          {showProcessing && (
-            <div className="flex flex-col items-center justify-center h-full text-center p-8">
-              <div className="relative h-16 w-16 mb-5">
-                <div className="absolute inset-0 rounded-full animate-ping opacity-40" style={{ background: "#fef3c7" }} />
-                <div className="relative h-16 w-16 rounded-full flex items-center justify-center" style={{ background: "#fef3c7" }}>
-                  <Spinner className="h-7 w-7 text-[#92400e]" />
+              {showUploadFlow && (
+                <div className="h-full overflow-y-auto">
+                  <UploadFlow onComplete={handleTbComplete} qboConnected={!!qboConn} />
                 </div>
-              </div>
-              <p className="text-base font-semibold text-theme mb-2">Processing your file…</p>
-              <p className="text-sm max-w-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                Reading your trial balance and computing variances. Usually takes a few seconds.
-              </p>
-            </div>
-          )}
+              )}
 
-          {showError && (
-            <div className="flex flex-col items-center justify-center h-full text-center p-8">
-              <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4" style={{ background: "#fee2e2" }}>
-                <AlertCircle size={28} strokeWidth={1.6} style={{ color: "#dc2626" }} />
-              </div>
-              <p className="text-base font-semibold text-theme mb-2">Processing failed</p>
-              <p className="text-sm max-w-xs leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
-                {selectedTb?.error_detail ?? "An error occurred while processing your file."}
-              </p>
-              <Button variant="outline" size="sm" icon={<RefreshCw size={14} strokeWidth={1.6} />} onClick={handleNewAnalysis}>
-                Try Again
-              </Button>
-            </div>
-          )}
+              {showProcessing && (
+                <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                  <div className="relative h-16 w-16 mb-5">
+                    <div className="absolute inset-0 rounded-full animate-ping opacity-40" style={{ background: "#fef3c7" }} />
+                    <div className="relative h-16 w-16 rounded-full flex items-center justify-center" style={{ background: "#fef3c7" }}>
+                      <Spinner className="h-7 w-7 text-[#92400e]" />
+                    </div>
+                  </div>
+                  <p className="text-base font-semibold text-theme mb-2">Processing your file…</p>
+                  <p className="text-sm max-w-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                    Reading your trial balance and computing variances. Usually takes a few seconds.
+                  </p>
+                </div>
+              )}
 
-          {showVarianceTable && (
-            <VarianceTable tbId={tbId!} rows={variances} isLoading={variancesLoading} onExport={handleExport} />
-          )}
+              {showError && (
+                <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                  <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4" style={{ background: "#fee2e2" }}>
+                    <AlertCircle size={28} strokeWidth={1.6} style={{ color: "#dc2626" }} />
+                  </div>
+                  <p className="text-base font-semibold text-theme mb-2">Processing failed</p>
+                  <p className="text-sm max-w-xs leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
+                    {selectedTb?.error_detail ?? "An error occurred while processing your file."}
+                  </p>
+                  <Button variant="outline" size="sm" icon={<RefreshCw size={14} strokeWidth={1.6} />} onClick={handleNewAnalysis}>
+                    Try Again
+                  </Button>
+                </div>
+              )}
 
-          {!tbId && !tbsLoading && tbs.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-center p-8">
-              <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4" style={{ background: "var(--surface-2)" }}>
-                <BarChart3 size={28} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} />
-              </div>
-              <p className="text-base font-semibold text-theme mb-2">No flux runs yet</p>
-              <p className="text-sm max-w-sm leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
-                Upload a trial balance or connect QuickBooks to generate your first AI-powered variance commentary.
-              </p>
-              <Button icon={<Plus size={16} strokeWidth={1.6} />} onClick={handleNewAnalysis}>
-                Start First Analysis
-              </Button>
-            </div>
-          )}
+              {showVarianceTable && (
+                <VarianceTable tbId={tbId!} rows={variances} isLoading={variancesLoading} onExport={handleExport} />
+              )}
 
+              {showEmpty && (
+                <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                  <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4" style={{ background: "var(--surface-2)" }}>
+                    <BarChart3 size={28} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} />
+                  </div>
+                  <p className="text-base font-semibold text-theme mb-2">No flux runs yet</p>
+                  <p className="text-sm max-w-sm leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
+                    Upload a trial balance or connect QuickBooks to generate your first AI-powered variance commentary.
+                  </p>
+                  <Button icon={<Plus size={16} strokeWidth={1.6} />} onClick={handleNewAnalysis}>
+                    Start First Analysis
+                  </Button>
+                </div>
+              )}
+
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
     </div>
