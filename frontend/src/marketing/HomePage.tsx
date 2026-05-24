@@ -214,8 +214,10 @@ function Navbar() {
     >
       <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 dark:hidden" />
-          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 hidden dark:block" />
+          {/* dark:hidden → show in light mode → use dark-colored logo (visible on light bg) */}
+          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
+          {/* hidden dark:block → show in dark mode → use light-colored logo (visible on dark bg) */}
+          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
           <span className="font-bold text-lg tracking-tight text-theme">nordavix<span style={{ color: "var(--green)" }}>.</span></span>
         </div>
         <div className="hidden md:flex items-center gap-8">

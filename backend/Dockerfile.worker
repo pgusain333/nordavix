@@ -7,11 +7,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Build context is the project root (set by fly.toml)
+# Build context is the project root (same as Dockerfile)
 COPY backend/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
 
-# Use shell form so ${PORT:-8000} expands at runtime (Render injects PORT automatically)
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Run Celery worker — processes AI narrative generation tasks from Redis queue
+CMD celery -A celery_app worker -l info --concurrency 2
