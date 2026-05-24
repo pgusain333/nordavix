@@ -36,7 +36,6 @@ import {
   Sparkles,
   Upload,
   Plus,
-  Trash,
   FileText,
   Download,
   ShieldCheck,
@@ -1018,22 +1017,14 @@ function InlineSubledgerForm({
   onClear: () => void
   onClose: () => void
 }) {
-  // Seed from the current override (if any) or the GL balance as a sensible
-  // starting point. Once the prior-period closing loads, we auto-roll it
-  // forward — the user shouldn't have to click "use prior balance" every
-  // single month. We only auto-fill when there's no existing override AND
-  // the user hasn't already edited the field.
-  const [amount, setAmount] = useState<string>(
-    account.subledger_is_manual ? account.subledger_balance : account.gl_balance
-  )
-  const [userTouchedAmount, setUserTouchedAmount] = useState(false)
+  // Source label travels with the override row. When rolling forward, we
+  // auto-populate with "Rolled forward from <date>" so the reviewer knows
+  // where the number came from.
   const [source, setSource] = useState<string>(
     account.subledger_is_manual && account.subledger_source ? account.subledger_source : ""
   )
   const [uploadError, setUploadError] = useState<string | null>(null)
   const qc = useQueryClient()
-  const parsed = parseFloat(amount)
-  const valid = Number.isFinite(parsed)
 
   // Live list of attached evidence files for this account+period.
   const { data: evidence, refetch: refetchEvidence } = useQuery({
@@ -1076,6 +1067,13 @@ function InlineSubledgerForm({
   const selectedItems = Object.values(selectedItemMap)
   const selectedSum = selectedItems.reduce((n, it) => n + (parseFloat(it.amount) || 0), 0)
 
+  // Subledger is CALCULATED now, not typed: opening (rolled forward from
+  // the prior period) ± reconciling items = closing subledger. This
+  // anchors the reconciliation to the prior close + activity rather than
+  // letting the user type any number that makes the variance disappear.
+  const openingBalance = prior ? parseFloat(prior.subledger_total) : 0
+  const computedSubledger = openingBalance + selectedSum
+
   // Manual reconciling item form — for items that don't exist in QBO yet
   // (outstanding bank checks, deposits in transit, journal entries not
   // posted). Adds straight into selectedItemMap with a synthetic txn_id.
@@ -1103,19 +1101,14 @@ function InlineSubledgerForm({
     setShowManualForm(false)
   }
 
-  // Auto-roll-forward: once the prior-period closing loads, copy it into
-  // the amount field — but only if (a) there's no existing override on
-  // this period yet, and (b) the user hasn't typed anything themselves.
-  // The blue card explains what we did and shows the delta.
+  // Auto-set the source label when rolling forward so the reviewer sees
+  // where the number came from. Only set if the user hasn't typed.
   useEffect(() => {
-    if (
-      prior?.subledger_total
-      && !account.subledger_is_manual
-      && !userTouchedAmount
-    ) {
-      setAmount(prior.subledger_total)
+    if (prior?.subledger_total && !source) {
+      setSource(`Rolled forward from ${prior.period_end}`)
     }
-  }, [prior, account.subledger_is_manual, userTouchedAmount])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prior])
 
   const uploadMut = useMutation({
     mutationFn: (file: File) => reconsApi.uploadAccountEvidence(account.qbo_id, periodEnd, file),
@@ -1165,8 +1158,11 @@ function InlineSubledgerForm({
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!valid) return
-    onSave(parsed, source.trim() || null, selectedItemsRef.current ? Object.values(selectedItemsRef.current) : [])
+    // Subledger total = opening balance + sum of selected reconciling items
+    // (the computed buildup). The user can't fudge a number to make the
+    // variance vanish — they must justify it with explicit items.
+    onSave(computedSubledger, source.trim() || null,
+      selectedItemsRef.current ? Object.values(selectedItemsRef.current) : [])
   }
 
   const hasEvidence = (evidence?.length ?? 0) > 0
@@ -1192,14 +1188,16 @@ function InlineSubledgerForm({
       </div>
 
       {/* ── Compact variance strip ───────────────────────────────────
-          Slim one-line summary so it doesn't eat vertical space in the
-          accordion. 4 inline metrics; background color flips green when
-          the gap is fully explained by selected reconciling items. */}
-      {valid && (() => {
-        const variance = parseFloat(account.gl_balance) - parsed
-        const adjustedVariance = variance - selectedSum
-        const tiedOut = Math.abs(adjustedVariance) < 0.5
-        const hasGap = Math.abs(variance) >= 0.5
+          Subledger is now a CALCULATED value: opening (rolled forward)
+          + sum(reconciling items). The strip just surfaces the math so
+          the user can see if there's still a gap to explain. Background
+          uses rgba so it tints correctly in both light and dark themes
+          (the previous #fef2f2 looked washed out on dark surfaces). */}
+      {(() => {
+        const gl = parseFloat(account.gl_balance)
+        const variance = gl - computedSubledger
+        const tiedOut = Math.abs(variance) < 0.5
+        const hasGap = !tiedOut
         const Metric = ({ label, value, color }: { label: string; value: string; color?: string }) => (
           <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
             <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</span>
@@ -1209,21 +1207,20 @@ function InlineSubledgerForm({
         return (
           <div className="rounded-lg px-3 py-2 mb-3 flex items-center justify-between gap-x-5 gap-y-1 flex-wrap"
             style={{
-              background: tiedOut ? "var(--green-subtle)" : hasGap ? "#fef2f2" : "var(--surface)",
-              border: `1px solid ${tiedOut ? "var(--green)" : hasGap ? "#fecaca" : "var(--border)"}`,
+              // rgba so the tint shows on both light and dark surfaces.
+              background: tiedOut ? "var(--green-subtle)" : "rgba(220, 38, 38, 0.10)",
+              border: `1px solid ${tiedOut ? "var(--green)" : "rgba(220, 38, 38, 0.40)"}`,
             }}>
             <Metric label="GL" value={fmtMoney(account.gl_balance)} />
-            <Metric label="Subledger" value={fmtMoney(parsed)} />
-            <Metric label="Variance" value={fmtMoney(variance)}
-              color={hasGap ? "#dc2626" : "var(--green)"} />
+            <Metric label="Subledger" value={fmtMoney(computedSubledger)} />
             <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
               {tiedOut && <CheckCircle2 size={13} strokeWidth={2.2} style={{ color: "var(--green)" }} />}
               <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                {tiedOut ? "Reconciled" : "Unexplained"}
+                {tiedOut ? "Reconciled" : "Variance (GL − Sub)"}
               </span>
               <span className="text-sm font-bold tabular-nums"
-                style={{ color: tiedOut ? "var(--green)" : "#dc2626" }}>
-                {fmtMoney(adjustedVariance)}
+                style={{ color: hasGap ? "#ef4444" : "var(--green)" }}>
+                {fmtMoney(variance)}
               </span>
             </div>
           </div>
@@ -1389,66 +1386,71 @@ function InlineSubledgerForm({
               </div>
             )}
 
-            <label className="block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide flex items-center gap-1.5"
-                style={{ color: "var(--text-muted)" }}>
-                Subledger total
-                {!!prior && (
-                  <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1 py-0.5 rounded"
-                    style={{ background: "#fef3c7", color: "#92400e" }}
-                    title="Locked from roll-forward — only admins can override">
-                    🔒 Admin only
-                  </span>
-                )}
-              </span>
-              <div className="mt-1 relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm" style={{ color: "var(--text-muted)" }}>$</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={amount}
-                  onChange={(e) => { setAmount(e.target.value); setUserTouchedAmount(true) }}
-                  placeholder="0.00"
-                  disabled={!!prior}
-                  className="w-full rounded-lg pl-7 pr-3 py-2 text-sm outline-none tabular-nums"
-                  style={{
-                    background: prior ? "var(--surface)" : "var(--surface-2)",
-                    border: "1px solid var(--border-strong)",
-                    color: prior ? "var(--text-muted)" : "var(--text)",
-                    cursor: prior ? "not-allowed" : "text",
-                  }}
-                />
-              </div>
-              {!!prior && (
-                <span className="text-[10px] mt-1 block" style={{ color: "var(--text-muted)" }}>
-                  Carries forward automatically. Admin override is a roadmap item.
+            {/* Subledger build-up — opening + selected items = closing.
+                Pure calculation, no typing. Shows the math line by line
+                so the user understands how the closing number was reached.
+                Theme-aware colors so it works in both light and dark. */}
+            <div className="rounded-lg overflow-hidden"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <div className="px-3 py-2"
+                style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                <span className="text-[10px] font-semibold uppercase tracking-wide"
+                  style={{ color: "var(--text-muted)" }}>
+                  Subledger build-up
                 </span>
-              )}
-            </label>
+              </div>
+              <div className="px-3 py-2 space-y-1 text-xs">
+                <div className="flex items-center justify-between">
+                  <span style={{ color: "var(--text-2)" }}>
+                    Opening balance
+                    {prior ? ` (from ${prior.period_end})` : " (no prior period)"}
+                  </span>
+                  <span className="tabular-nums font-medium text-theme">{fmtMoney(openingBalance)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span style={{ color: "var(--text-2)" }}>
+                    {selectedSum >= 0 ? "+ " : "− "}Reconciling items ({selectedItems.length})
+                  </span>
+                  <span className="tabular-nums font-medium"
+                    style={{ color: selectedSum >= 0 ? "var(--green)" : "#ef4444" }}>
+                    {selectedSum >= 0 ? "+" : ""}{fmtMoney(selectedSum)}
+                  </span>
+                </div>
+              </div>
+              <div className="px-3 py-2 flex items-center justify-between"
+                style={{ borderTop: "2px solid var(--border-strong)", background: "var(--green-subtle)" }}>
+                <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--green)" }}>
+                  = Closing subledger
+                </span>
+                <span className="tabular-nums text-base font-bold" style={{ color: "var(--green)" }}>
+                  {fmtMoney(computedSubledger)}
+                </span>
+              </div>
+            </div>
 
             <label className="block">
               <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                Source {prior ? "(carried forward)" : "(optional)"}
+                Source / notes (optional)
               </span>
               <input
                 type="text"
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
                 placeholder="e.g. Bank of America statement 4/30/26"
-                disabled={!!prior}
                 className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
                 style={{
-                  background: prior ? "var(--surface)" : "var(--surface-2)",
+                  background: "var(--surface-2)",
                   border: "1px solid var(--border-strong)",
-                  color: prior ? "var(--text-muted)" : "var(--text)",
-                  cursor: prior ? "not-allowed" : "text",
+                  color: "var(--text)",
                 }}
               />
             </label>
 
-          {/* Supporting evidence moved here (under entry fields) so the
-              right column can host the subledger build-up summary. */}
-          <div className="space-y-2 pt-2">
+        </div>{/* end LEFT column (build-up + source) */}
+
+        {/* ── RIGHT column: supporting evidence + AI verify ───── */}
+        <div className="space-y-3">
+          <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-semibold uppercase tracking-wide"
                   style={{ color: "var(--text-muted)" }}>
@@ -1494,9 +1496,11 @@ function InlineSubledgerForm({
                           </button>
                         </div>
 
-                        {/* Verification result — or the trigger button if not yet verified */}
+                        {/* Verification result — or the trigger button if not yet verified.
+                            Pass the computed subledger so the live delta tracks the
+                            calculation as the user picks more reconciling items. */}
                         {v ? (
-                          <VerificationBadge verification={v} enteredAmount={parsed} valid={valid}
+                          <VerificationBadge verification={v} enteredAmount={computedSubledger} valid={true}
                             onReverify={() => verifyMut.mutate(f.id)} reverifying={verifying} />
                         ) : (
                           <button type="button"
@@ -1538,108 +1542,7 @@ function InlineSubledgerForm({
                 <p className="text-[11px]" style={{ color: "#b91c1c" }}>{uploadError}</p>
               )}
             </div>
-          </div>{/* end LEFT column (entry fields + evidence) */}
-
-          {/* ── RIGHT column: subledger build-up summary ───────────
-              Top: list of currently-selected reconciling items.
-              Bottom: subledger total (the rolled-forward value the
-              account is being reconciled to). Lets the user see at a
-              glance what items they've picked and the target balance. */}
-          <div className="space-y-3 flex flex-col">
-            <div className="rounded-xl flex flex-col flex-1 overflow-hidden"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)", minHeight: 280 }}>
-              <div className="px-3 py-2"
-                style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
-                <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                  Subledger build-up
-                </p>
-                <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                  Reconciling items making up the balance
-                </p>
-              </div>
-
-              {/* Selected items list — scrollable */}
-              <div className="flex-1 overflow-y-auto" style={{ maxHeight: 240 }}>
-                {selectedItems.length === 0 ? (
-                  <p className="text-[11px] text-center px-4 py-8" style={{ color: "var(--text-muted)" }}>
-                    No reconciling items selected yet.<br />
-                    Tick entries above or use <em>Add manual item</em>.
-                  </p>
-                ) : (
-                  <ul>
-                    {selectedItems.map((it) => {
-                      const isManual = it.txn_id.startsWith("manual-")
-                      const amt = parseFloat(it.amount) || 0
-                      return (
-                        <li key={it.txn_id}
-                          className="px-3 py-1.5 text-[11px] flex items-center gap-2"
-                          style={{ borderBottom: "1px solid var(--border)" }}>
-                          <div className="flex-1 min-w-0">
-                            <p className="truncate text-theme">
-                              {isManual && (
-                                <span className="text-[9px] font-bold uppercase mr-1 px-1 py-0.5 rounded"
-                                  style={{ background: "#fef3c7", color: "#92400e" }}>
-                                  Manual
-                                </span>
-                              )}
-                              {it.memo || it.txn_type}
-                            </p>
-                            <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
-                              {it.txn_type}{it.txn_number ? ` · #${it.txn_number}` : ""}
-                              {it.txn_date ? ` · ${it.txn_date}` : ""}
-                            </p>
-                          </div>
-                          <span className="tabular-nums text-xs font-semibold whitespace-nowrap"
-                            style={{ color: amt >= 0 ? "var(--green)" : "#dc2626" }}>
-                            {amt >= 0 ? "+" : ""}{fmtMoney(amt)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => toggleItem(it)}
-                            className="h-5 w-5 inline-flex items-center justify-center rounded"
-                            title="Remove from selection"
-                            style={{ color: "var(--text-muted)" }}>
-                            <Trash size={10} strokeWidth={1.8} />
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </div>
-
-              {/* Sum of selected items */}
-              {selectedItems.length > 0 && (
-                <div className="px-3 py-2 flex items-center justify-between"
-                  style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
-                  <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                    Items sum
-                  </span>
-                  <span className="tabular-nums text-xs font-bold text-theme">
-                    {fmtMoney(selectedSum)}
-                  </span>
-                </div>
-              )}
-
-              {/* Subledger total — the anchor everything reconciles to */}
-              <div className="px-3 py-3"
-                style={{ borderTop: "2px solid var(--border-strong)", background: "var(--green-subtle)" }}>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "var(--green)" }}>
-                    Subledger total
-                  </span>
-                  <span className="tabular-nums text-lg font-bold" style={{ color: "var(--green)" }}>
-                    {fmtMoney(parsed)}
-                  </span>
-                </div>
-                {!!prior && (
-                  <p className="text-[10px] mt-0.5" style={{ color: "var(--green)" }}>
-                    Rolled forward from {prior.period_end}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>{/* end RIGHT column */}
+          </div>{/* end RIGHT column (evidence + AI verify) */}
         </div>{/* end grid */}
 
       <div className="flex items-center justify-between gap-2 mt-4 pt-3"
@@ -1659,7 +1562,7 @@ function InlineSubledgerForm({
           <Button size="sm" variant="ghost" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button size="sm" type="submit" loading={saving} disabled={!valid}>
+          <Button size="sm" type="submit" loading={saving}>
             Save subledger
           </Button>
         </div>
