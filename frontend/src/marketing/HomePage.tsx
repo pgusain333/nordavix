@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useUser } from "@clerk/clerk-react"
+import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import {
   Zap, Shield, FileSpreadsheet, CheckCircle2, ArrowRight,
   BarChart3, Clock, Lock, ChevronRight, Star, TrendingUp,
@@ -99,24 +100,32 @@ function HeroFlow() {
     <div className="relative flex flex-col md:flex-row items-center justify-center gap-2 md:gap-0 mt-12 md:mt-16 px-4">
       {/* ── Card 1: Trial Balance ── */}
       <div
-        className="bg-white border border-slate-200 shadow-xl rounded-2xl p-4 w-56 flex-shrink-0 animate-float-up z-10"
-        style={{ animationDelay: "0s" }}
+        className="shadow-xl rounded-2xl p-4 w-56 flex-shrink-0 animate-float-up z-10"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border-strong)",
+          animationDelay: "0s",
+        }}
       >
         <div className="flex items-center gap-2 mb-3">
-          <FileSpreadsheet className="w-4 h-4 text-blue-600" />
-          <span className="text-xs font-semibold text-slate-800">Trial Balance</span>
+          <FileSpreadsheet className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+          <span className="text-xs font-semibold text-theme">Trial Balance</span>
         </div>
-        <div className="text-[10px] text-slate-400 mb-2">Dec 2024 vs Nov 2024</div>
+        <div className="text-[10px] text-theme-muted mb-2">Dec 2024 vs Nov 2024</div>
         {[
           { name: "Revenue", cur: "$2,456K", var: "+12%", fav: true },
           { name: "COGS", cur: "$1,124K", var: "+9%", fav: false },
           { name: "OpEx", cur: "$820K", var: "+13%", fav: false },
           { name: "Net Income", cur: "$512K", var: "+17%", fav: true },
-        ].map((row) => (
-          <div key={row.name} className="flex items-center justify-between py-1 border-b border-slate-100 last:border-0">
-            <span className="text-[10px] text-slate-600">{row.name}</span>
+        ].map((row, idx, arr) => (
+          <div
+            key={row.name}
+            className="flex items-center justify-between py-1"
+            style={{ borderBottom: idx === arr.length - 1 ? "none" : "1px solid var(--border)" }}
+          >
+            <span className="text-[10px] text-theme-2">{row.name}</span>
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono text-slate-800">{row.cur}</span>
+              <span className="text-[10px] font-mono text-theme">{row.cur}</span>
               <span className={`text-[9px] font-mono px-1 rounded ${row.fav ? "text-fav bg-fav/10" : "text-unfav bg-unfav/10"}`}>
                 {row.var}
               </span>
@@ -128,26 +137,29 @@ function HeroFlow() {
       <FlowArrow />
 
       {/* ── Card 2: AI Engine ── */}
-      <div className="bg-white border border-blue-100 shadow-xl rounded-2xl p-5 w-44 flex-shrink-0 z-10">
+      <div
+        className="shadow-xl rounded-2xl p-5 w-44 flex-shrink-0 z-10"
+        style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
+      >
         <div className="flex flex-col items-center gap-3">
           <div className="relative">
-            <div className="w-12 h-12 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center animate-glow-pulse">
-              <Brain className="w-6 h-6 text-blue-600" />
+            <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-500/15 border border-blue-100 dark:border-blue-500/30 flex items-center justify-center animate-glow-pulse">
+              <Brain className="w-6 h-6 text-blue-600 dark:text-blue-400" />
             </div>
             <div className="absolute -top-1 -right-1 w-4 h-4 bg-purple-500 rounded-full flex items-center justify-center">
               <Sparkles className="w-2.5 h-2.5 text-white" />
             </div>
           </div>
           <div className="text-center">
-            <div className="text-xs font-semibold text-slate-800 mb-0.5">AI Analysis</div>
-            <div className="text-[10px] text-slate-400">claude-sonnet-4-6</div>
+            <div className="text-xs font-semibold text-theme mb-0.5">AI Analysis</div>
+            <div className="text-[10px] text-theme-muted">claude-sonnet-4-6</div>
           </div>
           <div className="w-full">
-            <div className="flex justify-between text-[9px] text-slate-400 mb-1">
+            <div className="flex justify-between text-[9px] text-theme-muted mb-1">
               <span>Processing</span>
-              <span className="text-blue-600">247 accounts</span>
+              <span className="text-blue-600 dark:text-blue-400">247 accounts</span>
             </div>
-            <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
+            <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
               <div
                 className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
                 style={{ animation: "processing-bar 2.5s ease-in-out infinite alternate", width: "85%" }}
@@ -170,22 +182,26 @@ function HeroFlow() {
 
       {/* ── Card 3: Flux Commentary ── */}
       <div
-        className="bg-white border border-slate-200 shadow-xl rounded-2xl p-4 w-56 flex-shrink-0 animate-float-down z-10"
-        style={{ animationDelay: "2s" }}
+        className="shadow-xl rounded-2xl p-4 w-56 flex-shrink-0 animate-float-down z-10"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border-strong)",
+          animationDelay: "2s",
+        }}
       >
         <div className="flex items-center gap-2 mb-3">
           <TrendingUp className="w-4 h-4 text-fav" />
-          <span className="text-xs font-semibold text-slate-800">Flux Commentary</span>
+          <span className="text-xs font-semibold text-theme">Flux Commentary</span>
           <span className="ml-auto text-[9px] bg-fav/10 text-fav px-1.5 py-0.5 rounded-full font-medium">+12%</span>
         </div>
-        <div className="text-[10px] text-slate-500 mb-2 font-medium">Revenue · Material Variance</div>
-        <div className="text-[10px] text-slate-700 leading-relaxed min-h-[60px]">
+        <div className="text-[10px] text-theme-muted mb-2 font-medium">Revenue · Material Variance</div>
+        <div className="text-[10px] text-theme leading-relaxed min-h-[60px]">
           {typed}
           <span className="inline-block w-0.5 h-3 bg-blue-500 ml-0.5 animate-type-cursor align-middle" />
         </div>
         <div className="mt-3 flex items-center gap-1.5">
           <div className="w-1.5 h-1.5 rounded-full bg-fav animate-pulse" />
-          <span className="text-[9px] text-slate-400">AI confidence: High</span>
+          <span className="text-[9px] text-theme-muted">AI confidence: High</span>
         </div>
       </div>
     </div>
@@ -213,23 +229,12 @@ function Navbar() {
     >
       <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          {/* When not scrolled: hero is always light → always use dark logo mark.
-              When scrolled: surface bg → switch by theme. */}
-          {scrolled ? (
-            <>
-              <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
-              <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
-            </>
-          ) : (
-            <img src="/logo-mark-dark.svg" alt="Nordavix" className="h-8 w-8" />
-          )}
-          {/* When not scrolled: hero bg is always light → force dark text.
-              When scrolled: use theme-aware var(--text). */}
-          <span
-            className="font-bold text-lg tracking-tight"
-            style={{ color: scrolled ? "var(--text)" : "#0E1112" }}
-          >
-            nordavix<span style={{ color: scrolled ? "var(--green)" : "#3E8F66" }}>.</span>
+          {/* Logo + wordmark are now theme-aware regardless of scroll state,
+              because the hero itself flips with the theme. */}
+          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
+          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
+          <span className="font-bold text-lg tracking-tight text-theme">
+            nordavix<span style={{ color: "var(--green)" }}>.</span>
           </span>
         </div>
         <div className="hidden md:flex items-center gap-8">
@@ -249,6 +254,7 @@ function Navbar() {
           ))}
         </div>
         <div className="flex items-center gap-3">
+          <ThemeToggle />
           {isSignedIn ? (
             <Link
               to="/app"
@@ -285,26 +291,30 @@ function Navbar() {
 // ── Hero (light gradient) ─────────────────────────────────────────────────────
 function HeroSection() {
   return (
-    <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden pt-20 pb-12 px-6 bg-gradient-to-b from-blue-50/70 via-white to-white">
-      {/* Soft background orbs */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-100/80 rounded-full blur-[120px] animate-blob pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-purple-100/70 rounded-full blur-[100px] animate-blob-delay pointer-events-none" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-blue-50 rounded-full blur-[80px] animate-blob pointer-events-none" style={{ animationDelay: "8s" }} />
+    <section
+      className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden pt-20 pb-12 px-6
+                 bg-gradient-to-b from-blue-50/70 via-white to-white
+                 dark:from-[#0E1112] dark:via-[#161B1D] dark:to-[#0E1112]"
+    >
+      {/* Soft background orbs — dimmer in dark mode so they don't blow out */}
+      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-100/80 dark:bg-blue-500/10 rounded-full blur-[120px] animate-blob pointer-events-none" />
+      <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-purple-100/70 dark:bg-purple-500/10 rounded-full blur-[100px] animate-blob-delay pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-blue-50 dark:bg-blue-500/5 rounded-full blur-[80px] animate-blob pointer-events-none" style={{ animationDelay: "8s" }} />
 
       {/* Content */}
       <div className="relative z-10 text-center max-w-4xl mx-auto">
-        <div className="inline-flex items-center gap-2 bg-blue-50 border border-blue-100 px-4 py-1.5 rounded-full text-xs font-medium text-blue-700 mb-6 animate-fade-in-up">
+        <div className="inline-flex items-center gap-2 bg-blue-50 dark:bg-blue-500/10 border border-blue-100 dark:border-blue-500/30 px-4 py-1.5 rounded-full text-xs font-medium text-blue-700 dark:text-blue-400 mb-6 animate-fade-in-up">
           <Sparkles className="w-3 h-3" />
           AI-native month-end close platform
           <ChevronRight className="w-3 h-3" />
         </div>
 
-        <h1 className="text-5xl md:text-7xl font-bold text-slate-900 leading-[1.05] tracking-tight mb-6 animate-fade-in-up animation-delay-200">
+        <h1 className="text-5xl md:text-7xl font-bold text-theme leading-[1.05] tracking-tight mb-6 animate-fade-in-up animation-delay-200">
           Month-end close,{" "}
           <span className="text-gradient">automated.</span>
         </h1>
 
-        <p className="text-lg md:text-xl text-slate-600 max-w-2xl mx-auto leading-relaxed mb-8 animate-fade-in-up animation-delay-400">
+        <p className="text-lg md:text-xl text-theme-2 max-w-2xl mx-auto leading-relaxed mb-8 animate-fade-in-up animation-delay-400">
           Nordavix generates AI-powered flux commentary from your trial balance in minutes.
           Built for controllers who want their lives back at close.
         </p>
@@ -329,7 +339,7 @@ function HeroSection() {
           </a>
         </div>
 
-        <p className="text-xs text-slate-400 animate-fade-in-up animation-delay-1000">
+        <p className="text-xs text-theme-muted animate-fade-in-up animation-delay-1000">
           No credit card required · SOC 2 compliant · Free trial
         </p>
       </div>
@@ -338,9 +348,11 @@ function HeroSection() {
         <HeroFlow />
       </div>
 
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-slate-400 animate-bounce">
-        <div className="w-5 h-8 border border-slate-300 rounded-full flex items-start justify-center pt-1.5">
-          <div className="w-1 h-2 bg-slate-400 rounded-full animate-bounce animation-delay-200" />
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-theme-muted animate-bounce">
+        <div className="w-5 h-8 rounded-full flex items-start justify-center pt-1.5"
+          style={{ border: "1px solid var(--border-strong)" }}>
+          <div className="w-1 h-2 rounded-full animate-bounce animation-delay-200"
+            style={{ background: "var(--text-muted)" }} />
         </div>
       </div>
     </section>
@@ -422,19 +434,19 @@ const FEATURES = [
 function FeaturesSection() {
   const { ref, inView } = useInView(0.1)
   return (
-    <section id="features" className="py-24 px-6 bg-white">
+    <section id="features" className="py-24 px-6" style={{ background: "var(--surface)" }}>
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 text-blue-600 text-xs font-semibold uppercase tracking-widest mb-4">
-            <div className="w-4 h-px bg-blue-600" />
+          <div className="inline-flex items-center gap-2 text-blue-600 dark:text-blue-400 text-xs font-semibold uppercase tracking-widest mb-4">
+            <div className="w-4 h-px bg-blue-600 dark:bg-blue-400" />
             Features
-            <div className="w-4 h-px bg-blue-600" />
+            <div className="w-4 h-px bg-blue-600 dark:bg-blue-400" />
           </div>
-          <h2 className="text-3xl md:text-5xl font-bold text-slate-900 mb-4 tracking-tight">
+          <h2 className="text-3xl md:text-5xl font-bold text-theme mb-4 tracking-tight">
             Everything you need to{" "}
             <span className="text-gradient">close faster</span>
           </h2>
-          <p className="text-slate-500 max-w-xl mx-auto">
+          <p className="text-theme-muted max-w-xl mx-auto">
             Nordavix handles the analysis so your team can focus on decisions, not documentation.
           </p>
         </div>
@@ -445,14 +457,18 @@ function FeaturesSection() {
             return (
               <div
                 key={f.title}
-                className={`bg-white border border-slate-100 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-slate-200 transition-all duration-500 group ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
-                style={{ transitionDelay: `${i * 80}ms` }}
+                className={`rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-500 group ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  transitionDelay: `${i * 80}ms`,
+                }}
               >
                 <div className={`w-10 h-10 rounded-xl ${f.iconBg} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
                   <Icon className={`w-5 h-5 ${f.iconColor}`} />
                 </div>
-                <h3 className="font-semibold text-slate-900 mb-2">{f.title}</h3>
-                <p className="text-sm text-slate-500 leading-relaxed">{f.description}</p>
+                <h3 className="font-semibold text-theme mb-2">{f.title}</h3>
+                <p className="text-sm text-theme-muted leading-relaxed">{f.description}</p>
               </div>
             )
           })}
@@ -501,25 +517,26 @@ const STEPS = [
 function HowItWorksSection() {
   const { ref, inView } = useInView(0.1)
   return (
-    <section id="how-it-works" className="py-24 px-6 bg-slate-50">
+    <section id="how-it-works" className="py-24 px-6" style={{ background: "var(--surface-2)" }}>
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 text-purple-600 text-xs font-semibold uppercase tracking-widest mb-4">
-            <div className="w-4 h-px bg-purple-600" />
+          <div className="inline-flex items-center gap-2 text-purple-600 dark:text-purple-400 text-xs font-semibold uppercase tracking-widest mb-4">
+            <div className="w-4 h-px bg-purple-600 dark:bg-purple-400" />
             How it works
-            <div className="w-4 h-px bg-purple-600" />
+            <div className="w-4 h-px bg-purple-600 dark:bg-purple-400" />
           </div>
-          <h2 className="text-3xl md:text-5xl font-bold text-slate-900 mb-4 tracking-tight">
+          <h2 className="text-3xl md:text-5xl font-bold text-theme mb-4 tracking-tight">
             From upload to report{" "}
             <span className="text-gradient">in four steps</span>
           </h2>
-          <p className="text-slate-500 max-w-xl mx-auto">
+          <p className="text-theme-muted max-w-xl mx-auto">
             A workflow designed around how controllers actually work — not around how software engineers think they work.
           </p>
         </div>
 
         <div ref={ref} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 relative">
-          <div className="hidden lg:block absolute top-10 left-[12.5%] right-[12.5%] h-px bg-gradient-to-r from-slate-200/0 via-slate-200 to-slate-200/0" />
+          <div className="hidden lg:block absolute top-10 left-[12.5%] right-[12.5%] h-px"
+            style={{ background: "linear-gradient(to right, transparent, var(--border-strong), transparent)" }} />
 
           {STEPS.map((step, i) => {
             const Icon = step.icon
@@ -531,12 +548,13 @@ function HowItWorksSection() {
               >
                 <div className={`relative w-20 h-20 rounded-2xl bg-gradient-to-br ${step.color} flex items-center justify-center mb-5 shadow-lg ${step.shadow} z-10`}>
                   <Icon className="w-8 h-8 text-white" />
-                  <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-[10px] font-bold text-slate-500">
+                  <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full shadow-sm flex items-center justify-center text-[10px] font-bold"
+                    style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
                     {step.num.slice(-1)}
                   </div>
                 </div>
-                <h3 className="font-semibold text-slate-900 mb-2 text-sm">{step.title}</h3>
-                <p className="text-xs text-slate-500 leading-relaxed">{step.description}</p>
+                <h3 className="font-semibold text-theme mb-2 text-sm">{step.title}</h3>
+                <p className="text-xs text-theme-muted leading-relaxed">{step.description}</p>
               </div>
             )
           })}
@@ -632,27 +650,28 @@ function ComparisonSection() {
     { feature: "Built for accountants", manual: true, checklist: true, nordavix: true },
   ]
   return (
-    <section className="py-24 px-6 bg-white">
+    <section className="py-24 px-6" style={{ background: "var(--surface)" }}>
       <div className="max-w-4xl mx-auto">
         <div className="text-center mb-12">
-          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-4 tracking-tight">
+          <h2 className="text-3xl md:text-4xl font-bold text-theme mb-4 tracking-tight">
             Why Nordavix vs the alternatives
           </h2>
-          <p className="text-slate-500">
+          <p className="text-theme-muted">
             Checklist tools help you track. Nordavix actually does the work.
           </p>
         </div>
 
         <div
           ref={ref}
-          className={`bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-sm transition-all duration-700 ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
+          className={`rounded-2xl overflow-hidden shadow-sm transition-all duration-700 ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
         >
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-100 bg-slate-50">
-                <th className="text-left px-6 py-4 text-slate-500 font-medium w-1/2">Capability</th>
-                <th className="text-center px-4 py-4 text-slate-500 font-medium">Manual</th>
-                <th className="text-center px-4 py-4 text-slate-500 font-medium">Checklist tools</th>
+              <tr style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                <th className="text-left px-6 py-4 font-medium w-1/2 text-theme-muted">Capability</th>
+                <th className="text-center px-4 py-4 font-medium text-theme-muted">Manual</th>
+                <th className="text-center px-4 py-4 font-medium text-theme-muted">Checklist tools</th>
                 <th className="text-center px-4 py-4 font-semibold">
                   <span className="text-gradient">Nordavix</span>
                 </th>
@@ -660,13 +679,19 @@ function ComparisonSection() {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.feature} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                  <td className="px-6 py-3 text-slate-700">{row.feature}</td>
+                <tr key={row.feature}
+                  className="transition-colors"
+                  style={{ borderBottom: "1px solid var(--border)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+                >
+                  <td className="px-6 py-3 text-theme">{row.feature}</td>
                   {[row.manual, row.checklist, row.nordavix].map((val, j) => (
                     <td key={j} className="text-center px-4 py-3">
                       {val
-                        ? <CheckCircle2 className={`w-4 h-4 mx-auto ${j === 2 ? "text-[var(--green)]" : "text-slate-300"}`} />
-                        : <div className="w-4 h-px bg-slate-200 mx-auto" />
+                        ? <CheckCircle2 className="w-4 h-4 mx-auto"
+                            style={{ color: j === 2 ? "var(--green)" : "var(--text-muted)" }} />
+                        : <div className="w-4 h-px mx-auto" style={{ background: "var(--border-strong)" }} />
                       }
                     </td>
                   ))}
@@ -769,9 +794,11 @@ function Footer() {
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
+// Body already paints `var(--bg)` + `var(--text)` (index.css), so the page
+// inherits dark mode from the html.dark class — no hardcoded bg-white here.
 export function HomePage() {
   return (
-    <div className="min-h-screen bg-white text-slate-900">
+    <div className="min-h-screen text-theme">
       <Navbar />
       <HeroSection />
       <StatsBar />
