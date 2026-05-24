@@ -96,11 +96,14 @@ export function ReconciliationsDashboard() {
     staleTime: 60_000,
   })
 
+  // Manual-fetch only. We never auto-pull from QBO on mount or period change —
+  // every sync is an explicit user action. `enabled: false` keeps the query
+  // dormant; handleSync() drives it via refetch().
   const { data: overview, isFetching, refetch, dataUpdatedAt } = useQuery({
     queryKey: ["recons-overview", periodEnd],
     queryFn:  () => reconsApi.getOverview(periodEnd),
-    enabled:  !!qbo,
-    staleTime: 30_000,
+    enabled:  false,
+    staleTime: Infinity,
   })
 
   async function handleSync() {
@@ -285,7 +288,27 @@ export function ReconciliationsDashboard() {
           </div>
         )}
 
-        {qbo && (
+        {qbo && !overview && !isFetching && (
+          <div
+            className="rounded-xl p-8 text-center"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
+          >
+            <div className="h-14 w-14 mx-auto rounded-full flex items-center justify-center mb-4"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              <RefreshCw size={26} strokeWidth={1.6} />
+            </div>
+            <p className="text-base font-semibold text-theme mb-1">Ready to sync</p>
+            <p className="text-sm max-w-md mx-auto mb-5" style={{ color: "var(--text-muted)" }}>
+              Pick a period end above and click Sync to pull every balance sheet account from QuickBooks.
+              Nordavix never auto-syncs — you stay in control of when data is fetched.
+            </p>
+            <Button size="sm" icon={<RefreshCw size={14} strokeWidth={1.8} />} onClick={handleSync}>
+              Sync from QuickBooks
+            </Button>
+          </div>
+        )}
+
+        {qbo && (overview || isFetching) && (
           <>
             {/* KPI strip */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

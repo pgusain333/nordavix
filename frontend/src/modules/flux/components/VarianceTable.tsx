@@ -474,7 +474,7 @@ function NarrativePanel({
   onRegenerate, isRegenerating,
 }: NarrativePanelProps) {
   const anomalyLabels: Record<string, string> = {
-    new_account:        "New account",
+    new_account:        "No prior balance",
     sign_flip:          "Sign flip",
     large_pct_change:   "Large % change",
     dormant_reactivated:"Reactivated",

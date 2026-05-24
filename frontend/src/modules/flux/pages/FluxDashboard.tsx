@@ -16,7 +16,7 @@
  *   status = parsed | ready_for_review | complete  → VarianceTable
  *   status = error         → error state
  */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -742,32 +742,160 @@ interface QboInlineProps {
   onComplete: (tb: TrialBalance) => void
 }
 
-function QboFluxInlineForm({ onComplete }: QboInlineProps) {
-  // Default: last full calendar month.
-  const lastMonthEnd = (() => {
-    const d = new Date(); d.setDate(0)  // last day of previous month
-    return d.toISOString().slice(0, 10)
-  })()
-  const lastMonthStart = (() => {
-    const d = new Date(); d.setDate(0); d.setDate(1)  // first day of previous month
-    return d.toISOString().slice(0, 10)
-  })()
+// ── Period preset helpers ───────────────────────────────────────────────────
+// All presets compute (currentStart, currentEnd) AND (priorStart, priorEnd)
+// directly. "Prior" semantics differ per preset:
+//   - "vs prior X" presets compare to the immediately preceding period
+//   - "vs same X last year" presets compare to the same window one year back
+// This avoids the ambiguity of always-minus-one-year for, say, a Q1 vs Q4 ask.
 
-  const [name,        setName]        = useState(`Flux ${lastMonthEnd.slice(0, 7)}`)
-  const [periodStart, setPeriodStart] = useState(lastMonthStart)
-  const [periodEnd,   setPeriodEnd]   = useState(lastMonthEnd)
+interface PeriodPreset {
+  key: string
+  label: string
+  /** Returns [currentStart, currentEnd, priorStart, priorEnd] as ISO strings */
+  compute: () => [string, string, string, string]
+}
+
+function iso(d: Date): string {
+  return d.toISOString().slice(0, 10)
+}
+function lastDayOfMonth(year: number, monthIdx0: number): Date {
+  return new Date(year, monthIdx0 + 1, 0)
+}
+
+const PERIOD_PRESETS: PeriodPreset[] = [
+  {
+    key: "mtd_vs_prior_month",
+    label: "This month vs last month",
+    compute: () => {
+      const now = new Date()
+      const cStart = new Date(now.getFullYear(), now.getMonth(), 1)
+      const cEnd   = now
+      const pStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const pEnd   = lastDayOfMonth(now.getFullYear(), now.getMonth() - 1)
+      return [iso(cStart), iso(cEnd), iso(pStart), iso(pEnd)]
+    },
+  },
+  {
+    key: "last_month_vs_prior_month",
+    label: "Last month vs prior month",
+    compute: () => {
+      const now = new Date()
+      const cStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const cEnd   = lastDayOfMonth(now.getFullYear(), now.getMonth() - 1)
+      const pStart = new Date(now.getFullYear(), now.getMonth() - 2, 1)
+      const pEnd   = lastDayOfMonth(now.getFullYear(), now.getMonth() - 2)
+      return [iso(cStart), iso(cEnd), iso(pStart), iso(pEnd)]
+    },
+  },
+  {
+    key: "last_month_vs_same_last_year",
+    label: "Last month vs same month last year",
+    compute: () => {
+      const now = new Date()
+      const cStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const cEnd   = lastDayOfMonth(now.getFullYear(), now.getMonth() - 1)
+      const pStart = new Date(now.getFullYear() - 1, now.getMonth() - 1, 1)
+      const pEnd   = lastDayOfMonth(now.getFullYear() - 1, now.getMonth() - 1)
+      return [iso(cStart), iso(cEnd), iso(pStart), iso(pEnd)]
+    },
+  },
+  {
+    key: "this_qtr_vs_prior_qtr",
+    label: "This quarter vs prior quarter",
+    compute: () => {
+      const now = new Date()
+      const qIdx = Math.floor(now.getMonth() / 3)             // 0..3 = Q1..Q4
+      const cStart = new Date(now.getFullYear(), qIdx * 3, 1)
+      const cEnd   = lastDayOfMonth(now.getFullYear(), qIdx * 3 + 2)
+      const prevQ  = qIdx === 0 ? 3 : qIdx - 1
+      const prevYr = qIdx === 0 ? now.getFullYear() - 1 : now.getFullYear()
+      const pStart = new Date(prevYr, prevQ * 3, 1)
+      const pEnd   = lastDayOfMonth(prevYr, prevQ * 3 + 2)
+      return [iso(cStart), iso(cEnd), iso(pStart), iso(pEnd)]
+    },
+  },
+  {
+    key: "this_qtr_vs_same_last_year",
+    label: "This quarter vs same quarter last year",
+    compute: () => {
+      const now = new Date()
+      const qIdx = Math.floor(now.getMonth() / 3)
+      const cStart = new Date(now.getFullYear(), qIdx * 3, 1)
+      const cEnd   = lastDayOfMonth(now.getFullYear(), qIdx * 3 + 2)
+      const pStart = new Date(now.getFullYear() - 1, qIdx * 3, 1)
+      const pEnd   = lastDayOfMonth(now.getFullYear() - 1, qIdx * 3 + 2)
+      return [iso(cStart), iso(cEnd), iso(pStart), iso(pEnd)]
+    },
+  },
+  {
+    key: "ytd_vs_prior_ytd",
+    label: "This year (YTD) vs prior YTD",
+    compute: () => {
+      const now = new Date()
+      const cStart = new Date(now.getFullYear(), 0, 1)
+      const cEnd   = now
+      const pStart = new Date(now.getFullYear() - 1, 0, 1)
+      // Same calendar day as today, one year back
+      const pEnd   = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate())
+      return [iso(cStart), iso(cEnd), iso(pStart), iso(pEnd)]
+    },
+  },
+  {
+    key: "last_full_year_vs_prior_year",
+    label: "Last full year vs prior year",
+    compute: () => {
+      const now = new Date()
+      const yr = now.getFullYear() - 1
+      return [iso(new Date(yr, 0, 1)), iso(new Date(yr, 11, 31)),
+              iso(new Date(yr - 1, 0, 1)), iso(new Date(yr - 1, 11, 31))]
+    },
+  },
+]
+
+
+function QboFluxInlineForm({ onComplete }: QboInlineProps) {
+  // Default preset = last month vs prior month
+  const initial = PERIOD_PRESETS[1].compute()
+
+  const [name,        setName]        = useState(`Flux ${initial[1].slice(0, 7)}`)
+  const [periodStart, setPeriodStart] = useState(initial[0])
+  const [periodEnd,   setPeriodEnd]   = useState(initial[1])
+  const [priorStart,  setPriorStart]  = useState(initial[2])
+  const [priorEnd,    setPriorEnd]    = useState(initial[3])
+  const [activePreset, setActivePreset] = useState<string | null>(PERIOD_PRESETS[1].key)
   const [threshold,   setThreshold]   = useState("5000")
   const [error,       setError]       = useState<string | null>(null)
 
-  // Compute the prior-year range automatically. Same calendar dates, one year back.
-  const { priorStart, priorEnd } = useMemo(() => {
-    const minusYear = (iso: string) => {
-      const d = new Date(iso + "T00:00:00")
+  function applyPreset(p: PeriodPreset) {
+    const [cs, ce, ps, pe] = p.compute()
+    setPeriodStart(cs); setPeriodEnd(ce)
+    setPriorStart(ps);  setPriorEnd(pe)
+    setActivePreset(p.key)
+    setName(`Flux ${ce.slice(0, 7)}`)
+  }
+
+  // When user manually edits dates, clear the active preset highlight + recompute
+  // prior to match (same range, one year back) only if they had been on a preset.
+  function onPeriodStartChange(v: string) {
+    setPeriodStart(v)
+    if (activePreset) {
+      setActivePreset(null)
+      // Compute new prior as same-dates-one-year-back
+      const d = new Date(v + "T00:00:00")
       d.setFullYear(d.getFullYear() - 1)
-      return d.toISOString().slice(0, 10)
+      setPriorStart(d.toISOString().slice(0, 10))
     }
-    return { priorStart: minusYear(periodStart), priorEnd: minusYear(periodEnd) }
-  }, [periodStart, periodEnd])
+  }
+  function onPeriodEndChange(v: string) {
+    setPeriodEnd(v)
+    if (activePreset) {
+      setActivePreset(null)
+      const d = new Date(v + "T00:00:00")
+      d.setFullYear(d.getFullYear() - 1)
+      setPriorEnd(d.toISOString().slice(0, 10))
+    }
+  }
 
   const fmt = (iso: string) => {
     try {
@@ -795,6 +923,28 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
     <div className="rounded-xl p-5 space-y-4"
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
 
+      {/* Period presets — click any chip to autofill both periods */}
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
+          Quick periods
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {PERIOD_PRESETS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => applyPreset(p)}
+              className="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all"
+              style={activePreset === p.key
+                ? { background: "var(--green)", color: "#fff", border: "1px solid var(--green)" }
+                : { background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border-strong)" }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <FieldLabel label="Analysis name">
           <input value={name} onChange={(e) => setName(e.target.value)} className="flux-input" />
@@ -803,19 +953,19 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
           <input value={threshold} onChange={(e) => setThreshold(e.target.value)} type="number" min="0" className="flux-input" />
         </FieldLabel>
         <FieldLabel label="Period start">
-          <input value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} type="date" className="flux-input" />
+          <input value={periodStart} onChange={(e) => onPeriodStartChange(e.target.value)} type="date" className="flux-input" />
         </FieldLabel>
         <FieldLabel label="Period end">
-          <input value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} type="date" className="flux-input" />
+          <input value={periodEnd} onChange={(e) => onPeriodEndChange(e.target.value)} type="date" className="flux-input" />
         </FieldLabel>
       </div>
 
-      {/* Auto-computed prior period — read-only, just confirms what'll be pulled */}
+      {/* Confirms exactly what will be pulled (auto from preset or computed from current dates) */}
       <div className="rounded-lg p-3 flex items-start gap-2"
         style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
         <RefreshCw size={12} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} className="mt-0.5 shrink-0" />
         <div className="text-[11px] leading-snug" style={{ color: "var(--text-2)" }}>
-          <span style={{ color: "var(--text-muted)" }}>Comparing against same dates one year back: </span>
+          <span style={{ color: "var(--text-muted)" }}>Comparing against: </span>
           <span className="font-medium">{fmt(priorStart)} → {fmt(priorEnd)}</span>
         </div>
       </div>

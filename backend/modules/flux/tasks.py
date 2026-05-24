@@ -151,7 +151,11 @@ async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
         anomaly_desc = ""
         if var.anomaly_flags:
             flag_labels = {
-                "new_account":        "this is a new account (no prior balance)",
+                # "new_account" doesn't mean a freshly-created QBO account; it
+                # means the account had a zero balance in the prior period and
+                # has activity now. Common when an account was opened mid-period
+                # or simply wasn't used in the comparison period.
+                "new_account":        "this account had no balance in the prior period and now does",
                 "sign_flip":          "the balance has flipped sign from prior period",
                 "large_pct_change":   "there is an unusually large percentage change",
                 "dormant_reactivated":"this account was previously dormant",

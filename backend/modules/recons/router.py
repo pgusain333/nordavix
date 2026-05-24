@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
+from models.qbo_connection import QboConnection
 from models.reconciliation import (
     Reconciliation,
     ReconciliationItem,

@@ -190,21 +190,12 @@ async def create_trial_balance_from_qbo(
         await db.commit()
         raise HTTPException(status_code=422, detail=tb.error_detail)
 
-    _, _, material = await create_accounts_and_variances(db, tb, tenant_id, account_dicts)
-    tb.status = "parsed"
+    _, _, _material = await create_accounts_and_variances(db, tb, tenant_id, account_dicts)
+    # AI is on-demand only — the user clicks "Find reasons" or "Regenerate"
+    # from the variance table to fire commentary. No auto-spend at creation.
+    # Status goes straight to ready_for_review so the user can browse rows.
+    tb.status = "ready_for_review"
     await db.commit()
-
-    # 5) Kick off AI narratives for material variances (in-process)
-    if material > 0:
-        variance_result = await db.execute(
-            select(Variance).join(Account, Variance.account_id == Account.id)
-            .where(Account.trial_balance_id == tb.id, Variance.is_material == True)
-        )
-        for var in variance_result.scalars().all():
-            background_tasks.add_task(generate_narrative_async, str(var.id), str(tenant_id))
-        tb.status = "generating"
-        await db.commit()
-
     await db.refresh(tb)
     return tb
 
@@ -350,23 +341,10 @@ async def parse_trial_balance(
         db, tb, tenant_id, account_dicts
     )
 
-    tb.status = "parsed"
+    # AI commentary is on-demand only — user clicks "Find reasons" or per-row
+    # "Generate AI commentary" from the variance table. No auto-spend.
+    tb.status = "ready_for_review"
     await db.commit()
-
-    # Enqueue AI tasks for material variances
-    variance_result = await db.execute(
-        select(Variance).join(Account, Variance.account_id == Account.id)
-        .where(Account.trial_balance_id == tb_id, Variance.is_material == True)
-    )
-    material_variances = list(variance_result.scalars().all())
-
-    # Run AI in-process via BackgroundTasks — no separate worker required.
-    for var in material_variances:
-        background_tasks.add_task(generate_narrative_async, str(var.id), str(tenant_id))
-
-    if material_variances:
-        tb.status = "generating"
-        await db.commit()
 
     return ParseResult(
         accounts_created=accts,
