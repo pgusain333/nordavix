@@ -254,70 +254,57 @@ async def fetch_variance_detail(
     period_end: date,
 ) -> dict:
     """
-    Explain WHY GL-subledger differ for this account by surfacing the most
-    likely contributing transactions:
+    Show every transaction posted to this account in the last 90 days, via
+    QBO's GeneralLedger report. Same approach as flux variance drill-in so
+    totals reconcile uniformly across both modules.
 
-      - For AR/AP: pulls JEs from the last 90 days that touched the account
-        without an Entity (customer/vendor) ref — those are the canonical
-        cause of an AR/AP-vs-aging gap.
-      - For Bank/CC and others: just lists recent JE activity touching the
-        account so the user can spot anomalies.
+    For AR/AP accounts we also annotate JEs that lack a customer/vendor ref
+    — those are the canonical drivers of an aging-vs-GL gap.
     """
+    from core.qbo_gl import pull_gl_transactions
+    from datetime import timedelta
+
     accts = await _list_balance_sheet_accounts(conn, session)
     acct = next((a for a in accts if str(a.get("Id")) == str(qbo_account_id)), None)
     if acct is None:
-        return {"rows": [], "source": "Account not found."}
+        return {"rows": [], "source": "Account not found.", "total": "0"}
 
-    cutoff = (period_end - timedelta(days=90)).isoformat()
-    end = period_end.isoformat()
-    try:
-        q = (
-            f"SELECT Id, DocNumber, TxnDate, PrivateNote, Line "
-            f"FROM JournalEntry WHERE TxnDate >= '{cutoff}' "
-            f"AND TxnDate <= '{end}' MAXRESULTS 200"
-        )
-        data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
-        jes = data.get("QueryResponse", {}).get("JournalEntry", []) or []
-    except Exception:
-        logger.exception("Variance-detail JE pull failed")
-        jes = []
+    period_start = period_end - timedelta(days=90)
+    gl_rows = await pull_gl_transactions(conn, session, qbo_account_id, period_start, period_end)
 
     target_ar_ap = acct.get("AccountType") in ("Accounts Receivable", "Accounts Payable")
     rows: list[dict] = []
-    for je in jes:
-        amount = Decimal("0")
-        has_entity_ref = False
-        for line in je.get("Line", []) or []:
-            detail = line.get("JournalEntryLineDetail") or {}
-            if (detail.get("AccountRef") or {}).get("value") != acct.get("Id"):
-                continue
-            if (detail.get("Entity") or {}).get("EntityRef"):
-                has_entity_ref = True
-            line_amt = _dec(line.get("Amount"))
-            amount += line_amt if detail.get("PostingType") == "Debit" else -line_amt
-        if amount == 0:
-            continue
-        # For AR/AP, only flag JEs without an Entity ref (those cause the gap).
-        if target_ar_ap and has_entity_ref:
-            continue
+    total = Decimal("0")
+    for r in gl_rows:
+        amount = r["amount"]
+        total += amount
+        # For AR/AP, JEs without a customer/vendor in the entity column are
+        # the most likely cause of an aging-vs-GL gap — flag them.
+        is_je = r["txn_type"].lower() in ("journal entry", "journalentry")
+        no_entity = not r["entity_name"]
+        flag = "no_entity_ref" if (target_ar_ap and is_je and no_entity) else None
         rows.append({
-            "txn_id":        je.get("Id"),
-            "txn_type":      "JournalEntry",
-            "txn_number":    je.get("DocNumber") or "",
-            "txn_date":      je.get("TxnDate") or "",
-            "amount":        str(amount),
-            "memo":          (je.get("PrivateNote") or "")[:200],
-            "flag":          "no_entity_ref" if target_ar_ap else "recent_je",
+            "txn_id":     r["qbo_txn_id"] or "",
+            "txn_type":   r["txn_type"],
+            "txn_number": r["txn_number"] or "",
+            "txn_date":   r["txn_date"].isoformat() if r["txn_date"] else "",
+            "amount":     str(amount),
+            "memo":       r["memo"] or "",
+            "entity":     r["entity_name"] or "",
+            "flag":       flag,
         })
 
-    rows.sort(key=lambda r: r["txn_date"], reverse=True)
     label = (
-        "Recent journal entries on this account WITHOUT a customer or vendor "
-        "reference - these are the typical cause of an aging-vs-GL gap."
+        "Last 90 days of activity on this account from QuickBooks. "
+        "JEs flagged as 'no customer/vendor ref' typically explain the GL-vs-subledger gap."
         if target_ar_ap
-        else "Recent journal entry activity on this account (last 90 days)."
+        else "Last 90 days of activity on this account from QuickBooks (GeneralLedger report)."
     )
-    return {"rows": rows, "source": label}
+    return {
+        "rows":   rows,
+        "source": label,
+        "total":  str(total.quantize(Decimal("0.01"))),
+    }
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

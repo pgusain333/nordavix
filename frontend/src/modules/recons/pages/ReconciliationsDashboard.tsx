@@ -582,16 +582,24 @@ function DetailDrawer({ account, mode, periodEnd, onClose, onSwitchMode }: Drawe
         className="fixed top-0 right-0 bottom-0 z-50 w-full sm:w-[480px] lg:w-[560px] flex flex-col"
         style={{ background: "var(--surface)", borderLeft: "1px solid var(--border)" }}
       >
-        {/* Header */}
+        {/* Header — account number featured prominently so the user can
+            cross-reference with the GL or the Flux Analysis screen */}
         <div className="px-5 py-4 flex items-start gap-3"
           style={{ borderBottom: "1px solid var(--border)" }}>
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-              {account.group_label}
-            </p>
-            <h3 className="text-base font-semibold text-theme truncate mt-0.5">{account.account_name}</h3>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-              {account.account_number && `${account.account_number} · `}
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                {account.group_label}
+              </span>
+              {account.account_number && (
+                <span className="text-[11px] font-mono px-1.5 py-0.5 rounded"
+                  style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+                  Acct No. {account.account_number}
+                </span>
+              )}
+            </div>
+            <h3 className="text-base font-semibold text-theme truncate">{account.account_name}</h3>
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
               GL {fmtMoney(account.gl_balance)} · Subledger {fmtMoney(account.subledger_balance)}
               {hasVariance && (
                 <> · <span style={{ color: "#dc2626" }}>Variance {fmtMoney(account.variance)}</span></>
@@ -621,7 +629,11 @@ function DetailDrawer({ account, mode, periodEnd, onClose, onSwitchMode }: Drawe
           {mode === "subledger" ? (
             <SubledgerBody subledger={subledger} loading={subLoading} />
           ) : (
-            <VarianceBody variance={varianceDetail} loading={varLoading} />
+            <VarianceBody
+              variance={varianceDetail}
+              loading={varLoading}
+              expectedVariance={account.variance}
+            />
           )}
         </div>
       </motion.aside>
@@ -677,74 +689,120 @@ function SubledgerBody({ subledger, loading }: { subledger?: SubledgerDetail; lo
             QuickBooks returned no detail rows. The account balance still ties to the GL.
           </p>
         </div>
-      ) : isAging ? (
-        <table className="w-full text-xs">
-          <thead>
-            <tr style={{ borderBottom: "1px solid var(--border)" }}>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Entity</th>
-              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>Current</th>
-              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>1-30</th>
-              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>31-60</th>
-              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>61-90</th>
-              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>&gt; 90</th>
-              <th className="text-right py-2 px-2 font-semibold" style={{ color: "var(--text)" }}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {subledger.rows.map((r, i) => (
-              <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
-                <td className="py-2 px-2 text-theme font-medium">{r.label}</td>
-                <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r.current ?? "0")}</td>
-                <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r["1_30"] ?? "0")}</td>
-                <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r["31_60"] ?? "0")}</td>
-                <td className="text-right py-2 px-1 tabular-nums"
-                  style={{ color: parseFloat(r["61_90"] ?? "0") > 0 ? "#92400e" : "inherit" }}>
-                  {fmtMoney(r["61_90"] ?? "0")}
-                </td>
-                <td className="text-right py-2 px-1 tabular-nums"
-                  style={{ color: parseFloat(r.over_90 ?? "0") > 0 ? "#dc2626" : "inherit" }}>
-                  {fmtMoney(r.over_90 ?? "0")}
-                </td>
-                <td className="text-right py-2 px-2 tabular-nums font-semibold text-theme">
-                  {fmtMoney(r.total ?? "0")}
-                </td>
+      ) : isAging ? (() => {
+        // Compute aging totals for the footer row
+        const totals = subledger.rows.reduce((acc, r) => ({
+          current: acc.current + parseFloat(r.current ?? "0"),
+          a1_30:   acc.a1_30   + parseFloat(r["1_30"] ?? "0"),
+          a31_60:  acc.a31_60  + parseFloat(r["31_60"] ?? "0"),
+          a61_90:  acc.a61_90  + parseFloat(r["61_90"] ?? "0"),
+          over90:  acc.over90  + parseFloat(r.over_90 ?? "0"),
+          total:   acc.total   + parseFloat(r.total ?? "0"),
+        }), { current: 0, a1_30: 0, a31_60: 0, a61_90: 0, over90: 0, total: 0 })
+        return (
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Entity</th>
+                <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>Current</th>
+                <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>1-30</th>
+                <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>31-60</th>
+                <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>61-90</th>
+                <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>&gt; 90</th>
+                <th className="text-right py-2 px-2 font-semibold" style={{ color: "var(--text)" }}>Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <table className="w-full text-xs">
-          <thead>
-            <tr style={{ borderBottom: "1px solid var(--border)" }}>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
-              <th className="text-right py-2 px-2 font-semibold" style={{ color: "var(--text)" }}>Amount</th>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Memo</th>
-            </tr>
-          </thead>
-          <tbody>
-            {subledger.rows.map((r, i) => (
-              <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
-                <td className="py-2 px-2 text-theme">{r.txn_type || r.label}</td>
-                <td className="py-2 px-2 font-mono" style={{ color: "var(--text-2)" }}>{r.txn_number || "—"}</td>
-                <td className="py-2 px-2" style={{ color: "var(--text-2)" }}>{r.txn_date || "—"}</td>
-                <td className="text-right py-2 px-2 tabular-nums font-medium text-theme">{fmtMoney(r.amount ?? "0")}</td>
-                <td className="py-2 px-2 truncate max-w-[180px]" style={{ color: "var(--text-muted)" }}>{r.memo || "—"}</td>
+            </thead>
+            <tbody>
+              {subledger.rows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                  <td className="py-2 px-2 text-theme font-medium">{r.label}</td>
+                  <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r.current ?? "0")}</td>
+                  <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r["1_30"] ?? "0")}</td>
+                  <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r["31_60"] ?? "0")}</td>
+                  <td className="text-right py-2 px-1 tabular-nums"
+                    style={{ color: parseFloat(r["61_90"] ?? "0") > 0 ? "#92400e" : "inherit" }}>
+                    {fmtMoney(r["61_90"] ?? "0")}
+                  </td>
+                  <td className="text-right py-2 px-1 tabular-nums"
+                    style={{ color: parseFloat(r.over_90 ?? "0") > 0 ? "#dc2626" : "inherit" }}>
+                    {fmtMoney(r.over_90 ?? "0")}
+                  </td>
+                  <td className="text-right py-2 px-2 tabular-nums font-semibold text-theme">
+                    {fmtMoney(r.total ?? "0")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            {/* Footer totals — sum every aging bucket so the user can spot-check */}
+            <tfoot>
+              <tr style={{ background: "var(--surface-2)", borderTop: "2px solid var(--border-strong)" }}>
+                <td className="py-2 px-2 font-bold text-theme">Total ({subledger.rows.length})</td>
+                <td className="text-right py-2 px-1 tabular-nums font-bold text-theme">{fmtMoney(totals.current)}</td>
+                <td className="text-right py-2 px-1 tabular-nums font-bold text-theme">{fmtMoney(totals.a1_30)}</td>
+                <td className="text-right py-2 px-1 tabular-nums font-bold text-theme">{fmtMoney(totals.a31_60)}</td>
+                <td className="text-right py-2 px-1 tabular-nums font-bold"
+                  style={{ color: totals.a61_90 > 0 ? "#92400e" : "var(--text)" }}>
+                  {fmtMoney(totals.a61_90)}
+                </td>
+                <td className="text-right py-2 px-1 tabular-nums font-bold"
+                  style={{ color: totals.over90 > 0 ? "#dc2626" : "var(--text)" }}>
+                  {fmtMoney(totals.over90)}
+                </td>
+                <td className="text-right py-2 px-2 tabular-nums font-bold text-theme">{fmtMoney(totals.total)}</td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </tfoot>
+          </table>
+        )
+      })() : (() => {
+        const total = subledger.rows.reduce((n, r) => n + parseFloat(r.amount ?? r.total ?? "0"), 0)
+        return (
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
+                <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
+                <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
+                <th className="text-right py-2 px-2 font-semibold" style={{ color: "var(--text)" }}>Amount</th>
+                <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Memo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subledger.rows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                  <td className="py-2 px-2 text-theme">{r.txn_type || r.label}</td>
+                  <td className="py-2 px-2 font-mono" style={{ color: "var(--text-2)" }}>{r.txn_number || "—"}</td>
+                  <td className="py-2 px-2" style={{ color: "var(--text-2)" }}>{r.txn_date || "—"}</td>
+                  <td className="text-right py-2 px-2 tabular-nums font-medium text-theme">{fmtMoney(r.amount ?? "0")}</td>
+                  <td className="py-2 px-2 truncate max-w-[180px]" style={{ color: "var(--text-muted)" }}>{r.memo || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: "var(--surface-2)", borderTop: "2px solid var(--border-strong)" }}>
+                <td className="py-2 px-2 font-bold text-theme" colSpan={3}>Total ({subledger.rows.length} txns)</td>
+                <td className="text-right py-2 px-2 tabular-nums font-bold text-theme">{fmtMoney(total)}</td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        )
+      })()}
     </div>
   )
 }
 
-function VarianceBody({ variance, loading }: { variance?: VarianceDetail; loading: boolean }) {
+function VarianceBody({ variance, loading, expectedVariance }:
+  { variance?: VarianceDetail; loading: boolean; expectedVariance: string }
+) {
   if (loading) {
     return <div className="py-12 flex items-center justify-center"><Spinner className="h-5 w-5" /></div>
   }
   if (!variance) return null
+
+  const sum = variance.rows.reduce((n, r) => n + (parseFloat(r.amount) || 0), 0)
+  const expected = parseFloat(expectedVariance) || 0
+  const diff = sum - expected
+  const inSync = Math.abs(diff) < 1
 
   return (
     <div className="space-y-3">
@@ -757,10 +815,9 @@ function VarianceBody({ variance, loading }: { variance?: VarianceDetail; loadin
       {variance.rows.length === 0 ? (
         <div className="py-8 text-center">
           <Zap size={24} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} className="mx-auto mb-2" />
-          <p className="text-sm font-medium text-theme">No variance-causing transactions found.</p>
+          <p className="text-sm font-medium text-theme">No transactions found in the last 90 days.</p>
           <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-            The gap may be from outside the 90-day lookback window, or from transaction types
-            we don't pull yet.
+            The gap may be from older activity. Widen the window or check the GL directly.
           </p>
         </div>
       ) : (
@@ -770,21 +827,66 @@ function VarianceBody({ variance, loading }: { variance?: VarianceDetail; loadin
               <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
               <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
               <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Entity</th>
               <th className="text-right py-2 px-2 font-semibold" style={{ color: "var(--text)" }}>Amount</th>
               <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Memo</th>
             </tr>
           </thead>
           <tbody>
-            {variance.rows.map((r, i) => (
-              <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
-                <td className="py-2 px-2 text-theme">{r.txn_type}</td>
-                <td className="py-2 px-2 font-mono" style={{ color: "var(--text-2)" }}>{r.txn_number || "—"}</td>
-                <td className="py-2 px-2" style={{ color: "var(--text-2)" }}>{r.txn_date || "—"}</td>
-                <td className="text-right py-2 px-2 tabular-nums font-medium text-theme">{fmtMoney(r.amount)}</td>
-                <td className="py-2 px-2 truncate max-w-[180px]" style={{ color: "var(--text-muted)" }}>{r.memo || "—"}</td>
-              </tr>
-            ))}
+            {variance.rows.map((r, i) => {
+              const flagged = r.flag === "no_entity_ref"
+              return (
+                <tr key={i} style={{
+                  borderBottom: "1px solid var(--border)",
+                  background: flagged ? "rgba(245, 158, 11, 0.08)" : "transparent",
+                }}
+                  title={flagged ? "Journal entry without a customer/vendor ref — likely cause of the gap" : ""}
+                >
+                  <td className="py-2 px-2 text-theme">{r.txn_type}</td>
+                  <td className="py-2 px-2 font-mono" style={{ color: "var(--text-2)" }}>{r.txn_number || "—"}</td>
+                  <td className="py-2 px-2" style={{ color: "var(--text-2)" }}>{r.txn_date || "—"}</td>
+                  <td className="py-2 px-2 truncate max-w-[110px]" style={{ color: "var(--text-2)" }}>
+                    {r.entity || (flagged ? <span style={{ color: "#92400e", fontStyle: "italic" }}>no ref</span> : "—")}
+                  </td>
+                  <td className="text-right py-2 px-2 tabular-nums font-medium text-theme">{fmtMoney(r.amount)}</td>
+                  <td className="py-2 px-2 truncate max-w-[160px]" style={{ color: "var(--text-muted)" }}>{r.memo || "—"}</td>
+                </tr>
+              )
+            })}
           </tbody>
+          <tfoot>
+            <tr style={{ background: "var(--surface-2)", borderTop: "2px solid var(--border-strong)" }}>
+              <td className="py-2 px-2 font-bold text-theme" colSpan={4}>Sum of activity (last 90 days)</td>
+              <td className="text-right py-2 px-2 tabular-nums font-bold text-theme">{fmtMoney(sum)}</td>
+              <td />
+            </tr>
+            <tr style={{ background: "var(--surface-2)" }}>
+              <td className="py-1.5 px-2 text-xs" style={{ color: "var(--text-muted)" }} colSpan={4}>
+                GL variance for this account
+              </td>
+              <td className="text-right py-1.5 px-2 tabular-nums text-xs" style={{ color: "var(--text-2)" }}>
+                {fmtMoney(expectedVariance)}
+              </td>
+              <td />
+            </tr>
+            <tr style={{
+              background: inSync ? "var(--green-subtle)" : "#fef2f2",
+              borderTop: "1px solid var(--border)",
+            }}>
+              <td className="py-2 px-2 text-xs font-semibold"
+                style={{ color: inSync ? "var(--green)" : "#b91c1c" }} colSpan={4}>
+                {inSync ? "Activity ties to the variance" : "Activity does not tie — unexplained gap"}
+              </td>
+              <td className="text-right py-2 px-2 tabular-nums font-bold"
+                style={{ color: inSync ? "var(--green)" : "#b91c1c" }}>
+                {inSync
+                  ? <CheckCircle2 size={14} strokeWidth={2} className="inline" />
+                  : fmtMoney(diff)
+                }
+              </td>
+              <td />
+            </tr>
+          </tfoot>
         </table>
       )}
     </div>

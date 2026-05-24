@@ -179,12 +179,14 @@ export interface VarianceRow {
   txn_date:   string
   amount:     string
   memo:       string
+  entity?:    string
   flag?:      string
 }
 
 export interface VarianceDetail {
   rows:   VarianceRow[]
   source: string
+  total:  string
 }
 
 export interface ReconciliationCreate {
