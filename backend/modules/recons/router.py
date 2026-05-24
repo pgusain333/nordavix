@@ -22,7 +22,7 @@ from decimal import Decimal
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser
@@ -324,6 +324,96 @@ async def bulk_update_account_review_status(
     )
     await db.commit()
     return {"updated": len(ids), "status": status_value}
+
+
+@router.post("/account/{qbo_account_id}/subledger")
+async def set_account_subledger_override(
+    qbo_account_id: str,
+    body: dict,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Set or clear the manual subledger override for one account+period.
+
+    Body shape:
+      { period_end: "2026-04-30",
+        total: 45000.00 | null,  // null clears the override
+        source: "Bank statement 4/30" | null }
+
+    When `total` is set, the live overview uses it as the subledger balance
+    for this account+period and recomputes variance accordingly. Useful for
+    Bank / Fixed Asset / Prepaid / Loan accounts where QBO has no separate
+    subledger to compare against.
+    """
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(str(body.get("period_end", "")))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    total_raw = body.get("total")
+    source = body.get("source")
+    if total_raw is not None:
+        try:
+            total = Decimal(str(total_raw))
+        except (ValueError, ArithmeticError):
+            raise HTTPException(status_code=400, detail="total must be numeric or null.")
+    else:
+        total = None
+
+    row = (await db.execute(
+        select(AccountReviewStatus).where(
+            AccountReviewStatus.qbo_account_id == qbo_account_id,
+            AccountReviewStatus.period_end == pe,
+        )
+    )).scalar_one_or_none()
+
+    now = datetime.now(timezone.utc)
+    if row is None:
+        row = AccountReviewStatus(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            qbo_account_id=qbo_account_id,
+            period_end=pe,
+            status="pending",
+            subledger_total=total,
+            subledger_source=source,
+            subledger_entered_by=user.id if total is not None else None,
+            subledger_entered_at=now if total is not None else None,
+        )
+        db.add(row)
+    else:
+        row.subledger_total = total
+        row.subledger_source = source if total is not None else None
+        row.subledger_entered_by = user.id if total is not None else None
+        row.subledger_entered_at = now if total is not None else None
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.subledger_override_set" if total is not None else "recon.subledger_override_cleared",
+        entity_type="account_review_status", entity_id=row.id,
+        metadata={
+            "summary": (
+                f"Set subledger override for account {qbo_account_id} ({pe}) → ${total}"
+                if total is not None
+                else f"Cleared subledger override for account {qbo_account_id} ({pe})"
+            ),
+            "qbo_account_id": qbo_account_id,
+            "period_end": body.get("period_end"),
+            "source": source,
+        },
+    )
+    await db.commit()
+    return {
+        "qbo_account_id": qbo_account_id,
+        "period_end":     body.get("period_end"),
+        "subledger_total":  str(total) if total is not None else None,
+        "subledger_source": source if total is not None else None,
+        "is_manual":      total is not None,
+    }
 
 
 @router.post("/clear-synced-data", status_code=status.HTTP_200_OK)

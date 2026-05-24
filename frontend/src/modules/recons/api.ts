@@ -117,20 +117,22 @@ export interface ReconciliationDashboard {
 export type AccountReviewStatus = "pending" | "reviewed" | "approved" | "flagged"
 
 export interface OverviewAccount {
-  qbo_id:               string
-  account_number:       string
-  account_name:         string
-  account_type:         string
-  group_label:          string   // Bank, AR, AP, Fixed Assets, etc.
-  gl_balance:           string
-  subledger_balance:    string
-  subledger_source:     string
-  has_subledger_detail: boolean
-  variance:             string
-  review_status:        AccountReviewStatus
-  reviewed_by:          string | null
-  reviewed_at:          string | null
-  review_notes:         string | null
+  qbo_id:                 string
+  account_number:         string
+  account_name:           string
+  account_type:           string
+  group_label:            string   // Bank, AR, AP, Fixed Assets, etc.
+  gl_balance:             string
+  subledger_balance:      string
+  subledger_source:       string
+  subledger_is_manual:    boolean
+  subledger_entered_at:   string | null
+  has_subledger_detail:   boolean
+  variance:               string
+  review_status:          AccountReviewStatus
+  reviewed_by:            string | null
+  reviewed_at:            string | null
+  review_notes:           string | null
 }
 
 export interface OverviewGroup {
@@ -258,6 +260,29 @@ async function updateAccountReviewStatus(
   return data
 }
 
+async function setSubledgerOverride(
+  qboAccountId: string,
+  periodEnd: string,
+  total: number | null,
+  source: string | null,
+): Promise<{
+  qbo_account_id: string
+  period_end:     string
+  subledger_total:  string | null
+  subledger_source: string | null
+  is_manual:      boolean
+}> {
+  const { data } = await apiClient.post(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/subledger`,
+    {
+      period_end: periodEnd,
+      total,
+      source,
+    },
+  )
+  return data
+}
+
 async function bulkUpdateAccountReviewStatus(
   periodEnd: string,
   status: AccountReviewStatus,
@@ -353,6 +378,7 @@ export const reconsApi = {
   clearSyncedData,
   updateAccountReviewStatus,
   bulkUpdateAccountReviewStatus,
+  setSubledgerOverride,
   getReconciliation,
   createReconciliation,
   resyncReconciliation,

@@ -139,18 +139,29 @@ async def fetch_overview(
             continue
 
         gl_balance = _tb_lookup(tb_balances, a)
-        subledger_balance, source, has_detail = _subledger_for_account(
-            acct_type=acct_type,
-            gl_balance=gl_balance,
-            ar_aging_sum=ar_aging_sum,
-            ap_aging_sum=ap_aging_sum,
-            ar_gl_total=ar_gl_total,
-            ap_gl_total=ap_gl_total,
-        )
-        variance = (gl_balance - subledger_balance).quantize(Decimal("0.01"))
-
         qbo_id = str(a.get("Id"))
         review = status_by_acct.get(qbo_id)
+
+        # Manual override beats the QBO default. Lets users plug in balances
+        # from external sources (bank statements, FA register, prepaid
+        # schedule) for account types where QBO has no separate subledger.
+        is_manual = review is not None and review.subledger_total is not None
+        if is_manual:
+            subledger_balance = review.subledger_total
+            source = review.subledger_source or "Manually entered"
+            has_detail = True  # users can re-edit
+        else:
+            subledger_balance, source, has_detail = _subledger_for_account(
+                acct_type=acct_type,
+                gl_balance=gl_balance,
+                ar_aging_sum=ar_aging_sum,
+                ap_aging_sum=ap_aging_sum,
+                ar_gl_total=ar_gl_total,
+                ap_gl_total=ap_gl_total,
+            )
+
+        variance = (gl_balance - subledger_balance).quantize(Decimal("0.01"))
+
         out_accounts.append({
             "qbo_id":              qbo_id,
             "account_number":      a.get("AcctNum") or "",
@@ -160,6 +171,9 @@ async def fetch_overview(
             "gl_balance":          str(gl_balance.quantize(Decimal("0.01"))),
             "subledger_balance":   str(subledger_balance.quantize(Decimal("0.01"))),
             "subledger_source":    source,
+            "subledger_is_manual": is_manual,
+            "subledger_entered_at": review.subledger_entered_at.isoformat()
+                                    if (review and review.subledger_entered_at) else None,
             "has_subledger_detail":has_detail,
             "variance":            str(variance),
             "review_status":       review.status if review else "pending",

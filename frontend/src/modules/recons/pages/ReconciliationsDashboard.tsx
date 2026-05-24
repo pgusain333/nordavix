@@ -34,6 +34,7 @@ import {
   Zap,
   ExternalLink,
   Sparkles,
+  Pencil,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import {
@@ -88,6 +89,8 @@ export function ReconciliationsDashboard() {
   const [drawerAccount, setDrawerAccount] = useState<OverviewAccount | null>(null)
   const [drawerMode, setDrawerMode] = useState<"subledger" | "variance">("subledger")
   const [confirmClear, setConfirmClear] = useState(false)
+  /** Account being edited via the manual-subledger modal (null = closed). */
+  const [editingSubledger, setEditingSubledger] = useState<OverviewAccount | null>(null)
   /** Set of qbo_account_ids the user has checked for bulk actions */
   const [selected, setSelected] = useState<Set<string>>(new Set())
   /** "Synced N accounts at HH:MM" — banner that fades out after a few seconds */
@@ -155,6 +158,16 @@ export function ReconciliationsDashboard() {
     mutationFn: (v: { id: string; status: AccountReviewStatus }) =>
       reconsApi.updateAccountReviewStatus(v.id, periodEnd, v.status),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] }),
+  })
+
+  /** Manual subledger override — used by the editor modal below. */
+  const subledgerMut = useMutation({
+    mutationFn: (v: { qboId: string; total: number | null; source: string | null }) =>
+      reconsApi.setSubledgerOverride(v.qboId, periodEnd, v.total, v.source),
+    onSuccess: () => {
+      setEditingSubledger(null)
+      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+    },
   })
 
   /** Bulk status flip for all selected accounts. */
@@ -559,8 +572,29 @@ export function ReconciliationsDashboard() {
                             <td className="px-3 py-2.5 text-right tabular-nums text-sm text-theme">
                               {fmtMoney(a.gl_balance)}
                             </td>
-                            <td className="px-3 py-2.5 text-right tabular-nums text-sm" style={{ color: "var(--text-2)" }}>
-                              {fmtMoney(a.subledger_balance)}
+                            <td className="px-3 py-2.5 text-right text-sm" style={{ color: "var(--text-2)" }}>
+                              <div className="inline-flex items-center justify-end gap-1.5">
+                                {a.subledger_is_manual && (
+                                  <span
+                                    className="text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded"
+                                    style={{ background: "#fef3c7", color: "#92400e" }}
+                                    title="Manually entered — overrides the QuickBooks default"
+                                  >
+                                    Manual
+                                  </span>
+                                )}
+                                <span className="tabular-nums">{fmtMoney(a.subledger_balance)}</span>
+                                <button
+                                  onClick={() => setEditingSubledger(a)}
+                                  className="h-5 w-5 inline-flex items-center justify-center rounded transition-colors"
+                                  style={{ color: "var(--text-muted)" }}
+                                  title={a.subledger_is_manual ? "Edit manual subledger" : "Enter manual subledger value"}
+                                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--green)")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
+                                >
+                                  <Pencil size={11} strokeWidth={1.8} />
+                                </button>
+                              </div>
                             </td>
                             <td className="px-3 py-2.5 text-right tabular-nums text-sm font-medium"
                               style={{ color: hasVariance ? "#dc2626" : "var(--green)" }}>
@@ -651,6 +685,24 @@ export function ReconciliationsDashboard() {
           />
         )}
       </AnimatePresence>
+
+      {/* ── Manual subledger editor (small modal) ───────────────────── */}
+      <AnimatePresence>
+        {editingSubledger && (
+          <SubledgerEditor
+            account={editingSubledger}
+            periodEnd={periodEnd}
+            saving={subledgerMut.isPending}
+            onSave={(total, source) =>
+              subledgerMut.mutate({ qboId: editingSubledger.qbo_id, total, source })
+            }
+            onClear={() =>
+              subledgerMut.mutate({ qboId: editingSubledger.qbo_id, total: null, source: null })
+            }
+            onClose={() => setEditingSubledger(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -682,6 +734,171 @@ function StatusChip({ status, onChange }:
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: m.fg }} />
       {m.label}
     </button>
+  )
+}
+
+// ── Manual subledger editor ─────────────────────────────────────────────────
+// Lets the user plug in a balance from an external source (bank statement,
+// fixed-asset register, prepaid schedule, etc.) when QuickBooks has no
+// separate subledger to reconcile against. The override lives on
+// account_review_status (one row per account+period) and is consumed by the
+// live overview — variance recomputes against the manual value.
+
+function SubledgerEditor({
+  account, periodEnd, saving, onSave, onClear, onClose,
+}: {
+  account: OverviewAccount
+  periodEnd: string
+  saving: boolean
+  onSave: (total: number, source: string | null) => void
+  onClear: () => void
+  onClose: () => void
+}) {
+  // Seed from the current override (if any) or the GL balance as a sensible
+  // starting point — most external schedules begin within a few % of GL.
+  const [amount, setAmount] = useState<string>(
+    account.subledger_is_manual ? account.subledger_balance : account.gl_balance
+  )
+  const [source, setSource] = useState<string>(
+    account.subledger_is_manual && account.subledger_source ? account.subledger_source : ""
+  )
+  const parsed = parseFloat(amount)
+  const valid = Number.isFinite(parsed)
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!valid) return
+    onSave(parsed, source.trim() || null)
+  }
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        transition={{ duration: 0.15 }}
+        className="fixed inset-0 z-[60]"
+        style={{ background: "rgba(0,0,0,0.45)" }}
+        onClick={onClose}
+      />
+      <motion.div
+        initial={{ opacity: 0, y: 10, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 10, scale: 0.97 }}
+        transition={{ duration: 0.18, ease: "easeOut" }}
+        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[61] w-[92vw] max-w-md rounded-2xl overflow-hidden"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}
+      >
+        <form onSubmit={submit}>
+          <div className="px-5 pt-4 pb-3 flex items-start gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Manual subledger · {periodEnd}
+              </p>
+              <h3 className="text-base font-semibold text-theme truncate mt-0.5">
+                {account.account_number ? `${account.account_number} · ` : ""}{account.account_name}
+              </h3>
+              <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                GL balance {fmtMoney(account.gl_balance)} · {account.group_label}
+              </p>
+            </div>
+            <button type="button" onClick={onClose}
+              className="h-8 w-8 rounded-md flex items-center justify-center"
+              style={{ color: "var(--text-muted)" }}>
+              <X size={16} strokeWidth={1.8} />
+            </button>
+          </div>
+
+          <div className="px-5 py-4 space-y-3">
+            <p className="text-xs leading-snug" style={{ color: "var(--text-2)" }}>
+              QuickBooks doesn't keep a subledger for most account types (Bank, Fixed Assets, Prepaids, Loans, etc).
+              Enter the balance from your external source — bank statement, fixed-asset register, amortization
+              schedule — and Nordavix will recompute the variance against it.
+            </p>
+
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Subledger total
+              </span>
+              <div className="mt-1 relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm" style={{ color: "var(--text-muted)" }}>$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  autoFocus
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full rounded-lg pl-7 pr-3 py-2 text-sm outline-none tabular-nums"
+                  style={{
+                    background: "var(--surface-2)",
+                    border: "1px solid var(--border-strong)",
+                    color: "var(--text)",
+                  }}
+                />
+              </div>
+            </label>
+
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Source (optional)
+              </span>
+              <input
+                type="text"
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                placeholder="e.g. Bank of America statement 4/30/26"
+                className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
+                style={{
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border-strong)",
+                  color: "var(--text)",
+                }}
+              />
+              <span className="text-[10px] mt-1 block" style={{ color: "var(--text-muted)" }}>
+                Shown on the dashboard so you remember where this number came from.
+              </span>
+            </label>
+
+            {valid && (
+              <div className="rounded-lg p-2.5 text-xs flex items-center justify-between"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                <span style={{ color: "var(--text-muted)" }}>New variance (GL − Subledger)</span>
+                <span className="font-bold tabular-nums"
+                  style={{
+                    color: Math.abs(parseFloat(account.gl_balance) - parsed) < 0.5
+                      ? "var(--green)" : "#dc2626",
+                  }}>
+                  {fmtMoney(parseFloat(account.gl_balance) - parsed)}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="px-5 py-3 flex items-center justify-between gap-2"
+            style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+            {account.subledger_is_manual ? (
+              <button
+                type="button"
+                onClick={onClear}
+                disabled={saving}
+                className="text-[11px] font-medium underline-offset-2 hover:underline"
+                style={{ color: "#b91c1c" }}
+              >
+                Clear override
+              </button>
+            ) : <span />}
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="ghost" type="button" onClick={onClose} disabled={saving}>
+                Cancel
+              </Button>
+              <Button size="sm" type="submit" loading={saving} disabled={!valid}>
+                Save subledger
+              </Button>
+            </div>
+          </div>
+        </form>
+      </motion.div>
+    </>
   )
 }
 
@@ -745,7 +962,7 @@ function DetailDrawer({ account, mode, periodEnd, onClose, onSwitchMode }: Drawe
         <div className="px-5 py-4 flex items-start gap-3"
           style={{ borderBottom: "1px solid var(--border)" }}>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 {account.group_label}
               </span>
@@ -753,6 +970,13 @@ function DetailDrawer({ account, mode, periodEnd, onClose, onSwitchMode }: Drawe
                 <span className="text-[11px] font-mono px-1.5 py-0.5 rounded"
                   style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
                   Acct No. {account.account_number}
+                </span>
+              )}
+              {account.subledger_is_manual && (
+                <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                  style={{ background: "#fef3c7", color: "#92400e" }}
+                  title="Subledger value was entered manually">
+                  Manual subledger
                 </span>
               )}
             </div>

@@ -11,8 +11,9 @@ has exactly one status row.
 """
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, String, Text, func
+from sqlalchemy import Date, DateTime, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +31,14 @@ class AccountReviewStatus(TenantBase):
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Manual subledger override: when set, the overview uses this value as the
+    # subledger balance for this account+period (overrides the QBO default).
+    # Lets users reconcile against external sources (bank statements, FA
+    # registers, prepaid schedules) that QBO doesn't expose.
+    subledger_total: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    subledger_source: Mapped[str | None] = mapped_column(String(255))
+    subledger_entered_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    subledger_entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
