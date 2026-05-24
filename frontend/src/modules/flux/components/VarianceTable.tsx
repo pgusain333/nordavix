@@ -554,6 +554,13 @@ function NarrativePanel({
                       : "No commentary yet. Click edit to add your own."}
               </p>
             </div>
+            {/* Approver stamp — only shown once this variance has been signed off */}
+            {row.approved_at && (
+              <p className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--green)" }}>
+                <CheckCircle2 size={11} strokeWidth={2} />
+                Approved on {new Date(row.approved_at).toLocaleString()}
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <Button
                 size="sm"

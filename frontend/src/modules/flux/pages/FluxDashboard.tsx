@@ -17,7 +17,7 @@
  *   status = error         → error state
  */
 import { useEffect, useState } from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
@@ -30,6 +30,7 @@ import {
   RotateCcw,
   Trash2,
   Sparkles,
+  CheckCircle2,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
@@ -72,6 +73,7 @@ export function FluxDashboard() {
   const { tbId }   = useParams<{ tbId?: string }>()
   const navigate   = useNavigate()
   const qc         = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   /** Controls the mobile slide-in analyses list overlay */
   const [showMobileHistory, setShowMobileHistory] = useState(false)
@@ -134,6 +136,25 @@ export function FluxDashboard() {
     if (tbId) setShowMobileHistory(false)
   }, [tbId])
 
+  // Deep-link: ?connect=qbo auto-redirects to Intuit's OAuth page once.
+  // Dashboard / nav links use this so the user lands in the connect flow immediately.
+  useEffect(() => {
+    if (searchParams.get("connect") !== "qbo") return
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = await api.getQboConnectUrl()
+        if (!cancelled) window.location.href = url
+      } catch {
+        // Clear the param so we don't loop on failure
+        const sp = new URLSearchParams(searchParams)
+        sp.delete("connect")
+        setSearchParams(sp, { replace: true })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [searchParams, setSearchParams])
+
   function handleNewAnalysis() {
     navigate("/app/flux")
     setShowMobileHistory(false)
@@ -168,6 +189,14 @@ export function FluxDashboard() {
       navigate("/app/flux", { replace: true })
     },
     onError: () => setPendingAction(null),
+  })
+
+  // Approve the entire analysis — stamps approved_by/at + moves to "complete"
+  const approveTbMut = useMutation({
+    mutationFn: (id: string) => api.approveTrialBalance(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trial-balances"] })
+    },
   })
 
   // Run AI analysis on all material+pending variances
@@ -447,6 +476,30 @@ export function FluxDashboard() {
               >
                 <span className="hidden sm:inline">Find reasons</span>
               </Button>
+            )}
+            {/* Approve analysis — only shown for TBs with results that aren't yet approved */}
+            {showVarianceTable && selectedTb && !selectedTb.approved_at && (
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<CheckCircle2 size={14} strokeWidth={1.8} />}
+                loading={approveTbMut.isPending}
+                onClick={() => tbId && approveTbMut.mutate(tbId)}
+                title="Sign off on this analysis"
+                style={{ borderColor: "var(--green)", color: "var(--green)" }}
+              >
+                <span className="hidden sm:inline">Approve</span>
+              </Button>
+            )}
+            {/* Approved badge in place of the button once signed off */}
+            {showVarianceTable && selectedTb && selectedTb.approved_at && (
+              <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+                title={`Approved on ${new Date(selectedTb.approved_at).toLocaleString()}`}
+              >
+                <CheckCircle2 size={11} strokeWidth={2} />
+                Approved
+              </span>
             )}
             {showVarianceTable && (
               <Button variant="outline" size="sm" icon={<Download size={14} strokeWidth={1.6} />} onClick={handleExport}>

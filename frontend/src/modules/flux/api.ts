@@ -10,6 +10,8 @@ import { apiClient } from "@/core/api/client"
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TrialBalance {
+  approved_by?: string | null
+  approved_at?: string | null
   id:                   string
   name:                 string
   period_current:       string   // ISO date "YYYY-MM-DD"
@@ -28,10 +30,16 @@ export interface TrialBalanceCreate {
 }
 
 export interface ColumnMapping {
-  account_number: string
-  account_name:   string
-  current_balance:string
-  prior_balance:  string
+  account_number:  string
+  account_name:    string
+  current_balance?:string
+  prior_balance?:  string
+  // QBO two-period TB layout (Debit/Credit columns)
+  current_debit?:  string
+  current_credit?: string
+  prior_debit?:    string
+  prior_credit?:   string
+  layout?:         "balance_pair" | "qbo_single_period_dc" | "qbo_two_period_dc"
 }
 
 export interface UploadPreview {
@@ -61,6 +69,8 @@ export interface VarianceRow {
   fs_category:      string | null
   narrative:        string | null
   confidence_score: string | null
+  approved_by?:     string | null
+  approved_at?:     string | null
 }
 
 export interface QboConnection {
@@ -95,6 +105,11 @@ async function deleteTrialBalance(id: string): Promise<void> {
   await apiClient.delete(`/api/flux/trial-balances/${id}`)
 }
 
+async function approveTrialBalance(id: string): Promise<TrialBalance> {
+  const { data } = await apiClient.post<TrialBalance>(`/api/flux/trial-balances/${id}/approve`)
+  return data
+}
+
 // ── Upload & Parse ────────────────────────────────────────────────────────────
 
 async function uploadFile(id: string, file: File): Promise<UploadPreview> {
@@ -116,7 +131,7 @@ async function parseColumns(id: string, mapping: ColumnMapping): Promise<ParseRe
   return data
 }
 
-async function runFlux(id: string): Promise<{ task_id: string; status: string }> {
+async function runFlux(id: string): Promise<{ task_id: string; status: string; message?: string }> {
   const { data } = await apiClient.post(`/api/flux/trial-balances/${id}/run`)
   return data
 }
@@ -208,6 +223,7 @@ export const api = {
   getTrialBalance,
   resetTrialBalance,
   deleteTrialBalance,
+  approveTrialBalance,
   // Upload & Parse
   uploadFile,
   parseColumns,

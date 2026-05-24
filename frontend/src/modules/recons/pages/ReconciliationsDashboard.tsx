@@ -7,8 +7,8 @@
  * - AI insights side panel
  * - Quick-start CTA to spin up a new AR/AP reconciliation
  */
-import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useEffect, useState } from "react"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
@@ -59,7 +59,19 @@ const STATUS_LABEL: Record<string, string> = {
 export function ReconciliationsDashboard() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [showCreate, setShowCreate] = useState<ReconType | null>(null)
+
+  // Deep-link: ?new=AR | AP | BANK | CC opens the create modal on mount
+  useEffect(() => {
+    const n = searchParams.get("new") as ReconType | null
+    if (n && ["AR", "AP", "BANK", "CC", "OTHER"].includes(n)) {
+      setShowCreate(n)
+      const sp = new URLSearchParams(searchParams)
+      sp.delete("new")
+      setSearchParams(sp, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   // Pull dashboard + QBO connection in parallel
   const { data: dash, isLoading } = useQuery({

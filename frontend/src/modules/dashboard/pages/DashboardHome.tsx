@@ -18,6 +18,7 @@ import {
   TrendingUp,
   Building2,
   X,
+  Scale,
 } from "lucide-react"
 import { api } from "@/modules/flux/api"
 import { Button } from "@/core/ui/components"
@@ -402,6 +403,10 @@ export function DashboardHome() {
           <div className="flex flex-wrap gap-3">
             <Button onClick={() => navigate("/app/flux")} icon={<Upload size={15} strokeWidth={1.6} />}>
               Upload Trial Balance
+            </Button>
+            <Button variant="outline" onClick={() => navigate("/app/reconciliations")}
+              icon={<Scale size={15} strokeWidth={1.6} />}>
+              Reconciliations
             </Button>
             <Button variant="outline" onClick={() => navigate("/app/flux?connect=qbo")}
               icon={<Zap size={15} strokeWidth={1.6} />}>

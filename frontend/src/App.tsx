@@ -1,5 +1,6 @@
 import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react"
-import { Routes, Route, Navigate } from "react-router-dom"
+import { Routes, Route, Navigate, useLocation } from "react-router-dom"
+import { AnimatePresence, motion } from "framer-motion"
 import { ThreePaneLayout } from "@/core/layout/ThreePaneLayout"
 import { DashboardHome } from "@/modules/dashboard/pages/DashboardHome"
 import { FluxDashboard } from "@/modules/flux/pages/FluxDashboard"
@@ -9,6 +10,44 @@ import { ReconciliationsDashboard } from "@/modules/recons/pages/Reconciliations
 import { ARReconciliations } from "@/modules/recons/pages/ARReconciliations"
 import { APReconciliations } from "@/modules/recons/pages/APReconciliations"
 import { ReconciliationDetail } from "@/modules/recons/pages/ReconciliationDetail"
+
+/**
+ * Route-level transition wrapper.
+ *
+ * Each top-level app page is keyed by the first two path segments so that
+ * sibling pages (e.g. /app vs /app/flux vs /app/reconciliations) fade between
+ * each other, but in-page state changes (?param updates, child route swaps
+ * like /reconciliations/:reconId) don't trigger a full re-mount.
+ */
+function AppRoutes() {
+  const location = useLocation()
+  // Use the first two segments as the transition key — that's our "page".
+  const segments = location.pathname.split("/").filter(Boolean)
+  const transitionKey = segments.slice(0, 2).join("/") || "root"
+
+  return (
+    <AnimatePresence mode="wait">
+      <motion.div
+        key={transitionKey}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -6 }}
+        transition={{ duration: 0.18, ease: "easeOut" }}
+        className="h-full"
+      >
+        <Routes location={location}>
+          <Route index element={<DashboardHome />} />
+          <Route path="flux"         element={<FluxDashboard />} />
+          <Route path="flux/:tbId"   element={<FluxDashboard />} />
+          <Route path="reconciliations"            element={<ReconciliationsDashboard />} />
+          <Route path="reconciliations/ar"         element={<ARReconciliations />} />
+          <Route path="reconciliations/ap"         element={<APReconciliations />} />
+          <Route path="reconciliations/:reconId"   element={<ReconciliationDetail />} />
+        </Routes>
+      </motion.div>
+    </AnimatePresence>
+  )
+}
 
 export default function App() {
   return (
@@ -27,15 +66,7 @@ export default function App() {
             <SignedIn>
               <WorkspaceGate>
                 <ThreePaneLayout>
-                  <Routes>
-                    <Route index element={<DashboardHome />} />
-                    <Route path="flux"         element={<FluxDashboard />} />
-                    <Route path="flux/:tbId"   element={<FluxDashboard />} />
-                    <Route path="reconciliations"            element={<ReconciliationsDashboard />} />
-                    <Route path="reconciliations/ar"         element={<ARReconciliations />} />
-                    <Route path="reconciliations/ap"         element={<APReconciliations />} />
-                    <Route path="reconciliations/:reconId"   element={<ReconciliationDetail />} />
-                  </Routes>
+                  <AppRoutes />
                 </ThreePaneLayout>
               </WorkspaceGate>
             </SignedIn>
