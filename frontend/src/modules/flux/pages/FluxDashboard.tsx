@@ -161,7 +161,8 @@ export function FluxDashboard() {
   }, [searchParams, setSearchParams])
 
   function handleNewAnalysis() {
-    navigate("/app/flux")
+    // New analyses are created from the Connections page (TB upload card)
+    navigate("/app/connections")
     setShowMobileHistory(false)
   }
 
@@ -250,18 +251,21 @@ export function FluxDashboard() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  const showUploadFlow    = !tbId || (selectedTb && selectedTb.status === "pending")
+  // UploadFlow only renders for a TB that's been created but not yet uploaded
+  // (i.e. after a Reset). Brand-new analyses are started from /app/connections.
+  const showUploadFlow    = selectedTb && selectedTb.status === "pending"
   const showVarianceTable = selectedTb &&
     ["parsed", "ready_for_review", "generating", "complete"].includes(selectedTb.status)
   const showProcessing = selectedTb && selectedTb.status === "processing"
   const showError      = selectedTb && selectedTb.status === "error"
+  const showEmpty      = !tbId && tbs.length === 0 && !tbsLoading
 
-  // Key drives AnimatePresence exit+enter on content changes
-  const contentKey = showUploadFlow ? "upload"
+  const contentKey = showEmpty ? "empty"
+    : showUploadFlow ? "upload"
     : showProcessing ? "processing"
     : showError      ? "error"
     : showVarianceTable ? `variance-${tbId}`
-    : "upload"
+    : "loading"
 
   // ── Shared analyses list (used in both desktop sidebar + mobile overlay) ──
   const AnalysesList = () => (
@@ -564,9 +568,27 @@ export function FluxDashboard() {
               className="absolute inset-0 flex flex-col"
             >
 
+              {showEmpty && (
+                <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                  <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4"
+                    style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                    <Plus size={28} strokeWidth={1.6} />
+                  </div>
+                  <p className="text-base font-semibold text-theme mb-2">No analyses yet</p>
+                  <p className="text-sm max-w-xs leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
+                    Connect QuickBooks or upload a trial balance in the Connections panel to start your first analysis.
+                  </p>
+                  <Button size="sm" onClick={() => navigate("/app/connections")}>
+                    Open Connections
+                  </Button>
+                </div>
+              )}
+
               {showUploadFlow && (
                 <div className="h-full overflow-y-auto">
-                  <UploadFlow onComplete={handleTbComplete} qboConnected={!!qboConn} />
+                  {/* Re-upload path: the TB record exists (status=pending) but
+                      has no file yet. UploadFlow handles upload+parse+run. */}
+                  <UploadFlow onComplete={handleTbComplete} qboConnected={!!qboConn} forceSource="upload" />
                 </div>
               )}
 

@@ -7,7 +7,7 @@ import { NavLink, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
-  X, Pencil, Check, type LucideIcon,
+  Plug, X, Pencil, Check, type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/core/ui/utils"
 import { Badge } from "@/core/ui/components"
@@ -22,6 +22,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard",       path: "/app",                 icon: LayoutDashboard, available: true  },
+  { label: "Connections",     path: "/app/connections",     icon: Plug,            available: true  },
   { label: "Flux Analysis",   path: "/app/flux",            icon: BarChart3,       available: true  },
   { label: "Reconciliations", path: "/app/reconciliations", icon: Scale,           available: true  },
   { label: "Workpapers",      path: "/app/workpapers",      icon: FileText,        available: false },
@@ -235,19 +236,29 @@ function OrgNameInline({ organizationName, onRename }: OrgNameInlineProps) {
           </button>
         </div>
       ) : (
-        <button
-          onClick={() => setEditing(true)}
-          className="flex items-center gap-1.5 w-full text-left group/btn"
-          title="Click to rename workspace"
-        >
-          <p className="text-xs truncate flex-1" style={{ color: "var(--nav-text)" }}>{organizationName}</p>
-          <Pencil
-            size={11}
-            strokeWidth={1.8}
-            className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+        <>
+          <button
+            onClick={() => setEditing(true)}
+            className="flex items-center gap-1.5 w-full text-left group/btn"
+            title="Click to rename company"
+          >
+            <p className="text-xs truncate flex-1" style={{ color: "var(--nav-text)" }}>{organizationName}</p>
+            <Pencil
+              size={11}
+              strokeWidth={1.8}
+              className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+              style={{ color: "var(--text-muted)" }}
+            />
+          </button>
+          <NavLink
+            to="/app/companies"
+            className="text-[10px] mt-1 inline-flex items-center gap-1 transition-colors hover:underline"
             style={{ color: "var(--text-muted)" }}
-          />
-        </button>
+            title="Switch company or create another"
+          >
+            Switch company
+          </NavLink>
+        </>
       )}
       {error && (
         <p className="text-[10px] mt-1" style={{ color: "#dc2626" }}>{error}</p>

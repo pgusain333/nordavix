@@ -31,6 +31,9 @@ type Source = "upload" | "qbo"
 interface Props {
   onComplete: (tb: TrialBalance) => void
   qboConnected?: boolean
+  /** When set, skip the source-picker step and force this source.
+   *  Used by ConnectionsPage so the embedded wizard starts on the details form. */
+  forceSource?: Source
 }
 
 // ── Step indicators ───────────────────────────────────────────────────────────
@@ -78,10 +81,12 @@ function StepBar({ step, steps }: { step: number; steps: string[] }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function UploadFlow({ onComplete, qboConnected = false }: Props) {
+export function UploadFlow({ onComplete, qboConnected = false, forceSource }: Props) {
   const qc = useQueryClient()
-  const [step, setStep]     = useState(0)
-  const [source, setSource] = useState<Source>("upload")
+  // When source is forced (e.g. embedded in ConnectionsPage), skip the
+  // source-picker step entirely so the wizard opens straight on Details.
+  const [step, setStep]     = useState(forceSource ? 1 : 0)
+  const [source, setSource] = useState<Source>(forceSource ?? "upload")
 
   // TB metadata
   const [tbName,    setTbName]    = useState("")
@@ -244,16 +249,19 @@ export function UploadFlow({ onComplete, qboConnected = false }: Props) {
         {/* ── Step 1: TB Details (upload path) ── */}
         {step === 1 && source === "upload" && (
           <div>
-            <button
-              onClick={() => setStep(0)}
-              className="flex items-center gap-1.5 text-xs mb-5 transition-colors"
-              style={{ color: "var(--text-muted)" }}
-              onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
-              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
-            >
-              <ArrowLeft size={14} strokeWidth={1.6} />
-              Back
-            </button>
+            {/* Hide back button when source was forced — there's no step 0 to go back to */}
+            {!forceSource && (
+              <button
+                onClick={() => setStep(0)}
+                className="flex items-center gap-1.5 text-xs mb-5 transition-colors"
+                style={{ color: "var(--text-muted)" }}
+                onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+                onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
+              >
+                <ArrowLeft size={14} strokeWidth={1.6} />
+                Back
+              </button>
+            )}
             <h2 className="text-base font-semibold text-theme mb-1">Trial balance details</h2>
             <p className="text-sm mb-6" style={{ color: "var(--text-muted)" }}>
               Name this run and set the analysis periods.

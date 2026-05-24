@@ -3,10 +3,10 @@
  * Framer Motion staggered entrance, animated counters, smooth transitions.
  */
 import { useEffect, useRef, useState } from "react"
-import { useUser, useOrganization, useOrganizationList } from "@clerk/clerk-react"
+import { useUser } from "@clerk/clerk-react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion } from "framer-motion"
 import {
   BarChart3,
   CheckCircle2,
@@ -16,8 +16,6 @@ import {
   Upload,
   Zap,
   TrendingUp,
-  Building2,
-  X,
   Scale,
 } from "lucide-react"
 import { api } from "@/modules/flux/api"
@@ -98,21 +96,7 @@ const TB_STATUS_LABELS: Record<string, string> = {
 
 export function DashboardHome() {
   const { user } = useUser()
-  const { organization } = useOrganization()
   const navigate  = useNavigate()
-
-  // Solo users (no Clerk org) see a persistent "create workspace" CTA on dashboard,
-  // even after they dismissed WorkspaceGate. Dismissible per session.
-  const [orgBannerDismissed, setOrgBannerDismissed] = useState(
-    () => sessionStorage.getItem("org_banner_dismissed") === "1"
-  )
-  const [showOrgModal, setShowOrgModal] = useState(false)
-  const showOrgBanner = !organization && !orgBannerDismissed
-
-  function dismissOrgBanner() {
-    sessionStorage.setItem("org_banner_dismissed", "1")
-    setOrgBannerDismissed(true)
-  }
 
   const { data: trialBalances = [], isLoading } = useQuery({
     queryKey: ["trial-balances"],
@@ -195,59 +179,6 @@ export function DashboardHome() {
       </div>
 
       <div className="flex-1 px-4 sm:px-8 py-6 max-w-5xl w-full mx-auto space-y-5">
-
-        {/* ── Create-workspace CTA (solo users only) ───────────────────────── */}
-        <AnimatePresence>
-          {showOrgBanner && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.3 }}
-              className="rounded-xl p-4 sm:p-5 flex items-start gap-3"
-              style={{
-                background: "var(--green-subtle)",
-                border: "1px solid var(--green)",
-              }}
-            >
-              <div className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
-                style={{ background: "var(--green)", color: "#fff" }}>
-                <Building2 size={18} strokeWidth={1.8} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-theme">Set up your workspace</p>
-                <p className="text-xs mt-0.5" style={{ color: "var(--text-2)" }}>
-                  Create a named workspace for your firm — invite teammates, share analyses, and keep client work organized.
-                </p>
-                <div className="flex items-center gap-2 mt-3">
-                  <button
-                    onClick={() => setShowOrgModal(true)}
-                    className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white inline-flex items-center gap-1.5 transition-opacity hover:opacity-90"
-                    style={{ background: "var(--green)" }}
-                  >
-                    Create workspace
-                    <ArrowRight size={12} strokeWidth={2} />
-                  </button>
-                  <button
-                    onClick={dismissOrgBanner}
-                    className="text-xs font-medium px-2 py-1.5 transition-colors"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    Maybe later
-                  </button>
-                </div>
-              </div>
-              <button
-                onClick={dismissOrgBanner}
-                className="shrink-0 h-7 w-7 rounded-md flex items-center justify-center transition-colors"
-                style={{ color: "var(--text-muted)" }}
-                aria-label="Dismiss"
-              >
-                <X size={14} strokeWidth={1.8} />
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         {/* ── Stat cards ──────────────────────────────────────────────────────── */}
         <motion.div
@@ -428,14 +359,14 @@ export function DashboardHome() {
         >
           <h2 className="text-sm font-semibold text-theme mb-4">Quick Actions</h2>
           <div className="flex flex-wrap gap-3">
-            <Button onClick={() => navigate("/app/flux")} icon={<Upload size={15} strokeWidth={1.6} />}>
+            <Button onClick={() => navigate("/app/connections")} icon={<Upload size={15} strokeWidth={1.6} />}>
               Upload Trial Balance
             </Button>
             <Button variant="outline" onClick={() => navigate("/app/reconciliations")}
               icon={<Scale size={15} strokeWidth={1.6} />}>
               Reconciliations
             </Button>
-            <Button variant="outline" onClick={() => navigate("/app/flux?connect=qbo")}
+            <Button variant="outline" onClick={() => navigate("/app/connections")}
               icon={<Zap size={15} strokeWidth={1.6} />}>
               Connect QuickBooks
             </Button>
@@ -443,132 +374,8 @@ export function DashboardHome() {
         </motion.div>
 
       </div>
-
-      {/* ── Create-workspace modal (rendered at root so it overlays cleanly) ── */}
-      <AnimatePresence>
-        {showOrgModal && (
-          <CreateOrgModal
-            onClose={() => setShowOrgModal(false)}
-            onCreated={() => {
-              setShowOrgModal(false)
-              dismissOrgBanner()
-            }}
-          />
-        )}
-      </AnimatePresence>
+      {/* Org onboarding/switching is owned by /app/companies — no inline modal here. */}
     </div>
-  )
-}
-
-// ── CreateOrgModal ────────────────────────────────────────────────────────────
-
-interface CreateOrgModalProps {
-  onClose: () => void
-  onCreated: () => void
-}
-
-function CreateOrgModal({ onClose, onCreated }: CreateOrgModalProps) {
-  const { createOrganization, isLoaded } = useOrganizationList()
-  const [name, setName] = useState("")
-  const [error, setError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!name.trim() || !createOrganization || !isLoaded) return
-    setError(null)
-    setSubmitting(true)
-    try {
-      await createOrganization({ name: name.trim() })
-      onCreated()
-    } catch {
-      setError("Could not create workspace. Try a different name?")
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.18 }}
-      className="fixed inset-0 z-50 flex items-center justify-center px-4"
-      style={{ background: "rgba(0,0,0,0.5)" }}
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        transition={{ duration: 0.22, ease: "easeOut" }}
-        className="w-full max-w-md rounded-2xl p-6"
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          boxShadow: "0 24px 64px rgba(0,0,0,0.35)",
-        }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-start gap-3 mb-5">
-          <div className="h-10 w-10 rounded-lg flex items-center justify-center shrink-0"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-            <Building2 size={20} strokeWidth={1.8} />
-          </div>
-          <div className="flex-1">
-            <h2 className="text-base font-semibold text-theme">Create your workspace</h2>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-              Name your firm or team. You can rename it later.
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="h-7 w-7 rounded-md flex items-center justify-center transition-colors"
-            style={{ color: "var(--text-muted)" }}
-          >
-            <X size={15} strokeWidth={1.8} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit}>
-          <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--text-2)" }}>
-            Workspace name
-          </label>
-          <input
-            type="text"
-            autoFocus
-            placeholder="e.g. Acme Accounting, Smith CPA"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            disabled={submitting}
-            className="w-full rounded-lg px-3 py-2.5 text-sm outline-none transition-all"
-            style={{
-              background: "var(--surface-2)",
-              border: "1px solid var(--border-strong)",
-              color: "var(--text)",
-            }}
-            onFocus={e => (e.currentTarget.style.borderColor = "var(--green)")}
-            onBlur={e => (e.currentTarget.style.borderColor = "var(--border-strong)")}
-          />
-          {error && (
-            <p className="text-xs mt-2" style={{ color: "#dc2626" }}>{error}</p>
-          )}
-          <button
-            type="submit"
-            disabled={!name.trim() || submitting || !isLoaded}
-            className="mt-4 w-full flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-            style={{ background: "var(--green)" }}
-          >
-            {submitting ? "Creating…" : (
-              <>
-                Create workspace
-                <ArrowRight size={14} strokeWidth={1.8} />
-              </>
-            )}
-          </button>
-        </form>
-      </motion.div>
-    </motion.div>
   )
 }
 

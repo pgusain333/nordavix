@@ -10,6 +10,8 @@ import { ReconciliationsDashboard } from "@/modules/recons/pages/Reconciliations
 import { ARReconciliations } from "@/modules/recons/pages/ARReconciliations"
 import { APReconciliations } from "@/modules/recons/pages/APReconciliations"
 import { ReconciliationDetail } from "@/modules/recons/pages/ReconciliationDetail"
+import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
+import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
 
 /**
  * Route-level transition wrapper.
@@ -37,6 +39,7 @@ function AppRoutes() {
       >
         <Routes location={location}>
           <Route index element={<DashboardHome />} />
+          <Route path="connections"  element={<ConnectionsPage />} />
           <Route path="flux"         element={<FluxDashboard />} />
           <Route path="flux/:tbId"   element={<FluxDashboard />} />
           <Route path="reconciliations"            element={<ReconciliationsDashboard />} />
@@ -55,7 +58,20 @@ export default function App() {
       {/* Public marketing pages */}
       <Route path="/" element={<HomePage />} />
 
-      {/* Auth-required application */}
+      {/* Company picker — standalone, no sidebar/layout. Reachable directly
+          (for switching) and rendered automatically by WorkspaceGate when
+          the signed-in user has no active company. */}
+      <Route
+        path="/app/companies"
+        element={
+          <>
+            <SignedOut><RedirectToSignIn /></SignedOut>
+            <SignedIn><CompaniesPanel /></SignedIn>
+          </>
+        }
+      />
+
+      {/* Auth-required application — needs an active company */}
       <Route
         path="/app/*"
         element={
