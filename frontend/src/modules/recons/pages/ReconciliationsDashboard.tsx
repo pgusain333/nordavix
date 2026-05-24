@@ -1035,19 +1035,29 @@ function SubledgerEditor({
         style={{ background: "rgba(0,0,0,0.45)" }}
         onClick={onClose}
       />
-      <motion.div
-        initial={{ opacity: 0, y: 10, scale: 0.97 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 10, scale: 0.97 }}
-        transition={{ duration: 0.18, ease: "easeOut" }}
-        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[61] w-[92vw] max-w-md rounded-2xl flex flex-col"
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
-          maxHeight: "90vh",  // never taller than viewport — body scrolls
-        }}
-      >
+      {/* Centering wrapper — uses flex (no transform) so it doesn't fight
+          with framer-motion's transform-based entry animation. The inner
+          motion.div handles only its own scale + opacity. The earlier
+          approach used Tailwind's `-translate-x-1/2 -translate-y-1/2`
+          which framer-motion overwrites the moment it animates, leaving
+          the modal anchored to the center of the screen by its top-left
+          corner instead of its own center. */}
+      <div className="fixed inset-0 z-[61] flex items-center justify-center p-3 sm:p-4 pointer-events-none">
+        <motion.div
+          initial={{ opacity: 0, y: 10, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 10, scale: 0.97 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+          className="w-full max-w-lg rounded-2xl flex flex-col pointer-events-auto"
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+            // dvh is dynamic viewport height — accounts for the mobile URL
+            // bar / virtual keyboard so the footer buttons stay reachable.
+            maxHeight: "min(90dvh, 90vh)",
+          }}
+        >
         <form onSubmit={submit} className="flex flex-col min-h-0 flex-1">
           <div className="px-5 pt-4 pb-3 flex items-start gap-3 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
             <div className="flex-1 min-w-0">
@@ -1233,8 +1243,10 @@ function SubledgerEditor({
                 ) : (
                   <div className="rounded-lg overflow-hidden"
                     style={{ border: "1px solid var(--border)" }}>
-                    <div className="max-h-56 overflow-y-auto">
-                      <table className="w-full text-[11px]">
+                    {/* Scroll in both directions — mobile widths can't fit
+                        all 5 columns at the natural min width otherwise. */}
+                    <div className="max-h-56 overflow-auto">
+                      <table className="w-full text-[11px] min-w-[340px]">
                         <thead>
                           <tr style={{ background: "var(--surface-2)" }}>
                             <th className="w-6 px-1.5 py-1.5"></th>
@@ -1400,7 +1412,8 @@ function SubledgerEditor({
             </div>
           </div>
         </form>
-      </motion.div>
+        </motion.div>
+      </div>
     </>
   )
 }
