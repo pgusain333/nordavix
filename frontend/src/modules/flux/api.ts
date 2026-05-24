@@ -23,10 +23,15 @@ export interface TrialBalance {
 }
 
 export interface TrialBalanceCreate {
-  name:                 string
-  period_current:       string
-  period_prior:         string
-  materiality_threshold:number
+  name:                  string
+  period_current:        string   // ISO date — END of current period
+  period_prior:          string   // ISO date — END of prior period (typically current minus 1 yr)
+  materiality_threshold: number
+  // Optional period START dates. When provided, the backend range-scopes
+  // the QBO TrialBalance pull (P&L accounts get period activity, BS accounts
+  // are still snapshots at end_date).
+  period_start_current?: string
+  period_start_prior?:   string
 }
 
 export interface ColumnMapping {

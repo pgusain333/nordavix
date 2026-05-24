@@ -7,9 +7,16 @@ from pydantic import BaseModel, ConfigDict, field_serializer
 
 class TrialBalanceCreate(BaseModel):
     name: str
-    period_current: date
-    period_prior: date
+    period_current: date         # Current period END date
+    period_prior: date           # Prior period END date (defaults to period_current minus 1 year)
     materiality_threshold: Decimal
+    # Optional period START dates. When provided alongside the end dates, the
+    # QBO TrialBalance pull is range-scoped (gives P&L activity for the
+    # window; balance-sheet accounts still come out as snapshots at end_date).
+    # The frontend defaults period_start_current to the first day of the
+    # period_current's month and computes period_start_prior automatically.
+    period_start_current: date | None = None
+    period_start_prior:   date | None = None
 
 
 class TrialBalanceResponse(BaseModel):

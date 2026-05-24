@@ -41,6 +41,18 @@ interface Props {
   rows:      VarianceRow[]
   isLoading: boolean
   onExport:  () => void
+  /** Period end dates for column headers — displayed as "MMM DD YYYY (CY/PY)" */
+  periodCurrent?: string  // ISO date
+  periodPrior?:   string
+}
+
+function _formatHeaderDate(iso?: string, suffix?: string): string {
+  if (!iso) return suffix ?? ""
+  try {
+    const d = new Date(iso + "T00:00:00")
+    const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    return suffix ? `${date} (${suffix})` : date
+  } catch { return suffix ?? iso }
 }
 
 const col = createColumnHelper<VarianceRow>()
@@ -56,7 +68,7 @@ const STATUS_ORDER: Record<string, number> = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
+export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, periodPrior }: Props) {
   const qc = useQueryClient()
   const [sorting,    setSorting]   = useState<SortingState>([
     { id: "is_material", desc: true },
@@ -123,8 +135,8 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
       ),
     }),
     col.accessor("current_balance", {
-      header: "Current",
-      size:   110,
+      header: _formatHeaderDate(periodCurrent, "CY"),
+      size:   140,
       cell: (c) => (
         <span className="tabular-nums text-sm text-right block text-theme">
           {formatAccounting(c.getValue(), 0)}
@@ -132,8 +144,8 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
       ),
     }),
     col.accessor("prior_balance", {
-      header: "Prior",
-      size:   110,
+      header: _formatHeaderDate(periodPrior, "PY"),
+      size:   140,
       cell: (c) => (
         <span className="tabular-nums text-sm text-right block" style={{ color: "var(--text-muted)" }}>
           {formatAccounting(c.getValue(), 0)}
@@ -226,7 +238,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport }: Props) {
         )
       },
     }),
-  ], [approve, tbId])
+  ], [approve, tbId, periodCurrent, periodPrior])
 
   const table = useReactTable({
     data:               filtered,

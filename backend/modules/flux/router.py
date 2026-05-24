@@ -146,13 +146,17 @@ async def create_trial_balance_from_qbo(
     await db.commit()
     await db.refresh(tb)
 
-    # 3) Pull both TrialBalance reports from QBO
-    async def fetch_tb(period_end: _date) -> dict:
+    # 3) Pull both TrialBalance reports from QBO. When START dates are provided
+    # we range-scope the report so P&L activity is included for the period
+    # (balance-sheet accounts are still as-of the end_date).
+    async def fetch_tb(period_start: _date | None, period_end: _date) -> dict:
         token = await _get_valid_token(conn, db)
         url = (
             f"{settings.qbo_base_url}/v3/company/{conn.realm_id}/reports/TrialBalance"
             f"?end_date={period_end.isoformat()}&accounting_method=Accrual"
         )
+        if period_start:
+            url += f"&start_date={period_start.isoformat()}"
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 url,
@@ -163,8 +167,8 @@ async def create_trial_balance_from_qbo(
         return resp.json()
 
     try:
-        report_current = await fetch_tb(body.period_current)
-        report_prior   = await fetch_tb(body.period_prior)
+        report_current = await fetch_tb(body.period_start_current, body.period_current)
+        report_prior   = await fetch_tb(body.period_start_prior,   body.period_prior)
     except Exception as exc:
         tb.status = "error"
         tb.error_detail = str(exc)[:1000]

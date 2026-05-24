@@ -16,7 +16,7 @@
  *   status = parsed | ready_for_review | complete  → VarianceTable
  *   status = error         → error state
  */
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -120,12 +120,15 @@ export function FluxDashboard() {
     staleTime: 60_000,
   })
 
-  // Auto-select most recent TB when none is selected (desktop UX convenience)
+  // Auto-select most recent TB on first visit (desktop UX convenience).
+  // Skipped when ?new=1 is present — that signals the user explicitly asked
+  // for the new-analysis picker (e.g. via +New or after a Reset).
   useEffect(() => {
+    if (searchParams.get("new") === "1") return
     if (!tbId && tbs.length > 0) {
       navigate(`/app/flux/${tbs[0].id}`, { replace: true })
     }
-  }, [tbs, tbId, navigate])
+  }, [tbs, tbId, navigate, searchParams])
 
   // Poll selected TB if it's processing/generating
   useEffect(() => {
@@ -162,10 +165,9 @@ export function FluxDashboard() {
   }, [searchParams, setSearchParams])
 
   function handleNewAnalysis() {
-    // Clear the selected TB so the empty state (with inline QBO + Upload
-    // options) shows. Flux Analysis is self-sufficient — no jump to
-    // Connections required.
-    navigate("/app/flux")
+    // ?new=1 tells the auto-select effect to skip — user wants the picker,
+    // not the most-recent analysis.
+    navigate("/app/flux?new=1")
     setShowMobileHistory(false)
   }
 
@@ -178,13 +180,21 @@ export function FluxDashboard() {
     if (tbId) api.exportExcel(tbId)
   }
 
-  // Reset wipes the data; the user stays on this analysis and re-uploads.
+  // Reset = "Start over" → wipe the TB data AND remove the analysis record,
+  // then send the user back to the new-analysis picker. This matches the
+  // intuitive expectation ("reset = clean slate, pick fresh periods")
+  // rather than leaving them stranded on an empty upload form.
   const resetMut = useMutation({
-    mutationFn: (id: string) => api.resetTrialBalance(id),
+    mutationFn: async (id: string) => {
+      // Wipe data first, then delete the record so the user lands cleanly
+      await api.resetTrialBalance(id)
+      await api.deleteTrialBalance(id)
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["trial-balances"] })
       qc.invalidateQueries({ queryKey: ["variances", tbId] })
       setPendingAction(null)
+      navigate("/app/flux?new=1", { replace: true })
     },
     onError: () => setPendingAction(null),
   })
@@ -254,14 +264,17 @@ export function FluxDashboard() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  // UploadFlow only renders for a TB that's been created but not yet uploaded
-  // (i.e. after a Reset). Brand-new analyses are started from /app/connections.
+  // UploadFlow renders for a TB that's been created but not yet uploaded
+  // (legacy path). New flows go through showEmpty + FluxEmptyState picker.
   const showUploadFlow    = selectedTb && selectedTb.status === "pending"
   const showVarianceTable = selectedTb &&
     ["parsed", "ready_for_review", "generating", "complete"].includes(selectedTb.status)
   const showProcessing = selectedTb && selectedTb.status === "processing"
   const showError      = selectedTb && selectedTb.status === "error"
-  const showEmpty      = !tbId && tbs.length === 0 && !tbsLoading
+  // Show the new-analysis picker whenever:
+  //   - there are no analyses at all, OR
+  //   - user explicitly asked for it via +New or after a Reset (?new=1)
+  const showEmpty      = !tbId && !tbsLoading && (tbs.length === 0 || searchParams.get("new") === "1")
 
   const contentKey = showEmpty ? "empty"
     : showUploadFlow ? "upload"
@@ -621,7 +634,14 @@ export function FluxDashboard() {
               )}
 
               {showVarianceTable && (
-                <VarianceTable tbId={tbId!} rows={variances} isLoading={variancesLoading} onExport={handleExport} />
+                <VarianceTable
+                  tbId={tbId!}
+                  rows={variances}
+                  isLoading={variancesLoading}
+                  onExport={handleExport}
+                  periodCurrent={selectedTb?.period_current}
+                  periodPrior={selectedTb?.period_prior}
+                />
               )}
 
             </motion.div>
@@ -723,27 +743,45 @@ interface QboInlineProps {
 }
 
 function QboFluxInlineForm({ onComplete }: QboInlineProps) {
-  const todayIso = new Date().toISOString().slice(0, 10)
-  const oneMonthAgo = (() => {
-    const d = new Date(); d.setDate(0)
+  // Default: last full calendar month.
+  const lastMonthEnd = (() => {
+    const d = new Date(); d.setDate(0)  // last day of previous month
     return d.toISOString().slice(0, 10)
   })()
-  const priorMonthEnd = (() => {
-    const d = new Date(); d.setDate(0); d.setDate(0)
+  const lastMonthStart = (() => {
+    const d = new Date(); d.setDate(0); d.setDate(1)  // first day of previous month
     return d.toISOString().slice(0, 10)
   })()
 
-  const [name,        setName]        = useState(`Flux ${oneMonthAgo.slice(0, 7)}`)
-  const [periodCur,   setPeriodCur]   = useState(oneMonthAgo)
-  const [periodPrior, setPeriodPrior] = useState(priorMonthEnd)
+  const [name,        setName]        = useState(`Flux ${lastMonthEnd.slice(0, 7)}`)
+  const [periodStart, setPeriodStart] = useState(lastMonthStart)
+  const [periodEnd,   setPeriodEnd]   = useState(lastMonthEnd)
   const [threshold,   setThreshold]   = useState("5000")
   const [error,       setError]       = useState<string | null>(null)
 
+  // Compute the prior-year range automatically. Same calendar dates, one year back.
+  const { priorStart, priorEnd } = useMemo(() => {
+    const minusYear = (iso: string) => {
+      const d = new Date(iso + "T00:00:00")
+      d.setFullYear(d.getFullYear() - 1)
+      return d.toISOString().slice(0, 10)
+    }
+    return { priorStart: minusYear(periodStart), priorEnd: minusYear(periodEnd) }
+  }, [periodStart, periodEnd])
+
+  const fmt = (iso: string) => {
+    try {
+      return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    } catch { return iso }
+  }
+
   const run = useMutation({
     mutationFn: () => api.createTrialBalanceFromQbo({
-      name: name.trim() || `Flux ${todayIso.slice(0, 7)}`,
-      period_current: periodCur,
-      period_prior:   periodPrior,
+      name: name.trim() || `Flux ${periodEnd.slice(0, 7)}`,
+      period_current:       periodEnd,
+      period_prior:         priorEnd,
+      period_start_current: periodStart,
+      period_start_prior:   priorStart,
       materiality_threshold: Number(threshold) || 5000,
     }),
     onSuccess: onComplete,
@@ -756,6 +794,7 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
   return (
     <div className="rounded-xl p-5 space-y-4"
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <FieldLabel label="Analysis name">
           <input value={name} onChange={(e) => setName(e.target.value)} className="flux-input" />
@@ -763,12 +802,22 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
         <FieldLabel label="Materiality threshold ($)">
           <input value={threshold} onChange={(e) => setThreshold(e.target.value)} type="number" min="0" className="flux-input" />
         </FieldLabel>
-        <FieldLabel label="Current period end">
-          <input value={periodCur} onChange={(e) => setPeriodCur(e.target.value)} type="date" className="flux-input" />
+        <FieldLabel label="Period start">
+          <input value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} type="date" className="flux-input" />
         </FieldLabel>
-        <FieldLabel label="Prior period end">
-          <input value={periodPrior} onChange={(e) => setPeriodPrior(e.target.value)} type="date" className="flux-input" />
+        <FieldLabel label="Period end">
+          <input value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} type="date" className="flux-input" />
         </FieldLabel>
+      </div>
+
+      {/* Auto-computed prior period — read-only, just confirms what'll be pulled */}
+      <div className="rounded-lg p-3 flex items-start gap-2"
+        style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+        <RefreshCw size={12} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} className="mt-0.5 shrink-0" />
+        <div className="text-[11px] leading-snug" style={{ color: "var(--text-2)" }}>
+          <span style={{ color: "var(--text-muted)" }}>Comparing against same dates one year back: </span>
+          <span className="font-medium">{fmt(priorStart)} → {fmt(priorEnd)}</span>
+        </div>
       </div>
 
       {error && (

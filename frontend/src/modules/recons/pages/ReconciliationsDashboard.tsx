@@ -17,7 +17,7 @@
  * All data is pulled LIVE from QuickBooks on each period change — no
  * persistence overhead, always fresh.
  */
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -87,6 +87,8 @@ export function ReconciliationsDashboard() {
   const [drawerAccount, setDrawerAccount] = useState<OverviewAccount | null>(null)
   const [drawerMode, setDrawerMode] = useState<"subledger" | "variance">("subledger")
   const [confirmClear, setConfirmClear] = useState(false)
+  /** "Synced N accounts at HH:MM" — banner that fades out after a few seconds */
+  const [syncMsg, setSyncMsg] = useState<string | null>(null)
 
   const { data: qbo } = useQuery({
     queryKey: ["qbo-connection"],
@@ -94,12 +96,40 @@ export function ReconciliationsDashboard() {
     staleTime: 60_000,
   })
 
-  const { data: overview, isFetching, refetch } = useQuery({
+  const { data: overview, isFetching, refetch, dataUpdatedAt } = useQuery({
     queryKey: ["recons-overview", periodEnd],
     queryFn:  () => reconsApi.getOverview(periodEnd),
     enabled:  !!qbo,
     staleTime: 30_000,
   })
+
+  async function handleSync() {
+    setSyncMsg(null)
+    const result = await refetch()
+    if (result.error) {
+      const ex = result.error as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
+    } else {
+      const n = result.data?.accounts.length ?? 0
+      setSyncMsg(`Synced ${n} account${n === 1 ? "" : "s"} from QuickBooks at ${new Date().toLocaleTimeString()}.`)
+    }
+  }
+
+  // Auto-dismiss banner after 4 seconds
+  useEffect(() => {
+    if (!syncMsg) return
+    const t = setTimeout(() => setSyncMsg(null), 4_000)
+    return () => clearTimeout(t)
+  }, [syncMsg])
+
+  // Human-readable "last synced" indicator
+  const lastSynced = useMemo(() => {
+    if (!dataUpdatedAt) return null
+    const seconds = Math.floor((Date.now() - dataUpdatedAt) / 1000)
+    if (seconds < 60) return `Synced ${seconds}s ago`
+    if (seconds < 3600) return `Synced ${Math.floor(seconds / 60)}m ago`
+    return `Synced ${Math.floor(seconds / 3600)}h ago`
+  }, [dataUpdatedAt])
 
   const clearMut = useMutation({
     mutationFn: () => reconsApi.clearSyncedData(),
@@ -189,11 +219,11 @@ export function ReconciliationsDashboard() {
               size="sm"
               variant="outline"
               icon={<RefreshCw size={14} strokeWidth={1.8} className={isFetching ? "animate-spin" : undefined} />}
-              onClick={() => refetch()}
+              onClick={handleSync}
               disabled={!qbo || isFetching}
               title="Re-pull from QuickBooks"
             >
-              <span className="hidden sm:inline">Sync</span>
+              <span className="hidden sm:inline">{isFetching ? "Syncing…" : "Sync"}</span>
             </Button>
             <Button
               size="sm"
@@ -211,6 +241,27 @@ export function ReconciliationsDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Sync-status banner (only shows when there's something to say) */}
+      <AnimatePresence>
+        {syncMsg && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="px-4 sm:px-8 py-2 text-xs font-medium flex items-center gap-2"
+            style={{
+              background: syncMsg.startsWith("Sync failed") ? "#fee2e2" : "var(--green-subtle)",
+              color:      syncMsg.startsWith("Sync failed") ? "#b91c1c" : "var(--green)",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <CheckCircle2 size={12} strokeWidth={1.8} />
+            <span className="flex-1">{syncMsg}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
 
@@ -414,11 +465,12 @@ export function ReconciliationsDashboard() {
                 </div>
               )}
 
-              <div className="px-4 py-2.5 flex items-center justify-between"
+              <div className="px-4 py-2.5 flex items-center justify-between flex-wrap gap-2"
                 style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
                 <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                   Showing {filteredAccounts.length} of {overview?.accounts.length ?? 0} accounts
-                  {overview?.period_end ? ` as of ${overview.period_end}` : ""}.
+                  {overview?.period_end ? ` as of ${overview.period_end}` : ""}
+                  {lastSynced ? ` · ${lastSynced}` : ""}.
                 </p>
                 <a
                   href="/docs/reconciliations.md"
