@@ -127,25 +127,26 @@ export function DashboardHome() {
         <div className="pointer-events-none absolute -top-16 -right-16 h-48 w-48 rounded-full opacity-[0.06]"
           style={{ background: "radial-gradient(circle, var(--green) 0%, transparent 70%)" }} />
 
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-theme truncate">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-start justify-between gap-2">
+            <h1 className="text-lg sm:text-2xl font-bold tracking-tight text-theme leading-tight" style={{ wordBreak: "break-word" }}>
               {getGreeting(displayName)}
             </h1>
-            <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>{formatDate()}</p>
+            {total > 0 && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.3, duration: 0.4 }}
+                className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold shrink-0"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+              >
+                <TrendingUp size={11} strokeWidth={2} />
+                <span className="hidden sm:inline">Close cycle active</span>
+                <span className="sm:hidden">Active</span>
+              </motion.div>
+            )}
           </div>
-          {total > 0 && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.3, duration: 0.4 }}
-              className="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold"
-              style={{ background: "var(--green-subtle)", color: "var(--green)" }}
-            >
-              <TrendingUp size={13} strokeWidth={2} />
-              Close cycle active
-            </motion.div>
-          )}
+          <p className="text-xs sm:text-sm" style={{ color: "var(--text-muted)" }}>{formatDate()}</p>
         </div>
       </motion.div>
 
