@@ -132,48 +132,67 @@ export function DashboardHome() {
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
 
-      {/* ── Hero header ─────────────────────────────────────────────────────── */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-        className="relative overflow-hidden px-4 sm:px-8 pt-6 sm:pt-8 pb-4 sm:pb-6"
-        style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
+      {/* ── Hero header ─────────────────────────────────────────────────────────
+          Defensive design: no entrance animation (route-level transition already
+          fades the page in), no decorative orbs that could cover text on narrow
+          viewports, explicit inline styles for colors / sizing so the greeting
+          can never end up invisible due to a Tailwind class that didn't load. */}
+      <div
+        className="px-4 sm:px-8 pt-5 sm:pt-8 pb-4 sm:pb-6"
+        style={{
+          background: "var(--surface)",
+          borderBottom: "1px solid var(--border)",
+        }}
       >
-        {/* Subtle gradient orb */}
-        <div className="pointer-events-none absolute -top-16 -right-16 h-48 w-48 rounded-full opacity-[0.06]"
-          style={{ background: "radial-gradient(circle, var(--green) 0%, transparent 70%)" }} />
+        <h1
+          style={{
+            // Mobile gets a guaranteed-readable 22px; desktop gets 28px.
+            // No clamp() / no Tailwind class — eliminates the variables that
+            // previously caused this to render invisibly on mobile.
+            fontSize: "clamp(22px, 5.5vw, 28px)",
+            fontWeight: 700,
+            lineHeight: 1.2,
+            letterSpacing: "-0.01em",
+            color: "var(--text)",
+            margin: 0,
+            overflowWrap: "break-word",
+            wordBreak: "break-word",
+          }}
+        >
+          {getGreeting(displayName)}
+        </h1>
 
-        {/*
-          Mobile layout: greeting on its own row (no badge crowding it),
-          badge floats to the right of the date on a second row.
-          Desktop layout: greeting + badge side-by-side as before.
-        */}
-        <div className="flex flex-col gap-1.5">
-          <h1
-            className="text-xl sm:text-2xl font-bold tracking-tight text-theme leading-tight"
-            style={{ wordBreak: "break-word" }}
+        <div
+          className="flex items-center justify-between gap-2 flex-wrap"
+          style={{ marginTop: "6px" }}
+        >
+          <p
+            style={{
+              fontSize: "13px",
+              color: "var(--text-muted)",
+              margin: 0,
+            }}
           >
-            {getGreeting(displayName)}
-          </h1>
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs sm:text-sm" style={{ color: "var(--text-muted)" }}>{formatDate()}</p>
-            {total > 0 && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.25, duration: 0.35 }}
-                className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold shrink-0"
-                style={{ background: "var(--green-subtle)", color: "var(--green)" }}
-              >
-                <TrendingUp size={11} strokeWidth={2} />
-                <span className="hidden sm:inline">Close cycle active</span>
-                <span className="sm:hidden">Active</span>
-              </motion.div>
-            )}
-          </div>
+            {formatDate()}
+          </p>
+          {total > 0 && (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full"
+              style={{
+                background: "var(--green-subtle)",
+                color: "var(--green)",
+                padding: "4px 10px",
+                fontSize: "11px",
+                fontWeight: 600,
+              }}
+            >
+              <TrendingUp size={11} strokeWidth={2} />
+              <span className="hidden sm:inline">Close cycle active</span>
+              <span className="sm:hidden">Active</span>
+            </span>
+          )}
         </div>
-      </motion.div>
+      </div>
 
       <div className="flex-1 px-4 sm:px-8 py-6 max-w-5xl w-full mx-auto space-y-5">
 

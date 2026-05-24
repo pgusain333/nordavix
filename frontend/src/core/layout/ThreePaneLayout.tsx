@@ -2,7 +2,6 @@ import { ReactNode, useState } from "react"
 import { Menu, X } from "lucide-react"
 import { LeftNav } from "./LeftNav"
 import { ClerkApiWirer } from "@/core/auth/ClerkProvider"
-import { ThemeToggle } from "@/core/theme/ThemeToggle"
 
 interface ThreePaneLayoutProps {
   children: ReactNode
@@ -52,13 +51,15 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
             {mobileNavOpen ? <X size={18} strokeWidth={1.6} /> : <Menu size={18} strokeWidth={1.6} />}
           </button>
           <div className="flex items-center gap-1.5">
-            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-6 w-6 dark:hidden" />
-            <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-6 w-6 hidden dark:block" />
+            {/* logo-mark-dark = dark-colored mark (use on light bg) */}
+            <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-6 w-6 dark:hidden" />
+            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-6 w-6 hidden dark:block" />
             <span className="text-sm font-semibold text-theme tracking-tight">
               nordavix<span style={{ color: "var(--green)" }}>.</span>
             </span>
           </div>
-          <ThemeToggle />
+          {/* Theme toggle lives at the bottom of LeftNav — no duplicate here. */}
+          <span className="w-8" aria-hidden="true" />
         </div>
 
         <main className="flex flex-1 flex-col overflow-hidden min-w-0">

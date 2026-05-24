@@ -5,7 +5,7 @@ import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import {
   Zap, Shield, FileSpreadsheet, CheckCircle2, ArrowRight,
   BarChart3, Clock, Lock, ChevronRight, Star, TrendingUp,
-  Brain, Download, Upload, Eye, Sparkles,
+  Brain, Download, Upload, Eye, Sparkles, Menu, X,
 } from "lucide-react"
 
 // ── Scroll-reveal hook ────────────────────────────────────────────────────────
@@ -209,8 +209,15 @@ function HeroFlow() {
 }
 
 // ── Navbar ────────────────────────────────────────────────────────────────────
+const NAV_LINKS = [
+  { label: "Features",     href: "#features" },
+  { label: "How it works", href: "#how-it-works" },
+  { label: "Pricing",      href: "#pricing" },
+]
+
 function Navbar() {
   const [scrolled, setScrolled] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
   const { isSignedIn } = useUser()
 
   useEffect(() => {
@@ -219,71 +226,190 @@ function Navbar() {
     return () => window.removeEventListener("scroll", onScroll)
   }, [])
 
+  // Lock body scroll when the mobile drawer is open so background doesn't slip
+  useEffect(() => {
+    document.body.style.overflow = mobileOpen ? "hidden" : ""
+    return () => { document.body.style.overflow = "" }
+  }, [mobileOpen])
+
+  // Close drawer on hash-link click — the page scrolls to the anchor
+  function closeDrawer() { setMobileOpen(false) }
+
   return (
-    <nav className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${
-      scrolled
-        ? "backdrop-blur-md border-b border-slate-100 dark:border-slate-800 shadow-sm py-3"
-        : "backdrop-blur-sm py-5"
-    }`}
-      style={{ background: scrolled ? "var(--surface)" : "transparent" }}
-    >
-      <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          {/* Logo + wordmark are now theme-aware regardless of scroll state,
-              because the hero itself flips with the theme. */}
-          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
-          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
-          <span className="font-bold text-lg tracking-tight text-theme">
-            nordavix<span style={{ color: "var(--green)" }}>.</span>
-          </span>
-        </div>
-        <div className="hidden md:flex items-center gap-8">
-          {[
-            { label: "Features", href: "#features" },
-            { label: "How it works", href: "#how-it-works" },
-            { label: "Pricing", href: "#pricing" },
-          ].map((item) => (
-            <a key={item.label} href={item.href}
-              className="text-sm transition-colors"
-              style={{ color: "var(--text-2)" }}
-              onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
-              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
-            >
-              {item.label}
-            </a>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          {isSignedIn ? (
-            <Link
-              to="/app"
-              className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
-              style={{ background: "var(--green)" }}
-            >
-              Dashboard →
-            </Link>
-          ) : (
-            <>
-              <Link to="/app"
-                className="hidden md:block text-sm transition-colors px-4 py-2"
+    <>
+      <nav className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${
+        scrolled
+          ? "backdrop-blur-md border-b border-slate-100 dark:border-slate-800 shadow-sm py-3"
+          : "backdrop-blur-sm py-5"
+      }`}
+        style={{ background: scrolled ? "var(--surface)" : "transparent" }}
+      >
+        <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
+            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
+            <span className="font-bold text-lg tracking-tight text-theme">
+              nordavix<span style={{ color: "var(--green)" }}>.</span>
+            </span>
+          </div>
+
+          {/* Desktop links */}
+          <div className="hidden md:flex items-center gap-8">
+            {NAV_LINKS.map((item) => (
+              <a key={item.label} href={item.href}
+                className="text-sm transition-colors"
                 style={{ color: "var(--text-2)" }}
                 onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
                 onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
               >
-                Sign in
-              </Link>
+                {item.label}
+              </a>
+            ))}
+          </div>
+
+          {/* Right cluster: desktop CTA + mobile hamburger */}
+          <div className="flex items-center gap-3">
+            {/* Desktop sign-in/dashboard buttons */}
+            <div className="hidden md:flex items-center gap-3">
+              {isSignedIn ? (
+                <Link
+                  to="/app"
+                  className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
+                  style={{ background: "var(--green)" }}
+                >
+                  Dashboard →
+                </Link>
+              ) : (
+                <>
+                  <Link to="/app"
+                    className="text-sm transition-colors px-4 py-2"
+                    style={{ color: "var(--text-2)" }}
+                    onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+                    onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
+                  >
+                    Sign in
+                  </Link>
+                  <Link
+                    to="/app"
+                    className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
+                    style={{ background: "var(--green)" }}
+                  >
+                    Get started free
+                  </Link>
+                </>
+              )}
+            </div>
+
+            {/* Mobile hamburger */}
+            <button
+              onClick={() => setMobileOpen(true)}
+              className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg transition-colors"
+              style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
+              aria-label="Open menu"
+            >
+              <Menu size={18} strokeWidth={1.8} />
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {/* ── Mobile slide-in drawer ──────────────────────────────────────────── */}
+      {/* Backdrop */}
+      <div
+        className={`md:hidden fixed inset-0 z-[60] transition-opacity duration-300 ${
+          mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        }`}
+        style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(2px)" }}
+        onClick={closeDrawer}
+        aria-hidden="true"
+      />
+      {/* Panel */}
+      <aside
+        className={`md:hidden fixed top-0 right-0 bottom-0 z-[70] w-[88vw] max-w-[340px] flex flex-col transition-transform duration-300 ease-out shadow-2xl ${
+          mobileOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+        style={{
+          background: "var(--surface)",
+          borderLeft: "1px solid var(--border)",
+        }}
+        aria-label="Mobile navigation"
+      >
+        <div className="flex items-center justify-between px-5 py-4"
+          style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-2">
+            <img src="/logo-mark-dark.svg"  alt="" className="h-6 w-6 dark:hidden" />
+            <img src="/logo-mark-light.svg" alt="" className="h-6 w-6 hidden dark:block" />
+            <span className="text-sm font-bold text-theme">
+              nordavix<span style={{ color: "var(--green)" }}>.</span>
+            </span>
+          </div>
+          <button
+            onClick={closeDrawer}
+            className="h-9 w-9 rounded-lg flex items-center justify-center transition-colors"
+            style={{ color: "var(--text-2)" }}
+            aria-label="Close menu"
+          >
+            <X size={18} strokeWidth={1.8} />
+          </button>
+        </div>
+
+        <nav className="flex-1 px-5 py-6">
+          <ul className="space-y-1">
+            {NAV_LINKS.map((item) => (
+              <li key={item.label}>
+                <a
+                  href={item.href}
+                  onClick={closeDrawer}
+                  className="block rounded-lg px-3 py-3 text-base font-medium transition-colors"
+                  style={{ color: "var(--text)" }}
+                  onTouchStart={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                  onTouchEnd={(e) => (e.currentTarget.style.background = "")}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+                >
+                  {item.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        <div className="px-5 pb-6 pt-2 space-y-2"
+          style={{ borderTop: "1px solid var(--border)" }}>
+          {isSignedIn ? (
+            <Link
+              to="/app"
+              onClick={closeDrawer}
+              className="flex items-center justify-center gap-2 w-full py-3 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
+              style={{ background: "var(--green)" }}
+            >
+              Open Dashboard
+              <ArrowRight size={14} strokeWidth={1.8} />
+            </Link>
+          ) : (
+            <>
               <Link
                 to="/app"
-                className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
+                onClick={closeDrawer}
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
                 style={{ background: "var(--green)" }}
               >
                 Get started free
+                <ArrowRight size={14} strokeWidth={1.8} />
+              </Link>
+              <Link
+                to="/app"
+                onClick={closeDrawer}
+                className="flex items-center justify-center w-full py-2.5 rounded-lg text-sm font-medium transition-colors"
+                style={{ color: "var(--text-2)", border: "1px solid var(--border-strong)" }}
+              >
+                Sign in
               </Link>
             </>
           )}
         </div>
-      </div>
-    </nav>
+      </aside>
+    </>
   )
 }
 
