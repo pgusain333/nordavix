@@ -2,27 +2,25 @@
 Variance Transactions — pull QBO transactions hitting a specific account
 during the change window of a flux analysis.
 
-Triggered from the variance row's "Pull transactions" expand. Pulls the
-right set of transactions for the account type:
+Strategy: use QBO's GeneralLedger report filtered by account_id.
 
-  AR accounts → Invoice + Payment + CreditMemo + AR-targeted JEs
-                (Invoices/Payments don't carry AccountRef — QBO posts
-                them to AR implicitly via CustomerRef. Filtering by
-                AccountRef returns NOTHING for AR. That was the bug.)
+Why GL report instead of per-entity queries:
+  - GL is QBO's canonical source of "what posted to this account in
+    this period". It works uniformly for every account type:
+        AR  → Invoice / Payment / CreditMemo / JE
+        AP  → Bill / VendorCredit / BillPayment / JE
+        Bank/CC → Deposit / Purchase / Check / Transfer / JE
+        Income → Invoice line + SalesReceipt + JE
+        Expense → Purchase / Bill / Check + JE
+        Equity / Other Liab → JE
+  - One API call vs N — much faster and far less brittle than
+    walking line-detail shapes per transaction type.
+  - Amounts are signed naturally (debit positive, credit negative)
+    so the table footer "sum of txns" reconciles to the variance.
 
-  AP accounts → Bill + VendorCredit + BillPayment + AP-targeted JEs
-
-  Bank / Credit Card →  Deposit + Purchase + Check + Transfer +
-                        any JE line that hit the account
-
-  Everything else (Fixed Asset, Other Asset, Equity, etc.) →
-                JE lines that hit the account + AccountBasedExpense
-                lines on Purchases / Bills
-
-Stored as variance_transactions rows so the reviewer can tick each
-one off (is_checked) and we can show them again without re-querying.
-
-By design we do this ONLY for material variances.
+We deliberately pull only this account's rows from the report; we
+don't try to expand each transaction to show the contra side (that's
+the next iteration if users need it).
 """
 from __future__ import annotations
 
@@ -40,8 +38,6 @@ from models.variance_transaction import VarianceTransaction
 
 logger = logging.getLogger(__name__)
 
-
-# ── helpers ─────────────────────────────────────────────────────────────────
 
 def _dec(val: Any) -> Decimal:
     if val is None or val == "":
@@ -72,26 +68,6 @@ async def _qbo_get(conn: QboConnection, db: AsyncSession, path: str, params: dic
     return await _shared_qbo_get(conn, db, path, params)
 
 
-async def _lookup_account_type(conn: QboConnection, db: AsyncSession, qbo_account_id: str) -> str:
-    """Fetch the QBO AccountType for an account id. Returns "" if anything goes wrong."""
-    try:
-        data = await _qbo_get(
-            conn, db, "/query",
-            params={
-                "query": f"SELECT Id, AccountType FROM Account WHERE Id = '{qbo_account_id}'",
-                "minorversion": "65",
-            },
-        )
-        accts = data.get("QueryResponse", {}).get("Account", []) or []
-        if accts:
-            return str(accts[0].get("AccountType") or "")
-    except Exception:
-        logger.exception("AccountType lookup failed for %s", qbo_account_id)
-    return ""
-
-
-# ── public entry point ─────────────────────────────────────────────────────
-
 async def pull_transactions_for_variance(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -103,9 +79,9 @@ async def pull_transactions_for_variance(
     """
     Wipe stored rows for this variance and re-pull from QBO. Caller commits.
 
-    The window [period_start, period_end] is the change window —
-    i.e. prior_period_end + 1 day to current_period_end. Driving txns are
-    everything posted to the account in that interval.
+    Date window [period_start, period_end] is the change window —
+    prior_period_end + 1 day through current_period_end. Sum of returned
+    rows should reconcile to the GL variance for that account.
     """
     conn = (await db.execute(
         select(QboConnection).where(QboConnection.tenant_id == tenant_id),
@@ -117,30 +93,27 @@ async def pull_transactions_for_variance(
     await db.execute(delete(VarianceTransaction).where(VarianceTransaction.variance_id == variance_id))
 
     start = period_start.isoformat()
-    end = period_end.isoformat()
+    end   = period_end.isoformat()
+    logger.info("Variance txn pull: variance=%s account=%s window=%s..%s",
+                variance_id, qbo_account_id, start, end)
 
-    account_type = await _lookup_account_type(conn, db, qbo_account_id)
-    logger.info("Variance txn pull: variance=%s account=%s type=%s window=%s..%s",
-                variance_id, qbo_account_id, account_type, start, end)
+    # The GeneralLedger report is the cleanest cross-account-type source.
+    # We request explicit columns so the parser is stable regardless of the
+    # company's report customization defaults.
+    try:
+        report = await _qbo_get(conn, db, "/reports/GeneralLedger", params={
+            "start_date":       start,
+            "end_date":         end,
+            "account":          qbo_account_id,
+            "accounting_method":"Accrual",
+            "columns":          "tx_date,txn_type,doc_num,name,memo,subt_nat_amount,split_acc",
+            "minorversion":     "65",
+        })
+    except Exception as exc:
+        logger.exception("GeneralLedger pull failed for variance %s", variance_id)
+        raise RuntimeError(f"QuickBooks GeneralLedger pull failed: {exc}") from exc
 
-    rows_out: list[VarianceTransaction] = []
-
-    # Always: pull JE lines that touched this exact account (works for every type)
-    rows_out += await _pull_je_lines(conn, db, tenant_id, variance_id, qbo_account_id, start, end)
-
-    # Account-type-specific pulls
-    if account_type == "Accounts Receivable":
-        # Invoices / Payments / CreditMemos all post to AR implicitly via CustomerRef.
-        # No AccountRef filter — every in-period one is an AR-driving txn.
-        rows_out += await _pull_ar_txns(conn, db, tenant_id, variance_id, start, end)
-    elif account_type == "Accounts Payable":
-        rows_out += await _pull_ap_txns(conn, db, tenant_id, variance_id, start, end)
-    elif account_type in ("Bank", "Credit Card"):
-        rows_out += await _pull_bank_cc_txns(conn, db, tenant_id, variance_id, qbo_account_id, start, end)
-    else:
-        # Other balance-sheet / P&L accounts: pull purchases/bills with
-        # AccountBasedExpense lines hitting this account.
-        rows_out += await _pull_account_ref_txns(conn, db, tenant_id, variance_id, qbo_account_id, start, end)
+    rows_out = _parse_gl_report(report, tenant_id, variance_id)
 
     for r in rows_out:
         db.add(r)
@@ -149,284 +122,112 @@ async def pull_transactions_for_variance(
     return rows_out
 
 
-# ── pullers per account type ───────────────────────────────────────────────
+# ── GL report parsing ───────────────────────────────────────────────────────
 
-async def _pull_je_lines(
-    conn: QboConnection,
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    variance_id: uuid.UUID,
-    qbo_account_id: str,
-    start: str, end: str,
-) -> list[VarianceTransaction]:
-    """JEs that touched this exact account — common to every account type."""
-    try:
-        data = await _qbo_get(conn, db, "/query", params={
-            "query": (
-                f"SELECT Id, DocNumber, TxnDate, PrivateNote, Line "
-                f"FROM JournalEntry WHERE TxnDate >= '{start}' AND TxnDate <= '{end}' MAXRESULTS 500"
-            ),
-            "minorversion": "65",
-        })
-        jes = data.get("QueryResponse", {}).get("JournalEntry", []) or []
-    except Exception:
-        logger.exception("JE pull failed for variance %s", variance_id)
-        return []
-
-    out: list[VarianceTransaction] = []
-    for je in jes:
-        amount = Decimal("0")
-        entity_name: str | None = None
-        for line in je.get("Line", []) or []:
-            detail = line.get("JournalEntryLineDetail") or {}
-            if (detail.get("AccountRef") or {}).get("value") != qbo_account_id:
-                continue
-            ent = (detail.get("Entity") or {}).get("EntityRef")
-            if ent and not entity_name:
-                entity_name = str(ent.get("name") or "")[:255]
-            line_amt = _dec(line.get("Amount"))
-            amount += line_amt if detail.get("PostingType") == "Debit" else -line_amt
-        if amount == 0:
-            continue
-        out.append(VarianceTransaction(
-            id=uuid.uuid4(),
-            tenant_id=tenant_id,
-            variance_id=variance_id,
-            qbo_txn_id=str(je.get("Id") or ""),
-            txn_type="JournalEntry",
-            txn_number=str(je.get("DocNumber") or "")[:100],
-            txn_date=_parse_date(je.get("TxnDate")),
-            amount=amount,
-            memo=(je.get("PrivateNote") or "")[:500] or None,
-            entity_name=entity_name,
-        ))
-    return out
-
-
-async def _pull_ar_txns(
-    conn: QboConnection,
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    variance_id: uuid.UUID,
-    start: str, end: str,
-) -> list[VarianceTransaction]:
+def _parse_gl_report(report: dict, tenant_id: uuid.UUID, variance_id: uuid.UUID) -> list[VarianceTransaction]:
     """
-    AR-driving txns. Every Invoice/Payment/CreditMemo for a customer in QBO
-    hits an AR account. We can't reliably tell *which* AR account in
-    multi-AR workspaces from the doc payload alone, so for MVP we include
-    all of them — better to over-include than to silently drop AR activity.
+    QBO GL report shape:
+      Header.Time, Header.ReportName, Header.ReportBasis, Header.StartPeriod, Header.EndPeriod
+      Columns.Column[]: each has ColTitle / ColType / MetaData (id, name, hidden)
+      Rows.Row[]: each is either
+          - a "Section" with a Header (account summary) + child Rows + Summary
+          - a "Data" row with ColData[] of the actual transaction
+    We walk depth-first picking ColData rows. Total/summary rows are skipped.
     """
-    out: list[VarianceTransaction] = []
-    pulls = [
-        ("Invoice",    "Id, DocNumber, TxnDate, TotalAmt, PrivateNote, CustomerRef", "DocNumber",        +1),
-        ("CreditMemo", "Id, DocNumber, TxnDate, TotalAmt, PrivateNote, CustomerRef", "DocNumber",        -1),
-        ("Payment",    "Id, PaymentRefNum, TxnDate, TotalAmt, PrivateNote, CustomerRef", "PaymentRefNum", -1),
-    ]
-    for kind, fields, num_field, sign in pulls:
-        try:
-            data = await _qbo_get(conn, db, "/query", params={
-                "query": (
-                    f"SELECT {fields} FROM {kind} "
-                    f"WHERE TxnDate >= '{start}' AND TxnDate <= '{end}' MAXRESULTS 500"
-                ),
-                "minorversion": "65",
-            })
-            rows = data.get("QueryResponse", {}).get(kind, []) or []
-        except Exception:
-            logger.exception("AR pull failed for %s", kind)
-            continue
-        for t in rows:
-            entity = (t.get("CustomerRef") or {}).get("name")
-            amount = _dec(t.get("TotalAmt")) * sign
-            out.append(VarianceTransaction(
-                id=uuid.uuid4(),
-                tenant_id=tenant_id,
-                variance_id=variance_id,
-                qbo_txn_id=str(t.get("Id") or ""),
-                txn_type=kind,
-                txn_number=str(t.get(num_field) or "")[:100],
-                txn_date=_parse_date(t.get("TxnDate")),
-                amount=amount,
-                memo=(t.get("PrivateNote") or "")[:500] or None,
-                entity_name=str(entity)[:255] if entity else None,
-            ))
-    return out
+    # Map column position → role using ColType for stability.
+    cols = report.get("Columns", {}).get("Column", []) or []
+    role_by_idx: dict[int, str] = {}
+    for i, c in enumerate(cols):
+        coltype = (c.get("ColType") or "").strip().lower()
+        title   = (c.get("ColTitle") or "").strip().lower()
+        role = _coltype_to_role(coltype, title)
+        if role:
+            role_by_idx[i] = role
+
+    rows_out: list[VarianceTransaction] = []
+
+    def walk(rows: list[dict]) -> None:
+        for r in rows:
+            kind = r.get("type") or ""
+            sub  = r.get("Rows", {}).get("Row", []) or []
+            cd   = r.get("ColData") or []
+
+            # Skip section header/summary rows — they have group="Account" or
+            # similar and no actual transaction in ColData.
+            if cd and (r.get("type") == "Data" or not r.get("group")):
+                first_val = (cd[0].get("value", "") if cd else "").strip().lower()
+                # Filter out "Beginning Balance" / "Total" / "Ending Balance"
+                if first_val not in ("", "beginning balance", "total", "ending balance"):
+                    txn = _row_to_txn(cd, role_by_idx, tenant_id, variance_id)
+                    if txn is not None:
+                        rows_out.append(txn)
+            elif kind == "Section" and not sub:
+                # Section without children — typically the "no activity" placeholder
+                continue
+            if sub:
+                walk(sub)
+
+    walk(report.get("Rows", {}).get("Row", []) or [])
+    return rows_out
 
 
-async def _pull_ap_txns(
-    conn: QboConnection,
-    db: AsyncSession,
+def _coltype_to_role(coltype: str, title: str) -> str | None:
+    """Map QBO column type/title to our row dict key."""
+    if coltype in ("tx_date", "txndate", "date"):           return "date"
+    if coltype in ("txn_type",):                            return "type"
+    if coltype in ("doc_num",):                             return "number"
+    if coltype in ("name", "customer", "vendor", "payee"):  return "entity"
+    if coltype in ("memo", "description"):                  return "memo"
+    if coltype in ("subt_nat_amount", "amount", "subt_amount"):
+                                                            return "amount"
+    if coltype in ("split_acc", "split"):                   return "split"
+    # Fall back to title heuristics
+    t = title
+    if "date" in t and "modify" not in t:                   return "date"
+    if "type" in t:                                         return "type"
+    if "num" in t:                                          return "number"
+    if "memo" in t or "description" in t:                   return "memo"
+    if "amount" in t:                                       return "amount"
+    if "split" in t:                                        return "split"
+    if "name" in t or "customer" in t or "vendor" in t:     return "entity"
+    return None
+
+
+def _row_to_txn(
+    coldata: list[dict],
+    role_by_idx: dict[int, str],
     tenant_id: uuid.UUID,
     variance_id: uuid.UUID,
-    start: str, end: str,
-) -> list[VarianceTransaction]:
-    """AP mirror of _pull_ar_txns."""
-    out: list[VarianceTransaction] = []
-    pulls = [
-        ("Bill",         "Id, DocNumber, TxnDate, TotalAmt, PrivateNote, VendorRef", "DocNumber", +1),
-        ("VendorCredit", "Id, DocNumber, TxnDate, TotalAmt, PrivateNote, VendorRef", "DocNumber", -1),
-        ("BillPayment",  "Id, DocNumber, TxnDate, TotalAmt, PrivateNote, VendorRef", "DocNumber", -1),
-    ]
-    for kind, fields, num_field, sign in pulls:
-        try:
-            data = await _qbo_get(conn, db, "/query", params={
-                "query": (
-                    f"SELECT {fields} FROM {kind} "
-                    f"WHERE TxnDate >= '{start}' AND TxnDate <= '{end}' MAXRESULTS 500"
-                ),
-                "minorversion": "65",
-            })
-            rows = data.get("QueryResponse", {}).get(kind, []) or []
-        except Exception:
-            logger.exception("AP pull failed for %s", kind)
+) -> VarianceTransaction | None:
+    """Convert one GL ColData row into a VarianceTransaction model."""
+    bucket: dict[str, str] = {}
+    qbo_txn_id: str | None = None
+    for i, c in enumerate(coldata):
+        role = role_by_idx.get(i)
+        if not role:
             continue
-        for t in rows:
-            entity = (t.get("VendorRef") or {}).get("name")
-            amount = _dec(t.get("TotalAmt")) * sign
-            out.append(VarianceTransaction(
-                id=uuid.uuid4(),
-                tenant_id=tenant_id,
-                variance_id=variance_id,
-                qbo_txn_id=str(t.get("Id") or ""),
-                txn_type=kind,
-                txn_number=str(t.get(num_field) or "")[:100],
-                txn_date=_parse_date(t.get("TxnDate")),
-                amount=amount,
-                memo=(t.get("PrivateNote") or "")[:500] or None,
-                entity_name=str(entity)[:255] if entity else None,
-            ))
-    return out
+        bucket[role] = (c.get("value", "") or "").strip()
+        # QBO leaves the txn id under the date column's `id` (transactional rows)
+        if not qbo_txn_id and c.get("id"):
+            qbo_txn_id = str(c.get("id"))
 
+    amount = _dec(bucket.get("amount", ""))
+    if amount == 0 and not bucket.get("number") and not bucket.get("entity") and not bucket.get("memo"):
+        # Empty-looking row — skip
+        return None
 
-async def _pull_bank_cc_txns(
-    conn: QboConnection,
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    variance_id: uuid.UUID,
-    qbo_account_id: str,
-    start: str, end: str,
-) -> list[VarianceTransaction]:
-    """Bank / Credit Card: Deposits, Purchases, Checks, Transfers touching this account."""
-    out: list[VarianceTransaction] = []
-
-    # Deposit + Purchase + Check have direct top-level AccountRef
-    for kind, fields, num_field, sign in [
-        ("Deposit",   "Id, TxnDate, TotalAmt, PrivateNote, AccountRef",                     "Id",        +1),
-        ("Purchase",  "Id, DocNumber, TxnDate, TotalAmt, PrivateNote, AccountRef, EntityRef","DocNumber", -1),
-        ("Check",     "Id, DocNumber, TxnDate, TotalAmt, PrivateNote, AccountRef, EntityRef","DocNumber", -1),
-    ]:
-        try:
-            data = await _qbo_get(conn, db, "/query", params={
-                "query": f"SELECT {fields} FROM {kind} WHERE TxnDate >= '{start}' AND TxnDate <= '{end}' MAXRESULTS 500",
-                "minorversion": "65",
-            })
-        except Exception:
-            continue
-        for t in data.get("QueryResponse", {}).get(kind, []) or []:
-            if (t.get("AccountRef") or {}).get("value") != qbo_account_id:
-                continue
-            entity = (t.get("EntityRef") or {}).get("name") if t.get("EntityRef") else None
-            out.append(VarianceTransaction(
-                id=uuid.uuid4(),
-                tenant_id=tenant_id,
-                variance_id=variance_id,
-                qbo_txn_id=str(t.get("Id") or ""),
-                txn_type=kind,
-                txn_number=str(t.get(num_field) or "")[:100],
-                txn_date=_parse_date(t.get("TxnDate")),
-                amount=_dec(t.get("TotalAmt")) * sign,
-                memo=(t.get("PrivateNote") or "")[:500] or None,
-                entity_name=str(entity)[:255] if entity else None,
-            ))
-
-    # Transfer is a two-leg construct — pull and match either leg
-    try:
-        data = await _qbo_get(conn, db, "/query", params={
-            "query": f"SELECT Id, TxnDate, Amount, PrivateNote, FromAccountRef, ToAccountRef FROM Transfer WHERE TxnDate >= '{start}' AND TxnDate <= '{end}' MAXRESULTS 200",
-            "minorversion": "65",
-        })
-        for t in data.get("QueryResponse", {}).get("Transfer", []) or []:
-            from_id = (t.get("FromAccountRef") or {}).get("value")
-            to_id = (t.get("ToAccountRef") or {}).get("value")
-            if qbo_account_id not in (from_id, to_id):
-                continue
-            sign = -1 if from_id == qbo_account_id else +1
-            out.append(VarianceTransaction(
-                id=uuid.uuid4(),
-                tenant_id=tenant_id,
-                variance_id=variance_id,
-                qbo_txn_id=str(t.get("Id") or ""),
-                txn_type="Transfer",
-                txn_number=str(t.get("Id") or "")[:100],
-                txn_date=_parse_date(t.get("TxnDate")),
-                amount=_dec(t.get("Amount")) * sign,
-                memo=(t.get("PrivateNote") or "")[:500] or None,
-                entity_name=None,
-            ))
-    except Exception:
-        logger.exception("Transfer pull failed for variance %s", variance_id)
-    return out
-
-
-async def _pull_account_ref_txns(
-    conn: QboConnection,
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    variance_id: uuid.UUID,
-    qbo_account_id: str,
-    start: str, end: str,
-) -> list[VarianceTransaction]:
-    """
-    Other-account types (fixed asset, prepaid, accrual, expense, etc.):
-    pull Purchases / Bills where any AccountBasedExpenseLine targets the
-    account. Plus the JE lines are already covered by _pull_je_lines.
-    """
-    out: list[VarianceTransaction] = []
-    pulls = [
-        ("Purchase", "Id, DocNumber, TxnDate, TotalAmt, PrivateNote, EntityRef, Line"),
-        ("Bill",     "Id, DocNumber, TxnDate, TotalAmt, PrivateNote, VendorRef, Line"),
-    ]
-    for kind, fields in pulls:
-        try:
-            data = await _qbo_get(conn, db, "/query", params={
-                "query": f"SELECT {fields} FROM {kind} WHERE TxnDate >= '{start}' AND TxnDate <= '{end}' MAXRESULTS 500",
-                "minorversion": "65",
-            })
-        except Exception:
-            continue
-        for t in data.get("QueryResponse", {}).get(kind, []) or []:
-            if not _has_account_in_lines(t, qbo_account_id):
-                continue
-            entity = (
-                ((t.get("EntityRef") or {}).get("name"))
-                or ((t.get("VendorRef") or {}).get("name"))
-            )
-            out.append(VarianceTransaction(
-                id=uuid.uuid4(),
-                tenant_id=tenant_id,
-                variance_id=variance_id,
-                qbo_txn_id=str(t.get("Id") or ""),
-                txn_type=kind,
-                txn_number=str(t.get("DocNumber") or "")[:100],
-                txn_date=_parse_date(t.get("TxnDate")),
-                amount=_dec(t.get("TotalAmt")),
-                memo=(t.get("PrivateNote") or "")[:500] or None,
-                entity_name=str(entity)[:255] if entity else None,
-            ))
-    return out
-
-
-def _has_account_in_lines(txn: dict, qbo_account_id: str) -> bool:
-    for line in txn.get("Line", []) or []:
-        for key in (
-            "AccountBasedExpenseLineDetail",
-            "DepositLineDetail",
-            "JournalEntryLineDetail",
-        ):
-            d = line.get(key)
-            if d and (d.get("AccountRef") or {}).get("value") == qbo_account_id:
-                return True
-    return False
+    return VarianceTransaction(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        variance_id=variance_id,
+        qbo_txn_id=qbo_txn_id,
+        txn_type=bucket.get("type") or "Transaction",
+        txn_number=bucket.get("number", "")[:100] or None,
+        txn_date=_parse_date(bucket.get("date", "")),
+        amount=amount,
+        memo=bucket.get("memo", "")[:500] or None,
+        entity_name=bucket.get("entity", "")[:255] or None,
+    )
 
 
 __all__ = ["pull_transactions_for_variance"]

@@ -34,21 +34,57 @@ _FS_CATEGORY_RANGES: list[tuple[int, int, str, str]] = [
 def classify_account(
     account_number: str,
     overrides: dict[str, str],
+    qbo_account_type: str | None = None,
 ) -> tuple[str | None, str | None]:
-    """Return (fs_category, fs_line) for an account number using GAAP ranges."""
+    """
+    Return (fs_category, fs_line) for an account.
+
+    Priority order:
+      1. Explicit overrides dict ({acctnum: "Category|FS Line"})
+      2. GAAP 4-digit account number ranges (works for numbered CoAs)
+      3. QBO AccountType fallback — required for unnumbered defaults
+         (e.g. "Design income", "Sales of Product Income") that don't
+         classify via account number.
+    """
     if account_number in overrides:
         parts = overrides[account_number].split("|", 1)
         return parts[0], parts[1] if len(parts) > 1 else None
 
+    # Try GAAP ranges first
     try:
         num = int(account_number.split(".")[0].strip())
+        for low, high, category, line in _FS_CATEGORY_RANGES:
+            if low <= num <= high:
+                return category, line
     except (ValueError, AttributeError):
-        return None, None
+        pass
 
-    for low, high, category, line in _FS_CATEGORY_RANGES:
-        if low <= num <= high:
-            return category, line
+    # Fall back to QBO AccountType
+    if qbo_account_type:
+        return _CATEGORY_FROM_QBO_TYPE.get(qbo_account_type, (None, None))
     return None, None
+
+
+# QBO AccountType → (FS category, FS sub-line). Covers every AccountType
+# QBO exposes today. Lines stay GAAP-ish so the AI prompt + UI grouping
+# read consistently across companies.
+_CATEGORY_FROM_QBO_TYPE: dict[str, tuple[str, str]] = {
+    "Bank":                       ("Assets",      "Current Assets"),
+    "Accounts Receivable":        ("Assets",      "Current Assets"),
+    "Other Current Asset":        ("Assets",      "Current Assets"),
+    "Fixed Asset":                ("Assets",      "Long-Term Assets"),
+    "Other Asset":                ("Assets",      "Other Assets"),
+    "Accounts Payable":           ("Liabilities", "Current Liabilities"),
+    "Credit Card":                ("Liabilities", "Current Liabilities"),
+    "Other Current Liability":    ("Liabilities", "Current Liabilities"),
+    "Long Term Liability":        ("Liabilities", "Long-Term Liabilities"),
+    "Equity":                     ("Equity",      "Equity"),
+    "Income":                     ("Revenue",     "Revenue"),
+    "Other Income":               ("Revenue",     "Other Income"),
+    "Cost of Goods Sold":         ("Expenses",    "Cost of Revenue"),
+    "Expense":                    ("Expenses",    "Operating Expenses"),
+    "Other Expense":              ("Expenses",    "Other Expenses"),
+}
 
 
 def compute_variance(
@@ -475,7 +511,7 @@ def parse_qbo_trial_balance_report(
         if not acct_num:
             acct_num = f"qbo-{qbo_id}" if qbo_id else acct_name[:50]
 
-        fs_category, fs_line = classify_account(acct_num, overrides)
+        fs_category, fs_line = classify_account(acct_num, overrides, qbo_acct_type)
         accounts.append({
             "account_number": acct_num,
             "account_name":   acct_name,

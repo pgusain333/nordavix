@@ -610,7 +610,11 @@ function NarrativePanel({
 
       {/* Transactions drill-in — only for material variances */}
       {row.is_material && (
-        <VarianceTxnsSection tbId={tbId} varianceId={row.id} />
+        <VarianceTxnsSection
+          tbId={tbId}
+          varianceId={row.id}
+          expectedVariance={row.dollar_variance}
+        />
       )}
     </div>
   )
@@ -621,9 +625,12 @@ function NarrativePanel({
 // First click "Pull transactions" hits QBO; once fetched the rows are stored
 // server-side so subsequent expands are instant. Each row has a check toggle
 // that the reviewer flips as they investigate — backed by an audit-logged
-// flip on the server.
+// flip on the server. The footer totals the pulled txns and reconciles them
+// to the expected GL variance so the reviewer can spot missing activity.
 
-function VarianceTxnsSection({ tbId, varianceId }: { tbId: string; varianceId: string }) {
+function VarianceTxnsSection({ tbId, varianceId, expectedVariance }:
+  { tbId: string; varianceId: string; expectedVariance: string }
+) {
   const qc = useQueryClient()
   const [enabled, setEnabled] = useState(false)
   /** Set of currently-selected transaction IDs for bulk actions */
@@ -867,6 +874,72 @@ function VarianceTxnsSection({ tbId, varianceId }: { tbId: string; varianceId: s
                 )
               })}
             </tbody>
+            {/* Reconciliation footer: sum of pulled txns vs the GL variance.
+                The amounts will match within rounding for QBO-sourced
+                analyses; any gap reveals txns we didn't pull (very old,
+                voided, or outside the date window). */}
+            {data && data.transactions.length > 0 && (
+              <tfoot>
+                {(() => {
+                  const sum = data.transactions.reduce(
+                    (n, t) => n + (parseFloat(t.amount) || 0),
+                    0,
+                  )
+                  const variance = parseFloat(expectedVariance) || 0
+                  const diff = sum - variance
+                  const inSync = Math.abs(diff) < 1
+                  return (
+                    <>
+                      <tr style={{
+                        background: "var(--surface-2)",
+                        borderTop: "2px solid var(--border-strong)",
+                      }}>
+                        <td className="px-3 py-2 text-center" colSpan={4} />
+                        <td className="px-3 py-2 text-right font-semibold text-theme">
+                          Sum of pulled transactions
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-bold text-theme">
+                          {formatAccounting(sum, 0)}
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
+                      <tr style={{ background: "var(--surface-2)" }}>
+                        <td className="px-3 py-1.5 text-center" colSpan={4} />
+                        <td className="px-3 py-1.5 text-right text-xs"
+                          style={{ color: "var(--text-muted)" }}>
+                          GL variance for this account
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-xs"
+                          style={{ color: "var(--text-2)" }}>
+                          {formatAccounting(variance, 0)}
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
+                      <tr style={{
+                        background: inSync ? "var(--green-subtle)" : "#fef2f2",
+                        borderTop: "1px solid var(--border)",
+                      }}>
+                        <td className="px-3 py-2 text-center" colSpan={4} />
+                        <td className="px-3 py-2 text-right text-xs font-semibold"
+                          style={{ color: inSync ? "var(--green)" : "#b91c1c" }}>
+                          {inSync
+                            ? "Reconciles to GL variance"
+                            : "Unreconciled difference"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-bold"
+                          style={{ color: inSync ? "var(--green)" : "#b91c1c" }}>
+                          {inSync
+                            ? <CheckCircle2 size={14} strokeWidth={2} className="inline" />
+                            : formatAccounting(diff, 0)
+                          }
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
+                    </>
+                  )
+                })()}
+              </tfoot>
+            )}
           </table>
         </div>
       )}

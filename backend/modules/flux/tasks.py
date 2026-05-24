@@ -104,29 +104,41 @@ async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
     from models.narrative import Narrative
     from models.trial_balance import TrialBalance
     from models.variance import Variance
+    from models.variance_transaction import VarianceTransaction
 
     var_uuid = uuid.UUID(variance_id)
     tid      = uuid.UUID(tenant_id)
     current_tenant_id.set(tid)
 
     async with get_async_session_context() as session:
-        # Load Variance + Account
+        # Load Variance + Account + TB (for period context)
         stmt = (
-            select(Variance, Account)
+            select(Variance, Account, TrialBalance)
             .join(Account, Variance.account_id == Account.id)
+            .join(TrialBalance, TrialBalance.id == Account.trial_balance_id)
             .where(Variance.id == var_uuid)
         )
         row = (await session.execute(stmt)).one_or_none()
         if row is None:
             return {"status": "not_found", "variance_id": variance_id}
 
-        var, acct = row
+        var, acct, tb = row
 
-        # Cache key: hash of inputs + model
+        # Pull any drill-in transactions the user has already fetched.
+        # These give the model concrete drivers to cite by name + amount.
+        txns = list((await session.execute(
+            select(VarianceTransaction)
+            .where(VarianceTransaction.variance_id == var_uuid)
+            .order_by(VarianceTransaction.txn_date.desc().nullslast())
+        )).scalars().all())
+
+        # Cache key includes whether txns were available so a "find reason"
+        # before vs after pulling transactions produces a fresh response.
         cache_input = "|".join([
             acct.account_number,
             str(acct.current_balance),
             str(acct.prior_balance),
+            str(len(txns)),
             settings.anthropic_model,
         ])
         cache_key = hashlib.sha256(cache_input.encode()).hexdigest()
@@ -164,28 +176,56 @@ async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
                 flag_labels.get(f, f) for f in var.anomaly_flags
             ) + "."
 
+        # Build the transaction evidence block — only when we have actual
+        # drill-in data. We include the largest-by-absolute-amount txns up
+        # to a token-budget cap so the model can cite specific drivers.
+        txn_block = ""
+        if txns:
+            sorted_txns = sorted(txns, key=lambda t: abs(float(t.amount)), reverse=True)[:15]
+            lines: list[str] = []
+            running_total = sum(float(t.amount) for t in txns)
+            for t in sorted_txns:
+                date_s = t.txn_date.isoformat() if t.txn_date else ""
+                entity = f" / {t.entity_name}" if t.entity_name else ""
+                memo   = f" - {t.memo[:80]}" if t.memo else ""
+                lines.append(
+                    f"  {date_s} {t.txn_type} {t.txn_number or ''}{entity}: "
+                    f"${float(t.amount):,.2f}{memo}"
+                )
+            txn_block = (
+                f"\n\nKey drivers ({len(txns)} transactions totaling "
+                f"${running_total:,.2f}):\n" + "\n".join(lines)
+            )
+
         prompt = (
             f"You are a senior CPA writing month-end flux commentary for a client. "
-            f"Write 2 to 3 sentences explaining the variance for:\n\n"
-            f"Account: {acct.account_number} - {acct.account_name}\n"
-            f"Category: {acct.fs_category or 'Unknown'} / {acct.fs_line or 'Unknown'}\n"
-            f"Current period: ${float(acct.current_balance):,.2f}\n"
-            f"Prior period:   ${float(acct.prior_balance):,.2f}\n"
+            f"Write 2 to 4 sentences explaining what drove the variance, citing "
+            f"specific drivers from the transaction list when they are material.\n\n"
+            f"Account:        {acct.account_number} - {acct.account_name}\n"
+            f"Category:       {acct.fs_category or 'Unknown'} / {acct.fs_line or 'Unknown'}\n"
+            f"Current period end: {tb.period_current} balance ${float(acct.current_balance):,.2f}\n"
+            f"Prior period end:   {tb.period_prior} balance ${float(acct.prior_balance):,.2f}\n"
             f"Dollar change:  ${float(var.dollar_variance):,.2f}\n"
-            f"Percent change: {pct_str}{anomaly_desc}\n\n"
-            f"Formatting rules - these are strict:\n"
+            f"Percent change: {pct_str}{anomaly_desc}"
+            f"{txn_block}\n\n"
+            f"What good commentary looks like:\n"
+            f"- Names specific customers/vendors/transactions when they explain >25% of the change\n"
+            f"- Distinguishes operating activity from one-time items\n"
+            f"- States the most likely cause in plain language a controller would write\n"
+            f"- Calls out anything that warrants follow-up (unposted JEs, unusual timing)\n\n"
+            f"Formatting rules - strict:\n"
             f"- Plain prose only. No headers, no bullet lists, no tables.\n"
             f"- Never use markdown. No **, no __, no ##, no ---, no backticks.\n"
-            f"- If you must separate clauses, use a normal hyphen-minus (-) or a period.\n"
-            f"- Do not restate the numbers verbatim - interpret them.\n"
-            f"- Professional tone, suitable for a controller's workpaper."
+            f"- If you separate clauses, use a normal hyphen-minus (-) or a period.\n"
+            f"- Do not restate every number; interpret what the data means.\n"
+            f"- Controller-grade tone, suitable for a close workpaper."
         )
 
         # Call Anthropic (sync client — acceptable inside asyncio.run in Celery)
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         response = client.messages.create(
             model=settings.anthropic_model,
-            max_tokens=250,
+            max_tokens=400,
             messages=[{"role": "user", "content": prompt}],
         )
 
@@ -193,12 +233,17 @@ async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
         input_tokens  = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
 
-        # Confidence heuristic: lower if anomalies present or new account
+        # Confidence heuristic: starts at 0.85, drops with anomalies,
+        # bumps up when we have actual transaction evidence to ground the
+        # response.
         confidence = Decimal("0.85")
         if var.anomaly_flags:
             confidence = Decimal("0.70")
         if "new_account" in (var.anomaly_flags or []):
             confidence = Decimal("0.60")
+        if txns:
+            # Evidence-backed commentary gets higher confidence
+            confidence = min(Decimal("0.95"), confidence + Decimal("0.10"))
 
         # Persist narrative
         narrative = Narrative(
