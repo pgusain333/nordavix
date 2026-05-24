@@ -18,7 +18,7 @@ import uuid
 from decimal import Decimal
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ from modules.flux.schemas import (
     VarianceResponse,
 )
 from modules.flux.service import parse_file_to_preview, parse_accounts_from_file, create_accounts_and_variances
-from modules.flux.tasks import generate_narrative_task
+from modules.flux.tasks import generate_narrative_async, generate_narrative_task  # noqa: F401  (kept for celery)
 
 router = APIRouter()
 
@@ -155,6 +155,7 @@ async def parse_trial_balance(
     tb_id: uuid.UUID,
     body: ColumnMappingBody,
     tenant_id: CurrentTenantId,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> ParseResult:
     """
@@ -228,8 +229,9 @@ async def parse_trial_balance(
     )
     material_variances = list(variance_result.scalars().all())
 
+    # Run AI in-process via BackgroundTasks — no separate worker required.
     for var in material_variances:
-        generate_narrative_task.delay(str(var.id), str(tenant_id))
+        background_tasks.add_task(generate_narrative_async, str(var.id), str(tenant_id))
 
     if material_variances:
         tb.status = "generating"
@@ -248,11 +250,12 @@ async def parse_trial_balance(
 async def run_flux(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> FluxRunResponse:
     """
-    Re-enqueue AI narrative generation for all pending material variances.
-    Also used after /parse to kick off generation.
+    Run AI narrative generation for every material variance that doesn't yet
+    have one (status pending or flagged). Also used right after /parse.
     """
     result = await db.execute(select(TrialBalance).where(TrialBalance.id == tb_id))
     tb = result.scalar_one_or_none()
@@ -265,20 +268,21 @@ async def run_flux(
             detail=f"Cannot run flux on TB with status '{tb.status}'"
         )
 
-    # Enqueue for all variances that still need narratives
+    # Pick up anything that's material and not already done by the AI.
+    # We include "flagged" so a previous transient failure can be retried.
     var_result = await db.execute(
         select(Variance).join(Account, Variance.account_id == Account.id)
         .where(
             Account.trial_balance_id == tb_id,
             Variance.is_material == True,
-            Variance.status == "pending",
+            Variance.status.in_(("pending", "flagged")),
         )
     )
     pending = list(var_result.scalars().all())
 
     queued = 0
     for var in pending:
-        generate_narrative_task.delay(str(var.id), str(tenant_id))
+        background_tasks.add_task(generate_narrative_async, str(var.id), str(tenant_id))
         queued += 1
 
     if queued > 0:
@@ -290,7 +294,11 @@ async def run_flux(
         trial_balance_id=tb_id,
         task_id=task_id,
         status="queued" if queued > 0 else "no_pending",
-        message=f"Queued {queued} narrative tasks.",
+        message=(
+            f"Queued AI analysis for {queued} variance{'s' if queued != 1 else ''}."
+            if queued > 0
+            else "All material variances already have AI commentary."
+        ),
     )
 
 
@@ -398,10 +406,11 @@ async def regenerate_variance(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Clear the existing narrative for a single variance and re-enqueue the AI task.
+    Clear the existing narrative for a single variance and re-run the AI task.
     Lets the user request a fresh AI explanation for any variance, regardless of
     whether it was previously material/pending.
     """
@@ -422,7 +431,7 @@ async def regenerate_variance(
     var_row.status = "pending"
     await db.commit()
 
-    generate_narrative_task.delay(str(var_id), str(tenant_id))
+    background_tasks.add_task(generate_narrative_async, str(var_id), str(tenant_id))
     return {"id": str(var_id), "status": "queued"}
 
 

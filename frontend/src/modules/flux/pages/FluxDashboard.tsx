@@ -79,6 +79,9 @@ export function FluxDashboard() {
   /** Two-step confirm for destructive actions: null | "reset" | "delete" */
   const [pendingAction, setPendingAction] = useState<"reset" | "delete" | null>(null)
 
+  /** Transient banner shown after Find-reasons runs ("Queued X analyses…") */
+  const [runMsg, setRunMsg] = useState<{ kind: "ok" | "info" | "err"; text: string } | null>(null)
+
   // List of all TBs
   const { data: tbs = [], isLoading: tbsLoading } = useQuery({
     queryKey: ["trial-balances"],
@@ -170,11 +173,27 @@ export function FluxDashboard() {
   // Run AI analysis on all material+pending variances
   const runFluxMut = useMutation({
     mutationFn: (id: string) => api.runFlux(id),
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["trial-balances"] })
       qc.invalidateQueries({ queryKey: ["variances", tbId] })
+      if (data.status === "queued") {
+        setRunMsg({ kind: "ok", text: data.message ?? "AI analysis started." })
+      } else {
+        setRunMsg({ kind: "info", text: data.message ?? "All variances already have AI commentary." })
+      }
+    },
+    onError: (e: unknown) => {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setRunMsg({ kind: "err", text: detail ?? "Could not start AI analysis. Try again." })
     },
   })
+
+  // Auto-dismiss the run banner
+  useEffect(() => {
+    if (!runMsg) return
+    const t = setTimeout(() => setRunMsg(null), 5_000)
+    return () => clearTimeout(t)
+  }, [runMsg])
 
   // Auto-clear the pending-confirm state after 4s of inactivity
   useEffect(() => {
@@ -444,6 +463,36 @@ export function FluxDashboard() {
             />
           </div>
         </div>
+
+        {/* Transient feedback banner */}
+        <AnimatePresence>
+          {runMsg && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="px-4 sm:px-6 py-2 text-xs font-medium flex items-center gap-2"
+              style={{
+                background:
+                  runMsg.kind === "ok"   ? "var(--green-subtle)" :
+                  runMsg.kind === "err"  ? "#fee2e2" :
+                                           "var(--surface-2)",
+                color:
+                  runMsg.kind === "ok"   ? "var(--green)" :
+                  runMsg.kind === "err"  ? "#b91c1c" :
+                                           "var(--text-2)",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <Sparkles size={12} strokeWidth={1.8} />
+              <span className="flex-1">{runMsg.text}</span>
+              <button onClick={() => setRunMsg(null)} className="opacity-60 hover:opacity-100">
+                <X size={12} strokeWidth={2} />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* ── Animated content ── */}
         <div className="flex-1 overflow-hidden relative">

@@ -31,6 +31,10 @@ def generate_narrative_task(self: object, variance_id: str, tenant_id: str) -> d
     """
     Generate an AI narrative for one variance row.
     Runs the async implementation via asyncio.run().
+
+    NOTE: This Celery path is kept for environments that run a worker.
+    On Fly.io (no separate worker process today), the API routes use
+    `generate_narrative_async` directly via FastAPI BackgroundTasks instead.
     """
     # Set tenant context before any DB operation
     tid = uuid.UUID(tenant_id)
@@ -42,6 +46,40 @@ def generate_narrative_task(self: object, variance_id: str, tenant_id: str) -> d
     except Exception as exc:
         # Retry on transient errors
         raise self.retry(exc=exc)  # type: ignore[attr-defined]
+
+
+async def generate_narrative_async(variance_id: str, tenant_id: str) -> dict[str, str]:
+    """
+    Background-task entrypoint used by FastAPI when no Celery worker is running.
+
+    Sets the tenant context (because background tasks run outside the request)
+    and never raises — failures are logged but must not crash the worker pool.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        tid = uuid.UUID(tenant_id)
+        current_tenant_id.set(tid)
+        return await _generate(variance_id, tenant_id)
+    except Exception:
+        logger.exception("Variance narrative generation failed (variance=%s)", variance_id)
+        # Best-effort: mark the variance as flagged so the UI doesn't poll forever
+        try:
+            from sqlalchemy import select
+            from core.db.session import get_async_session_context
+            from models.variance import Variance
+
+            async with get_async_session_context() as session:
+                var = (
+                    await session.execute(select(Variance).where(Variance.id == uuid.UUID(variance_id)))
+                ).scalar_one_or_none()
+                if var is not None:
+                    var.status = "flagged"
+                    await session.commit()
+        except Exception:
+            logger.exception("Could not mark variance flagged after failure")
+        return {"status": "error", "variance_id": variance_id}
 
 
 async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
