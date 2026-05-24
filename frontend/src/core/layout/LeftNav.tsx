@@ -23,7 +23,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard",       path: "/app",                 icon: LayoutDashboard, available: true  },
   { label: "Flux Analysis",   path: "/app/flux",            icon: BarChart3,       available: true  },
-  { label: "Reconciliations", path: "/app/reconciliations", icon: Scale,           available: false },
+  { label: "Reconciliations", path: "/app/reconciliations", icon: Scale,           available: true  },
   { label: "Workpapers",      path: "/app/workpapers",      icon: FileText,        available: false },
   { label: "Intercompany",    path: "/app/intercompany",    icon: ArrowLeftRight,  available: false },
 ]

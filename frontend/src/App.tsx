@@ -5,6 +5,10 @@ import { DashboardHome } from "@/modules/dashboard/pages/DashboardHome"
 import { FluxDashboard } from "@/modules/flux/pages/FluxDashboard"
 import { HomePage } from "@/marketing/HomePage"
 import { WorkspaceGate } from "@/core/auth/WorkspaceGate"
+import { ReconciliationsDashboard } from "@/modules/recons/pages/ReconciliationsDashboard"
+import { ARReconciliations } from "@/modules/recons/pages/ARReconciliations"
+import { APReconciliations } from "@/modules/recons/pages/APReconciliations"
+import { ReconciliationDetail } from "@/modules/recons/pages/ReconciliationDetail"
 
 export default function App() {
   return (
@@ -27,6 +31,10 @@ export default function App() {
                     <Route index element={<DashboardHome />} />
                     <Route path="flux"         element={<FluxDashboard />} />
                     <Route path="flux/:tbId"   element={<FluxDashboard />} />
+                    <Route path="reconciliations"            element={<ReconciliationsDashboard />} />
+                    <Route path="reconciliations/ar"         element={<ARReconciliations />} />
+                    <Route path="reconciliations/ap"         element={<APReconciliations />} />
+                    <Route path="reconciliations/:reconId"   element={<ReconciliationDetail />} />
                   </Routes>
                 </ThreePaneLayout>
               </WorkspaceGate>
