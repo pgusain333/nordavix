@@ -17,7 +17,7 @@
  * All data is pulled LIVE from QuickBooks on each period change — no
  * persistence overhead, always fresh.
  */
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -44,6 +44,7 @@ import {
 import { Button, Spinner } from "@/core/ui/components"
 import {
   reconsApi,
+  type Overview,
   type OverviewAccount,
   type SubledgerDetail,
   type VarianceDetail,
@@ -101,8 +102,8 @@ export function ReconciliationsDashboard() {
   const [drawerAccount, setDrawerAccount] = useState<OverviewAccount | null>(null)
   const [drawerMode, setDrawerMode] = useState<"subledger" | "variance">("subledger")
   const [confirmClear, setConfirmClear] = useState(false)
-  /** Account being edited via the manual-subledger modal (null = closed). */
-  const [editingSubledger, setEditingSubledger] = useState<OverviewAccount | null>(null)
+  /** qbo_account_id of the row currently expanded inline (null = all collapsed). */
+  const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null)
   /** Set of qbo_account_ids the user has checked for bulk actions */
   const [selected, setSelected] = useState<Set<string>>(new Set())
   /** "Synced N accounts at HH:MM" — banner that fades out after a few seconds */
@@ -165,20 +166,48 @@ export function ReconciliationsDashboard() {
     onError: () => setConfirmClear(false),
   })
 
-  /** Per-row status flip (used inline + when no rows are selected). */
+  /**
+   * Per-row status flip (used inline + when no rows are selected).
+   *
+   * The overview query is manual-sync only (`enabled: false`, `staleTime: Infinity`),
+   * so a plain `invalidateQueries` after the mutation does nothing — the
+   * cache stays stale until the user clicks Sync. Instead we optimistically
+   * patch the cached overview the moment the mutation fires so the row
+   * jumps to its new bucket immediately; rollback on error.
+   */
   const setStatusMut = useMutation({
     mutationFn: (v: { id: string; status: AccountReviewStatus }) =>
       reconsApi.updateAccountReviewStatus(v.id, periodEnd, v.status),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] }),
-    onError: (err: unknown) => {
+    onMutate: async (v) => {
+      await qc.cancelQueries({ queryKey: ["recons-overview", periodEnd] })
+      const prev = qc.getQueryData<Overview>(["recons-overview", periodEnd])
+      if (prev) {
+        const nowIso = new Date().toISOString()
+        qc.setQueryData<Overview>(["recons-overview", periodEnd], {
+          ...prev,
+          accounts: prev.accounts.map((a) =>
+            a.qbo_id === v.id
+              ? {
+                  ...a,
+                  review_status: v.status,
+                  reviewed_at: v.status === "pending" ? null : nowIso,
+                }
+              : a,
+          ),
+        })
+      }
+      return { prev }
+    },
+    onError: (err: unknown, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["recons-overview", periodEnd], ctx.prev)
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }
       // Surface maker/checker rejection (403) clearly via the sync banner —
       // it's the same channel the user already watches for errors.
-      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Could not update status"}`)
+      setSyncMsg(`Status update failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown"}`)
     },
   })
 
-  /** Manual subledger override — used by the editor modal below. */
+  /** Manual subledger override — used by the inline editor below. */
   const subledgerMut = useMutation({
     mutationFn: (v: {
       qboId: string
@@ -187,9 +216,30 @@ export function ReconciliationsDashboard() {
       items?: ReconcilingItem[]
     }) =>
       reconsApi.setSubledgerOverride(v.qboId, periodEnd, v.total, v.source, v.items),
-    onSuccess: () => {
-      setEditingSubledger(null)
-      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+    onSuccess: (_data, v) => {
+      setExpandedAccountId(null)
+      // Optimistic patch so the manual badge / value flips immediately.
+      const prev = qc.getQueryData<Overview>(["recons-overview", periodEnd])
+      if (prev) {
+        qc.setQueryData<Overview>(["recons-overview", periodEnd], {
+          ...prev,
+          accounts: prev.accounts.map((a) =>
+            a.qbo_id === v.qboId
+              ? {
+                  ...a,
+                  subledger_is_manual: v.total !== null,
+                  subledger_balance:   v.total !== null ? String(v.total) : a.gl_balance,
+                  subledger_source:    v.total !== null ? (v.source ?? a.subledger_source) : a.subledger_source,
+                  reconciling_items:   v.items ?? [],
+                  variance:            v.total !== null
+                                        ? String((parseFloat(a.gl_balance) - v.total).toFixed(2))
+                                        : "0.00",
+                  subledger_entered_at: v.total !== null ? new Date().toISOString() : null,
+                }
+              : a,
+          ),
+        })
+      }
     },
   })
 
@@ -197,13 +247,32 @@ export function ReconciliationsDashboard() {
   const bulkStatusMut = useMutation({
     mutationFn: (status: AccountReviewStatus) =>
       reconsApi.bulkUpdateAccountReviewStatus(periodEnd, status, Array.from(selected)),
-    onSuccess: () => {
-      setSelected(new Set())
-      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+    onMutate: async (status) => {
+      await qc.cancelQueries({ queryKey: ["recons-overview", periodEnd] })
+      const prev = qc.getQueryData<Overview>(["recons-overview", periodEnd])
+      if (prev) {
+        const ids = selected
+        const nowIso = new Date().toISOString()
+        qc.setQueryData<Overview>(["recons-overview", periodEnd], {
+          ...prev,
+          accounts: prev.accounts.map((a) =>
+            ids.has(a.qbo_id)
+              ? {
+                  ...a,
+                  review_status: status,
+                  reviewed_at: status === "pending" ? null : nowIso,
+                }
+              : a,
+          ),
+        })
+      }
+      return { prev }
     },
-    onError: (err: unknown) => {
+    onSuccess: () => setSelected(new Set()),
+    onError: (err: unknown, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["recons-overview", periodEnd], ctx.prev)
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }
-      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Bulk update failed"}`)
+      setSyncMsg(`Bulk update failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown"}`)
     },
   })
 
@@ -619,20 +688,24 @@ export function ReconciliationsDashboard() {
                         const color = GROUP_COLORS[a.group_label] ?? "var(--text-muted)"
                         const isSelected = selected.has(a.qbo_id)
                         const status = a.review_status
+                        const isExpanded = expandedAccountId === a.qbo_id
                         return (
-                          <tr key={a.qbo_id}
+                          <Fragment key={a.qbo_id}>
+                          <tr
                             style={{
-                              borderBottom: "1px solid var(--border)",
+                              borderBottom: isExpanded ? "none" : "1px solid var(--border)",
                               background: isSelected
                                 ? "var(--green-subtle)"
-                                : status === "approved"
-                                  ? "rgba(16, 185, 129, 0.04)"
-                                  : "transparent",
+                                : isExpanded
+                                  ? "var(--surface-2)"
+                                  : status === "approved"
+                                    ? "rgba(16, 185, 129, 0.04)"
+                                    : "transparent",
                             }}
                             className="transition-colors"
-                            onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                            onMouseEnter={(e) => { if (!isSelected && !isExpanded) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
                             onMouseLeave={(e) => {
-                              if (!isSelected) {
+                              if (!isSelected && !isExpanded) {
                                 (e.currentTarget as HTMLElement).style.background =
                                   status === "approved" ? "rgba(16, 185, 129, 0.04)" : ""
                               }
@@ -694,7 +767,7 @@ export function ReconciliationsDashboard() {
                                 )}
                                 <span className="tabular-nums">{fmtMoney(a.subledger_balance)}</span>
                                 <button
-                                  onClick={() => setEditingSubledger(a)}
+                                  onClick={() => setExpandedAccountId(expandedAccountId === a.qbo_id ? null : a.qbo_id)}
                                   className="h-5 w-5 inline-flex items-center justify-center rounded transition-colors"
                                   style={{ color: "var(--text-muted)" }}
                                   title={a.subledger_is_manual ? "Edit manual subledger" : "Enter manual subledger value"}
@@ -718,7 +791,7 @@ export function ReconciliationsDashboard() {
                             <td className="px-3 py-2.5">
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
-                                  onClick={() => setEditingSubledger(a)}
+                                  onClick={() => setExpandedAccountId(expandedAccountId === a.qbo_id ? null : a.qbo_id)}
                                   className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors relative"
                                   style={{
                                     color: a.evidence_count > 0 ? "var(--green)" : "var(--text-2)",
@@ -765,6 +838,44 @@ export function ReconciliationsDashboard() {
                               </div>
                             </td>
                           </tr>
+                          {/* Inline expanded form — opens beneath the clicked row
+                              instead of a modal. Same fields as before. */}
+                          <AnimatePresence initial={false}>
+                            {isExpanded && (
+                              <motion.tr
+                                key={`${a.qbo_id}-expanded`}
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                transition={{ duration: 0.15 }}
+                                style={{ borderBottom: "1px solid var(--border)" }}
+                              >
+                                <td colSpan={9} style={{ padding: 0, background: "var(--surface-2)" }}>
+                                  <motion.div
+                                    initial={{ height: 0 }}
+                                    animate={{ height: "auto" }}
+                                    exit={{ height: 0 }}
+                                    transition={{ duration: 0.2, ease: "easeOut" }}
+                                    style={{ overflow: "hidden" }}
+                                  >
+                                    <InlineSubledgerForm
+                                      account={a}
+                                      periodEnd={periodEnd}
+                                      saving={subledgerMut.isPending}
+                                      onSave={(total, source, items) =>
+                                        subledgerMut.mutate({ qboId: a.qbo_id, total, source, items })
+                                      }
+                                      onClear={() =>
+                                        subledgerMut.mutate({ qboId: a.qbo_id, total: null, source: null, items: [] })
+                                      }
+                                      onClose={() => setExpandedAccountId(null)}
+                                    />
+                                  </motion.div>
+                                </td>
+                              </motion.tr>
+                            )}
+                          </AnimatePresence>
+                          </Fragment>
                         )
                       })}
                     </tbody>
@@ -810,23 +921,8 @@ export function ReconciliationsDashboard() {
         )}
       </AnimatePresence>
 
-      {/* ── Manual subledger editor (small modal) ───────────────────── */}
-      <AnimatePresence>
-        {editingSubledger && (
-          <SubledgerEditor
-            account={editingSubledger}
-            periodEnd={periodEnd}
-            saving={subledgerMut.isPending}
-            onSave={(total, source, items) =>
-              subledgerMut.mutate({ qboId: editingSubledger.qbo_id, total, source, items })
-            }
-            onClear={() =>
-              subledgerMut.mutate({ qboId: editingSubledger.qbo_id, total: null, source: null, items: [] })
-            }
-            onClose={() => setEditingSubledger(null)}
-          />
-        )}
-      </AnimatePresence>
+      {/* The manual-subledger editor now opens inline as an expanded row
+          inside the table (see InlineSubledgerForm). No modal needed. */}
     </div>
   )
 }
@@ -946,14 +1042,13 @@ function VerificationBadge({
   )
 }
 
-// ── Manual subledger editor ─────────────────────────────────────────────────
-// Lets the user plug in a balance from an external source (bank statement,
-// fixed-asset register, prepaid schedule, etc.) when QuickBooks has no
-// separate subledger to reconcile against. The override lives on
-// account_review_status (one row per account+period) and is consumed by the
-// live overview — variance recomputes against the manual value.
+// ── Inline subledger form ───────────────────────────────────────────────────
+// Replaces the old modal — opens as an expandable row inside the table so
+// the user keeps the surrounding context (other accounts, KPIs, period
+// selector) visible while reconciling. Same fields: amount, source,
+// roll-forward, variance preview, reconciling items, evidence + verify.
 
-function SubledgerEditor({
+function InlineSubledgerForm({
   account, periodEnd, saving, onSave, onClear, onClose,
 }: {
   account: OverviewAccount
@@ -1090,58 +1185,29 @@ function SubledgerEditor({
   const hasEvidence = (evidence?.length ?? 0) > 0
 
   return (
-    <>
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        transition={{ duration: 0.15 }}
-        className="fixed inset-0 z-[60]"
-        style={{ background: "rgba(0,0,0,0.45)" }}
-        onClick={onClose}
-      />
-      {/* Centering wrapper — uses flex (no transform) so it doesn't fight
-          with framer-motion's transform-based entry animation. The inner
-          motion.div handles only its own scale + opacity. The earlier
-          approach used Tailwind's `-translate-x-1/2 -translate-y-1/2`
-          which framer-motion overwrites the moment it animates, leaving
-          the modal anchored to the center of the screen by its top-left
-          corner instead of its own center. */}
-      <div className="fixed inset-0 z-[61] flex items-center justify-center p-3 sm:p-4 pointer-events-none">
-        <motion.div
-          initial={{ opacity: 0, y: 10, scale: 0.97 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 10, scale: 0.97 }}
-          transition={{ duration: 0.18, ease: "easeOut" }}
-          className="w-full max-w-lg rounded-2xl flex flex-col pointer-events-auto"
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
-            // dvh is dynamic viewport height — accounts for the mobile URL
-            // bar / virtual keyboard so the footer buttons stay reachable.
-            maxHeight: "min(90dvh, 90vh)",
-          }}
-        >
-        <form onSubmit={submit} className="flex flex-col min-h-0 flex-1">
-          <div className="px-5 pt-4 pb-3 flex items-start gap-3 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
-            <div className="flex-1 min-w-0">
-              <p className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                Manual subledger · {periodEnd}
-              </p>
-              <h3 className="text-base font-semibold text-theme truncate mt-0.5">
-                {account.account_number ? `${account.account_number} · ` : ""}{account.account_name}
-              </h3>
-              <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
-                GL balance {fmtMoney(account.gl_balance)} · {account.group_label}
-              </p>
-            </div>
-            <button type="button" onClick={onClose}
-              className="h-8 w-8 rounded-md flex items-center justify-center"
-              style={{ color: "var(--text-muted)" }}>
-              <X size={16} strokeWidth={1.8} />
-            </button>
-          </div>
+    <form onSubmit={submit} className="px-4 sm:px-6 py-4 border-l-4"
+      style={{ borderLeftColor: "var(--green)" }}>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--green)" }}>
+            Manual subledger · {periodEnd}
+          </p>
+          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            GL balance {fmtMoney(account.gl_balance)} · {account.group_label}
+          </p>
+        </div>
+        <button type="button" onClick={onClose}
+          className="h-7 w-7 rounded-md flex items-center justify-center"
+          style={{ color: "var(--text-muted)" }}
+          title="Collapse">
+          <X size={15} strokeWidth={1.8} />
+        </button>
+      </div>
 
-          <div className="px-5 py-4 space-y-3 overflow-y-auto flex-1 min-h-0">
+      {/* Two-column on desktop, single column on mobile — uses the wider
+          inline space to spread amount/source/variance on the left and
+          evidence/items on the right. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5"><div className="space-y-3">
             <p className="text-xs leading-snug" style={{ color: "var(--text-2)" }}>
               QuickBooks doesn't keep a subledger for most account types (Bank, Fixed Assets, Prepaids, Loans, etc).
               Enter the balance from your external source — bank statement, fixed-asset register, amortization
@@ -1361,6 +1427,9 @@ function SubledgerEditor({
               )}
             </div>
 
+          </div>{/* end left column */}
+
+          <div className="space-y-3">
             {/* Supporting evidence — attach the bank stmt / FA register PDF */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -1452,34 +1521,32 @@ function SubledgerEditor({
                 <p className="text-[11px]" style={{ color: "#b91c1c" }}>{uploadError}</p>
               )}
             </div>
-          </div>
+          </div>{/* end right column */}
+        </div>{/* end grid */}
 
-          <div className="px-5 py-3 flex items-center justify-between gap-2 shrink-0 rounded-b-2xl"
-            style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
-            {account.subledger_is_manual ? (
-              <button
-                type="button"
-                onClick={onClear}
-                disabled={saving}
-                className="text-[11px] font-medium underline-offset-2 hover:underline"
-                style={{ color: "#b91c1c" }}
-              >
-                Clear override
-              </button>
-            ) : <span />}
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" type="button" onClick={onClose} disabled={saving}>
-                Cancel
-              </Button>
-              <Button size="sm" type="submit" loading={saving} disabled={!valid}>
-                Save subledger
-              </Button>
-            </div>
-          </div>
-        </form>
-        </motion.div>
+      <div className="flex items-center justify-between gap-2 mt-4 pt-3"
+        style={{ borderTop: "1px solid var(--border)" }}>
+        {account.subledger_is_manual ? (
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={saving}
+            className="text-[11px] font-medium underline-offset-2 hover:underline"
+            style={{ color: "#b91c1c" }}
+          >
+            Clear override
+          </button>
+        ) : <span />}
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" type="button" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" type="submit" loading={saving} disabled={!valid}>
+            Save subledger
+          </Button>
+        </div>
       </div>
-    </>
+    </form>
   )
 }
 
