@@ -4,6 +4,7 @@ import { ThreePaneLayout } from "@/core/layout/ThreePaneLayout"
 import { DashboardHome } from "@/modules/dashboard/pages/DashboardHome"
 import { FluxDashboard } from "@/modules/flux/pages/FluxDashboard"
 import { HomePage } from "@/marketing/HomePage"
+import { WorkspaceGate } from "@/core/auth/WorkspaceGate"
 
 export default function App() {
   return (
@@ -20,13 +21,15 @@ export default function App() {
               <RedirectToSignIn />
             </SignedOut>
             <SignedIn>
-              <ThreePaneLayout>
-                <Routes>
-                  <Route index element={<DashboardHome />} />
-                  <Route path="flux"         element={<FluxDashboard />} />
-                  <Route path="flux/:tbId"   element={<FluxDashboard />} />
-                </Routes>
-              </ThreePaneLayout>
+              <WorkspaceGate>
+                <ThreePaneLayout>
+                  <Routes>
+                    <Route index element={<DashboardHome />} />
+                    <Route path="flux"         element={<FluxDashboard />} />
+                    <Route path="flux/:tbId"   element={<FluxDashboard />} />
+                  </Routes>
+                </ThreePaneLayout>
+              </WorkspaceGate>
             </SignedIn>
           </>
         }

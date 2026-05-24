@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     # Clerk — JWTs are verified against their JWKS endpoint, never proxied to Clerk's API
     clerk_secret_key: str
     clerk_publishable_key: str
-    clerk_jwks_url: str
+    # JWKS URL is auto-derived from clerk_publishable_key if not explicitly set
+    clerk_jwks_url: str = ""
 
     # Cloudflare R2 — S3-compatible; boto3 pointed at account-specific endpoint
     r2_account_id: str
