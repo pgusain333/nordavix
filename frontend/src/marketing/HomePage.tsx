@@ -250,7 +250,6 @@ function Navbar() {
           ))}
         </div>
         <div className="flex items-center gap-3">
-          <ThemeToggle />
           {isSignedIn ? (
             <Link
               to="/app"

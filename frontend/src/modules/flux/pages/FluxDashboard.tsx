@@ -2,33 +2,36 @@
  * FluxDashboard — main Flux Analysis workspace.
  *
  * Layout:
- *   Left panel (240px): list of trial balance runs + "New Analysis" button
- *   Right panel (flex-1): UploadFlow wizard OR VarianceTable based on TB status
+ *   Left panel (240px, desktop only): list of analyses + "New Analysis" button
+ *   Right panel (flex-1):             UploadFlow wizard OR VarianceTable
+ *
+ * Mobile: right panel is always the primary view.
+ *         A "History" overlay button slides in the analyses list.
  *
  * State machine for the right panel:
- *   no selection           → welcome / empty state
+ *   no selection           → UploadFlow (new analysis)
  *   status = pending       → UploadFlow
  *   status = processing    → processing spinner
  *   status = generating    → generating spinner
  *   status = parsed | ready_for_review | complete  → VarianceTable
  *   status = error         → error state
  */
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
-  BarChart3,
   Plus,
   AlertCircle,
   RefreshCw,
   Download,
+  X,
+  History,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
 import { VarianceTable } from "@/modules/flux/components/VarianceTable"
 import { Button, Spinner } from "@/core/ui/components"
-import { cn } from "@/core/ui/utils"
 
 // ── Status dot colours (inline styles — no Tailwind bg-* needed) ────────────
 
@@ -67,6 +70,9 @@ export function FluxDashboard() {
   const navigate   = useNavigate()
   const qc         = useQueryClient()
 
+  /** Controls the mobile slide-in analyses list overlay */
+  const [showMobileHistory, setShowMobileHistory] = useState(false)
+
   // List of all TBs
   const { data: tbs = [], isLoading: tbsLoading } = useQuery({
     queryKey: ["trial-balances"],
@@ -97,7 +103,7 @@ export function FluxDashboard() {
     staleTime: 60_000,
   })
 
-  // Auto-select first TB when none is selected
+  // Auto-select most recent TB when none is selected (desktop UX convenience)
   useEffect(() => {
     if (!tbId && tbs.length > 0) {
       navigate(`/app/flux/${tbs[0].id}`, { replace: true })
@@ -114,8 +120,14 @@ export function FluxDashboard() {
     return () => clearInterval(interval)
   }, [selectedTb?.id, selectedTb?.status, qc])
 
+  // Close mobile history overlay when a TB is selected
+  useEffect(() => {
+    if (tbId) setShowMobileHistory(false)
+  }, [tbId])
+
   function handleNewAnalysis() {
     navigate("/app/flux")
+    setShowMobileHistory(false)
   }
 
   function handleTbComplete(tb: TrialBalance) {
@@ -134,108 +146,149 @@ export function FluxDashboard() {
     ["parsed", "ready_for_review", "generating", "complete"].includes(selectedTb.status)
   const showProcessing = selectedTb && selectedTb.status === "processing"
   const showError      = selectedTb && selectedTb.status === "error"
-  const showEmpty      = !tbId && !tbsLoading && tbs.length === 0
 
   // Key drives AnimatePresence exit+enter on content changes
   const contentKey = showUploadFlow ? "upload"
     : showProcessing ? "processing"
     : showError      ? "error"
     : showVarianceTable ? `variance-${tbId}`
-    : "empty"
+    : "upload"
 
-  return (
-    <div className="flex h-full overflow-hidden">
-
-      {/* ── Left panel: TB list ── */}
-      <div
-        className={cn(
-          "flex h-full shrink-0 flex-col w-full lg:w-56 lg:border-r",
-          tbId ? "hidden lg:flex" : "flex",
-        )}
-        style={{ background: "var(--surface)", borderColor: "var(--border)" }}
-      >
-        <div className="flex items-center justify-between px-3 py-3"
-          style={{ borderBottom: "1px solid var(--border)" }}>
-          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-            Runs
-          </span>
+  // ── Shared analyses list (used in both desktop sidebar + mobile overlay) ──
+  const AnalysesList = () => (
+    <>
+      <div className="flex items-center justify-between px-3 py-3"
+        style={{ borderBottom: "1px solid var(--border)" }}>
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+          Analyses
+        </span>
+        <div className="flex items-center gap-1">
+          {/* Mobile close button */}
+          <button
+            className="lg:hidden flex items-center justify-center h-6 w-6 rounded-md text-theme-muted hover:text-theme transition-colors"
+            onClick={() => setShowMobileHistory(false)}
+          >
+            <X size={15} strokeWidth={1.6} />
+          </button>
           <Button size="icon-sm" variant="ghost" title="New analysis" onClick={handleNewAnalysis}>
             <Plus size={16} strokeWidth={1.6} />
           </Button>
         </div>
-
-        <div className="flex-1 overflow-y-auto py-1">
-          {tbsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Spinner className="h-4 w-4" />
-            </div>
-          ) : tbs.length === 0 ? (
-            <div className="px-3 py-6 text-center">
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>No runs yet</p>
-              <button className="text-xs mt-1 hover:underline" style={{ color: "var(--green)" }}
-                onClick={handleNewAnalysis}>
-                Start first run
-              </button>
-            </div>
-          ) : (
-            tbs.map((tb) => {
-              const isActive = tb.id === tbId
-              return (
-                <button
-                  key={tb.id}
-                  className="w-full text-left px-3 py-2.5 flex items-start gap-2 transition-colors duration-150"
-                  style={isActive
-                    ? { background: "var(--surface-2)", borderRight: "2px solid var(--green)" }
-                    : {}}
-                  onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
-                  onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "" }}
-                  onClick={() => navigate(`/app/flux/${tb.id}`)}
-                >
-                  <span
-                    className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0"
-                    style={{ background: STATUS_DOT[tb.status] ?? "var(--border-strong)" }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium truncate text-theme">{tb.name}</p>
-                    <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: "var(--text-muted)" }}>
-                      {new Date(tb.period_current).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
-                    </p>
-                    <span className="text-[9px] font-semibold uppercase tracking-wider"
-                      style={{ color:
-                        tb.status === "complete"  ? "var(--green)" :
-                        tb.status === "error"     ? "#dc2626" :
-                        ["generating","processing"].includes(tb.status) ? "#92400e" :
-                        "var(--text-muted)"
-                      }}>
-                      {STATUS_LABELS[tb.status] ?? tb.status}
-                    </span>
-                  </div>
-                </button>
-              )
-            })
-          )}
-        </div>
       </div>
 
-      {/* ── Right panel ── */}
-      <div
-        className={cn(
-          "flex flex-1 flex-col overflow-hidden min-w-0",
-          !tbId ? "hidden lg:flex" : "flex",
+      <div className="flex-1 overflow-y-auto py-1">
+        {tbsLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Spinner className="h-4 w-4" />
+          </div>
+        ) : tbs.length === 0 ? (
+          <div className="px-3 py-6 text-center">
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>No analyses yet</p>
+            <button className="text-xs mt-1 hover:underline" style={{ color: "var(--green)" }}
+              onClick={handleNewAnalysis}>
+              Start first run
+            </button>
+          </div>
+        ) : (
+          tbs.map((tb) => {
+            const isActive = tb.id === tbId
+            return (
+              <button
+                key={tb.id}
+                className="w-full text-left px-3 py-2.5 flex items-start gap-2 transition-colors duration-150"
+                style={isActive
+                  ? { background: "var(--surface-2)", borderRight: "2px solid var(--green)" }
+                  : {}}
+                onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "" }}
+                onClick={() => { navigate(`/app/flux/${tb.id}`); setShowMobileHistory(false) }}
+              >
+                <span
+                  className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0"
+                  style={{ background: STATUS_DOT[tb.status] ?? "var(--border-strong)" }}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium truncate text-theme">{tb.name}</p>
+                  <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: "var(--text-muted)" }}>
+                    {new Date(tb.period_current).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                  </p>
+                  <span className="text-[9px] font-semibold uppercase tracking-wider"
+                    style={{ color:
+                      tb.status === "complete"  ? "var(--green)" :
+                      tb.status === "error"     ? "#dc2626" :
+                      ["generating","processing"].includes(tb.status) ? "#92400e" :
+                      "var(--text-muted)"
+                    }}>
+                    {STATUS_LABELS[tb.status] ?? tb.status}
+                  </span>
+                </div>
+              </button>
+            )
+          })
         )}
+      </div>
+    </>
+  )
+
+  return (
+    <div className="flex h-full overflow-hidden relative">
+
+      {/* ── Left panel: desktop sidebar (hidden on mobile) ── */}
+      <div
+        className="hidden lg:flex h-full w-56 shrink-0 flex-col border-r"
+        style={{ background: "var(--surface)", borderColor: "var(--border)" }}
+      >
+        <AnalysesList />
+      </div>
+
+      {/* ── Mobile overlay: analyses list slides in ── */}
+      <AnimatePresence>
+        {showMobileHistory && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              key="backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="lg:hidden absolute inset-0 z-20"
+              style={{ background: "rgba(0,0,0,0.4)" }}
+              onClick={() => setShowMobileHistory(false)}
+            />
+            {/* Drawer */}
+            <motion.div
+              key="drawer"
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ duration: 0.22, ease: "easeOut" as const }}
+              className="lg:hidden absolute left-0 top-0 bottom-0 z-30 flex flex-col w-72"
+              style={{ background: "var(--surface)", borderRight: "1px solid var(--border)" }}
+            >
+              <AnalysesList />
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ── Right panel: always visible ── */}
+      <div
+        className="flex flex-1 flex-col overflow-hidden min-w-0"
         style={{ background: "var(--bg)" }}
       >
         {/* Header */}
         <div className="flex items-center gap-2 px-4 sm:px-6 py-3.5 shrink-0"
           style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
 
-          {/* Mobile back button */}
+          {/* Mobile: history toggle button */}
           <button
             className="lg:hidden flex items-center justify-center h-7 w-7 rounded-md mr-1 transition-colors text-theme-2"
             style={{ background: "var(--surface-2)" }}
-            onClick={() => navigate("/app/flux")}
+            title="View analyses"
+            onClick={() => setShowMobileHistory(true)}
           >
-            <BarChart3 size={15} strokeWidth={1.6} />
+            <History size={15} strokeWidth={1.6} />
           </button>
 
           <div className="flex-1 min-w-0">
@@ -334,21 +387,6 @@ export function FluxDashboard() {
 
               {showVarianceTable && (
                 <VarianceTable tbId={tbId!} rows={variances} isLoading={variancesLoading} onExport={handleExport} />
-              )}
-
-              {showEmpty && (
-                <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                  <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4" style={{ background: "var(--surface-2)" }}>
-                    <BarChart3 size={28} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} />
-                  </div>
-                  <p className="text-base font-semibold text-theme mb-2">No flux runs yet</p>
-                  <p className="text-sm max-w-sm leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
-                    Upload a trial balance or connect QuickBooks to generate your first AI-powered variance commentary.
-                  </p>
-                  <Button icon={<Plus size={16} strokeWidth={1.6} />} onClick={handleNewAnalysis}>
-                    Start First Analysis
-                  </Button>
-                </div>
               )}
 
             </motion.div>
