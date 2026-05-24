@@ -254,7 +254,6 @@ function Navbar() {
           ))}
         </div>
         <div className="flex items-center gap-3">
-          <ThemeToggle />
           {isSignedIn ? (
             <Link
               to="/app"
@@ -786,6 +785,11 @@ function Footer() {
         </div>
         <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-xs text-slate-600">© 2026 Nordavix. All rights reserved.</p>
+          {/* Footer is intentionally always-dark, so force `.dark` scope to
+              keep the toggle chrome readable regardless of the user's theme. */}
+          <div className="dark">
+            <ThemeToggle />
+          </div>
           <p className="text-xs text-slate-700">Built for accountants, by accountants.</p>
         </div>
       </div>
