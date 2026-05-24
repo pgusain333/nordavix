@@ -45,7 +45,7 @@ export function LeftNav({ onClose }: Props) {
       <div className="flex items-center justify-between px-4 py-[18px]"
         style={{ borderBottom: "1px solid var(--nav-border)" }}>
         <button
-          onClick={() => { navigate("/app"); onClose?.() }}
+          onClick={() => { navigate("/"); onClose?.() }}
           className="flex items-center gap-2.5 min-w-0 flex-1"
         >
           <img src="/logo-mark-light.svg" alt="Nordavix" className="h-7 w-7 shrink-0 dark:hidden" />

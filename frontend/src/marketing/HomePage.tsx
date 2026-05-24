@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
+import { useUser } from "@clerk/clerk-react"
 import {
   Zap, Shield, FileSpreadsheet, CheckCircle2, ArrowRight,
   BarChart3, Clock, Lock, ChevronRight, Star, TrendingUp,
@@ -195,6 +196,8 @@ function HeroFlow() {
 // ── Navbar ────────────────────────────────────────────────────────────────────
 function Navbar() {
   const [scrolled, setScrolled] = useState(false)
+  const { isSignedIn } = useUser()
+
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20)
     window.addEventListener("scroll", onScroll)
@@ -233,21 +236,33 @@ function Navbar() {
         </div>
         <div className="flex items-center gap-3">
           <ThemeToggle />
-          <Link to="/app"
-            className="hidden md:block text-sm transition-colors px-4 py-2"
-            style={{ color: "var(--text-2)" }}
-            onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
-            onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
-          >
-            Sign in
-          </Link>
-          <Link
-            to="/app"
-            className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
-            style={{ background: "var(--green)" }}
-          >
-            Get started free
-          </Link>
+          {isSignedIn ? (
+            <Link
+              to="/app"
+              className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
+              style={{ background: "var(--green)" }}
+            >
+              Dashboard →
+            </Link>
+          ) : (
+            <>
+              <Link to="/app"
+                className="hidden md:block text-sm transition-colors px-4 py-2"
+                style={{ color: "var(--text-2)" }}
+                onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+                onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
+              >
+                Sign in
+              </Link>
+              <Link
+                to="/app"
+                className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
+                style={{ background: "var(--green)" }}
+              >
+                Get started free
+              </Link>
+            </>
+          )}
         </div>
       </div>
     </nav>

@@ -26,17 +26,17 @@ app = FastAPI(
     redoc_url=None,
 )
 
+# Middleware is applied in reverse add order (last added = outermost = runs first).
+# So TenantMiddleware is added first (inner), CORSMiddleware second (outer/first).
+# CORS handles OPTIONS preflight before TenantMiddleware ever sees the request.
+app.add_middleware(TenantMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
-
-# TenantMiddleware must come after CORSMiddleware so OPTIONS preflight requests
-# are handled by CORS before hitting the auth check.
-app.add_middleware(TenantMiddleware)
 
 # ── API routers ───────────────────────────────────────────────────────────────
 

@@ -37,7 +37,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         is_public = (
-            request.url.path in _PUBLIC_PATHS
+            request.method == "OPTIONS"  # always allow CORS preflight through
+            or request.url.path in _PUBLIC_PATHS
             or not request.url.path.startswith("/api/")
             or any(request.url.path.startswith(p) for p in _PUBLIC_PREFIXES)
         )
