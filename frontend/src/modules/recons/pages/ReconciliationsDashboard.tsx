@@ -1,113 +1,158 @@
 /**
- * Reconciliations Dashboard.
+ * Reconciliations Dashboard — single-screen live overview.
  *
- * - KPI cards across the top
- * - Recent reconciliations table
- * - Recent activity feed
- * - AI insights side panel
- * - Quick-start CTA to spin up a new AR/AP reconciliation
+ * Layout:
+ *   [Header]   Title + Period selector + Sync + Clear data
+ *   [KPI strip] 4 cards summarizing totals + variance
+ *   [AI insights] (only when there's something interesting)
+ *   [Main table] EVERY balance-sheet account from QBO with:
+ *      Account # | Name | Type | GL Balance | Subledger | Variance | Actions
+ *      grouped by type, sortable, searchable, filterable
+ *      per-row buttons: View subledger | View variance | Generate AI
+ *
+ * Two side drawers slide in from the right for drill-in:
+ *   - SubledgerDetailDrawer (per-account subledger composition)
+ *   - VarianceDetailDrawer  (transactions causing the GL-vs-subledger gap)
+ *
+ * All data is pulled LIVE from QuickBooks on each period change — no
+ * persistence overhead, always fresh.
  */
-import { useEffect, useState } from "react"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
-  Scale,
-  CheckCircle2,
-  AlertTriangle,
-  Sparkles,
-  ArrowRight,
-  Plus,
-  Activity,
-  X,
   RefreshCw,
-  TrendingUp,
+  AlertTriangle,
+  AlertCircle,
+  CheckCircle2,
+  Search,
+  Eye,
+  GitCompareArrows,
+  X,
+  Trash2,
+  Zap,
+  ExternalLink,
+  Sparkles,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
-import { reconsApi, type ReconType } from "@/modules/recons/api"
+import {
+  reconsApi,
+  type OverviewAccount,
+  type SubledgerDetail,
+  type VarianceDetail,
+} from "@/modules/recons/api"
 import { api as fluxApi } from "@/modules/flux/api"
 
-const fadeUp = {
-  hidden:  { opacity: 0, y: 14 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" as const } },
-}
-const stagger = { hidden: {}, visible: { transition: { staggerChildren: 0.06, delayChildren: 0.05 } } }
+// ── Formatting helpers ─────────────────────────────────────────────────────
 
-const fmtMoney = (s: string | number) => {
+function fmtMoney(s: string | number, withSign = false): string {
   const n = typeof s === "string" ? parseFloat(s) : s
-  return `$${(Number.isFinite(n) ? n : 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  if (!Number.isFinite(n)) return "$0"
+  const abs = `$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  if (n === 0) return abs
+  if (n < 0) return `(${abs})`
+  return withSign ? `+${abs}` : abs
 }
 
-const STATUS_TONE: Record<string, { bg: string; fg: string; dot: string }> = {
-  pending:    { bg: "var(--surface-2)",     fg: "var(--text-muted)", dot: "var(--border-strong)" },
-  syncing:    { bg: "#fef3c7",              fg: "#92400e",           dot: "#f59e0b" },
-  computing:  { bg: "#fef3c7",              fg: "#92400e",           dot: "#f59e0b" },
-  in_review:  { bg: "#dbeafe",              fg: "#1d4ed8",           dot: "#3b82f6" },
-  approved:   { bg: "var(--green-subtle)",  fg: "var(--green)",      dot: "var(--green)" },
-  error:      { bg: "#fee2e2",              fg: "#b91c1c",           dot: "#dc2626" },
+function defaultPeriodEnd(): string {
+  // Default: last day of previous month — common close period
+  const d = new Date()
+  d.setDate(0)  // last day of previous month
+  return d.toISOString().slice(0, 10)
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  pending: "Pending",
-  syncing: "Syncing…",
-  computing: "Computing…",
-  in_review: "Ready to review",
-  approved: "Approved",
-  error: "Error",
+const GROUP_COLORS: Record<string, string> = {
+  Bank:                       "#3b82f6",
+  "Credit Card":              "#8b5cf6",
+  AR:                         "#10b981",
+  AP:                         "#f59e0b",
+  "Fixed Assets":             "#0ea5e9",
+  "Other Current Assets":     "#14b8a6",
+  "Other Assets":             "#06b6d4",
+  "Other Current Liabilities":"#ec4899",
+  "Long Term Liabilities":    "#d946ef",
+  Equity:                     "#a855f7",
 }
+
+// ── Main component ─────────────────────────────────────────────────────────
 
 export function ReconciliationsDashboard() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const [showCreate, setShowCreate] = useState<ReconType | null>(null)
+  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  const [search, setSearch] = useState("")
+  const [groupFilter, setGroupFilter] = useState<string>("all")
+  const [showOnlyVariance, setShowOnlyVariance] = useState(false)
+  const [drawerAccount, setDrawerAccount] = useState<OverviewAccount | null>(null)
+  const [drawerMode, setDrawerMode] = useState<"subledger" | "variance">("subledger")
+  const [confirmClear, setConfirmClear] = useState(false)
 
-  // Deep-link: ?new=AR | AP | BANK | CC opens the create modal on mount
-  useEffect(() => {
-    const n = searchParams.get("new") as ReconType | null
-    if (n && ["AR", "AP", "BANK", "CC", "OTHER"].includes(n)) {
-      setShowCreate(n)
-      const sp = new URLSearchParams(searchParams)
-      sp.delete("new")
-      setSearchParams(sp, { replace: true })
-    }
-  }, [searchParams, setSearchParams])
-
-  // Pull dashboard + QBO connection in parallel
-  const { data: dash, isLoading } = useQuery({
-    queryKey: ["recons-dashboard"],
-    queryFn:  reconsApi.getDashboard,
-    // Only poll when something is actively syncing — otherwise the dashboard
-    // is fully cache-driven and refreshes on mount / mutation invalidations.
-    refetchInterval: (q) => {
-      const d = q.state.data
-      if (!d) return false
-      const live = d.recent.some(r => r.status === "syncing" || r.status === "computing")
-      return live ? 5_000 : false
-    },
-    staleTime: 30_000,
-  })
   const { data: qbo } = useQuery({
     queryKey: ["qbo-connection"],
     queryFn:  fluxApi.getQboConnection,
     staleTime: 60_000,
   })
 
-  function gotoRecon(id: string) { navigate(`/app/reconciliations/${id}`) }
+  const { data: overview, isFetching, refetch } = useQuery({
+    queryKey: ["recons-overview", periodEnd],
+    queryFn:  () => reconsApi.getOverview(periodEnd),
+    enabled:  !!qbo,
+    staleTime: 30_000,
+  })
+
+  const clearMut = useMutation({
+    mutationFn: () => reconsApi.clearSyncedData(),
+    onSuccess: () => {
+      setConfirmClear(false)
+      qc.invalidateQueries({ queryKey: ["recons-overview"] })
+    },
+    onError: () => setConfirmClear(false),
+  })
+
+  // Filtered + searched account list
+  const filteredAccounts = useMemo(() => {
+    if (!overview) return [] as OverviewAccount[]
+    const q = search.trim().toLowerCase()
+    return overview.accounts.filter((a) => {
+      if (groupFilter !== "all" && a.group_label !== groupFilter) return false
+      if (showOnlyVariance && Math.abs(parseFloat(a.variance)) < 0.5) return false
+      if (q && !(a.account_name.toLowerCase().includes(q) || a.account_number.toLowerCase().includes(q))) return false
+      return true
+    })
+  }, [overview, search, groupFilter, showOnlyVariance])
+
+  const groupOptions = useMemo(() => {
+    const set = new Set<string>()
+    overview?.accounts.forEach((a) => set.add(a.group_label))
+    return Array.from(set).sort()
+  }, [overview])
+
+  const varianceCount = useMemo(() => {
+    return overview?.accounts.filter((a) => Math.abs(parseFloat(a.variance)) >= 0.5).length ?? 0
+  }, [overview])
+
+  function openSubledger(a: OverviewAccount) {
+    setDrawerAccount(a)
+    setDrawerMode("subledger")
+  }
+  function openVariance(a: OverviewAccount) {
+    setDrawerAccount(a)
+    setDrawerMode("variance")
+  }
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      {/* Hero — no decorative orb here. The orb at 6% opacity was creating a
-          dark halo in dark mode where it bled past the overflow clip. */}
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <div
-        className="px-4 sm:px-8 pt-6 sm:pt-8 pb-4 sm:pb-6"
+        className="px-4 sm:px-8 pt-5 sm:pt-7 pb-4"
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
       >
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
             <h1
               style={{
-                fontSize: "clamp(22px, 5.5vw, 28px)",
+                fontSize: "clamp(22px, 5vw, 28px)",
                 fontWeight: 700,
                 lineHeight: 1.2,
                 letterSpacing: "-0.01em",
@@ -118,39 +163,60 @@ export function ReconciliationsDashboard() {
               Reconciliations
             </h1>
             <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              QuickBooks-synced reconciliations across every balance sheet account — with aging, risk scoring, and on-demand AI commentary.
+              Live snapshot of every balance-sheet account — pulled from QuickBooks at your chosen period end.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex items-end gap-2 flex-wrap">
+            <label className="flex flex-col">
+              <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
+                Period end
+              </span>
+              <input
+                type="date"
+                value={periodEnd}
+                onChange={(e) => setPeriodEnd(e.target.value)}
+                disabled={!qbo}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border-strong)",
+                  color: "var(--text)",
+                }}
+              />
+            </label>
             <Button
-              variant="outline"
               size="sm"
-              icon={<Plus size={14} strokeWidth={1.8} />}
-              onClick={() => setShowCreate("AP")}
-              disabled={!qbo}
-              title={qbo ? "Start an AP reconciliation" : "Connect QuickBooks first"}
+              variant="outline"
+              icon={<RefreshCw size={14} strokeWidth={1.8} className={isFetching ? "animate-spin" : undefined} />}
+              onClick={() => refetch()}
+              disabled={!qbo || isFetching}
+              title="Re-pull from QuickBooks"
             >
-              New AP
+              <span className="hidden sm:inline">Sync</span>
             </Button>
             <Button
               size="sm"
-              icon={<Plus size={14} strokeWidth={1.8} />}
-              onClick={() => setShowCreate("AR")}
-              disabled={!qbo}
-              title={qbo ? "Start an AR reconciliation" : "Connect QuickBooks first"}
+              variant="outline"
+              icon={<Trash2 size={14} strokeWidth={1.8} />}
+              onClick={() => confirmClear ? clearMut.mutate() : setConfirmClear(true)}
+              loading={clearMut.isPending}
+              style={confirmClear ? { borderColor: "#dc2626", color: "#dc2626" } : undefined}
+              title="Wipe all cached reconciliation data (the QBO connection stays)"
             >
-              New AR
+              <span className="hidden sm:inline">
+                {confirmClear ? "Confirm clear?" : "Clear data"}
+              </span>
             </Button>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 px-4 sm:px-8 py-6 max-w-7xl w-full mx-auto space-y-6">
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
 
         {/* QBO required banner */}
         {!qbo && (
-          <motion.div
-            initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+          <div
             className="rounded-xl p-4 flex items-start gap-3"
             style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}
           >
@@ -158,219 +224,227 @@ export function ReconciliationsDashboard() {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold" style={{ color: "#92400e" }}>QuickBooks isn't connected</p>
               <p className="text-xs mt-0.5" style={{ color: "#92400e" }}>
-                Reconciliations pull customer/vendor balances, aging, and transactions from QBO.
-                Connect QuickBooks to start your first reconciliation.
+                The Reconciliations dashboard pulls all your GL accounts and subledger balances live from QuickBooks.
+                Connect to get started.
               </p>
             </div>
-            <Button size="sm" onClick={() => navigate("/app/flux?connect=qbo")}>
+            <Button size="sm" onClick={() => navigate("/app/connections")}>
               Connect QuickBooks
             </Button>
-          </motion.div>
+          </div>
         )}
 
-        {/* KPI cards */}
-        <motion.div variants={stagger} initial="hidden" animate="visible"
-          className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard
-            icon={<Scale size={20} strokeWidth={1.6} />}
-            label="Total reconciliations"
-            value={dash?.stats.total ?? 0}
-            accent="var(--text-muted)"
-          />
-          <KpiCard
-            icon={<CheckCircle2 size={20} strokeWidth={1.6} />}
-            label="Completed"
-            value={dash?.stats.completed ?? 0}
-            accent="var(--green)"
-          />
-          <KpiCard
-            icon={<TrendingUp size={20} strokeWidth={1.6} />}
-            label="Pending review"
-            value={dash?.stats.pending_review ?? 0}
-            accent="#3b82f6"
-          />
-          <KpiCard
-            icon={<AlertTriangle size={20} strokeWidth={1.6} />}
-            label="High-risk accounts"
-            value={dash?.stats.high_risk_accounts ?? 0}
-            accent="#dc2626"
-          />
-        </motion.div>
+        {qbo && (
+          <>
+            {/* KPI strip */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <Kpi label="Total GL"               value={fmtMoney(overview?.totals.gl ?? 0)}        tone="var(--text)" />
+              <Kpi label="Total subledger"        value={fmtMoney(overview?.totals.subledger ?? 0)} tone="var(--text)" />
+              <Kpi label="Net variance"           value={fmtMoney(overview?.totals.variance ?? 0)}
+                tone={Math.abs(parseFloat(overview?.totals.variance ?? "0")) > 0.5 ? "#dc2626" : "var(--green)"} />
+              <Kpi label="Accounts with variance" value={String(varianceCount)} tone="var(--text)" />
+            </div>
 
-        <motion.div variants={stagger} initial="hidden" animate="visible"
-          className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <SecondaryCard
-            label="Unresolved difference"
-            value={dash ? fmtMoney(dash.stats.unresolved_difference) : "$0"}
-            hint="Across open reconciliations"
-            tone="#92400e"
-          />
-          <SecondaryCard
-            label="Aging > 60 days"
-            value={dash ? fmtMoney(dash.stats.overdue_aging_total) : "$0"}
-            hint="Sum of subledger 61-90 + >90 buckets"
-            tone="#dc2626"
-          />
-          <SecondaryCard
-            label="Workspace status"
-            value={isLoading ? "Loading…" : dash?.stats.pending_review ? "Action needed" : "Up to date"}
-            hint={isLoading ? "" : dash?.stats.pending_review ? `${dash.stats.pending_review} reconciliation(s) need review` : "No open reconciliations require review"}
-            tone={dash?.stats.pending_review ? "#1d4ed8" : "var(--green)"}
-          />
-        </motion.div>
-
-        {/* AI insights panel */}
-        <motion.div variants={fadeUp} initial="hidden" animate="visible"
-          className="rounded-xl overflow-hidden"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
-        >
-          <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
-            <Sparkles size={14} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-            <h2 className="text-sm font-semibold text-theme">AI Insights</h2>
-          </div>
-          <div className="p-5 space-y-2.5">
-            {(dash?.ai_insights ?? []).map((line, i) => (
-              <div key={i} className="flex items-start gap-2 text-sm">
-                <span className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0" style={{ background: "var(--green)" }} />
-                <span className="text-theme leading-snug">{line}</span>
+            {/* Filters */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative flex-1 min-w-[180px] max-w-xs">
+                <Search size={14} strokeWidth={1.8} className="absolute left-2.5 top-1/2 -translate-y-1/2"
+                  style={{ color: "var(--text-muted)" }} />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search account name or #…"
+                  className="w-full rounded-lg pl-8 pr-3 py-1.5 text-sm outline-none"
+                  style={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    color: "var(--text)",
+                  }}
+                />
               </div>
-            ))}
-            {!dash?.ai_insights?.length && (
-              <p className="text-sm" style={{ color: "var(--text-muted)" }}>No insights yet — they appear once reconciliations have data.</p>
-            )}
-          </div>
-        </motion.div>
+              <select
+                value={groupFilter}
+                onChange={(e) => setGroupFilter(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text)",
+                }}
+              >
+                <option value="all">All account types</option>
+                {groupOptions.map((g) => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none" style={{ color: "var(--text-2)" }}>
+                <input
+                  type="checkbox"
+                  checked={showOnlyVariance}
+                  onChange={(e) => setShowOnlyVariance(e.target.checked)}
+                />
+                Variances only
+              </label>
+            </div>
 
-        {/* Recent table + activity feed */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <motion.div variants={fadeUp} initial="hidden" animate="visible" className="lg:col-span-2">
+            {/* Main table */}
             <div className="rounded-xl overflow-hidden"
               style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-              <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
-                <h2 className="text-sm font-semibold text-theme flex-1">Recent reconciliations</h2>
-                <button
-                  className="text-xs font-medium flex items-center gap-1 transition-opacity hover:opacity-80"
-                  style={{ color: "var(--text-2)" }}
-                  onClick={() => navigate("/app/reconciliations/ar")}
-                >
-                  View AR <ArrowRight size={12} strokeWidth={1.8} />
-                </button>
-              </div>
-              {(!dash || dash.recent.length === 0) ? (
-                <div className="p-10 text-center">
-                  <div className="mx-auto h-12 w-12 rounded-full flex items-center justify-center mb-3"
-                    style={{ background: "var(--surface-2)" }}>
-                    <Scale size={22} strokeWidth={1.5} style={{ color: "var(--text-muted)" }} />
-                  </div>
-                  <p className="text-sm font-medium text-theme mb-1">No reconciliations yet</p>
+              {isFetching && !overview ? (
+                <div className="py-16 flex items-center justify-center">
+                  <Spinner className="h-6 w-6" />
+                </div>
+              ) : filteredAccounts.length === 0 ? (
+                <div className="py-12 text-center">
+                  <p className="text-sm font-medium text-theme mb-1">
+                    {overview?.accounts.length === 0
+                      ? "QuickBooks didn't return any balance-sheet accounts for this period."
+                      : "No accounts match your filters."}
+                  </p>
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Click <b>New AR</b> or <b>New AP</b> above to pull live data from QuickBooks.
+                    {overview?.accounts.length === 0
+                      ? "Try a different period end, or sync again."
+                      : "Try clearing the search or changing the type filter."}
                   </p>
                 </div>
               ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-[11px] font-semibold uppercase tracking-wide"
-                      style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
-                      <th className="text-left px-5 py-2.5">Name</th>
-                      <th className="text-left px-3 py-2.5">Type</th>
-                      <th className="text-right px-3 py-2.5">Difference</th>
-                      <th className="text-left px-3 py-2.5">Status</th>
-                      <th className="px-5 py-2.5" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dash.recent.map((r) => {
-                      const tone = STATUS_TONE[r.status]
-                      return (
-                        <tr key={r.id}
-                          className="cursor-pointer transition-colors"
-                          style={{ borderBottom: "1px solid var(--border)" }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-                          onClick={() => gotoRecon(r.id)}
-                        >
-                          <td className="px-5 py-3">
-                            <div className="text-sm font-medium text-theme">{r.name}</div>
-                            <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                              {new Date(r.period_end).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                            </div>
-                          </td>
-                          <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>{r.recon_type}</td>
-                          <td className="px-3 py-3 text-right tabular-nums text-sm font-medium"
-                            style={{ color: Math.abs(parseFloat(r.difference)) > 100 ? "#dc2626" : "var(--text-2)" }}>
-                            {fmtMoney(r.difference)}
-                          </td>
-                          <td className="px-3 py-3">
-                            <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
-                              style={{ background: tone.bg, color: tone.fg }}>
-                              <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.dot }} />
-                              {STATUS_LABEL[r.status] ?? r.status}
-                            </span>
-                          </td>
-                          <td className="px-5 py-3 text-right">
-                            <ArrowRight size={14} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} />
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr style={{
+                        background: "var(--surface-2)",
+                        borderBottom: "1px solid var(--border)",
+                      }}>
+                        {[
+                          { label: "Account #", w: "90px" },
+                          { label: "Account", w: "auto" },
+                          { label: "Type", w: "130px" },
+                          { label: "GL Balance", w: "120px", right: true },
+                          { label: "Subledger", w: "120px", right: true },
+                          { label: "Variance", w: "120px", right: true },
+                          { label: "", w: "160px" },
+                        ].map((h, i) => (
+                          <th
+                            key={i}
+                            className="text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5"
+                            style={{
+                              color: "var(--text-muted)",
+                              textAlign: h.right ? "right" : "left",
+                              width: h.w,
+                            }}
+                          >
+                            {h.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredAccounts.map((a) => {
+                        const variance = parseFloat(a.variance)
+                        const hasVariance = Math.abs(variance) >= 0.5
+                        const color = GROUP_COLORS[a.group_label] ?? "var(--text-muted)"
+                        return (
+                          <tr key={a.qbo_id}
+                            style={{ borderBottom: "1px solid var(--border)" }}
+                            className="transition-colors"
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+                          >
+                            <td className="px-3 py-2.5 font-mono text-xs" style={{ color: "var(--text-2)" }}>
+                              {a.account_number || "—"}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <span className="text-sm font-medium text-theme">{a.account_name}</span>
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium">
+                                <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+                                <span style={{ color: "var(--text-2)" }}>{a.group_label}</span>
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-sm text-theme">
+                              {fmtMoney(a.gl_balance)}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-sm" style={{ color: "var(--text-2)" }}>
+                              {fmtMoney(a.subledger_balance)}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-sm font-medium"
+                              style={{ color: hasVariance ? "#dc2626" : "var(--green)" }}>
+                              {hasVariance ? fmtMoney(a.variance) : "—"}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => openSubledger(a)}
+                                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+                                  style={{
+                                    color: "var(--text-2)",
+                                    border: "1px solid var(--border-strong)",
+                                    background: "var(--surface)",
+                                  }}
+                                  title="See how this subledger balance was computed"
+                                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--green)")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border-strong)")}
+                                >
+                                  <Eye size={11} strokeWidth={1.8} />
+                                  Subledger
+                                </button>
+                                {hasVariance && (
+                                  <button
+                                    onClick={() => openVariance(a)}
+                                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+                                    style={{
+                                      color: "#b91c1c",
+                                      border: "1px solid #fecaca",
+                                      background: "#fef2f2",
+                                    }}
+                                    title="See transactions likely causing the variance"
+                                  >
+                                    <GitCompareArrows size={11} strokeWidth={1.8} />
+                                    Variance
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </div>
-          </motion.div>
 
-          {/* Activity feed */}
-          <motion.div variants={fadeUp} initial="hidden" animate="visible">
-            <div className="rounded-xl overflow-hidden h-full"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-              <div className="flex items-center gap-2 px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
-                <Activity size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-                <h2 className="text-sm font-semibold text-theme">Recent activity</h2>
-              </div>
-              <div className="px-3 py-2 max-h-[400px] overflow-y-auto">
-                {(dash?.activity ?? []).length === 0 ? (
-                  <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No activity yet.</p>
-                ) : (
-                  <ul>
-                    {dash!.activity.map((a, i) => (
-                      <li key={i}
-                        className="px-2 py-2 rounded-md cursor-pointer transition-colors"
-                        onClick={() => gotoRecon(a.recon_id)}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-                      >
-                        <div className="flex items-start gap-2">
-                          <ActivityKindIcon kind={a.kind} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-theme truncate">{a.recon_name}</p>
-                            <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{a.summary}</p>
-                            <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                              {new Date(a.happened_at).toLocaleString()}
-                            </p>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              <div className="px-4 py-2.5 flex items-center justify-between"
+                style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  Showing {filteredAccounts.length} of {overview?.accounts.length ?? 0} accounts
+                  {overview?.period_end ? ` as of ${overview.period_end}` : ""}.
+                </p>
+                <a
+                  href="/docs/reconciliations.md"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] inline-flex items-center gap-1 transition-opacity hover:opacity-80"
+                  style={{ color: "var(--green)" }}
+                >
+                  How this works
+                  <ExternalLink size={10} strokeWidth={1.8} />
+                </a>
               </div>
             </div>
-          </motion.div>
-        </div>
+          </>
+        )}
       </div>
 
-      {/* New reconciliation modal */}
+      {/* ── Side drawers ─────────────────────────────────────────────── */}
       <AnimatePresence>
-        {showCreate && (
-          <CreateReconModal
-            initialType={showCreate}
-            onClose={() => setShowCreate(null)}
-            onCreated={(id) => {
-              setShowCreate(null)
-              qc.invalidateQueries({ queryKey: ["recons-dashboard"] })
-              navigate(`/app/reconciliations/${id}`)
-            }}
+        {drawerAccount && (
+          <DetailDrawer
+            account={drawerAccount}
+            mode={drawerMode}
+            periodEnd={periodEnd}
+            onClose={() => setDrawerAccount(null)}
+            onSwitchMode={(m) => setDrawerMode(m)}
           />
         )}
       </AnimatePresence>
@@ -378,202 +452,266 @@ export function ReconciliationsDashboard() {
   )
 }
 
-// ── KPI card ─────────────────────────────────────────────────────────────────
+// ── KPI tile ────────────────────────────────────────────────────────────────
 
-interface KpiProps {
-  icon:   React.ReactNode
-  label:  string
-  value:  number
-  accent: string
-}
-function KpiCard({ icon, label, value, accent }: KpiProps) {
+function Kpi({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
-    <motion.div variants={fadeUp}
-      className="rounded-xl p-4"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <span style={{ color: accent }}>{icon}</span>
-      </div>
-      <p className="text-[11px] uppercase tracking-wide mt-2" style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className="text-2xl font-bold tabular-nums text-theme mt-1">{value}</p>
-    </motion.div>
+    <div className="rounded-xl p-4"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
+      <p className="text-xl sm:text-2xl font-bold tabular-nums mt-1" style={{ color: tone }}>{value}</p>
+    </div>
   )
 }
 
-interface SecondaryProps {
-  label: string
-  value: string
-  hint:  string
-  tone:  string
-}
-function SecondaryCard({ label, value, hint, tone }: SecondaryProps) {
-  return (
-    <motion.div variants={fadeUp}
-      className="rounded-xl p-4"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
-    >
-      <p className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className="text-xl font-bold tabular-nums mt-1" style={{ color: tone }}>{value}</p>
-      {hint && <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{hint}</p>}
-    </motion.div>
-  )
-}
+// ── Detail drawer (subledger + variance share one drawer for context) ───────
 
-function ActivityKindIcon({ kind }: { kind: string }) {
-  const map: Record<string, { icon: React.ReactNode; color: string }> = {
-    created:        { icon: <Plus size={12} />,        color: "var(--text-muted)" },
-    synced:         { icon: <RefreshCw size={12} />,   color: "#3b82f6" },
-    approved:       { icon: <CheckCircle2 size={12} />,color: "var(--green)" },
-    noted:          { icon: <Activity size={12} />,    color: "var(--text-2)" },
-    assigned:       { icon: <Activity size={12} />,    color: "#1d4ed8" },
-    ai_commentary:  { icon: <Sparkles size={12} />,    color: "var(--green)" },
-  }
-  const m = map[kind] ?? map.created
-  return (
-    <span className="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
-      style={{ background: "var(--surface-2)", color: m.color }}>
-      {m.icon}
-    </span>
-  )
-}
-
-// ── Create modal ─────────────────────────────────────────────────────────────
-
-interface CreateProps {
-  initialType: ReconType
+interface DrawerProps {
+  account:     OverviewAccount
+  mode:        "subledger" | "variance"
+  periodEnd:   string
   onClose:     () => void
-  onCreated:   (id: string) => void
+  onSwitchMode:(m: "subledger" | "variance") => void
 }
-function CreateReconModal({ initialType, onClose, onCreated }: CreateProps) {
-  const [reconType, setReconType] = useState<ReconType>(initialType)
-  const today = new Date().toISOString().slice(0, 10)
-  const [periodEnd, setPeriodEnd] = useState<string>(today)
-  const defaultName = `${reconType} ${today.slice(0,7)}`
-  const [name, setName] = useState<string>(defaultName)
-  const [error, setError] = useState<string | null>(null)
 
-  const create = useMutation({
-    mutationFn: () => reconsApi.createReconciliation({ name: name.trim() || defaultName, recon_type: reconType, period_end: periodEnd }),
-    onSuccess: (r) => onCreated(r.id),
-    onError: (e: unknown) => {
-      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(detail ?? "Could not create reconciliation. Make sure QuickBooks is connected.")
-    },
+function DetailDrawer({ account, mode, periodEnd, onClose, onSwitchMode }: DrawerProps) {
+  const variance = parseFloat(account.variance)
+  const hasVariance = Math.abs(variance) >= 0.5
+
+  const { data: subledger, isLoading: subLoading } = useQuery<SubledgerDetail>({
+    queryKey: ["recon-subledger", account.qbo_id, periodEnd],
+    queryFn:  () => reconsApi.getAccountSubledger(account.qbo_id, periodEnd),
+    enabled:  mode === "subledger",
+  })
+
+  const { data: varianceDetail, isLoading: varLoading } = useQuery<VarianceDetail>({
+    queryKey: ["recon-variance", account.qbo_id, periodEnd],
+    queryFn:  () => reconsApi.getAccountVariance(account.qbo_id, periodEnd),
+    enabled:  mode === "variance",
   })
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      transition={{ duration: 0.18 }}
-      className="fixed inset-0 z-50 flex items-center justify-center px-4"
-      style={{ background: "rgba(0,0,0,0.5)" }}
-      onClick={onClose}
-    >
+    <>
+      {/* Backdrop */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        transition={{ duration: 0.22, ease: "easeOut" }}
-        className="w-full max-w-md rounded-2xl p-6"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "0 24px 64px rgba(0,0,0,0.35)" }}
-        onClick={(e) => e.stopPropagation()}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        transition={{ duration: 0.18 }}
+        className="fixed inset-0 z-50"
+        style={{ background: "rgba(0,0,0,0.45)" }}
+        onClick={onClose}
+      />
+      {/* Panel */}
+      <motion.aside
+        initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
+        className="fixed top-0 right-0 bottom-0 z-50 w-full sm:w-[480px] lg:w-[560px] flex flex-col"
+        style={{ background: "var(--surface)", borderLeft: "1px solid var(--border)" }}
       >
-        <div className="flex items-start gap-3 mb-5">
-          <div className="h-10 w-10 rounded-lg flex items-center justify-center shrink-0"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-            <Scale size={20} strokeWidth={1.8} />
-          </div>
-          <div className="flex-1">
-            <h2 className="text-base font-semibold text-theme">New reconciliation</h2>
+        {/* Header */}
+        <div className="px-5 py-4 flex items-start gap-3"
+          style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              {account.group_label}
+            </p>
+            <h3 className="text-base font-semibold text-theme truncate mt-0.5">{account.account_name}</h3>
             <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-              Nordavix will pull the matching aging report from QuickBooks and compute differences.
+              {account.account_number && `${account.account_number} · `}
+              GL {fmtMoney(account.gl_balance)} · Subledger {fmtMoney(account.subledger_balance)}
+              {hasVariance && (
+                <> · <span style={{ color: "#dc2626" }}>Variance {fmtMoney(account.variance)}</span></>
+              )}
             </p>
           </div>
-          <button onClick={onClose} className="h-7 w-7 rounded-md flex items-center justify-center"
+          <button onClick={onClose}
+            className="h-8 w-8 rounded-md flex items-center justify-center transition-colors"
             style={{ color: "var(--text-muted)" }}>
-            <X size={15} strokeWidth={1.8} />
+            <X size={16} strokeWidth={1.8} />
           </button>
         </div>
 
-        <div className="space-y-3 mb-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
-              Subledger reconciliations
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {([
-                { v: "AR",   label: "Accounts Receivable" },
-                { v: "AP",   label: "Accounts Payable"    },
-                { v: "BANK", label: "Bank"                },
-                { v: "CC",   label: "Credit card"         },
-              ] as { v: ReconType; label: string }[]).map((opt) => (
-                <button
-                  key={opt.v}
-                  onClick={() => { setReconType(opt.v); setName(`${opt.label} ${periodEnd.slice(0,7)}`) }}
-                  className="px-3 py-2 rounded-lg text-sm font-medium transition-all text-left"
-                  style={reconType === opt.v
-                    ? { background: "var(--green)", color: "#fff", borderColor: "var(--green)" }
-                    : { background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
-              GL account reconciliations
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {([
-                { v: "FIXED_ASSETS",            label: "Fixed assets" },
-                { v: "OTHER_CURRENT_ASSET",     label: "Prepaids & other CA" },
-                { v: "OTHER_ASSET",             label: "Other assets" },
-                { v: "OTHER_CURRENT_LIABILITY", label: "Accruals & other CL" },
-                { v: "LONG_TERM_LIABILITY",     label: "Loans & LTD" },
-                { v: "EQUITY",                  label: "Equity" },
-              ] as { v: ReconType; label: string }[]).map((opt) => (
-                <button
-                  key={opt.v}
-                  onClick={() => { setReconType(opt.v); setName(`${opt.label} ${periodEnd.slice(0,7)}`) }}
-                  className="px-3 py-2 rounded-lg text-xs font-medium transition-all text-left"
-                  style={reconType === opt.v
-                    ? { background: "var(--green)", color: "#fff", borderColor: "var(--green)" }
-                    : { background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* Mode tabs */}
+        <div className="px-5 pt-3 pb-1 flex items-center gap-1"
+          style={{ borderBottom: "1px solid var(--border)" }}>
+          <ModeTab active={mode === "subledger"} onClick={() => onSwitchMode("subledger")}
+            icon={<Eye size={12} strokeWidth={1.8} />} label="Subledger detail" />
+          <ModeTab active={mode === "variance"} onClick={() => onSwitchMode("variance")}
+            icon={<GitCompareArrows size={12} strokeWidth={1.8} />}
+            label="Variance reasons"
+            badge={hasVariance ? "!" : undefined} />
         </div>
 
-        <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--text-2)" }}>Name</label>
-        <input
-          value={name} onChange={(e) => setName(e.target.value)}
-          className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-3"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-        />
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {mode === "subledger" ? (
+            <SubledgerBody subledger={subledger} loading={subLoading} />
+          ) : (
+            <VarianceBody variance={varianceDetail} loading={varLoading} />
+          )}
+        </div>
+      </motion.aside>
+    </>
+  )
+}
 
-        <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--text-2)" }}>Period end</label>
-        <input
-          type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)}
-          className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-        />
+function ModeTab({ active, onClick, icon, label, badge }:
+  { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; badge?: string }
+) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors"
+      style={{
+        color: active ? "var(--text)" : "var(--text-muted)",
+        borderBottom: `2px solid ${active ? "var(--green)" : "transparent"}`,
+        marginBottom: "-1px",
+      }}
+    >
+      {icon}
+      {label}
+      {badge && (
+        <span className="inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full text-[9px] font-bold"
+          style={{ background: "#fee2e2", color: "#b91c1c" }}>
+          {badge}
+        </span>
+      )}
+    </button>
+  )
+}
 
-        {error && <p className="text-xs mt-2" style={{ color: "#dc2626" }}>{error}</p>}
+function SubledgerBody({ subledger, loading }: { subledger?: SubledgerDetail; loading: boolean }) {
+  if (loading) {
+    return <div className="py-12 flex items-center justify-center"><Spinner className="h-5 w-5" /></div>
+  }
+  if (!subledger) return null
+  const isAging = subledger.account?.account_type === "Accounts Receivable" || subledger.account?.account_type === "Accounts Payable"
 
-        <button
-          onClick={() => create.mutate()}
-          disabled={create.isPending}
-          className="w-full mt-5 flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-          style={{ background: "var(--green)" }}
-        >
-          {create.isPending ? <Spinner className="h-4 w-4" /> : <Sparkles size={14} strokeWidth={1.8} />}
-          {create.isPending ? "Pulling from QuickBooks…" : "Create + sync"}
-        </button>
-      </motion.div>
-    </motion.div>
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg p-3 flex items-start gap-2"
+        style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+        <Sparkles size={12} strokeWidth={1.8} style={{ color: "var(--green)" }} className="shrink-0 mt-0.5" />
+        <p className="text-xs leading-snug text-theme">{subledger.source}</p>
+      </div>
+
+      {subledger.rows.length === 0 ? (
+        <div className="py-8 text-center">
+          <CheckCircle2 size={24} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} className="mx-auto mb-2" />
+          <p className="text-sm font-medium text-theme">No subledger rows for this period.</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+            QuickBooks returned no detail rows. The account balance still ties to the GL.
+          </p>
+        </div>
+      ) : isAging ? (
+        <table className="w-full text-xs">
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Entity</th>
+              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>Current</th>
+              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>1-30</th>
+              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>31-60</th>
+              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>61-90</th>
+              <th className="text-right py-2 px-1 font-semibold" style={{ color: "var(--text-muted)" }}>&gt; 90</th>
+              <th className="text-right py-2 px-2 font-semibold" style={{ color: "var(--text)" }}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {subledger.rows.map((r, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td className="py-2 px-2 text-theme font-medium">{r.label}</td>
+                <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r.current ?? "0")}</td>
+                <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r["1_30"] ?? "0")}</td>
+                <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r["31_60"] ?? "0")}</td>
+                <td className="text-right py-2 px-1 tabular-nums"
+                  style={{ color: parseFloat(r["61_90"] ?? "0") > 0 ? "#92400e" : "inherit" }}>
+                  {fmtMoney(r["61_90"] ?? "0")}
+                </td>
+                <td className="text-right py-2 px-1 tabular-nums"
+                  style={{ color: parseFloat(r.over_90 ?? "0") > 0 ? "#dc2626" : "inherit" }}>
+                  {fmtMoney(r.over_90 ?? "0")}
+                </td>
+                <td className="text-right py-2 px-2 tabular-nums font-semibold text-theme">
+                  {fmtMoney(r.total ?? "0")}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
+              <th className="text-right py-2 px-2 font-semibold" style={{ color: "var(--text)" }}>Amount</th>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Memo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {subledger.rows.map((r, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td className="py-2 px-2 text-theme">{r.txn_type || r.label}</td>
+                <td className="py-2 px-2 font-mono" style={{ color: "var(--text-2)" }}>{r.txn_number || "—"}</td>
+                <td className="py-2 px-2" style={{ color: "var(--text-2)" }}>{r.txn_date || "—"}</td>
+                <td className="text-right py-2 px-2 tabular-nums font-medium text-theme">{fmtMoney(r.amount ?? "0")}</td>
+                <td className="py-2 px-2 truncate max-w-[180px]" style={{ color: "var(--text-muted)" }}>{r.memo || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+function VarianceBody({ variance, loading }: { variance?: VarianceDetail; loading: boolean }) {
+  if (loading) {
+    return <div className="py-12 flex items-center justify-center"><Spinner className="h-5 w-5" /></div>
+  }
+  if (!variance) return null
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg p-3 flex items-start gap-2"
+        style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
+        <AlertCircle size={12} strokeWidth={1.8} style={{ color: "#b91c1c" }} className="shrink-0 mt-0.5" />
+        <p className="text-xs leading-snug" style={{ color: "#b91c1c" }}>{variance.source}</p>
+      </div>
+
+      {variance.rows.length === 0 ? (
+        <div className="py-8 text-center">
+          <Zap size={24} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} className="mx-auto mb-2" />
+          <p className="text-sm font-medium text-theme">No variance-causing transactions found.</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+            The gap may be from outside the 90-day lookback window, or from transaction types
+            we don't pull yet.
+          </p>
+        </div>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
+              <th className="text-right py-2 px-2 font-semibold" style={{ color: "var(--text)" }}>Amount</th>
+              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Memo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {variance.rows.map((r, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td className="py-2 px-2 text-theme">{r.txn_type}</td>
+                <td className="py-2 px-2 font-mono" style={{ color: "var(--text-2)" }}>{r.txn_number || "—"}</td>
+                <td className="py-2 px-2" style={{ color: "var(--text-2)" }}>{r.txn_date || "—"}</td>
+                <td className="text-right py-2 px-2 tabular-nums font-medium text-theme">{fmtMoney(r.amount)}</td>
+                <td className="py-2 px-2 truncate max-w-[180px]" style={{ color: "var(--text-muted)" }}>{r.memo || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   )
 }

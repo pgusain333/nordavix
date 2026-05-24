@@ -112,6 +112,81 @@ export interface ReconciliationDashboard {
   ai_insights: string[]
 }
 
+// ── Live overview shapes ─────────────────────────────────────────────────────
+
+export interface OverviewAccount {
+  qbo_id:               string
+  account_number:       string
+  account_name:         string
+  account_type:         string
+  group_label:          string   // Bank, AR, AP, Fixed Assets, etc.
+  gl_balance:           string
+  subledger_balance:    string
+  subledger_source:     string
+  has_subledger_detail: boolean
+  variance:             string
+}
+
+export interface OverviewGroup {
+  group:     string
+  count:     number
+  gl:        string
+  subledger: string
+  variance:  string
+}
+
+export interface Overview {
+  period_end:     string
+  qbo_connected:  boolean
+  accounts:       OverviewAccount[]
+  totals:         { gl: string; subledger: string; variance: string }
+  by_group:       OverviewGroup[]
+}
+
+export interface SubledgerRow {
+  label:   string
+  qbo_id?: string | null
+  current?:string
+  "1_30"?: string
+  "31_60"?:string
+  "61_90"?:string
+  over_90?:string
+  total?:  string
+  txn_id?: string
+  txn_type?: string
+  txn_number?: string
+  txn_date?: string
+  amount?: string
+  memo?:   string
+}
+
+export interface SubledgerDetail {
+  account: {
+    qbo_id:         string
+    name:           string
+    account_number: string
+    account_type:   string
+    gl_balance:     string
+  } | null
+  rows:   SubledgerRow[]
+  source: string
+}
+
+export interface VarianceRow {
+  txn_id:     string
+  txn_type:   string
+  txn_number: string
+  txn_date:   string
+  amount:     string
+  memo:       string
+  flag?:      string
+}
+
+export interface VarianceDetail {
+  rows:   VarianceRow[]
+  source: string
+}
+
 export interface ReconciliationCreate {
   name:       string
   recon_type: ReconType
@@ -130,6 +205,35 @@ async function listReconciliations(type?: ReconType): Promise<Reconciliation[]> 
 async function getDashboard(): Promise<ReconciliationDashboard> {
   const { data } = await apiClient.get<ReconciliationDashboard>("/api/reconciliations/dashboard")
   return data
+}
+
+// ── Live overview calls ─────────────────────────────────────────────────────
+
+async function getOverview(periodEnd: string): Promise<Overview> {
+  const { data } = await apiClient.get<Overview>("/api/reconciliations/overview", {
+    params: { period_end: periodEnd },
+  })
+  return data
+}
+
+async function getAccountSubledger(qboAccountId: string, periodEnd: string): Promise<SubledgerDetail> {
+  const { data } = await apiClient.get<SubledgerDetail>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/subledger`,
+    { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
+async function getAccountVariance(qboAccountId: string, periodEnd: string): Promise<VarianceDetail> {
+  const { data } = await apiClient.get<VarianceDetail>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/variance`,
+    { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
+async function clearSyncedData(): Promise<void> {
+  await apiClient.post("/api/reconciliations/clear-synced-data")
 }
 
 async function getReconciliation(id: string): Promise<ReconciliationDetail> {
@@ -209,6 +313,10 @@ async function exportReconciliation(id: string, fileName?: string): Promise<void
 export const reconsApi = {
   listReconciliations,
   getDashboard,
+  getOverview,
+  getAccountSubledger,
+  getAccountVariance,
+  clearSyncedData,
   getReconciliation,
   createReconciliation,
   resyncReconciliation,

@@ -53,6 +53,11 @@ from modules.recons.service import (
     insights_from,
     run_sync,
 )
+from modules.recons.overview import (
+    fetch_overview,
+    fetch_subledger_detail,
+    fetch_variance_detail,
+)
 
 router = APIRouter()
 
@@ -97,7 +102,115 @@ async def create_reconciliation(
     return recon
 
 
-# ── Dashboard ─────────────────────────────────────────────────────────────────
+# ── Live overview (the main dashboard view) ──────────────────────────────────
+
+@router.get("/overview")
+async def get_overview(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end date YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Live snapshot of every balance-sheet account with GL + subledger + variance
+    at the chosen period end. Pulled directly from QuickBooks — no persistence,
+    no AI cost, always fresh. The frontend calls this on dashboard mount and
+    again every time the user changes the period.
+    """
+    from datetime import date
+    try:
+        pe = date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        return {
+            "period_end": pe.isoformat(),
+            "accounts": [],
+            "totals": {"gl": "0.00", "subledger": "0.00", "variance": "0.00"},
+            "by_group": [],
+            "qbo_connected": False,
+        }
+
+    overview = await fetch_overview(conn, db, pe)
+    overview["qbo_connected"] = True
+    return overview
+
+
+@router.get("/account/{qbo_account_id}/subledger")
+async def get_account_subledger(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Drill-in for one account's subledger detail.
+    For AR/AP — per customer/vendor aging rows.
+    For Bank/CC — recent deposits and purchases.
+    For others — recent journal entry activity.
+    """
+    from datetime import date
+    try:
+        pe = date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="QuickBooks isn't connected.")
+    return await fetch_subledger_detail(conn, db, qbo_account_id, pe)
+
+
+@router.get("/account/{qbo_account_id}/variance")
+async def get_account_variance(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Transactions likely to explain a GL-vs-subledger variance for this account."""
+    from datetime import date
+    try:
+        pe = date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="QuickBooks isn't connected.")
+    return await fetch_variance_detail(conn, db, qbo_account_id, pe)
+
+
+@router.post("/clear-synced-data", status_code=status.HTTP_200_OK)
+async def clear_synced_data(
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Wipe all persisted reconciliations / items / transactions / notes for
+    this workspace. Useful when the user wants to start fresh (e.g. after
+    a QBO re-sync brought in different data, or to clear demo data).
+    The QBO connection itself is preserved — only Nordavix-side cached
+    reconciliation records are deleted.
+    """
+    # Delete in FK-safe order: notes → transactions → items → reconciliations
+    await db.execute(delete(ReconNote))
+    await db.execute(delete(ReconTransaction))
+    await db.execute(delete(ReconciliationItem))
+    await db.execute(delete(Reconciliation))
+    await db.commit()
+    return {"status": "ok", "message": "All cached reconciliation data cleared."}
+
+
+# ── Persistent-reconciliations dashboard (deprecated entry, kept for now) ────
 
 @router.get("/dashboard", response_model=ReconciliationDashboard)
 async def get_dashboard(

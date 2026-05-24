@@ -103,27 +103,57 @@ async def _qbo_get(conn: QboConnection, db: AsyncSession, path: str, params: dic
 def _flatten_report_rows(report: dict) -> list[dict]:
     """
     QBO report payloads nest rows. Flatten to a list of {col_name: value} dicts.
-    Tolerant of missing keys — reports vary by report type and QBO API version.
+
+    Tolerant of QBO's quirks:
+      - Column titles vary by region/version; we keep BOTH the ColTitle key
+        AND a normalized fallback key derived from ColType so callers can
+        look up by either ("Customer" vs "Cust" vs ColType=Customer).
+      - Some rows have empty ColTitle; we fall back to ColType, then to
+        a positional `col_<i>` key.
+      - Entity IDs (customer / vendor / account refs) are stashed under
+        `<title>_id` AND `_entity_id` so callers don't have to guess the
+        title casing.
     """
     rows_section = report.get("Rows", {}).get("Row", [])
-    columns = [c.get("ColTitle", "") for c in report.get("Columns", {}).get("Column", [])]
+    raw_cols = report.get("Columns", {}).get("Column", []) or []
+
+    # Build per-column metadata. Each column gets (title, coltype, fallback_key)
+    col_meta: list[tuple[str, str, str]] = []
+    for i, c in enumerate(raw_cols):
+        title = (c.get("ColTitle") or "").strip()
+        coltype = (c.get("ColType") or "").strip()
+        fallback = title or coltype or f"col_{i}"
+        col_meta.append((title, coltype, fallback))
+
     out: list[dict] = []
 
     def walk(rows: list[dict]) -> None:
         for r in rows:
-            sub = r.get("Rows", {}).get("Row", [])
+            sub = r.get("Rows", {}).get("Row", []) or []
             if sub:
                 walk(sub)
-            cols = r.get("ColData", [])
+            cols = r.get("ColData", []) or []
             if not cols:
                 continue
-            d = {}
+            d: dict = {}
             for i, c in enumerate(cols):
-                title = columns[i] if i < len(columns) else f"col_{i}"
-                d[title] = c.get("value", "")
-                # Preserve ID for entity rows (customers, vendors)
-                if c.get("id"):
-                    d[f"{title}_id"] = c["id"]
+                title, coltype, fallback = col_meta[i] if i < len(col_meta) else ("", "", f"col_{i}")
+                val = c.get("value", "")
+                # Store under every reasonable key so downstream lookup
+                # works regardless of which name the QBO instance returns.
+                if title:
+                    d[title] = val
+                if coltype and coltype not in d:
+                    d[coltype] = val
+                d[fallback] = val
+                d[f"col_{i}"] = val
+                entity_id = c.get("id")
+                if entity_id:
+                    if title:
+                        d[f"{title}_id"] = entity_id
+                    if coltype:
+                        d[f"{coltype}_id"] = entity_id
+                    d["_entity_id"] = entity_id
             out.append(d)
 
     walk(rows_section)
@@ -296,6 +326,30 @@ async def _sync_ar(
     await _sync_ar_journal_entries(session, conn, recon, items_to_create, tenant_id, gap)
 
 
+def _row_value_fuzzy(row: dict, needles: list[str]) -> Any:
+    """
+    Look up a column value where the column title may be slightly different
+    across QBO regions (e.g. "1 - 30" vs "1-30" vs "Days1to30" vs "Age1_30").
+    We match by substring against ANY key in the row dict.
+    """
+    # First try exact key match (cheap)
+    for n in needles:
+        if n in row:
+            return row[n]
+    # Then fuzzy: normalize both sides and check containment
+    norm_needles = [_normalize(n) for n in needles]
+    for key, val in row.items():
+        nk = _normalize(str(key))
+        if any(nn and nn in nk for nn in norm_needles):
+            return val
+    return None
+
+
+def _normalize(s: str) -> str:
+    """Lowercase, strip spaces/hyphens/underscores/dots — for fuzzy column matching."""
+    return "".join(ch for ch in s.lower() if ch.isalnum())
+
+
 def _build_aging_items(
     rows: list[dict],
     recon: Reconciliation,
@@ -306,42 +360,59 @@ def _build_aging_items(
 ) -> list[ReconciliationItem]:
     """
     Shared aging-row → ReconciliationItem mapping for AR & AP.
-    Handles QBO's varying column titles ("1 - 30" vs "1-30", etc.) and skips
-    summary/total rows defensively.
-    """
-    col_lookups = {
-        "current":   ["Current"],
-        "1_30":      ["1 - 30", "1-30"],
-        "31_60":     ["31 - 60", "31-60"],
-        "61_90":     ["61 - 90", "61-90"],
-        "over_90":   ["91 and over", "> 90", "Over 90"],
-        "total":     ["Total"],
-    }
 
-    def first(row: dict, keys: list[str]) -> Any:
-        for k in keys:
-            if k in row:
-                return row[k]
-        return None
+    Resilient against QBO column title drift — uses fuzzy matching plus
+    POSITIONAL fallback for AgedReceivables/AgedPayables (the layout is
+    always: Entity | Current | 1-30 | 31-60 | 61-90 | >90 | Total).
+    """
+    # Title-based alias lists (try lots of variations)
+    aliases = {
+        "current":   ["Current", "0-30", "0 - 30", "Current Due", "Not Due", "current"],
+        "1_30":      ["1 - 30", "1-30", "1 to 30", "Days1to30", "Age1_30", "1-30 days"],
+        "31_60":     ["31 - 60", "31-60", "31 to 60", "Days31to60", "Age31_60"],
+        "61_90":     ["61 - 90", "61-90", "61 to 90", "Days61to90", "Age61_90"],
+        "over_90":   ["91 and over", "> 90", "Over 90", "90+", "Days90Plus", "Over90Days"],
+        "total":     ["Total", "Amount", "Balance"],
+    }
+    # Positional fallback for QBO's aging reports — used only when titles
+    # didn't yield a hit. Index matches "Current" (1), 1-30 (2), 31-60 (3),
+    # 61-90 (4), >90 (5), Total (6).
+    POS = {"current": 1, "1_30": 2, "31_60": 3, "61_90": 4, "over_90": 5, "total": 6}
+
+    def get(row: dict, bucket: str) -> Decimal:
+        v = _row_value_fuzzy(row, aliases[bucket])
+        if v is None or v == "":
+            v = row.get(f"col_{POS[bucket]}", "")
+        return _dec(v)
 
     items: list[ReconciliationItem] = []
     for r in rows:
-        name = first(r, entity_col_aliases)
-        if not name:
-            continue
+        name = _row_value_fuzzy(r, entity_col_aliases)
+        if name is None:
+            # Fall back to first column positionally
+            name = r.get("col_0", "")
         n = str(name).strip()
-        if not n or n.upper().startswith("TOTAL"):
+        if not n or n.upper().startswith(("TOTAL", "SUBTOTAL", "GRAND")):
             continue
-        total = _dec(first(r, col_lookups["total"]))
+        total = get(r, "total")
+        # Sum the aging buckets as a tiebreaker — some QBO reports omit a Total col
+        bucket_sum = sum((get(r, k) for k in ("current", "1_30", "31_60", "61_90", "over_90")),
+                         Decimal("0"))
+        if total == 0:
+            total = bucket_sum
         if total == 0:
             continue
 
+        # Entity ID lookup: try the specific field first, then fall back
+        # to the universal _entity_id stashed by _flatten_report_rows.
+        qbo_id = r.get(entity_id_field) or r.get("_entity_id")
+
         item_totals = {
-            "aging_current": _dec(first(r, col_lookups["current"])),
-            "aging_1_30":    _dec(first(r, col_lookups["1_30"])),
-            "aging_31_60":   _dec(first(r, col_lookups["31_60"])),
-            "aging_61_90":   _dec(first(r, col_lookups["61_90"])),
-            "aging_over_90": _dec(first(r, col_lookups["over_90"])),
+            "aging_current": get(r, "current"),
+            "aging_1_30":    get(r, "1_30"),
+            "aging_31_60":   get(r, "31_60"),
+            "aging_61_90":   get(r, "61_90"),
+            "aging_over_90": get(r, "over_90"),
             "subledger_balance": total,
             "difference": Decimal("0"),
         }
@@ -351,7 +422,7 @@ def _build_aging_items(
             tenant_id=tenant_id,
             reconciliation_id=recon.id,
             entity_name=n,
-            entity_qbo_id=r.get(entity_id_field),
+            entity_qbo_id=qbo_id,
             **item_totals,
             gl_balance=Decimal("0"),
             risk_level=risk,

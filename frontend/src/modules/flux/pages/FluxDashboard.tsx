@@ -31,6 +31,7 @@ import {
   Trash2,
   Sparkles,
   CheckCircle2,
+  Upload,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
@@ -161,8 +162,10 @@ export function FluxDashboard() {
   }, [searchParams, setSearchParams])
 
   function handleNewAnalysis() {
-    // New analyses are created from the Connections page (TB upload card)
-    navigate("/app/connections")
+    // Clear the selected TB so the empty state (with inline QBO + Upload
+    // options) shows. Flux Analysis is self-sufficient — no jump to
+    // Connections required.
+    navigate("/app/flux")
     setShowMobileHistory(false)
   }
 
@@ -569,18 +572,13 @@ export function FluxDashboard() {
             >
 
               {showEmpty && (
-                <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                  <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4"
-                    style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-                    <Plus size={28} strokeWidth={1.6} />
-                  </div>
-                  <p className="text-base font-semibold text-theme mb-2">No analyses yet</p>
-                  <p className="text-sm max-w-xs leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
-                    Connect QuickBooks or upload a trial balance in the Connections panel to start your first analysis.
-                  </p>
-                  <Button size="sm" onClick={() => navigate("/app/connections")}>
-                    Open Connections
-                  </Button>
+                <div className="h-full overflow-y-auto">
+                  <FluxEmptyState
+                    qboConnected={!!qboConn}
+                    qboCompany={qboConn?.company}
+                    onComplete={handleTbComplete}
+                    onConnectQbo={() => navigate("/app/connections")}
+                  />
                 </div>
               )}
 
@@ -631,5 +629,184 @@ export function FluxDashboard() {
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Empty state with inline "Run from QBO" + Upload ─────────────────────────
+
+interface FluxEmptyStateProps {
+  qboConnected: boolean
+  qboCompany?: string | null
+  onComplete:  (tb: TrialBalance) => void
+  onConnectQbo:() => void
+}
+
+function FluxEmptyState({ qboConnected, qboCompany, onComplete, onConnectQbo }: FluxEmptyStateProps) {
+  const [mode, setMode] = useState<"choose" | "qbo" | "upload">(qboConnected ? "qbo" : "choose")
+
+  return (
+    <div className="max-w-xl mx-auto px-6 py-10">
+      <div className="mb-6">
+        <p className="text-base font-semibold text-theme">Start a new flux analysis</p>
+        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+          {qboConnected
+            ? `Connected to ${qboCompany ?? "QuickBooks"}. Pull a trial balance directly, or upload a file.`
+            : "Connect QuickBooks for one-click pulls, or upload a trial balance file."}
+        </p>
+      </div>
+
+      {/* Source selector */}
+      <div className="grid grid-cols-2 gap-2 mb-5">
+        <button
+          onClick={() => setMode("qbo")}
+          disabled={!qboConnected}
+          className="rounded-lg p-3 text-left transition-all"
+          style={{
+            background: mode === "qbo" ? "var(--green-subtle)" : "var(--surface)",
+            border: `1px solid ${mode === "qbo" ? "var(--green)" : "var(--border)"}`,
+            opacity: qboConnected ? 1 : 0.5,
+            cursor: qboConnected ? "pointer" : "not-allowed",
+          }}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <Sparkles size={14} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+            <span className="text-sm font-semibold text-theme">From QuickBooks</span>
+          </div>
+          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            {qboConnected ? "Pull both periods automatically." : "Connect QuickBooks first."}
+          </p>
+        </button>
+        <button
+          onClick={() => setMode("upload")}
+          className="rounded-lg p-3 text-left transition-all"
+          style={{
+            background: mode === "upload" ? "var(--green-subtle)" : "var(--surface)",
+            border: `1px solid ${mode === "upload" ? "var(--green)" : "var(--border)"}`,
+          }}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <Upload size={14} strokeWidth={1.8} style={{ color: "var(--text-2)" }} />
+            <span className="text-sm font-semibold text-theme">Upload file</span>
+          </div>
+          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            Excel or CSV with current + prior columns.
+          </p>
+        </button>
+      </div>
+
+      {!qboConnected && mode !== "upload" && (
+        <div className="mb-5 rounded-lg p-3 flex items-start gap-2"
+          style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}>
+          <AlertCircle size={14} strokeWidth={1.8} style={{ color: "#92400e" }} className="shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs" style={{ color: "#92400e" }}>
+              QuickBooks isn't connected — pulling a trial balance automatically is disabled. You can upload a file instead, or connect QBO.
+            </p>
+          </div>
+          <Button size="sm" onClick={onConnectQbo}>Connect</Button>
+        </div>
+      )}
+
+      {/* Body for chosen mode */}
+      {mode === "qbo" && qboConnected && (
+        <QboFluxInlineForm onComplete={onComplete} />
+      )}
+      {mode === "upload" && (
+        <UploadFlow onComplete={onComplete} qboConnected={qboConnected} forceSource="upload" />
+      )}
+    </div>
+  )
+}
+
+interface QboInlineProps {
+  onComplete: (tb: TrialBalance) => void
+}
+
+function QboFluxInlineForm({ onComplete }: QboInlineProps) {
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const oneMonthAgo = (() => {
+    const d = new Date(); d.setDate(0)
+    return d.toISOString().slice(0, 10)
+  })()
+  const priorMonthEnd = (() => {
+    const d = new Date(); d.setDate(0); d.setDate(0)
+    return d.toISOString().slice(0, 10)
+  })()
+
+  const [name,        setName]        = useState(`Flux ${oneMonthAgo.slice(0, 7)}`)
+  const [periodCur,   setPeriodCur]   = useState(oneMonthAgo)
+  const [periodPrior, setPeriodPrior] = useState(priorMonthEnd)
+  const [threshold,   setThreshold]   = useState("5000")
+  const [error,       setError]       = useState<string | null>(null)
+
+  const run = useMutation({
+    mutationFn: () => api.createTrialBalanceFromQbo({
+      name: name.trim() || `Flux ${todayIso.slice(0, 7)}`,
+      period_current: periodCur,
+      period_prior:   periodPrior,
+      materiality_threshold: Number(threshold) || 5000,
+    }),
+    onSuccess: onComplete,
+    onError: (e: unknown) => {
+      const ex = e as { response?: { data?: { detail?: string } }; message?: string }
+      setError(ex.response?.data?.detail ?? ex.message ?? "Could not pull from QuickBooks.")
+    },
+  })
+
+  return (
+    <div className="rounded-xl p-5 space-y-4"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <FieldLabel label="Analysis name">
+          <input value={name} onChange={(e) => setName(e.target.value)} className="flux-input" />
+        </FieldLabel>
+        <FieldLabel label="Materiality threshold ($)">
+          <input value={threshold} onChange={(e) => setThreshold(e.target.value)} type="number" min="0" className="flux-input" />
+        </FieldLabel>
+        <FieldLabel label="Current period end">
+          <input value={periodCur} onChange={(e) => setPeriodCur(e.target.value)} type="date" className="flux-input" />
+        </FieldLabel>
+        <FieldLabel label="Prior period end">
+          <input value={periodPrior} onChange={(e) => setPeriodPrior(e.target.value)} type="date" className="flux-input" />
+        </FieldLabel>
+      </div>
+
+      {error && (
+        <p className="text-xs flex items-start gap-1.5" style={{ color: "#dc2626" }}>
+          <AlertCircle size={11} strokeWidth={1.8} className="mt-0.5 shrink-0" />
+          {error}
+        </p>
+      )}
+
+      <Button onClick={() => run.mutate()} loading={run.isPending}
+        icon={<Sparkles size={14} strokeWidth={1.8} />}
+      >
+        {run.isPending ? "Pulling from QuickBooks…" : "Run analysis"}
+      </Button>
+
+      <style>{`
+        .flux-input {
+          width: 100%;
+          background: var(--surface-2);
+          border: 1px solid var(--border-strong);
+          color: var(--text);
+          border-radius: 8px;
+          padding: 8px 10px;
+          font-size: 13px;
+          outline: none;
+          transition: border-color 0.15s;
+        }
+        .flux-input:focus { border-color: var(--green); }
+      `}</style>
+    </div>
+  )
+}
+
+function FieldLabel({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="text-[11px] font-medium mb-1 block" style={{ color: "var(--text-2)" }}>{label}</span>
+      {children}
+    </label>
   )
 }

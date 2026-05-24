@@ -10,7 +10,7 @@
  */
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Zap,
@@ -22,8 +22,6 @@ import {
   Plus,
   AlertCircle,
   ChevronUp,
-  Sparkles,
-  BarChart3,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
@@ -33,7 +31,6 @@ export function ConnectionsPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [uploadOpen, setUploadOpen] = useState(false)
-  const [qboFluxOpen, setQboFluxOpen] = useState(false)
   const [qboError, setQboError] = useState<string | null>(null)
   const [qboLoading, setQboLoading] = useState(false)
 
@@ -187,59 +184,6 @@ export function ConnectionsPage() {
           )}
         </motion.div>
 
-        {/* ── Run Flux Analysis from QBO (only when QBO is connected) ──────── */}
-        {qbo && (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, delay: 0.03, ease: "easeOut" }}
-            className="rounded-xl overflow-hidden"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
-          >
-            <button
-              onClick={() => setQboFluxOpen(o => !o)}
-              className="w-full p-5 flex items-start gap-4 text-left transition-colors"
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "" }}
-            >
-              <div className="h-11 w-11 rounded-lg flex items-center justify-center shrink-0"
-                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-                <BarChart3 size={22} strokeWidth={1.8} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h2 className="text-base font-semibold text-theme">Run Flux Analysis from QuickBooks</h2>
-                <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-                  Pull both periods from your QBO TrialBalance report directly. No upload needed.
-                </p>
-              </div>
-              <div className="shrink-0 flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant={qboFluxOpen ? "outline" : "default"}
-                  icon={qboFluxOpen ? <ChevronUp size={12} strokeWidth={1.8} /> : <Sparkles size={12} strokeWidth={1.8} />}
-                >
-                  {qboFluxOpen ? "Hide" : "New from QBO"}
-                </Button>
-              </div>
-            </button>
-
-            <AnimatePresence initial={false}>
-              {qboFluxOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.22, ease: "easeOut" }}
-                  style={{ borderTop: "1px solid var(--border)" }}
-                >
-                  <div className="p-5">
-                    <QboFluxForm onComplete={handleTbComplete} onCancel={() => setQboFluxOpen(false)} />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-        )}
-
         {/* ── Trial Balance Upload card ────────────────────────────────────── */}
         <motion.div
           initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
@@ -311,111 +255,6 @@ export function ConnectionsPage() {
         </div>
       </div>
     </div>
-  )
-}
-
-// ── QBO-driven flux form (no file upload) ────────────────────────────────────
-
-interface QboFluxFormProps {
-  onComplete: (tb: TrialBalance) => void
-  onCancel:   () => void
-}
-
-function QboFluxForm({ onComplete, onCancel }: QboFluxFormProps) {
-  const todayIso = new Date().toISOString().slice(0, 10)
-  // Default current period = today, prior = 1 year ago. User adjusts as needed.
-  const oneYearAgo = (() => {
-    const d = new Date(); d.setFullYear(d.getFullYear() - 1)
-    return d.toISOString().slice(0, 10)
-  })()
-
-  const [name,        setName]        = useState(`Flux ${todayIso.slice(0, 7)}`)
-  const [periodCur,   setPeriodCur]   = useState(todayIso)
-  const [periodPrior, setPeriodPrior] = useState(oneYearAgo)
-  const [threshold,   setThreshold]   = useState("5000")
-  const [error,       setError]       = useState<string | null>(null)
-
-  const run = useMutation({
-    mutationFn: () => api.createTrialBalanceFromQbo({
-      name: name.trim() || `Flux ${todayIso.slice(0, 7)}`,
-      period_current: periodCur,
-      period_prior:   periodPrior,
-      materiality_threshold: Number(threshold) || 5000,
-    }),
-    onSuccess: onComplete,
-    onError: (e: unknown) => {
-      const ex = e as { response?: { data?: { detail?: string } }; message?: string }
-      setError(ex.response?.data?.detail ?? ex.message ?? "Could not pull from QBO.")
-    },
-  })
-
-  return (
-    <div className="space-y-4">
-      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-        Nordavix will pull two TrialBalance reports from your QuickBooks Online
-        account (one per period), merge them by account, and run AI commentary
-        for material variances.
-      </p>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="Analysis name">
-          <input value={name} onChange={(e) => setName(e.target.value)} className="form-input" />
-        </Field>
-        <Field label="Materiality threshold ($)">
-          <input value={threshold} onChange={(e) => setThreshold(e.target.value)} type="number" min="0" className="form-input" />
-        </Field>
-        <Field label="Current period end">
-          <input value={periodCur} onChange={(e) => setPeriodCur(e.target.value)} type="date" className="form-input" />
-        </Field>
-        <Field label="Prior period end">
-          <input value={periodPrior} onChange={(e) => setPeriodPrior(e.target.value)} type="date" className="form-input" />
-        </Field>
-      </div>
-
-      {error && (
-        <p className="text-xs flex items-start gap-1.5" style={{ color: "#dc2626" }}>
-          <AlertCircle size={11} strokeWidth={1.8} className="mt-0.5 shrink-0" />
-          {error}
-        </p>
-      )}
-
-      <div className="flex items-center gap-2 flex-wrap pt-1">
-        <Button
-          onClick={() => run.mutate()}
-          loading={run.isPending}
-          icon={<Sparkles size={14} strokeWidth={1.8} />}
-        >
-          {run.isPending ? "Pulling from QuickBooks…" : "Run analysis"}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onCancel} disabled={run.isPending}>
-          Cancel
-        </Button>
-      </div>
-
-      <style>{`
-        .form-input {
-          width: 100%;
-          background: var(--surface-2);
-          border: 1px solid var(--border-strong);
-          color: var(--text);
-          border-radius: 8px;
-          padding: 8px 10px;
-          font-size: 13px;
-          outline: none;
-          transition: border-color 0.15s;
-        }
-        .form-input:focus { border-color: var(--green); }
-      `}</style>
-    </div>
-  )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="text-[11px] font-medium mb-1 block" style={{ color: "var(--text-2)" }}>{label}</span>
-      {children}
-    </label>
   )
 }
 
