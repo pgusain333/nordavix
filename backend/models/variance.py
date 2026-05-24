@@ -30,6 +30,9 @@ class Variance(TenantBase):
     is_material: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     anomaly_flags: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    # Per-line sign-off: which user approved this specific variance, and when
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

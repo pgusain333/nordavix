@@ -23,6 +23,8 @@ class TrialBalanceResponse(BaseModel):
     materiality_threshold: Decimal
     error_detail: str | None = None
     created_at: datetime
+    approved_by: uuid.UUID | None = None
+    approved_at: datetime | None = None
 
 
 class UploadPreview(BaseModel):
@@ -33,8 +35,17 @@ class UploadPreview(BaseModel):
 
 
 class ColumnMappingBody(BaseModel):
-    """Column mapping from user's header names to our canonical fields."""
-    mapping: dict[str, str]   # keys: account_number, account_name, current_balance, prior_balance
+    """
+    Column mapping from the user's header names to our canonical fields.
+
+    Two shapes are supported (the parser figures out which from the keys present):
+      A) {account_number, account_name, current_balance, prior_balance}
+      B) {account_number, account_name, current_debit, current_credit,
+          prior_debit?, prior_credit?}  ← QBO Compare Trial Balance shape
+
+    Extra metadata keys like "layout" or "_filename" are tolerated and ignored.
+    """
+    mapping: dict[str, str]
 
 
 class ParseResult(BaseModel):
@@ -60,6 +71,8 @@ class VarianceResponse(BaseModel):
     fs_category: str | None
     narrative: str | None
     confidence_score: Decimal | None
+    approved_by: uuid.UUID | None = None
+    approved_at: datetime | None = None
 
     @field_serializer("dollar_variance", "current_balance", "prior_balance",
                       "pct_variance", "confidence_score")

@@ -23,6 +23,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import datetime, timezone
+
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
 from models.account import Account
@@ -182,11 +184,20 @@ async def parse_trial_balance(
 
     file_bytes = base64.b64decode(file_b64)
 
-    # Required mapping keys
-    required = {"account_number", "account_name", "current_balance", "prior_balance"}
-    missing = required - set(body.mapping.keys())
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Missing column mappings: {', '.join(missing)}")
+    # Required: account number + name + EITHER a current_balance column OR a
+    # (current_debit, current_credit) pair. Prior is treated as zero if missing.
+    if not body.mapping.get("account_number") or not body.mapping.get("account_name"):
+        raise HTTPException(
+            status_code=400,
+            detail="Missing column mappings: account_number and account_name are required.",
+        )
+    has_balance_curr = bool(body.mapping.get("current_balance"))
+    has_dc_curr = bool(body.mapping.get("current_debit")) and bool(body.mapping.get("current_credit"))
+    if not (has_balance_curr or has_dc_curr):
+        raise HTTPException(
+            status_code=400,
+            detail="Need either a current-period balance column OR a (debit, credit) pair.",
+        )
 
     tb.status = "processing"
     tb.column_mapping = {
@@ -350,6 +361,8 @@ async def list_variances(
                 fs_category=acct.fs_category,
                 narrative=narr.content if narr else None,
                 confidence_score=narr.confidence_score if narr else None,
+                approved_by=var.approved_by,
+                approved_at=var.approved_at,
             )
         )
 
@@ -388,17 +401,50 @@ async def approve_variance(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Mark a variance as approved."""
+    """Mark a variance as approved + stamp who approved it and when."""
     var_result = await db.execute(select(Variance).where(Variance.id == var_id))
     var = var_result.scalar_one_or_none()
     if var is None:
         raise HTTPException(status_code=404, detail="Variance not found")
 
     var.status = "approved"
+    var.approved_by = user.id
+    var.approved_at = datetime.now(timezone.utc)
     await db.commit()
-    return {"id": str(var_id), "status": "approved"}
+    return {
+        "id": str(var_id),
+        "status": "approved",
+        "approved_by": str(user.id),
+        "approved_at": var.approved_at.isoformat(),
+    }
+
+
+@router.post("/trial-balances/{tb_id}/approve", response_model=TrialBalanceResponse)
+async def approve_trial_balance(
+    tb_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TrialBalance:
+    """
+    Sign off on the entire flux analysis. Stamps approved_by + approved_at and
+    moves status to 'complete'. Per-line approvals (variances) are separate and
+    don't have to all be approved first — the controller can sign off the run
+    even with some variances still pending if they accept that.
+    """
+    tb = (await db.execute(
+        select(TrialBalance).where(TrialBalance.id == tb_id)
+    )).scalar_one_or_none()
+    if tb is None:
+        raise HTTPException(status_code=404, detail="Trial balance not found")
+    tb.approved_by = user.id
+    tb.approved_at = datetime.now(timezone.utc)
+    tb.status = "complete"
+    await db.commit()
+    return tb
 
 
 @router.post("/trial-balances/{tb_id}/variances/{var_id}/regenerate")

@@ -107,6 +107,8 @@ _PRIOR_HINTS = [
     "prior period", "prior", "previous", "last period", "prev",
     "period 1", "prior year", "py",
 ]
+_DEBIT_HINTS  = ["debit",  "dr"]
+_CREDIT_HINTS = ["credit", "cr"]
 
 
 def _guess_column(headers: list[str], hints: list[str]) -> str | None:
@@ -118,14 +120,70 @@ def _guess_column(headers: list[str], hints: list[str]) -> str | None:
     return None
 
 
+def _find_debit_credit_pairs(headers: list[str]) -> list[tuple[str, str]]:
+    """
+    Walk headers left→right collecting consecutive (debit, credit) pairs.
+    QBO 'Compare Trial Balance' exports as Account | Debit | Credit | Debit | Credit.
+    Returns the pairs in column order so caller can treat the first as current,
+    the second as prior (QBO's default ordering).
+    """
+    pairs: list[tuple[str, str]] = []
+    last_debit: str | None = None
+    for h in headers:
+        low = h.lower().strip()
+        is_debit = any(t in low for t in _DEBIT_HINTS) and not any(t in low for t in _CREDIT_HINTS)
+        is_credit = any(t in low for t in _CREDIT_HINTS) and not any(t in low for t in _DEBIT_HINTS)
+        if is_debit:
+            last_debit = h
+        elif is_credit and last_debit is not None:
+            pairs.append((last_debit, h))
+            last_debit = None
+    return pairs
+
+
 def auto_detect_mapping(headers: list[str]) -> dict[str, str | None]:
-    """Auto-detect column roles from header names."""
-    return {
+    """
+    Detect column roles. Supports three QBO trial-balance shapes:
+
+      A) Two-period side-by-side (QBO 'Compare TB' export):
+            Account | Debit (Curr) | Credit (Curr) | Debit (Prior) | Credit (Prior)
+         → emits current_debit / current_credit / prior_debit / prior_credit.
+      B) Single-period debit/credit:
+            Account | Debit | Credit
+         → emits current_debit / current_credit only (prior treated as zero).
+      C) Pre-netted balance columns (legacy / custom CSV):
+            Account | Current | Prior
+         → emits current_balance / prior_balance.
+
+    Always emits account_number and account_name keys (may be None if not
+    confidently detected — the UI lets the user confirm).
+    """
+    mapping: dict[str, str | None] = {
         "account_number":  _guess_column(headers, _ACCOUNT_NUMBER_HINTS),
         "account_name":    _guess_column(headers, _ACCOUNT_NAME_HINTS),
-        "current_balance": _guess_column(headers, _CURRENT_HINTS),
-        "prior_balance":   _guess_column(headers, _PRIOR_HINTS),
+        "current_balance": None,
+        "prior_balance":   None,
+        "current_debit":   None,
+        "current_credit":  None,
+        "prior_debit":     None,
+        "prior_credit":    None,
+        "layout":          "single_balance_pair",
     }
+
+    dc_pairs = _find_debit_credit_pairs(headers)
+    if len(dc_pairs) >= 2:
+        mapping["current_debit"],  mapping["current_credit"] = dc_pairs[0]
+        mapping["prior_debit"],    mapping["prior_credit"]   = dc_pairs[1]
+        mapping["layout"] = "qbo_two_period_dc"
+    elif len(dc_pairs) == 1:
+        mapping["current_debit"], mapping["current_credit"] = dc_pairs[0]
+        mapping["layout"] = "qbo_single_period_dc"
+    else:
+        mapping["current_balance"] = _guess_column(headers, _CURRENT_HINTS)
+        mapping["prior_balance"]   = _guess_column(headers, _PRIOR_HINTS)
+        mapping["layout"] = "balance_pair"
+
+    return mapping
 
 
 def parse_file_to_preview(
@@ -161,6 +219,39 @@ def parse_file_to_preview(
     return headers, sample_rows, detected_mapping
 
 
+def _to_decimal(val: object) -> Decimal:
+    """Tolerant parser: handles "$1,234.56", "(123)", "—", blanks."""
+    try:
+        cleaned = (
+            str(val).replace(",", "").replace("$", "")
+            .replace("(", "-").replace(")", "")
+            .replace("—", "").replace("–", "").strip()
+        )
+        if not cleaned or cleaned.lower() in ("nan", "none", "n/a"):
+            return Decimal(0)
+        return Decimal(cleaned)
+    except (InvalidOperation, ValueError):
+        return Decimal(0)
+
+
+def _balance_from_row(
+    row: pd.Series,
+    debit_col: str | None,
+    credit_col: str | None,
+    balance_col: str | None,
+) -> Decimal:
+    """
+    Return one signed balance value, regardless of file layout:
+      - If both debit + credit columns are provided, balance = debit - credit.
+      - Otherwise read the pre-netted balance column.
+    """
+    if debit_col and credit_col:
+        return _to_decimal(row.get(debit_col, 0)) - _to_decimal(row.get(credit_col, 0))
+    if balance_col:
+        return _to_decimal(row.get(balance_col, 0))
+    return Decimal(0)
+
+
 def parse_accounts_from_file(
     file_bytes: bytes,
     filename: str,
@@ -169,10 +260,12 @@ def parse_accounts_from_file(
 ) -> list[dict]:
     """
     Parse the file with a confirmed column mapping.
-    Returns a list of account dicts ready for DB insertion.
+
+    Accepts EITHER pre-netted balance columns OR raw debit/credit columns
+    (one or two period pairs, QBO-style). The mapping dict tells us which
+    columns to use; missing keys are treated as None.
     """
     ext = filename.rsplit(".", 1)[-1].lower()
-
     if ext == "csv":
         df = pd.read_csv(io.BytesIO(file_bytes))
     else:
@@ -180,33 +273,37 @@ def parse_accounts_from_file(
 
     df.dropna(how="all", inplace=True)
 
-    acct_num_col  = mapping["account_number"]
-    acct_name_col = mapping["account_name"]
-    curr_col      = mapping["current_balance"]
-    prior_col     = mapping["prior_balance"]
+    acct_num_col  = mapping.get("account_number")
+    acct_name_col = mapping.get("account_name")
 
-    accounts = []
+    # Pull both possible layouts from the mapping; whichever has data wins.
+    curr_balance  = mapping.get("current_balance")
+    prior_balance = mapping.get("prior_balance")
+    curr_debit    = mapping.get("current_debit")
+    curr_credit   = mapping.get("current_credit")
+    prior_debit   = mapping.get("prior_debit")
+    prior_credit  = mapping.get("prior_credit")
+
+    accounts: list[dict] = []
     for _, row in df.iterrows():
-        # Skip rows with missing account number
-        acct_num = str(row.get(acct_num_col, "")).strip()
+        acct_num = str(row.get(acct_num_col, "")).strip() if acct_num_col else ""
         if not acct_num or acct_num.lower() in ("nan", "none", ""):
             continue
 
-        acct_name = str(row.get(acct_name_col, "")).strip()
+        # Skip QBO subtotal/total rows defensively
+        if acct_num.lower().startswith("total"):
+            continue
 
-        def to_decimal(val: object) -> Decimal:
-            try:
-                # Remove currency formatting characters
-                cleaned = str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip()
-                return Decimal(cleaned) if cleaned and cleaned not in ("nan", "") else Decimal(0)
-            except (InvalidOperation, ValueError):
-                return Decimal(0)
+        acct_name = str(row.get(acct_name_col, "")).strip() if acct_name_col else ""
 
-        current = to_decimal(row.get(curr_col, 0))
-        prior   = to_decimal(row.get(prior_col, 0))
+        current = _balance_from_row(row, curr_debit, curr_credit, curr_balance)
+        prior   = _balance_from_row(row, prior_debit, prior_credit, prior_balance)
+
+        # Skip entirely-zero rows — they're not informative
+        if current == 0 and prior == 0:
+            continue
 
         fs_category, fs_line = classify_account(acct_num, overrides)
-
         accounts.append({
             "account_number": acct_num,
             "account_name":   acct_name or acct_num,
@@ -215,7 +312,6 @@ def parse_accounts_from_file(
             "fs_category":    fs_category,
             "fs_line":        fs_line,
         })
-
     return accounts
 
 

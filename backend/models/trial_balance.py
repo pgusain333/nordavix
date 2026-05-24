@@ -1,9 +1,9 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Date, Numeric, String
+from sqlalchemy import Date, DateTime, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,5 +36,8 @@ class TrialBalance(TimestampMixin, TenantBase):
     # Overrides for account-number-to-FS-line mapping (default is GAAP 4-digit ranges)
     fs_line_mapping: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # Sign-off: who approved the entire analysis, and when
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Error detail stored here when status = "error" — no client data, only technical message
     error_detail: Mapped[str | None] = mapped_column(String(1000))
