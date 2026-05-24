@@ -92,6 +92,17 @@ async function createTrialBalance(body: TrialBalanceCreate): Promise<TrialBalanc
   return data
 }
 
+/**
+ * Create a flux analysis directly from QuickBooks Online — no file upload.
+ * Server pulls the TrialBalance report for both periods, parses it, and
+ * starts variance computation. Returns the TB with status=processing/
+ * parsed/generating.
+ */
+async function createTrialBalanceFromQbo(body: TrialBalanceCreate): Promise<TrialBalance> {
+  const { data } = await apiClient.post<TrialBalance>("/api/flux/trial-balances/from-qbo", body)
+  return data
+}
+
 async function getTrialBalance(id: string): Promise<TrialBalance> {
   const { data } = await apiClient.get<TrialBalance>(`/api/flux/trial-balances/${id}`)
   return data
@@ -220,6 +231,7 @@ export const api = {
   // Trial Balances
   listTrialBalances,
   createTrialBalance,
+  createTrialBalanceFromQbo,
   getTrialBalance,
   resetTrialBalance,
   deleteTrialBalance,

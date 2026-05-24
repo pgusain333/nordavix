@@ -2,7 +2,15 @@ import { apiClient } from "@/core/api/client"
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type ReconType   = "AR" | "AP" | "BANK" | "CC" | "OTHER"
+export type ReconType =
+  | "AR" | "AP" | "BANK" | "CC"
+  | "FIXED_ASSETS"
+  | "OTHER_CURRENT_ASSET"
+  | "OTHER_ASSET"
+  | "OTHER_CURRENT_LIABILITY"
+  | "LONG_TERM_LIABILITY"
+  | "EQUITY"
+  | "OTHER"
 export type ReconStatus = "pending" | "syncing" | "computing" | "in_review" | "approved" | "error"
 export type ItemStatus  = "pending" | "reviewed" | "approved" | "flagged" | "resolved"
 export type RiskLevel   = "low" | "medium" | "high"
@@ -165,9 +173,19 @@ async function setItemStatus(reconId: string, itemId: string, status: ItemStatus
   return data
 }
 
-async function regenerateItem(reconId: string, itemId: string): Promise<ReconciliationItem> {
+async function explainItem(reconId: string, itemId: string): Promise<ReconciliationItem> {
+  // Synchronous AI commentary generation for a single item. Server waits for
+  // the Anthropic call to finish and returns the saved commentary inline.
   const { data } = await apiClient.post<ReconciliationItem>(
-    `/api/reconciliations/${reconId}/items/${itemId}/regenerate`
+    `/api/reconciliations/${reconId}/items/${itemId}/explain`
+  )
+  return data
+}
+
+async function explainRecon(reconId: string): Promise<Reconciliation> {
+  // Aggregate AI summary for the whole reconciliation, on-demand only.
+  const { data } = await apiClient.post<Reconciliation>(
+    `/api/reconciliations/${reconId}/explain`
   )
   return data
 }
@@ -198,7 +216,8 @@ export const reconsApi = {
   assignReconciliation,
   addNote,
   setItemStatus,
-  regenerateItem,
+  explainItem,
+  explainRecon,
   deleteReconciliation,
   exportReconciliation,
 }

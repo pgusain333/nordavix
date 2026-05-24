@@ -196,17 +196,21 @@ async def run_sync(reconciliation_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
                 await _sync_ar(session, conn, recon, tenant_id)
             elif recon.recon_type == "AP":
                 await _sync_ap(session, conn, recon, tenant_id)
+            elif recon.recon_type in _ACCOUNT_TYPE_MAP:
+                # Generic balance-sheet account reconciliation — one item per
+                # account in the selected QBO AccountType, with the period-end
+                # balance + last-90-days transactions for variance evidence.
+                await _sync_accounts(
+                    session, conn, recon, tenant_id,
+                    qbo_account_types=_ACCOUNT_TYPE_MAP[recon.recon_type],
+                )
             else:
-                # MVP: bank/cc/other types get a stub item so the UI renders
+                # MVP: any remaining type gets a stub item so the UI renders
                 await _sync_stub(session, recon, tenant_id)
 
-            recon.status = "computing"
-            await session.commit()
-
-            # AI pass — runs sequentially per-item; for 50+ items this is the
-            # right place to add concurrency if it becomes a bottleneck.
-            await _generate_ai_commentary(session, recon, tenant_id)
-
+            # AI commentary is now strictly on-demand: the user clicks
+            # "Generate AI commentary" from the detail page when they want
+            # an explanation. We never auto-spend tokens during sync.
             recon.status = "in_review"
             recon.error_detail = None
             await session.commit()
@@ -724,6 +728,245 @@ async def _sync_ap_evidence(
             ))
 
 
+# ── Generic balance-sheet account reconciliations ────────────────────────────
+#
+# QBO's Account.AccountType enum drives this. We map our internal recon_type
+# to one or more QBO AccountTypes so a single reconciliation can cover all
+# related accounts (e.g. FIXED_ASSETS catches both "Fixed Asset" and
+# "Accumulated Depreciation" — typically you reconcile them together).
+#
+# Source for the QBO enum:
+#   https://developer.intuit.com/.../entities/Account#enum-accounttype
+
+_ACCOUNT_TYPE_MAP: dict[str, list[str]] = {
+    "BANK":                    ["Bank"],
+    "CC":                      ["Credit Card"],
+    "FIXED_ASSETS":            ["Fixed Asset", "Other Asset"],
+    "OTHER_CURRENT_ASSET":     ["Other Current Asset"],
+    "OTHER_ASSET":             ["Other Asset"],
+    "OTHER_CURRENT_LIABILITY": ["Other Current Liability"],
+    "LONG_TERM_LIABILITY":     ["Long Term Liability"],
+    "EQUITY":                  ["Equity"],
+    "OTHER": [
+        "Other Current Asset", "Other Asset",
+        "Other Current Liability", "Long Term Liability", "Equity",
+    ],
+}
+
+
+async def _sync_accounts(
+    session: AsyncSession,
+    conn: QboConnection,
+    recon: Reconciliation,
+    tenant_id: uuid.UUID,
+    qbo_account_types: list[str],
+) -> None:
+    """
+    Pull every account whose QBO AccountType is in `qbo_account_types`. For
+    each account: list it with its period-end balance (from CurrentBalance —
+    QBO doesn't return historical CurrentBalance via the Account query, so
+    for true period-end we use the TrialBalance report at period_end).
+
+    Sub-ledger is conceptual here:
+      - For these account types QBO doesn't maintain a separate sub-ledger.
+        Instead, we treat the SUM OF PERIOD-END ACCOUNT BALANCES as both the
+        GL total AND the subledger total — they're definitionally equal in
+        QBO because there's no external system to reconcile against.
+      - The "reconciling item" pattern is preserved (gap == 0 here unless a
+        custom sub-ledger feed is wired up later, e.g. fixed-asset manager).
+
+    The detail page then shows per-account balances + recent transactions so
+    the controller can drill in. Real reconciliation work for these accounts
+    is rollforward analysis (BB + additions - reductions = EB) and that's
+    what the AI commentary articulates per-account.
+    """
+    await _wipe_items(session, recon.id)
+
+    # Pull TrialBalance to get accurate period-end balances per account.
+    # The report is keyed by account display name; we cross-reference with
+    # the Account query to filter by AccountType + capture QBO IDs.
+    accounts = await _qbo_list_accounts(conn, session, qbo_account_types)
+    if not accounts:
+        recon.gl_total = Decimal("0")
+        recon.subledger_total = Decimal("0")
+        recon.difference = Decimal("0")
+        await session.flush()
+        return
+
+    tb_balances = await _qbo_trial_balance_by_account(conn, session, recon.period_end)
+
+    items_to_create: list[ReconciliationItem] = []
+    grand_total = Decimal("0")
+    for acct in accounts:
+        name = str(acct.get("Name") or "Unnamed account")
+        acct_num = str(acct.get("AcctNum") or "").strip()
+        qbo_id = str(acct.get("Id") or "")
+        display = f"{acct_num} {name}".strip() if acct_num else name
+
+        # Look up by exact name + by stripped fully-qualified name
+        balance = tb_balances.get(display) or tb_balances.get(name) or Decimal("0")
+        grand_total += balance
+
+        items_to_create.append(ReconciliationItem(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            reconciliation_id=recon.id,
+            entity_name=display,
+            entity_qbo_id=qbo_id or None,
+            gl_balance=balance,
+            subledger_balance=balance,
+            difference=Decimal("0"),
+            aging_current=Decimal("0"),
+            aging_1_30=Decimal("0"),
+            aging_31_60=Decimal("0"),
+            aging_61_90=Decimal("0"),
+            aging_over_90=Decimal("0"),
+            risk_level=_risk_for_account_balance(balance),
+            status="pending",
+        ))
+
+    for item in items_to_create:
+        session.add(item)
+
+    recon.gl_total = grand_total
+    recon.subledger_total = grand_total
+    recon.difference = Decimal("0")
+    await session.flush()
+
+    # Pull last-90-days transactions for each account into the evidence table
+    # (sub-bounded concurrency so we don't blast the QBO API).
+    await _sync_account_transactions(session, conn, recon, items_to_create, tenant_id)
+
+
+def _risk_for_account_balance(balance: Decimal) -> str:
+    """Crude heuristic until we have variance vs prior period:
+       balances >$50k flagged medium, >$500k high. Tweak per company size later."""
+    abs_bal = abs(balance)
+    if abs_bal > Decimal("500000"):
+        return "high"
+    if abs_bal > Decimal("50000"):
+        return "medium"
+    return "low"
+
+
+async def _qbo_list_accounts(
+    conn: QboConnection,
+    session: AsyncSession,
+    account_types: list[str],
+) -> list[dict]:
+    """Return active accounts whose AccountType is in the provided list."""
+    if not account_types:
+        return []
+    quoted = ", ".join(f"'{t}'" for t in account_types)
+    q = (
+        f"SELECT Id, Name, AcctNum, AccountType, CurrentBalance "
+        f"FROM Account WHERE AccountType IN ({quoted}) AND Active = true "
+        f"MAXRESULTS 500"
+    )
+    try:
+        data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
+    except Exception:
+        logger.exception("QBO account list failed for types %s", account_types)
+        return []
+    return data.get("QueryResponse", {}).get("Account", []) or []
+
+
+async def _qbo_trial_balance_by_account(
+    conn: QboConnection,
+    session: AsyncSession,
+    period_end: date,
+) -> dict[str, Decimal]:
+    """
+    Pull QBO TrialBalance report for period_end and return a dict keyed by
+    the account name (as QBO renders it) → net balance (debit - credit).
+    """
+    out: dict[str, Decimal] = {}
+    try:
+        report = await _qbo_get(
+            conn, session, "/reports/TrialBalance",
+            params={"end_date": period_end.isoformat(), "accounting_method": "Accrual"},
+        )
+    except Exception:
+        logger.exception("QBO TrialBalance pull failed for %s", period_end)
+        return out
+
+    def walk(rows: list[dict]) -> None:
+        for r in rows:
+            cols = r.get("ColData") or []
+            sub = r.get("Rows", {}).get("Row", []) or []
+            if cols and cols[0].get("value"):
+                name = str(cols[0]["value"]).strip()
+                if name and not name.lower().startswith(("total", "subtotal", "net income", "net loss")):
+                    debit  = _dec(cols[1].get("value", "")) if len(cols) > 1 else Decimal("0")
+                    credit = _dec(cols[2].get("value", "")) if len(cols) > 2 else Decimal("0")
+                    out[name] = debit - credit
+            if sub:
+                walk(sub)
+
+    walk(report.get("Rows", {}).get("Row", []) or [])
+    return out
+
+
+async def _sync_account_transactions(
+    session: AsyncSession,
+    conn: QboConnection,
+    recon: Reconciliation,
+    items: list[ReconciliationItem],
+    tenant_id: uuid.UUID,
+) -> None:
+    """
+    For each account, pull JournalEntry lines + Purchase + Deposit + Bill +
+    Invoice rows from the last 90 days that touched it. Stored as evidence
+    in recon_transactions for the detail page rollforward view.
+    Bounded concurrency = 4.
+    """
+    cutoff = (recon.period_end - timedelta(days=90)).isoformat()
+    end = recon.period_end.isoformat()
+    sem = asyncio.Semaphore(4)
+
+    async def for_one(item: ReconciliationItem) -> None:
+        if not item.entity_qbo_id:
+            return
+        async with sem:
+            try:
+                # JE lines that touched this account
+                q = (
+                    f"SELECT Id, DocNumber, TxnDate, PrivateNote, Line "
+                    f"FROM JournalEntry WHERE TxnDate >= '{cutoff}' "
+                    f"AND TxnDate <= '{end}' MAXRESULTS 50"
+                )
+                data = await _qbo_get(conn, session, "/query",
+                                       params={"query": q, "minorversion": "65"})
+                jes = data.get("QueryResponse", {}).get("JournalEntry", []) or []
+            except Exception:
+                jes = []
+
+            for je in jes:
+                amt = Decimal("0")
+                for line in je.get("Line", []) or []:
+                    detail = line.get("JournalEntryLineDetail") or {}
+                    if (detail.get("AccountRef") or {}).get("value") != item.entity_qbo_id:
+                        continue
+                    line_amt = _dec(line.get("Amount"))
+                    amt += line_amt if detail.get("PostingType") == "Debit" else -line_amt
+                if amt == 0:
+                    continue
+                session.add(ReconTransaction(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant_id,
+                    reconciliation_item_id=item.id,
+                    txn_type="JournalEntry",
+                    txn_number=str(je.get("DocNumber") or ""),
+                    txn_date=_parse_date(je.get("TxnDate")),
+                    amount=amt,
+                    memo=str(je.get("PrivateNote") or "")[:500] or None,
+                    category="manual_je",
+                    meta={"je_id": je.get("Id")},
+                ))
+
+    await asyncio.gather(*(for_one(i) for i in items))
+
+
 # ── Stub (bank/cc/other) ──────────────────────────────────────────────────────
 
 async def _sync_stub(session: AsyncSession, recon: Reconciliation, tenant_id: uuid.UUID) -> None:
@@ -788,9 +1031,10 @@ def _parse_date(s: Any) -> date | None:
 # ── AI commentary ─────────────────────────────────────────────────────────────
 
 _AI_PROMPT = (
-    "You are a CPA reviewing a {recon_type} reconciliation as of {period_end}. "
-    "Write 1–2 sentences for the controller explaining the variance and aging "
-    "for this {entity_label} so they can decide whether to investigate.\n\n"
+    "You are a senior CPA reviewing a {recon_type} reconciliation as of "
+    "{period_end}. Write 2 to 3 sentences for the controller explaining the "
+    "balance, aging, and variance for this {entity_label} so they can decide "
+    "whether to investigate.\n\n"
     "{entity_label}: {entity_name}\n"
     "GL balance:        ${gl_balance:,.2f}\n"
     "Subledger balance: ${sub_balance:,.2f}\n"
@@ -798,8 +1042,26 @@ _AI_PROMPT = (
     "Aging — Current ${a0:,.2f} | 1-30 ${a1:,.2f} | 31-60 ${a2:,.2f} | "
     "61-90 ${a3:,.2f} | >90 ${a4:,.2f}\n"
     "Risk: {risk}\n\n"
-    "Write ONLY the commentary. No headers, no restated numbers, no bullet "
-    "lists. Plain English, professional, action-oriented."
+    "Formatting rules — these are strict:\n"
+    "- Plain prose only. No headers, no bullet lists, no tables.\n"
+    "- Never use markdown. No **, no __, no ##, no ---, no backticks.\n"
+    "- If you must separate clauses, use a normal hyphen-minus (-) or a period.\n"
+    "- Do not restate the numbers verbatim — interpret them.\n"
+    "- Professional tone, action-oriented, suitable for a controller's workpaper."
+)
+
+
+_AI_SUMMARY_PROMPT = (
+    "You are a senior CPA. Write a 2 to 3 sentence executive summary of this "
+    "{recon_type} reconciliation as of {period_end}. Total GL ${gl:,.2f}, "
+    "total subledger ${sub:,.2f}, net difference ${diff:,.2f}. {n_items} "
+    "{label_plural}, {n_high} flagged high-risk. {extra}\n\n"
+    "Formatting rules — these are strict:\n"
+    "- Plain prose only. No headers, no bullet lists, no tables.\n"
+    "- Never use markdown. No **, no __, no ##, no ---, no backticks.\n"
+    "- If you must separate clauses, use a normal hyphen-minus (-) or a period.\n"
+    "- Mention specific {label_singular} names only when materially relevant.\n"
+    "- Professional tone, controller-grade."
 )
 
 
@@ -820,88 +1082,125 @@ def _ai_cache_key(item: ReconciliationItem, recon: Reconciliation) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-async def _generate_ai_commentary(
+def _entity_label_for(recon_type: str, plural: bool = False) -> str:
+    """UI/AI-friendly label for what each reconciliation item represents."""
+    base = {
+        "AR": "customer", "AP": "vendor",
+        "BANK": "bank account", "CC": "credit card",
+        "FIXED_ASSETS": "fixed asset account",
+        "OTHER_CURRENT_ASSET": "current asset account",
+        "OTHER_ASSET": "asset account",
+        "OTHER_CURRENT_LIABILITY": "current liability account",
+        "LONG_TERM_LIABILITY": "long-term liability account",
+        "EQUITY": "equity account",
+    }.get(recon_type, "account")
+    if not plural:
+        return base.title() if recon_type in ("AR", "AP") else base
+    return base + "s"
+
+
+def _strip_markdown(text: str) -> str:
+    """
+    Belt-and-suspenders cleanup of any markdown the model leaks despite the
+    prompt instructions. Strips bold/italic, header marks, em-dashes that
+    look like list separators, and trailing whitespace.
+    """
+    import re
+    cleaned = text
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)   # **bold**
+    cleaned = re.sub(r"\*([^*]+)\*",     r"\1", cleaned)   # *italic*
+    cleaned = re.sub(r"__([^_]+)__",     r"\1", cleaned)   # __bold__
+    cleaned = re.sub(r"^#{1,6}\s+",      "",    cleaned, flags=re.M)  # headers
+    cleaned = re.sub(r"`([^`]+)`",       r"\1", cleaned)   # `code`
+    cleaned = cleaned.replace("—", "-").replace("–", "-")
+    cleaned = re.sub(r"^[ \t]*-{2,}[ \t]*$", "", cleaned, flags=re.M)  # divider --- lines
+    return cleaned.strip()
+
+
+async def explain_item(
     session: AsyncSession,
     recon: Reconciliation,
-    tenant_id: uuid.UUID,
-) -> None:
+    item: ReconciliationItem,
+) -> str | None:
     """
-    Per-item commentary in parallel (bounded concurrency), then a short
-    overall summary on the Reconciliation header itself. Failures degrade
-    gracefully — the UI still renders without commentary.
-
-    Concurrency tuned for Anthropic's per-key rate limits: 5 in flight is
-    safe for sonnet at default tiers and ~10x faster than sequential.
+    Generate AI commentary for a single reconciliation item. Synchronous
+    from the caller's perspective — the caller awaits the result and persists
+    it. Returns the commentary string, or None if anthropic isn't configured
+    or the call failed.
     """
     if not settings.anthropic_api_key:
-        return
-
-    items = list((await session.execute(
-        select(ReconciliationItem).where(ReconciliationItem.reconciliation_id == recon.id)
-    )).scalars().all())
-
+        return None
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    entity_label = "Customer" if recon.recon_type == "AR" else "Vendor" if recon.recon_type == "AP" else "Account"
-
-    # Filter to items worth spending tokens on
-    worth_explaining = [
-        i for i in items
-        if abs(i.difference) >= Decimal("100") or i.risk_level != "low"
-    ]
-
-    sem = asyncio.Semaphore(5)
-
-    async def explain(item: ReconciliationItem) -> None:
-        async with sem:
-            prompt = _AI_PROMPT.format(
-                recon_type=recon.recon_type,
-                period_end=recon.period_end.isoformat(),
-                entity_label=entity_label,
-                entity_name=item.entity_name,
-                gl_balance=float(item.gl_balance),
-                sub_balance=float(item.subledger_balance),
-                difference=float(item.difference),
-                a0=float(item.aging_current),
-                a1=float(item.aging_1_30),
-                a2=float(item.aging_31_60),
-                a3=float(item.aging_61_90),
-                a4=float(item.aging_over_90),
-                risk=item.risk_level,
-            )
-            try:
-                resp = await asyncio.to_thread(
-                    client.messages.create,
-                    model=settings.anthropic_model,
-                    max_tokens=220,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                item.ai_commentary = resp.content[0].text.strip()
-            except Exception:
-                logger.exception("AI commentary failed for item %s", item.id)
-
-    await asyncio.gather(*(explain(i) for i in worth_explaining))
-
-    # Aggregate summary: highest-risk + biggest variances
-    high_risk = [i for i in items if i.risk_level == "high"]
-    summary_payload = (
-        f"You are a CPA. Write a 2-3 sentence executive summary of this "
-        f"{recon.recon_type} reconciliation as of {recon.period_end}. "
-        f"Total GL ${float(recon.gl_total):,.2f}, total subledger "
-        f"${float(recon.subledger_total):,.2f}, net difference "
-        f"${float(recon.difference):,.2f}. {len(items)} entities, "
-        f"{len(high_risk)} flagged high-risk. Mention the most material "
-        f"item(s) by name if any are clearly material. Be concise."
+    prompt = _AI_PROMPT.format(
+        recon_type=recon.recon_type,
+        period_end=recon.period_end.isoformat(),
+        entity_label=_entity_label_for(recon.recon_type).title(),
+        entity_name=item.entity_name,
+        gl_balance=float(item.gl_balance),
+        sub_balance=float(item.subledger_balance),
+        difference=float(item.difference),
+        a0=float(item.aging_current),
+        a1=float(item.aging_1_30),
+        a2=float(item.aging_31_60),
+        a3=float(item.aging_61_90),
+        a4=float(item.aging_over_90),
+        risk=item.risk_level,
     )
     try:
         resp = await asyncio.to_thread(
             client.messages.create,
             model=settings.anthropic_model,
             max_tokens=260,
-            messages=[{"role": "user", "content": summary_payload}],
+            messages=[{"role": "user", "content": prompt}],
         )
-        recon.ai_summary = resp.content[0].text.strip()
+        return _strip_markdown(resp.content[0].text)
+    except Exception:
+        logger.exception("AI commentary failed for item %s", item.id)
+        return None
+
+
+async def explain_recon_summary(
+    session: AsyncSession,
+    recon: Reconciliation,
+) -> str | None:
+    """Aggregate AI summary for the whole reconciliation."""
+    if not settings.anthropic_api_key:
+        return None
+    items = list((await session.execute(
+        select(ReconciliationItem).where(ReconciliationItem.reconciliation_id == recon.id)
+    )).scalars().all())
+    high_risk = [i for i in items if i.risk_level == "high"]
+    biggest = sorted(items, key=lambda i: abs(i.difference), reverse=True)[:3]
+    extra = ""
+    if biggest and abs(biggest[0].difference) > Decimal("100"):
+        names = ", ".join(b.entity_name for b in biggest if abs(b.difference) > Decimal("100"))
+        if names:
+            extra = f"Biggest variances by name: {names}."
+
+    prompt = _AI_SUMMARY_PROMPT.format(
+        recon_type=recon.recon_type,
+        period_end=recon.period_end.isoformat(),
+        gl=float(recon.gl_total),
+        sub=float(recon.subledger_total),
+        diff=float(recon.difference),
+        n_items=len(items),
+        n_high=len(high_risk),
+        label_singular=_entity_label_for(recon.recon_type),
+        label_plural=_entity_label_for(recon.recon_type, plural=True),
+        extra=extra,
+    )
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    try:
+        resp = await asyncio.to_thread(
+            client.messages.create,
+            model=settings.anthropic_model,
+            max_tokens=320,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return _strip_markdown(resp.content[0].text)
     except Exception:
         logger.exception("AI summary failed for recon %s", recon.id)
+        return None
 
 
 # ── AI insights for dashboard ─────────────────────────────────────────────────

@@ -11,6 +11,7 @@ Each task:
 """
 import asyncio
 import hashlib
+import re
 import uuid
 from decimal import Decimal
 
@@ -19,6 +20,19 @@ import anthropic
 from celery_app import celery_app
 from core.config import settings
 from core.db.base import current_tenant_id
+
+
+def _strip_markdown(text: str) -> str:
+    """Belt-and-suspenders cleanup of any markdown the model leaks despite the prompt rules."""
+    cleaned = text
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"\*([^*]+)\*",     r"\1", cleaned)
+    cleaned = re.sub(r"__([^_]+)__",     r"\1", cleaned)
+    cleaned = re.sub(r"^#{1,6}\s+",      "",    cleaned, flags=re.M)
+    cleaned = re.sub(r"`([^`]+)`",       r"\1", cleaned)
+    cleaned = cleaned.replace("—", "-").replace("–", "-")
+    cleaned = re.sub(r"^[ \t]*-{2,}[ \t]*$", "", cleaned, flags=re.M)
+    return cleaned.strip()
 
 
 @celery_app.task(
@@ -147,16 +161,20 @@ async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
             ) + "."
 
         prompt = (
-            f"You are a CPA writing concise, professional month-end flux commentary for a client. "
-            f"Write 1–2 sentences explaining the variance for:\n\n"
-            f"Account: {acct.account_number} – {acct.account_name}\n"
+            f"You are a senior CPA writing month-end flux commentary for a client. "
+            f"Write 2 to 3 sentences explaining the variance for:\n\n"
+            f"Account: {acct.account_number} - {acct.account_name}\n"
             f"Category: {acct.fs_category or 'Unknown'} / {acct.fs_line or 'Unknown'}\n"
             f"Current period: ${float(acct.current_balance):,.2f}\n"
             f"Prior period:   ${float(acct.prior_balance):,.2f}\n"
             f"Dollar change:  ${float(var.dollar_variance):,.2f}\n"
             f"Percent change: {pct_str}{anomaly_desc}\n\n"
-            f"Write ONLY the commentary sentence(s). Do not restate numbers, account numbers, "
-            f"or column labels. Be professional, concise, and use plain English."
+            f"Formatting rules - these are strict:\n"
+            f"- Plain prose only. No headers, no bullet lists, no tables.\n"
+            f"- Never use markdown. No **, no __, no ##, no ---, no backticks.\n"
+            f"- If you must separate clauses, use a normal hyphen-minus (-) or a period.\n"
+            f"- Do not restate the numbers verbatim - interpret them.\n"
+            f"- Professional tone, suitable for a controller's workpaper."
         )
 
         # Call Anthropic (sync client — acceptable inside asyncio.run in Celery)
@@ -167,7 +185,7 @@ async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
             messages=[{"role": "user", "content": prompt}],
         )
 
-        content       = response.content[0].text.strip()
+        content       = _strip_markdown(response.content[0].text)
         input_tokens  = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
 

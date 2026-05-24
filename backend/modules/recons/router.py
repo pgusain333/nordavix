@@ -47,7 +47,12 @@ from modules.recons.schemas import (
     ReconNoteResponse,
     ReconTransactionResponse,
 )
-from modules.recons.service import insights_from, run_sync
+from modules.recons.service import (
+    explain_item,
+    explain_recon_summary,
+    insights_from,
+    run_sync,
+)
 
 router = APIRouter()
 
@@ -336,15 +341,18 @@ async def set_item_status(
     return item
 
 
-@router.post("/{recon_id}/items/{item_id}/regenerate", response_model=ReconciliationItemResponse)
-async def regenerate_item(
+@router.post("/{recon_id}/items/{item_id}/explain", response_model=ReconciliationItemResponse)
+async def explain_item_endpoint(
     recon_id: uuid.UUID,
     item_id: uuid.UUID,
     tenant_id: CurrentTenantId,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> ReconciliationItem:
-    """Clear and re-run AI commentary for a single item."""
+    """
+    Generate (or regenerate) AI commentary for a single reconciliation item.
+    Synchronous from the caller's perspective so the UI can show the new
+    commentary the moment the request returns — no background polling.
+    """
     item = (await db.execute(
         select(ReconciliationItem).where(
             ReconciliationItem.id == item_id,
@@ -353,31 +361,41 @@ async def regenerate_item(
     )).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
-    item.ai_commentary = None
-    await db.commit()
-    # Re-run AI by triggering a full recompute pass; cheap because everything else
-    # is already in place. (Per-item AI extraction would be a future refinement.)
-    background_tasks.add_task(_regen_one, recon_id, item_id, tenant_id)
+    recon = (await db.execute(
+        select(Reconciliation).where(Reconciliation.id == recon_id)
+    )).scalar_one_or_none()
+    if recon is None:
+        raise HTTPException(status_code=404, detail="Reconciliation not found")
+
+    commentary = await explain_item(db, recon, item)
+    if commentary:
+        item.ai_commentary = commentary
+        await db.commit()
+        await db.refresh(item)
     return item
 
 
-async def _regen_one(recon_id: uuid.UUID, item_id: uuid.UUID, tenant_id: uuid.UUID) -> None:
-    """Background helper: run AI commentary for a single item."""
-    from core.db.base import current_tenant_id as _tid
-    from core.db.session import AsyncSessionLocal as _S
-    from modules.recons.service import _generate_ai_commentary  # internal helper
-
-    _tid.set(tenant_id)
-    async with _S() as session:
-        recon = (await session.execute(
-            select(Reconciliation).where(Reconciliation.id == recon_id)
-        )).scalar_one_or_none()
-        if recon is None:
-            return
-        # Generate for ALL items (it skips items that already have commentary
-        # AND are not high-risk, so this is effectively scoped to ones missing).
-        await _generate_ai_commentary(session, recon, tenant_id)
-        await session.commit()
+@router.post("/{recon_id}/explain", response_model=ReconciliationResponse)
+async def explain_recon_endpoint(
+    recon_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> Reconciliation:
+    """
+    Generate the AI executive summary for the whole reconciliation.
+    On-demand only — never auto-runs during sync.
+    """
+    recon = (await db.execute(
+        select(Reconciliation).where(Reconciliation.id == recon_id)
+    )).scalar_one_or_none()
+    if recon is None:
+        raise HTTPException(status_code=404, detail="Reconciliation not found")
+    summary = await explain_recon_summary(db, recon)
+    if summary:
+        recon.ai_summary = summary
+        await db.commit()
+        await db.refresh(recon)
+    return recon
 
 
 # ── Delete ────────────────────────────────────────────────────────────────────

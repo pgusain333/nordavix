@@ -97,23 +97,28 @@ export function ReconciliationsDashboard() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      {/* Hero */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: "easeOut" }}
-        className="relative overflow-hidden px-4 sm:px-8 pt-6 sm:pt-8 pb-4 sm:pb-6"
+      {/* Hero — no decorative orb here. The orb at 6% opacity was creating a
+          dark halo in dark mode where it bled past the overflow clip. */}
+      <div
+        className="px-4 sm:px-8 pt-6 sm:pt-8 pb-4 sm:pb-6"
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
       >
-        <div className="pointer-events-none absolute -top-16 -right-16 h-48 w-48 rounded-full opacity-[0.06]"
-          style={{ background: "radial-gradient(circle, var(--green) 0%, transparent 70%)" }} />
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <h1 className="text-lg sm:text-2xl font-bold tracking-tight text-theme leading-tight">
+            <h1
+              style={{
+                fontSize: "clamp(22px, 5.5vw, 28px)",
+                fontWeight: 700,
+                lineHeight: 1.2,
+                letterSpacing: "-0.01em",
+                color: "var(--text)",
+                margin: 0,
+              }}
+            >
               Reconciliations
             </h1>
-            <p className="text-xs sm:text-sm mt-1" style={{ color: "var(--text-muted)" }}>
-              QuickBooks-synced AR / AP reconciliations with aging, risk scoring, and AI commentary.
+            <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
+              QuickBooks-synced reconciliations across every balance sheet account — with aging, risk scoring, and on-demand AI commentary.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -138,7 +143,7 @@ export function ReconciliationsDashboard() {
             </Button>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       <div className="flex-1 px-4 sm:px-8 py-6 max-w-7xl w-full mx-auto space-y-6">
 
@@ -489,19 +494,58 @@ function CreateReconModal({ initialType, onClose, onCreated }: CreateProps) {
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mb-4">
-          {(["AR", "AP", "BANK", "CC"] as ReconType[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => { setReconType(t); setName(`${t} ${periodEnd.slice(0,7)}`) }}
-              className="px-3 py-2 rounded-lg text-sm font-medium transition-all"
-              style={reconType === t
-                ? { background: "var(--green)", color: "#fff", borderColor: "var(--green)" }
-                : { background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}
-            >
-              {t === "BANK" ? "Bank" : t === "CC" ? "Credit card" : t}
-            </button>
-          ))}
+        <div className="space-y-3 mb-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
+              Subledger reconciliations
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { v: "AR",   label: "Accounts Receivable" },
+                { v: "AP",   label: "Accounts Payable"    },
+                { v: "BANK", label: "Bank"                },
+                { v: "CC",   label: "Credit card"         },
+              ] as { v: ReconType; label: string }[]).map((opt) => (
+                <button
+                  key={opt.v}
+                  onClick={() => { setReconType(opt.v); setName(`${opt.label} ${periodEnd.slice(0,7)}`) }}
+                  className="px-3 py-2 rounded-lg text-sm font-medium transition-all text-left"
+                  style={reconType === opt.v
+                    ? { background: "var(--green)", color: "#fff", borderColor: "var(--green)" }
+                    : { background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
+              GL account reconciliations
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { v: "FIXED_ASSETS",            label: "Fixed assets" },
+                { v: "OTHER_CURRENT_ASSET",     label: "Prepaids & other CA" },
+                { v: "OTHER_ASSET",             label: "Other assets" },
+                { v: "OTHER_CURRENT_LIABILITY", label: "Accruals & other CL" },
+                { v: "LONG_TERM_LIABILITY",     label: "Loans & LTD" },
+                { v: "EQUITY",                  label: "Equity" },
+              ] as { v: ReconType; label: string }[]).map((opt) => (
+                <button
+                  key={opt.v}
+                  onClick={() => { setReconType(opt.v); setName(`${opt.label} ${periodEnd.slice(0,7)}`) }}
+                  className="px-3 py-2 rounded-lg text-xs font-medium transition-all text-left"
+                  style={reconType === opt.v
+                    ? { background: "var(--green)", color: "#fff", borderColor: "var(--green)" }
+                    : { background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--text-2)" }}>Name</label>

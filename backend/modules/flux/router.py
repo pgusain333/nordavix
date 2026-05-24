@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser
+from core.config import settings
 from core.db.session import get_db
 from models.account import Account
 from models.narrative import Narrative
@@ -41,8 +42,15 @@ from modules.flux.schemas import (
     UploadPreview,
     VarianceResponse,
 )
-from modules.flux.service import parse_file_to_preview, parse_accounts_from_file, create_accounts_and_variances
+from modules.flux.service import (
+    create_accounts_and_variances,
+    parse_accounts_from_file,
+    parse_file_to_preview,
+    parse_qbo_trial_balance_report,
+)
 from modules.flux.tasks import generate_narrative_async, generate_narrative_task  # noqa: F401  (kept for celery)
+from models.qbo_connection import QboConnection
+from modules.qbo.router import _get_valid_token  # type: ignore  # reuse existing helper
 
 router = APIRouter()
 
@@ -85,6 +93,114 @@ async def create_trial_balance(
     )
     db.add(tb)
     await db.commit()
+    await db.refresh(tb)
+    return tb
+
+
+@router.post(
+    "/trial-balances/from-qbo",
+    response_model=TrialBalanceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_trial_balance_from_qbo(
+    body: TrialBalanceCreate,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> TrialBalance:
+    """
+    Create a flux analysis directly from a connected QuickBooks Online account
+    — no manual upload. Pulls the TrialBalance report for both periods,
+    computes variances, and queues AI commentary for material lines.
+
+    Periods are interpreted as the LAST day of each comparison period. We pull
+    two TrialBalance reports (one per period) and merge them by account.
+    """
+    import httpx
+    from datetime import date as _date
+
+    # 1) Validate QBO connection
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(
+            status_code=409,
+            detail="QuickBooks isn't connected. Connect it from the Connections page first.",
+        )
+
+    # 2) Insert the TB stub up front so the user can see progress
+    tb = TrialBalance(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        name=body.name,
+        period_current=body.period_current,
+        period_prior=body.period_prior,
+        materiality_threshold=body.materiality_threshold,
+        created_by=user.id,
+        status="processing",
+    )
+    db.add(tb)
+    await db.commit()
+    await db.refresh(tb)
+
+    # 3) Pull both TrialBalance reports from QBO
+    async def fetch_tb(period_end: _date) -> dict:
+        token = await _get_valid_token(conn, db)
+        url = (
+            f"{settings.qbo_base_url}/v3/company/{conn.realm_id}/reports/TrialBalance"
+            f"?end_date={period_end.isoformat()}&accounting_method=Accrual"
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(f"QBO TrialBalance pull failed ({resp.status_code}): {resp.text[:300]}")
+        return resp.json()
+
+    try:
+        report_current = await fetch_tb(body.period_current)
+        report_prior   = await fetch_tb(body.period_prior)
+    except Exception as exc:
+        tb.status = "error"
+        tb.error_detail = str(exc)[:1000]
+        await db.commit()
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    # 4) Parse into account dicts and persist accounts + variances
+    try:
+        account_dicts = parse_qbo_trial_balance_report(report_current, report_prior, tb.fs_line_mapping or {})
+    except Exception as exc:
+        tb.status = "error"
+        tb.error_detail = f"QBO report parse failed: {exc}"
+        await db.commit()
+        raise HTTPException(status_code=502, detail=tb.error_detail)
+
+    if not account_dicts:
+        tb.status = "error"
+        tb.error_detail = "QBO TrialBalance returned no account rows for these periods."
+        await db.commit()
+        raise HTTPException(status_code=422, detail=tb.error_detail)
+
+    _, _, material = await create_accounts_and_variances(db, tb, tenant_id, account_dicts)
+    tb.status = "parsed"
+    await db.commit()
+
+    # 5) Kick off AI narratives for material variances (in-process)
+    if material > 0:
+        variance_result = await db.execute(
+            select(Variance).join(Account, Variance.account_id == Account.id)
+            .where(Account.trial_balance_id == tb.id, Variance.is_material == True)
+        )
+        for var in variance_result.scalars().all():
+            background_tasks.add_task(generate_narrative_async, str(var.id), str(tenant_id))
+        tb.status = "generating"
+        await db.commit()
+
     await db.refresh(tb)
     return tb
 

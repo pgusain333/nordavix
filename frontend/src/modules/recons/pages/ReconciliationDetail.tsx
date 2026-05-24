@@ -109,7 +109,12 @@ export function ReconciliationDetail() {
     onSuccess:  () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
   })
   const regen = useMutation({
-    mutationFn: (itemId: string) => reconsApi.regenerateItem(reconId!, itemId),
+    mutationFn: (itemId: string) => reconsApi.explainItem(reconId!, itemId),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
+  })
+  // Recon-level AI summary, on-demand only.
+  const explainSummary = useMutation({
+    mutationFn: () => reconsApi.explainRecon(reconId!),
     onSuccess:  () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
   })
   const addNote = useMutation({
@@ -137,7 +142,12 @@ export function ReconciliationDetail() {
   }
 
   const { recon } = detail
-  const entityLabel = recon.recon_type === "AP" ? "Vendor" : recon.recon_type === "AR" ? "Customer" : "Account"
+  const entityLabel =
+    recon.recon_type === "AP"   ? "Vendor"   :
+    recon.recon_type === "AR"   ? "Customer" :
+    recon.recon_type === "BANK" ? "Bank account" :
+    recon.recon_type === "CC"   ? "Card"     :
+    "Account"
   const periodLabel = new Date(recon.period_end).toLocaleDateString(undefined, { dateStyle: "medium" })
 
   return (
@@ -214,17 +224,35 @@ export function ReconciliationDetail() {
       </div>
 
       <div className="flex-1 px-4 sm:px-8 py-6 max-w-7xl w-full mx-auto">
-        {/* Aggregate AI summary */}
-        {recon.ai_summary && (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-            className="rounded-xl p-4 mb-5 flex items-start gap-3"
-            style={{ background: "var(--green-subtle)", border: "1px solid var(--green)" }}
+        {/* AI executive summary — on-demand, never auto-runs. */}
+        <motion.div
+          initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl p-4 mb-5 flex items-start gap-3"
+          style={{
+            background: recon.ai_summary ? "var(--green-subtle)" : "var(--surface)",
+            border: `1px solid ${recon.ai_summary ? "var(--green)" : "var(--border)"}`,
+          }}
+        >
+          <Sparkles size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} className="shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            {recon.ai_summary ? (
+              <p className="text-sm leading-snug text-theme whitespace-pre-wrap">{recon.ai_summary}</p>
+            ) : (
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                No AI summary yet. Generate one whenever you want a controller-grade overview of this reconciliation.
+              </p>
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            icon={<Sparkles size={12} strokeWidth={1.8} />}
+            loading={explainSummary.isPending}
+            onClick={() => explainSummary.mutate()}
           >
-            <Sparkles size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} className="shrink-0 mt-0.5" />
-            <p className="text-sm leading-snug text-theme">{recon.ai_summary}</p>
-          </motion.div>
-        )}
+            {recon.ai_summary ? "Regenerate" : "Generate summary"}
+          </Button>
+        </motion.div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
@@ -299,7 +327,7 @@ export function ReconciliationDetail() {
                           loading={regen.isPending && regen.variables === selectedItem.id}
                           onClick={() => regen.mutate(selectedItem.id)}
                         >
-                          {selectedItem.ai_commentary ? "Regenerate" : "Find reason"}
+                          {selectedItem.ai_commentary ? "Regenerate AI" : "Generate AI commentary"}
                         </Button>
                         {selectedItem.status !== "approved" && (
                           <Button size="sm" icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
@@ -344,7 +372,7 @@ export function ReconciliationDetail() {
                       <h3 className="text-sm font-semibold text-theme">AI Commentary</h3>
                     </div>
                     {selectedItem.ai_commentary ? (
-                      <p className="text-sm leading-relaxed text-theme">{selectedItem.ai_commentary}</p>
+                      <p className="text-sm leading-relaxed text-theme whitespace-pre-wrap">{selectedItem.ai_commentary}</p>
                     ) : (
                       <p className="text-sm italic" style={{ color: "var(--text-muted)" }}>
                         {recon.status === "syncing" || recon.status === "computing"

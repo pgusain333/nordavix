@@ -7,7 +7,18 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-ReconType = Literal["AR", "AP", "BANK", "CC", "OTHER"]
+ReconType = Literal[
+    # Specialized with sub-ledger detail
+    "AR", "AP", "BANK", "CC",
+    # Generic balance-sheet account reconciliations, keyed to QBO AccountType
+    "FIXED_ASSETS",
+    "OTHER_CURRENT_ASSET",     # Prepaids, inventory, etc.
+    "OTHER_ASSET",             # Misc long-term assets
+    "OTHER_CURRENT_LIABILITY", # Accruals, deferred revenue, etc.
+    "LONG_TERM_LIABILITY",     # Loans, notes payable, etc.
+    "EQUITY",
+    "OTHER",
+]
 ReconStatus = Literal["pending", "syncing", "computing", "in_review", "approved", "error"]
 ItemStatus = Literal["pending", "reviewed", "approved", "flagged", "resolved"]
 RiskLevel = Literal["low", "medium", "high"]

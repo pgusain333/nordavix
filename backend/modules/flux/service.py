@@ -366,6 +366,88 @@ async def create_accounts_and_variances(
     return accounts_created, variances_created, material_count
 
 
+def parse_qbo_trial_balance_report(
+    report_current: dict,
+    report_prior: dict,
+    overrides: dict[str, str],
+) -> list[dict]:
+    """
+    Convert two QBO TrialBalance report JSON payloads (current + prior period)
+    into the same account_dicts shape `parse_accounts_from_file` returns.
+
+    QBO TrialBalance rows look like:
+        { ColData: [{value: "1010 Cash"}, {value: "12,500.00"}, {value: ""}] }
+    where the columns are typically [Account, Debit, Credit] — net balance is
+    Debit - Credit. The Account column embeds "<acctnum> <name>" so we split.
+    """
+    def walk(rows: list[dict], out: list[dict]) -> None:
+        for r in rows:
+            sub = r.get("Rows", {}).get("Row", []) or []
+            cols = r.get("ColData") or []
+            # Skip section / summary rows that don't have actual data
+            if cols and cols[0].get("value", "").strip():
+                first = cols[0].get("value", "").strip()
+                # Skip if it's a header / total row
+                if not first.lower().startswith(("total", "subtotal", "net income", "net loss")):
+                    out.append({"name_raw": first, "cols": cols})
+            if sub:
+                walk(sub, out)
+
+    def to_decimal(v: str) -> Decimal:
+        try:
+            s = v.replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip()
+            return Decimal(s) if s else Decimal(0)
+        except (InvalidOperation, ValueError):
+            return Decimal(0)
+
+    def extract(report: dict) -> dict[str, Decimal]:
+        """Return {account_key: net_balance_decimal} for the report."""
+        flat: list[dict] = []
+        rows = report.get("Rows", {}).get("Row", []) or []
+        walk(rows, flat)
+        out: dict[str, Decimal] = {}
+        for row in flat:
+            cols = row["cols"]
+            if len(cols) < 2:
+                continue
+            debit  = to_decimal(cols[1].get("value", "")) if len(cols) > 1 else Decimal(0)
+            credit = to_decimal(cols[2].get("value", "")) if len(cols) > 2 else Decimal(0)
+            net = debit - credit
+            out[row["name_raw"]] = net
+        return out
+
+    current = extract(report_current)
+    prior   = extract(report_prior)
+
+    accounts: list[dict] = []
+    for key in set(current) | set(prior):
+        # Parse "1010 Cash" or "1010-Cash" into (number, name). Fall back to
+        # the whole string as the name if no leading numeric token.
+        parts = key.split(None, 1)
+        if parts and parts[0].replace(".", "").replace("-", "").isdigit():
+            acct_num  = parts[0].strip()
+            acct_name = parts[1].strip() if len(parts) > 1 else acct_num
+        else:
+            acct_num  = key.strip()[:50]
+            acct_name = key.strip()
+
+        cur_bal = current.get(key, Decimal(0))
+        pri_bal = prior.get(key, Decimal(0))
+        if cur_bal == 0 and pri_bal == 0:
+            continue
+
+        fs_category, fs_line = classify_account(acct_num, overrides)
+        accounts.append({
+            "account_number": acct_num,
+            "account_name":   acct_name,
+            "current_balance":cur_bal,
+            "prior_balance":  pri_bal,
+            "fs_category":    fs_category,
+            "fs_line":        fs_line,
+        })
+    return accounts
+
+
 async def create_variances_for_tb(
     session: AsyncSession,
     trial_balance: TrialBalance,

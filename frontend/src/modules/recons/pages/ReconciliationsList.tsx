@@ -296,7 +296,11 @@ function ReconCard({ recon, expanded, onToggle, onSync, riskFilter, navigate }: 
                   <thead style={{ background: "var(--surface-2)" }}>
                     <tr className="text-[11px] font-semibold uppercase tracking-wide"
                       style={{ color: "var(--text-muted)" }}>
-                      <th className="text-left px-5 py-2.5">{recon.recon_type === "AP" ? "Vendor" : "Customer"}</th>
+                      <th className="text-left px-5 py-2.5">{
+                        recon.recon_type === "AP" ? "Vendor" :
+                        recon.recon_type === "AR" ? "Customer" :
+                        "Account"
+                      }</th>
                       <th className="text-right px-3 py-2.5">GL</th>
                       <th className="text-right px-3 py-2.5">Subledger</th>
                       <th className="text-right px-3 py-2.5">Difference</th>
