@@ -34,8 +34,6 @@ import {
   Zap,
   ExternalLink,
   Sparkles,
-  Pencil,
-  Paperclip,
   Upload,
   FileText,
   Download,
@@ -664,15 +662,16 @@ export function ReconciliationsDashboard() {
                           { label: "GL Balance", w: "120px", right: true },
                           { label: "Subledger", w: "120px", right: true },
                           { label: "Variance", w: "120px", right: true },
+                          { label: "Attachments", w: "100px", center: true },
                           { label: "Status", w: "120px" },
-                          { label: "", w: "160px" },
+                          { label: "", w: "120px" },
                         ].map((h, i) => (
                           <th
                             key={i}
                             className="text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5"
                             style={{
                               color: "var(--text-muted)",
-                              textAlign: h.right ? "right" : "left",
+                              textAlign: h.right ? "right" : h.center ? "center" : "left",
                               width: h.w,
                             }}
                           >
@@ -692,8 +691,10 @@ export function ReconciliationsDashboard() {
                         return (
                           <Fragment key={a.qbo_id}>
                           <tr
+                            onClick={() => setExpandedAccountId(isExpanded ? null : a.qbo_id)}
                             style={{
                               borderBottom: isExpanded ? "none" : "1px solid var(--border)",
+                              cursor: "pointer",
                               background: isSelected
                                 ? "var(--green-subtle)"
                                 : isExpanded
@@ -711,7 +712,7 @@ export function ReconciliationsDashboard() {
                               }
                             }}
                           >
-                            <td className="px-3 py-2.5 text-center">
+                            <td className="px-3 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="checkbox"
                                 checked={isSelected}
@@ -739,72 +740,29 @@ export function ReconciliationsDashboard() {
                             <td className="px-3 py-2.5 text-right tabular-nums text-sm text-theme">
                               {fmtMoney(a.gl_balance)}
                             </td>
-                            <td className="px-3 py-2.5 text-right text-sm" style={{ color: "var(--text-2)" }}>
-                              <div className="inline-flex items-center justify-end gap-1.5">
-                                {a.subledger_is_manual && (
-                                  <span
-                                    className="text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded"
-                                    style={{ background: "#fef3c7", color: "#92400e" }}
-                                    title="Manually entered — overrides the QuickBooks default"
-                                  >
-                                    Manual
-                                  </span>
-                                )}
-                                {a.subledger_is_manual && a.evidence_count > 0 && (
-                                  <span className="inline-flex items-center gap-0.5 text-[10px]"
-                                    style={{ color: "var(--green)" }}
-                                    title={`${a.evidence_count} supporting file(s) attached`}>
-                                    <Paperclip size={10} strokeWidth={1.8} />
-                                    {a.evidence_count}
-                                  </span>
-                                )}
-                                {a.subledger_is_manual && a.evidence_count === 0 && (
-                                  <span className="inline-flex items-center text-[10px]"
-                                    style={{ color: "#b91c1c" }}
-                                    title="Manual override has no supporting document attached">
-                                    <AlertTriangle size={10} strokeWidth={1.8} />
-                                  </span>
-                                )}
-                                <span className="tabular-nums">{fmtMoney(a.subledger_balance)}</span>
-                                <button
-                                  onClick={() => setExpandedAccountId(expandedAccountId === a.qbo_id ? null : a.qbo_id)}
-                                  className="h-5 w-5 inline-flex items-center justify-center rounded transition-colors"
-                                  style={{ color: "var(--text-muted)" }}
-                                  title={a.subledger_is_manual ? "Edit manual subledger" : "Enter manual subledger value"}
-                                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--green)")}
-                                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
-                                >
-                                  <Pencil size={11} strokeWidth={1.8} />
-                                </button>
-                              </div>
+                            <td className="px-3 py-2.5 text-right text-sm tabular-nums" style={{ color: "var(--text-2)" }}>
+                              {fmtMoney(a.subledger_balance)}
+                              {a.subledger_is_manual && (
+                                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle"
+                                  style={{ background: "var(--green)" }}
+                                  title="Subledger saved for this period" />
+                              )}
                             </td>
                             <td className="px-3 py-2.5 text-right tabular-nums text-sm font-medium"
                               style={{ color: hasVariance ? "#dc2626" : "var(--green)" }}>
                               {hasVariance ? fmtMoney(a.variance) : "—"}
                             </td>
-                            <td className="px-3 py-2.5">
+                            <td className="px-3 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                              <AttachmentsCell files={a.evidence_files ?? []} />
+                            </td>
+                            <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                               <StatusChip
                                 status={status}
                                 onChange={(next) => setStatusMut.mutate({ id: a.qbo_id, status: next })}
                               />
                             </td>
-                            <td className="px-3 py-2.5">
+                            <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  onClick={() => setExpandedAccountId(expandedAccountId === a.qbo_id ? null : a.qbo_id)}
-                                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors relative"
-                                  style={{
-                                    color: a.evidence_count > 0 ? "var(--green)" : "var(--text-2)",
-                                    border: `1px solid ${a.evidence_count > 0 ? "var(--green)" : "var(--border-strong)"}`,
-                                    background: a.evidence_count > 0 ? "var(--green-subtle)" : "var(--surface)",
-                                  }}
-                                  title={a.evidence_count > 0
-                                    ? `${a.evidence_count} supporting file(s) attached — click to manage`
-                                    : "Attach supporting document (bank statement, register, schedule, etc.)"}
-                                >
-                                  <Paperclip size={11} strokeWidth={1.8} />
-                                  {a.evidence_count > 0 ? a.evidence_count : ""}
-                                </button>
                                 <button
                                   onClick={() => openSubledger(a)}
                                   className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
@@ -850,7 +808,7 @@ export function ReconciliationsDashboard() {
                                 transition={{ duration: 0.15 }}
                                 style={{ borderBottom: "1px solid var(--border)" }}
                               >
-                                <td colSpan={9} style={{ padding: 0, background: "var(--surface-2)" }}>
+                                <td colSpan={10} style={{ padding: 0, background: "var(--surface-2)" }}>
                                   <motion.div
                                     initial={{ height: 0 }}
                                     animate={{ height: "auto" }}
@@ -1204,19 +1162,134 @@ function InlineSubledgerForm({
         </button>
       </div>
 
-      {/* Two-column on desktop, single column on mobile — uses the wider
-          inline space to spread amount/source/variance on the left and
-          evidence/items on the right. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5"><div className="space-y-3">
-            <p className="text-xs leading-snug" style={{ color: "var(--text-2)" }}>
-              QuickBooks doesn't keep a subledger for most account types (Bank, Fixed Assets, Prepaids, Loans, etc).
-              Enter the balance from your external source — bank statement, fixed-asset register, amortization
-              schedule — and Nordavix will recompute the variance against it.
-            </p>
+      {/* ── Variance box (wide, top) ─────────────────────────────────
+          GL vs Subledger up top and prominent so the user sees the gap
+          they need to explain before scrolling to the picker beneath it. */}
+      {valid && (() => {
+        const variance = parseFloat(account.gl_balance) - parsed
+        const adjustedVariance = variance - selectedSum
+        const tiedOut = Math.abs(adjustedVariance) < 0.5
+        const hasGap = Math.abs(variance) >= 0.5
+        return (
+          <div className="rounded-xl p-4 mb-4"
+            style={{
+              background: tiedOut ? "var(--green-subtle)" : hasGap ? "#fef2f2" : "var(--surface)",
+              border: `1px solid ${tiedOut ? "var(--green)" : hasGap ? "#fecaca" : "var(--border)"}`,
+            }}>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>GL balance</p>
+                <p className="text-base font-bold tabular-nums text-theme">{fmtMoney(account.gl_balance)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Subledger</p>
+                <p className="text-base font-bold tabular-nums text-theme">{fmtMoney(parsed)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                  Variance (GL − Sub)
+                </p>
+                <p className="text-base font-bold tabular-nums"
+                  style={{ color: hasGap ? "#dc2626" : "var(--green)" }}>
+                  {fmtMoney(variance)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                  {tiedOut ? "Reconciled" : "Unexplained gap"}
+                </p>
+                <p className="text-base font-bold tabular-nums flex items-center gap-1"
+                  style={{ color: tiedOut ? "var(--green)" : "#dc2626" }}>
+                  {tiedOut && <CheckCircle2 size={14} strokeWidth={2.2} />}
+                  {fmtMoney(adjustedVariance)}
+                </p>
+              </div>
+            </div>
+            {selectedItems.length > 0 && (
+              <p className="text-[11px] mt-2 pt-2"
+                style={{ borderTop: "1px dashed var(--border)", color: "var(--text-muted)" }}>
+                {selectedItems.length} reconciling item{selectedItems.length === 1 ? "" : "s"} selected
+                · sum {fmtMoney(selectedSum)}
+              </p>
+            )}
+          </div>
+        )
+      })()}
 
+      {/* ── Reconciling items table (wide, just under variance) ─────
+          Pulled live from QBO via /period-entries. Selecting items
+          closes the variance gap. Persists on the override on save. */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+            Reconciling items — current-period activity from QuickBooks
+            {(periodEntries?.rows.length ?? 0) > 0 && ` · ${periodEntries!.rows.length}`}
+          </span>
+          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+            Tick what explains GL − Subledger
+          </span>
+        </div>
+        {entriesLoading ? (
+          <div className="py-3 flex items-center justify-center"><Spinner className="h-4 w-4" /></div>
+        ) : (periodEntries?.rows.length ?? 0) === 0 ? (
+          <p className="text-[11px] py-3 px-3 rounded-md text-center"
+            style={{ color: "var(--text-muted)", background: "var(--surface)", border: "1px dashed var(--border)" }}>
+            No transactions posted to this account in the closing month.
+            {selectedItems.length > 0 && ` ${selectedItems.length} item(s) carried over from a prior save.`}
+          </p>
+        ) : (
+          <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)", background: "var(--surface)" }}>
+            <div className="max-h-72 overflow-auto">
+              <table className="w-full text-xs min-w-[500px]">
+                <thead>
+                  <tr style={{ background: "var(--surface-2)", position: "sticky", top: 0 }}>
+                    <th className="w-8 px-2 py-2"></th>
+                    <th className="text-left px-2 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
+                    <th className="text-left px-2 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
+                    <th className="text-left px-2 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
+                    <th className="text-left px-2 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Entity</th>
+                    <th className="text-left px-2 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Memo</th>
+                    <th className="text-right px-2 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {periodEntries!.rows.map((r) => {
+                    const checked = !!selectedItemMap[r.txn_id]
+                    return (
+                      <tr key={r.txn_id}
+                        onClick={() => toggleItem(r)}
+                        className="cursor-pointer transition-colors"
+                        style={{
+                          borderTop: "1px solid var(--border)",
+                          background: checked ? "var(--green-subtle)" : "transparent",
+                        }}>
+                        <td className="px-2 py-2 text-center">
+                          <input type="checkbox" checked={checked}
+                            onChange={() => toggleItem(r)}
+                            onClick={(e) => e.stopPropagation()} />
+                        </td>
+                        <td className="px-2 py-2 text-theme">{r.txn_type}</td>
+                        <td className="px-2 py-2 font-mono" style={{ color: "var(--text-2)" }}>{r.txn_number || "—"}</td>
+                        <td className="px-2 py-2" style={{ color: "var(--text-2)" }}>{r.txn_date || "—"}</td>
+                        <td className="px-2 py-2 truncate max-w-[120px]" style={{ color: "var(--text-2)" }}>{r.entity || "—"}</td>
+                        <td className="px-2 py-2 truncate max-w-[180px]" style={{ color: "var(--text-muted)" }}>{r.memo || "—"}</td>
+                        <td className="px-2 py-2 text-right tabular-nums font-medium text-theme">{fmtMoney(r.amount)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Lower two-column area: entry fields | evidence ────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="space-y-3">
             {/* Roll-forward card — prior period closing auto-flows in as the
-                starting balance. The user sees what was rolled forward, the
-                source, and the delta they're now declaring. No clicks needed. */}
+                subledger value. The user sees what was rolled forward and
+                the input is locked (admin-only to override). */}
             {prior && (
               <div className="rounded-lg p-3 space-y-2"
                 style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
@@ -1228,9 +1301,7 @@ function InlineSubledgerForm({
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
-                  <span style={{ color: "#1e3a8a" }}>
-                    Closing as of {prior.period_end}
-                  </span>
+                  <span style={{ color: "#1e3a8a" }}>Closing as of {prior.period_end}</span>
                   <span className="font-bold tabular-nums" style={{ color: "#1e3a8a" }}>
                     {fmtMoney(prior.subledger_total)}
                   </span>
@@ -1240,198 +1311,70 @@ function InlineSubledgerForm({
                     Source: {prior.subledger_source}
                   </p>
                 )}
-                {valid && (
-                  <div className="flex items-center justify-between text-xs pt-1.5"
-                    style={{ borderTop: "1px dashed #bfdbfe" }}>
-                    <span style={{ color: "#1e3a8a" }}>Change vs prior</span>
-                    <span className="font-bold tabular-nums"
-                      style={{
-                        color: parsed - parseFloat(prior.subledger_total) >= 0 ? "var(--green)" : "#dc2626",
-                      }}>
-                      {(parsed - parseFloat(prior.subledger_total)) >= 0 ? "+" : ""}
-                      {fmtMoney(parsed - parseFloat(prior.subledger_total))}
-                    </span>
-                  </div>
-                )}
               </div>
             )}
 
             <label className="block">
-              <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              <span className="text-[10px] font-semibold uppercase tracking-wide flex items-center gap-1.5"
+                style={{ color: "var(--text-muted)" }}>
                 Subledger total
+                {!!prior && (
+                  <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1 py-0.5 rounded"
+                    style={{ background: "#fef3c7", color: "#92400e" }}
+                    title="Locked from roll-forward — only admins can override">
+                    🔒 Admin only
+                  </span>
+                )}
               </span>
               <div className="mt-1 relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm" style={{ color: "var(--text-muted)" }}>$</span>
                 <input
                   type="number"
                   step="0.01"
-                  autoFocus
                   value={amount}
                   onChange={(e) => { setAmount(e.target.value); setUserTouchedAmount(true) }}
                   placeholder="0.00"
+                  disabled={!!prior}
                   className="w-full rounded-lg pl-7 pr-3 py-2 text-sm outline-none tabular-nums"
                   style={{
-                    background: "var(--surface-2)",
+                    background: prior ? "var(--surface)" : "var(--surface-2)",
                     border: "1px solid var(--border-strong)",
-                    color: "var(--text)",
+                    color: prior ? "var(--text-muted)" : "var(--text)",
+                    cursor: prior ? "not-allowed" : "text",
                   }}
                 />
               </div>
+              {!!prior && (
+                <span className="text-[10px] mt-1 block" style={{ color: "var(--text-muted)" }}>
+                  Carries forward automatically. Admin override is a roadmap item.
+                </span>
+              )}
             </label>
 
             <label className="block">
               <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                Source (optional)
+                Source {prior ? "(carried forward)" : "(optional)"}
               </span>
               <input
                 type="text"
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
                 placeholder="e.g. Bank of America statement 4/30/26"
+                disabled={!!prior}
                 className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
                 style={{
-                  background: "var(--surface-2)",
+                  background: prior ? "var(--surface)" : "var(--surface-2)",
                   border: "1px solid var(--border-strong)",
-                  color: "var(--text)",
+                  color: prior ? "var(--text-muted)" : "var(--text)",
+                  cursor: prior ? "not-allowed" : "text",
                 }}
               />
-              <span className="text-[10px] mt-1 block" style={{ color: "var(--text-muted)" }}>
-                Shown on the dashboard so you remember where this number came from.
-              </span>
             </label>
+        </div>
 
-            {valid && (() => {
-              const variance = parseFloat(account.gl_balance) - parsed
-              // Reconciling items "close the gap": if their sum equals the
-              // variance, the account ties out even though GL ≠ subledger.
-              // Classic bank-rec outstanding-items logic.
-              const adjustedVariance = variance - selectedSum
-              const tiedOut = Math.abs(adjustedVariance) < 0.5
-              return (
-                <div className="rounded-lg p-2.5 text-xs space-y-1.5"
-                  style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-                  <div className="flex items-center justify-between">
-                    <span style={{ color: "var(--text-muted)" }}>Variance (GL − Subledger)</span>
-                    <span className="font-bold tabular-nums"
-                      style={{ color: Math.abs(variance) < 0.5 ? "var(--green)" : "#dc2626" }}>
-                      {fmtMoney(variance)}
-                    </span>
-                  </div>
-                  {selectedItems.length > 0 && (
-                    <>
-                      <div className="flex items-center justify-between">
-                        <span style={{ color: "var(--text-muted)" }}>
-                          Reconciling items ({selectedItems.length})
-                        </span>
-                        <span className="font-medium tabular-nums" style={{ color: "var(--text-2)" }}>
-                          {fmtMoney(selectedSum)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between pt-1"
-                        style={{ borderTop: "1px dashed var(--border)" }}>
-                        <span className="font-semibold"
-                          style={{ color: tiedOut ? "var(--green)" : "#dc2626" }}>
-                          {tiedOut ? "Reconciled ✓" : "Unexplained gap"}
-                        </span>
-                        <span className="font-bold tabular-nums"
-                          style={{ color: tiedOut ? "var(--green)" : "#dc2626" }}>
-                          {fmtMoney(adjustedVariance)}
-                        </span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )
-            })()}
-
-            {/* Reconciling items — always shown so the user can pick items
-                whether or not there's a current variance. Previously gated
-                on |variance| >= $0.50, which hid the whole section the
-                moment the rolled-forward subledger happened to match GL.
-                Now always renders: empty state when QBO has no activity,
-                the picker table otherwise. Selections persist on the
-                override row and pre-select when reopened. */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-semibold uppercase tracking-wide"
-                  style={{ color: "var(--text-muted)" }}>
-                  Reconciling items
-                  {(periodEntries?.rows.length ?? 0) > 0 && ` · ${periodEntries!.rows.length} this period`}
-                </span>
-                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                  Tick the entries that explain GL − Subledger
-                </span>
-              </div>
-              {entriesLoading ? (
-                <div className="py-3 flex items-center justify-center">
-                  <Spinner className="h-4 w-4" />
-                </div>
-              ) : (periodEntries?.rows.length ?? 0) === 0 ? (
-                <p className="text-[11px] py-2 px-2 rounded-md"
-                  style={{ color: "var(--text-muted)", background: "var(--surface-2)", border: "1px dashed var(--border)" }}>
-                  No transactions posted to this account in the closing month.
-                  {selectedItems.length > 0 && ` ${selectedItems.length} item(s) carried over from a prior save.`}
-                </p>
-              ) : (
-                <div className="rounded-lg overflow-hidden"
-                  style={{ border: "1px solid var(--border)" }}>
-                  {/* Scroll in both directions — mobile widths can't fit
-                      all 5 columns at the natural min width otherwise. */}
-                  <div className="max-h-56 overflow-auto">
-                    <table className="w-full text-[11px] min-w-[340px]">
-                      <thead>
-                        <tr style={{ background: "var(--surface-2)" }}>
-                          <th className="w-6 px-1.5 py-1.5"></th>
-                          <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
-                          <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
-                          <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
-                          <th className="text-right px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {periodEntries!.rows.map((r) => {
-                          const checked = !!selectedItemMap[r.txn_id]
-                          return (
-                            <tr key={r.txn_id}
-                              onClick={() => toggleItem(r)}
-                              className="cursor-pointer transition-colors"
-                              style={{
-                                borderTop: "1px solid var(--border)",
-                                background: checked ? "var(--green-subtle)" : "transparent",
-                              }}>
-                              <td className="px-1.5 py-1.5 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() => toggleItem(r)}
-                                  onClick={(e) => e.stopPropagation()}
-                                />
-                              </td>
-                              <td className="px-1.5 py-1.5 text-theme">{r.txn_type}</td>
-                              <td className="px-1.5 py-1.5 font-mono" style={{ color: "var(--text-2)" }}>
-                                {r.txn_number || "—"}
-                              </td>
-                              <td className="px-1.5 py-1.5" style={{ color: "var(--text-2)" }}>
-                                {r.txn_date || "—"}
-                              </td>
-                              <td className="px-1.5 py-1.5 text-right tabular-nums font-medium text-theme">
-                                {fmtMoney(r.amount)}
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-
-          </div>{/* end left column */}
-
-          <div className="space-y-3">
-            {/* Supporting evidence — attach the bank stmt / FA register PDF */}
-            <div className="space-y-2">
+        <div className="space-y-3">
+          {/* Supporting evidence — attach the bank stmt / FA register PDF */}
+          <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-semibold uppercase tracking-wide"
                   style={{ color: "var(--text-muted)" }}>
@@ -1547,6 +1490,86 @@ function InlineSubledgerForm({
         </div>
       </div>
     </form>
+  )
+}
+
+// ── Attachments cell ────────────────────────────────────────────────────────
+// Shows attachment count + lets the user download files directly from the
+// row without expanding it. Single attachment → one click downloads.
+// Multiple → tiny dropdown listing all files. Backed by the same signed-URL
+// flow as the inline form.
+
+function AttachmentsCell({ files }: { files: import("@/modules/recons/api").OverviewEvidenceFile[] }) {
+  const [open, setOpen] = useState(false)
+  if (!files || files.length === 0) {
+    return <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>
+  }
+
+  async function downloadOne(id: string) {
+    const { download_url } = await reconsApi.getEvidenceDownloadUrl(id)
+    window.open(download_url, "_blank", "noopener,noreferrer")
+  }
+
+  // Single file — render as a direct download button.
+  if (files.length === 1) {
+    const f = files[0]
+    return (
+      <button
+        type="button"
+        onClick={() => downloadOne(f.id)}
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+        style={{
+          color: "var(--green)",
+          background: "var(--green-subtle)",
+          border: "1px solid var(--green)",
+        }}
+        title={`Download ${f.file_name}`}
+      >
+        <Download size={11} strokeWidth={1.8} />
+        View
+      </button>
+    )
+  }
+
+  // Multiple — small dropdown menu.
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+        style={{
+          color: "var(--green)",
+          background: "var(--green-subtle)",
+          border: "1px solid var(--green)",
+        }}
+        title={`${files.length} files attached`}
+      >
+        <Download size={11} strokeWidth={1.8} />
+        {files.length}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-50 min-w-[220px] rounded-lg overflow-hidden"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+            {files.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => { downloadOne(f.id); setOpen(false) }}
+                className="w-full px-3 py-2 text-left text-[11px] flex items-center gap-2 transition-colors hover:bg-opacity-100"
+                style={{ borderBottom: "1px solid var(--border)", color: "var(--text)" }}
+              >
+                <FileText size={11} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                <span className="flex-1 truncate">{f.file_name}</span>
+                <Download size={10} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 

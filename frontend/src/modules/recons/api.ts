@@ -126,6 +126,13 @@ export interface ReconcilingItem {
   entity?:    string
 }
 
+export interface OverviewEvidenceFile {
+  id:          string
+  file_name:   string
+  mime_type:   string
+  uploaded_at: string | null
+}
+
 export interface OverviewAccount {
   qbo_id:                 string
   account_number:         string
@@ -139,6 +146,7 @@ export interface OverviewAccount {
   subledger_entered_by:   string | null
   subledger_entered_at:   string | null
   evidence_count:         number
+  evidence_files:         OverviewEvidenceFile[]
   reconciling_items:      ReconcilingItem[]
   has_subledger_detail:   boolean
   variance:               string

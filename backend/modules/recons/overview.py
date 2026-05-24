@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -131,17 +131,15 @@ async def fetch_overview(
         s.qbo_account_id: s for s in status_rows
     }
 
-    # One grouped query for evidence counts so we can render a paperclip
-    # badge inline without an N+1.
+    # Pull the actual evidence rows so the dashboard can render an inline
+    # "attachments" column with click-to-download — no second fetch needed.
+    # Bounded per-period set; one query, fan out in memory below.
     ev_rows = list((await session.execute(
-        select(
-            SubledgerEvidence.qbo_account_id,
-            _func.count(SubledgerEvidence.id).label("n"),
-        )
-        .where(SubledgerEvidence.period_end == period_end)
-        .group_by(SubledgerEvidence.qbo_account_id)
-    )).all())
-    evidence_count_by_acct: dict[str, int] = {e.qbo_account_id: int(e.n) for e in ev_rows}
+        select(SubledgerEvidence).where(SubledgerEvidence.period_end == period_end)
+    )).scalars().all())
+    evidence_by_acct: dict[str, list[SubledgerEvidence]] = {}
+    for e in ev_rows:
+        evidence_by_acct.setdefault(e.qbo_account_id, []).append(e)
 
     out_accounts: list[dict] = []
     for a in accounts_meta:
@@ -189,7 +187,22 @@ async def fetch_overview(
                                     if (review and review.subledger_entered_by) else None,
             "subledger_entered_at": review.subledger_entered_at.isoformat()
                                     if (review and review.subledger_entered_at) else None,
-            "evidence_count":      evidence_count_by_acct.get(qbo_id, 0),
+            "evidence_count":      len(evidence_by_acct.get(qbo_id, [])),
+            "evidence_files":      [
+                {
+                    "id":           str(f.id),
+                    "file_name":    f.file_name,
+                    "mime_type":    f.mime_type,
+                    "uploaded_at":  f.uploaded_at.isoformat() if f.uploaded_at else None,
+                }
+                # Most-recent first so the row-level download button hits the
+                # latest attachment when the user clicks it.
+                for f in sorted(
+                    evidence_by_acct.get(qbo_id, []),
+                    key=lambda x: x.uploaded_at or datetime.min,
+                    reverse=True,
+                )
+            ],
             "reconciling_items":   review.reconciling_items if review else [],
             "has_subledger_detail":has_detail,
             "variance":            str(variance),
