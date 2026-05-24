@@ -126,13 +126,37 @@ export interface OverviewAccount {
   subledger_balance:      string
   subledger_source:       string
   subledger_is_manual:    boolean
+  subledger_entered_by:   string | null
   subledger_entered_at:   string | null
+  evidence_count:         number
   has_subledger_detail:   boolean
   variance:               string
   review_status:          AccountReviewStatus
   reviewed_by:            string | null
   reviewed_at:            string | null
   review_notes:           string | null
+}
+
+export interface EvidenceFile {
+  id:          string
+  file_name:   string
+  file_size:   number
+  mime_type:   string
+  uploaded_by: string
+  uploaded_at: string
+}
+
+export interface OverrideEntry {
+  qbo_account_id:        string
+  period_end:            string
+  subledger_total:       string | null
+  subledger_source:      string | null
+  subledger_entered_by:  string | null
+  subledger_entered_at:  string | null
+  status:                AccountReviewStatus
+  reviewed_by:           string | null
+  reviewed_at:           string | null
+  evidence_count:        number
 }
 
 export interface OverviewGroup {
@@ -283,6 +307,51 @@ async function setSubledgerOverride(
   return data
 }
 
+async function listAccountEvidence(qboAccountId: string, periodEnd: string): Promise<EvidenceFile[]> {
+  const { data } = await apiClient.get<{ evidence: EvidenceFile[] }>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/evidence`,
+    { params: { period_end: periodEnd } },
+  )
+  return data.evidence
+}
+
+async function uploadAccountEvidence(
+  qboAccountId: string,
+  periodEnd: string,
+  file: File,
+): Promise<EvidenceFile> {
+  const fd = new FormData()
+  fd.append("file", file)
+  const { data } = await apiClient.post<EvidenceFile>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/evidence`,
+    fd,
+    {
+      params: { period_end: periodEnd },
+      headers: { "Content-Type": "multipart/form-data" },
+    },
+  )
+  return data
+}
+
+async function deleteAccountEvidence(evidenceId: string): Promise<void> {
+  await apiClient.delete(`/api/reconciliations/evidence/${encodeURIComponent(evidenceId)}`)
+}
+
+async function getEvidenceDownloadUrl(evidenceId: string): Promise<{ download_url: string; file_name: string; mime_type: string }> {
+  const { data } = await apiClient.get<{ download_url: string; file_name: string; mime_type: string }>(
+    `/api/reconciliations/evidence/${encodeURIComponent(evidenceId)}/download`,
+  )
+  return data
+}
+
+async function listOverrides(periodEnd?: string): Promise<OverrideEntry[]> {
+  const { data } = await apiClient.get<{ overrides: OverrideEntry[] }>(
+    "/api/reconciliations/overrides",
+    { params: periodEnd ? { period_end: periodEnd } : undefined },
+  )
+  return data.overrides
+}
+
 async function bulkUpdateAccountReviewStatus(
   periodEnd: string,
   status: AccountReviewStatus,
@@ -379,6 +448,11 @@ export const reconsApi = {
   updateAccountReviewStatus,
   bulkUpdateAccountReviewStatus,
   setSubledgerOverride,
+  listAccountEvidence,
+  uploadAccountEvidence,
+  deleteAccountEvidence,
+  getEvidenceDownloadUrl,
+  listOverrides,
   getReconciliation,
   createReconciliation,
   resyncReconciliation,

@@ -20,13 +20,14 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import pandas as pd
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
+from core.storage import r2 as r2_storage
 from models.qbo_connection import QboConnection
 from models.reconciliation import (
     Reconciliation,
@@ -34,6 +35,7 @@ from models.reconciliation import (
     ReconNote,
     ReconTransaction,
 )
+from models.subledger_evidence import SubledgerEvidence
 from modules.recons.schemas import (
     ActivityFeedEntry,
     AssignBody,
@@ -220,6 +222,24 @@ async def update_account_review_status(
         )
     )).scalar_one_or_none()
 
+    # Maker/checker: a manual subledger override cannot be approved by
+    # the same user who entered it. Self-approval defeats the whole point
+    # of the control. Preparer enters → independent reviewer approves.
+    if (
+        status_value == "approved"
+        and row is not None
+        and row.subledger_total is not None
+        and row.subledger_entered_by is not None
+        and row.subledger_entered_by == user.id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You entered the manual subledger for this account — "
+                "approval must come from a different user (maker/checker control)."
+            ),
+        )
+
     if row is None:
         row = AccountReviewStatus(
             id=uuid.uuid4(),
@@ -292,6 +312,27 @@ async def bulk_update_account_review_status(
         )
     )).scalars().all())
     by_id = {r.qbo_account_id: r for r in existing}
+
+    # Maker/checker — block bulk approval of any account whose override the
+    # current user entered. Bulk action either fully succeeds or fails as a
+    # set, so we surface every conflict in the error message.
+    if status_value == "approved":
+        own_overrides = [
+            qid for qid, r in by_id.items()
+            if r.subledger_total is not None
+            and r.subledger_entered_by is not None
+            and r.subledger_entered_by == user.id
+        ]
+        if own_overrides:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "You entered the manual subledger for "
+                    f"{len(own_overrides)} account(s) in this batch — "
+                    "approval must come from a different user (maker/checker). "
+                    f"Conflicting account IDs: {', '.join(own_overrides)}."
+                ),
+            )
 
     now = datetime.now(timezone.utc)
     is_reviewed = status_value != "pending"
@@ -414,6 +455,244 @@ async def set_account_subledger_override(
         "subledger_source": source if total is not None else None,
         "is_manual":      total is not None,
     }
+
+
+# ── Evidence (attached source documents for manual overrides) ────────────────
+
+_ALLOWED_EVIDENCE_EXTS = {"pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg"}
+_ALLOWED_EVIDENCE_MIMES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "text/csv",
+    "image/png",
+    "image/jpeg",
+}
+_MAX_EVIDENCE_BYTES = 15 * 1024 * 1024  # 15 MB
+
+
+def _serialize_evidence(e: SubledgerEvidence) -> dict:
+    return {
+        "id":          str(e.id),
+        "file_name":   e.file_name,
+        "file_size":   e.file_size,
+        "mime_type":   e.mime_type,
+        "uploaded_by": str(e.uploaded_by),
+        "uploaded_at": e.uploaded_at.isoformat() if e.uploaded_at else None,
+    }
+
+
+@router.get("/account/{qbo_account_id}/evidence")
+async def list_account_evidence(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return the list of attached evidence files for one account+period."""
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    rows = list((await db.execute(
+        select(SubledgerEvidence)
+        .where(
+            SubledgerEvidence.qbo_account_id == qbo_account_id,
+            SubledgerEvidence.period_end == pe,
+        )
+        .order_by(desc(SubledgerEvidence.uploaded_at))
+    )).scalars().all())
+    return {"evidence": [_serialize_evidence(r) for r in rows]}
+
+
+@router.post("/account/{qbo_account_id}/evidence", status_code=status.HTTP_201_CREATED)
+async def upload_account_evidence(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Upload a supporting document (bank statement, FA register, etc.) for a
+    manual subledger override. Stored in R2, listed alongside the override,
+    used by reviewers to verify the entered value.
+    """
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    name = file.filename or "evidence"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext not in _ALLOWED_EVIDENCE_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type .{ext} not allowed. Use: {', '.join(sorted(_ALLOWED_EVIDENCE_EXTS))}.",
+        )
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    if len(raw) > _MAX_EVIDENCE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large (max {_MAX_EVIDENCE_BYTES // (1024 * 1024)} MB).",
+        )
+
+    mime = file.content_type or "application/octet-stream"
+    # Don't fully reject on MIME alone — browsers can mis-label — but warn
+    # via the audit log if it's unfamiliar.
+    safe_name = name.replace("/", "_").replace("\\", "_")
+    key = r2_storage.tenant_key(
+        tenant_id,
+        f"subledger-evidence/{qbo_account_id}/{pe.isoformat()}",
+        f"{uuid.uuid4()}_{safe_name}",
+    )
+    r2_storage.upload_file(key, io.BytesIO(raw), content_type=mime)
+
+    row = SubledgerEvidence(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        qbo_account_id=qbo_account_id,
+        period_end=pe,
+        file_name=safe_name,
+        file_size=len(raw),
+        mime_type=mime,
+        r2_key=key,
+        uploaded_by=user.id,
+    )
+    db.add(row)
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.evidence_uploaded",
+        entity_type="subledger_evidence", entity_id=row.id,
+        metadata={
+            "summary": f"Uploaded {safe_name} ({len(raw)} bytes) for account {qbo_account_id} ({pe})",
+            "qbo_account_id": qbo_account_id,
+            "period_end": pe.isoformat(),
+            "mime_unrecognized": mime not in _ALLOWED_EVIDENCE_MIMES,
+        },
+    )
+    await db.commit()
+    await db.refresh(row)
+    return _serialize_evidence(row)
+
+
+@router.get("/evidence/{evidence_id}/download")
+async def download_account_evidence(
+    evidence_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Return a short-lived signed URL the browser can hit to download the file.
+    Tenant scoping ensures users can only ever fetch their own org's files.
+    """
+    row = (await db.execute(
+        select(SubledgerEvidence).where(SubledgerEvidence.id == evidence_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Evidence not found.")
+    url = r2_storage.generate_presigned_download_url(row.r2_key, expires_in=300)
+    return {"download_url": url, "file_name": row.file_name, "mime_type": row.mime_type}
+
+
+@router.delete("/evidence/{evidence_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account_evidence(
+    evidence_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove an attached evidence file."""
+    row = (await db.execute(
+        select(SubledgerEvidence).where(SubledgerEvidence.id == evidence_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Evidence not found.")
+    r2_storage.delete_file(row.r2_key)
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.evidence_deleted",
+        entity_type="subledger_evidence", entity_id=row.id,
+        metadata={
+            "summary": f"Deleted evidence {row.file_name} for account {row.qbo_account_id} ({row.period_end})",
+            "qbo_account_id": row.qbo_account_id,
+            "period_end": row.period_end.isoformat(),
+        },
+    )
+    await db.delete(row)
+    await db.commit()
+
+
+# ── Reviewer dashboard: every manual override for the tenant ─────────────────
+
+@router.get("/overrides")
+async def list_overrides(
+    tenant_id: CurrentTenantId,
+    period_end: str | None = Query(default=None, description="Filter by period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Reviewer's one-stop QC list — every manual subledger override across
+    every account+period (optionally filtered to one period). Each entry
+    carries the entered value, source label, evidence count, and review
+    status so the reviewer can triage at a glance and click in to verify.
+    """
+    from datetime import date as _date
+    stmt = (
+        select(AccountReviewStatus)
+        .where(AccountReviewStatus.subledger_total.is_not(None))
+        .order_by(desc(AccountReviewStatus.subledger_entered_at))
+    )
+    if period_end:
+        try:
+            pe = _date.fromisoformat(period_end)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+        stmt = stmt.where(AccountReviewStatus.period_end == pe)
+
+    rows = list((await db.execute(stmt)).scalars().all())
+    if not rows:
+        return {"overrides": []}
+
+    # Bulk-load evidence counts in one query
+    keys = [(r.qbo_account_id, r.period_end) for r in rows]
+    if keys:
+        ev_rows = list((await db.execute(
+            select(
+                SubledgerEvidence.qbo_account_id,
+                SubledgerEvidence.period_end,
+                func.count(SubledgerEvidence.id).label("n"),
+            ).group_by(SubledgerEvidence.qbo_account_id, SubledgerEvidence.period_end)
+        )).all())
+        ev_count = {(e.qbo_account_id, e.period_end): int(e.n) for e in ev_rows}
+    else:
+        ev_count = {}
+
+    out = []
+    for r in rows:
+        out.append({
+            "qbo_account_id":         r.qbo_account_id,
+            "period_end":             r.period_end.isoformat(),
+            "subledger_total":        str(r.subledger_total) if r.subledger_total is not None else None,
+            "subledger_source":       r.subledger_source,
+            "subledger_entered_by":   str(r.subledger_entered_by) if r.subledger_entered_by else None,
+            "subledger_entered_at":   r.subledger_entered_at.isoformat() if r.subledger_entered_at else None,
+            "status":                 r.status,
+            "reviewed_by":            str(r.reviewed_by) if r.reviewed_by else None,
+            "reviewed_at":            r.reviewed_at.isoformat() if r.reviewed_at else None,
+            "evidence_count":         ev_count.get((r.qbo_account_id, r.period_end), 0),
+        })
+    return {"overrides": out}
 
 
 @router.post("/clear-synced-data", status_code=status.HTTP_200_OK)

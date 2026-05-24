@@ -10,6 +10,7 @@ import { ReconciliationsDashboard } from "@/modules/recons/pages/Reconciliations
 import { ARReconciliations } from "@/modules/recons/pages/ARReconciliations"
 import { APReconciliations } from "@/modules/recons/pages/APReconciliations"
 import { ReconciliationDetail } from "@/modules/recons/pages/ReconciliationDetail"
+import { OverridesDashboard } from "@/modules/recons/pages/OverridesDashboard"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
 import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
 
@@ -43,6 +44,7 @@ function AppRoutes() {
           <Route path="flux"         element={<FluxDashboard />} />
           <Route path="flux/:tbId"   element={<FluxDashboard />} />
           <Route path="reconciliations"            element={<ReconciliationsDashboard />} />
+          <Route path="reconciliations/overrides"  element={<OverridesDashboard />} />
           <Route path="reconciliations/ar"         element={<ARReconciliations />} />
           <Route path="reconciliations/ap"         element={<APReconciliations />} />
           <Route path="reconciliations/:reconId"   element={<ReconciliationDetail />} />

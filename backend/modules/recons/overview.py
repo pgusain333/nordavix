@@ -122,13 +122,26 @@ async def fetch_overview(
     # The dashboard merges this into each account row so the user sees their
     # own approval state for the period they're looking at.
     from models.account_review_status import AccountReviewStatus
-    from sqlalchemy import select
+    from models.subledger_evidence import SubledgerEvidence
+    from sqlalchemy import func as _func, select
     status_rows = list((await session.execute(
         select(AccountReviewStatus).where(AccountReviewStatus.period_end == period_end)
     )).scalars().all())
     status_by_acct: dict[str, AccountReviewStatus] = {
         s.qbo_account_id: s for s in status_rows
     }
+
+    # One grouped query for evidence counts so we can render a paperclip
+    # badge inline without an N+1.
+    ev_rows = list((await session.execute(
+        select(
+            SubledgerEvidence.qbo_account_id,
+            _func.count(SubledgerEvidence.id).label("n"),
+        )
+        .where(SubledgerEvidence.period_end == period_end)
+        .group_by(SubledgerEvidence.qbo_account_id)
+    )).all())
+    evidence_count_by_acct: dict[str, int] = {e.qbo_account_id: int(e.n) for e in ev_rows}
 
     out_accounts: list[dict] = []
     for a in accounts_meta:
@@ -172,8 +185,11 @@ async def fetch_overview(
             "subledger_balance":   str(subledger_balance.quantize(Decimal("0.01"))),
             "subledger_source":    source,
             "subledger_is_manual": is_manual,
+            "subledger_entered_by": str(review.subledger_entered_by)
+                                    if (review and review.subledger_entered_by) else None,
             "subledger_entered_at": review.subledger_entered_at.isoformat()
                                     if (review and review.subledger_entered_at) else None,
+            "evidence_count":      evidence_count_by_acct.get(qbo_id, 0),
             "has_subledger_detail":has_detail,
             "variance":            str(variance),
             "review_status":       review.status if review else "pending",

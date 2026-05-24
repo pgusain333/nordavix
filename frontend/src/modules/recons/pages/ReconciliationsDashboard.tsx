@@ -35,6 +35,11 @@ import {
   ExternalLink,
   Sparkles,
   Pencil,
+  Paperclip,
+  Upload,
+  FileText,
+  Download,
+  ShieldCheck,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import {
@@ -158,6 +163,12 @@ export function ReconciliationsDashboard() {
     mutationFn: (v: { id: string; status: AccountReviewStatus }) =>
       reconsApi.updateAccountReviewStatus(v.id, periodEnd, v.status),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] }),
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      // Surface maker/checker rejection (403) clearly via the sync banner —
+      // it's the same channel the user already watches for errors.
+      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Could not update status"}`)
+    },
   })
 
   /** Manual subledger override — used by the editor modal below. */
@@ -177,6 +188,10 @@ export function ReconciliationsDashboard() {
     onSuccess: () => {
       setSelected(new Set())
       qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Bulk update failed"}`)
     },
   })
 
@@ -264,6 +279,15 @@ export function ReconciliationsDashboard() {
               title="Re-pull from QuickBooks"
             >
               <span className="hidden sm:inline">{isFetching ? "Syncing…" : "Sync"}</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<ShieldCheck size={14} strokeWidth={1.8} />}
+              onClick={() => navigate("/app/reconciliations/overrides")}
+              title="Review every manual subledger value entered for any account"
+            >
+              <span className="hidden sm:inline">Overrides</span>
             </Button>
             <Button
               size="sm"
@@ -583,6 +607,21 @@ export function ReconciliationsDashboard() {
                                     Manual
                                   </span>
                                 )}
+                                {a.subledger_is_manual && a.evidence_count > 0 && (
+                                  <span className="inline-flex items-center gap-0.5 text-[10px]"
+                                    style={{ color: "var(--green)" }}
+                                    title={`${a.evidence_count} supporting file(s) attached`}>
+                                    <Paperclip size={10} strokeWidth={1.8} />
+                                    {a.evidence_count}
+                                  </span>
+                                )}
+                                {a.subledger_is_manual && a.evidence_count === 0 && (
+                                  <span className="inline-flex items-center text-[10px]"
+                                    style={{ color: "#b91c1c" }}
+                                    title="Manual override has no supporting document attached">
+                                    <AlertTriangle size={10} strokeWidth={1.8} />
+                                  </span>
+                                )}
                                 <span className="tabular-nums">{fmtMoney(a.subledger_balance)}</span>
                                 <button
                                   onClick={() => setEditingSubledger(a)}
@@ -762,14 +801,57 @@ function SubledgerEditor({
   const [source, setSource] = useState<string>(
     account.subledger_is_manual && account.subledger_source ? account.subledger_source : ""
   )
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const qc = useQueryClient()
   const parsed = parseFloat(amount)
   const valid = Number.isFinite(parsed)
+
+  // Live list of attached evidence files for this account+period.
+  const { data: evidence, refetch: refetchEvidence } = useQuery({
+    queryKey: ["recon-evidence", account.qbo_id, periodEnd],
+    queryFn:  () => reconsApi.listAccountEvidence(account.qbo_id, periodEnd),
+  })
+
+  const uploadMut = useMutation({
+    mutationFn: (file: File) => reconsApi.uploadAccountEvidence(account.qbo_id, periodEnd, file),
+    onSuccess: () => {
+      setUploadError(null)
+      refetchEvidence()
+      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setUploadError(ex.response?.data?.detail ?? ex.message ?? "Upload failed")
+    },
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => reconsApi.deleteAccountEvidence(id),
+    onSuccess: () => {
+      refetchEvidence()
+      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+    },
+  })
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    uploadMut.mutate(file)
+    e.target.value = ""  // allow re-upload of same file
+  }
+
+  async function handleDownload(evidenceId: string) {
+    const { download_url } = await reconsApi.getEvidenceDownloadUrl(evidenceId)
+    window.open(download_url, "_blank", "noopener,noreferrer")
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!valid) return
     onSave(parsed, source.trim() || null)
   }
+
+  const hasEvidence = (evidence?.length ?? 0) > 0
 
   return (
     <>
@@ -872,6 +954,73 @@ function SubledgerEditor({
                 </span>
               </div>
             )}
+
+            {/* Supporting evidence — attach the bank stmt / FA register PDF */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-wide"
+                  style={{ color: "var(--text-muted)" }}>
+                  Supporting evidence
+                </span>
+                {!hasEvidence && (
+                  <span className="text-[10px] font-medium"
+                    style={{ color: "#b91c1c" }}>
+                    Required for approval
+                  </span>
+                )}
+              </div>
+
+              {/* Attached files list */}
+              {hasEvidence && (
+                <ul className="space-y-1">
+                  {evidence!.map((f) => (
+                    <li key={f.id}
+                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs"
+                      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                      <FileText size={12} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                      <span className="flex-1 truncate text-theme">{f.file_name}</span>
+                      <span style={{ color: "var(--text-muted)" }}>
+                        {Math.round(f.file_size / 1024)} KB
+                      </span>
+                      <button type="button" onClick={() => handleDownload(f.id)}
+                        className="h-6 w-6 inline-flex items-center justify-center rounded"
+                        title="Download"
+                        style={{ color: "var(--text-muted)" }}>
+                        <Download size={11} strokeWidth={1.8} />
+                      </button>
+                      <button type="button"
+                        onClick={() => deleteMut.mutate(f.id)}
+                        disabled={deleteMut.isPending}
+                        className="h-6 w-6 inline-flex items-center justify-center rounded"
+                        title="Remove"
+                        style={{ color: "#b91c1c" }}>
+                        <X size={12} strokeWidth={1.8} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* Upload trigger */}
+              <label className="inline-flex items-center gap-1.5 cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors"
+                style={{
+                  background: hasEvidence ? "var(--surface)" : "var(--green-subtle)",
+                  color:      hasEvidence ? "var(--text-2)" : "var(--green)",
+                  border:     `1px dashed ${hasEvidence ? "var(--border-strong)" : "var(--green)"}`,
+                }}>
+                <Upload size={12} strokeWidth={1.8} />
+                {uploadMut.isPending ? "Uploading…" : hasEvidence ? "Attach another file" : "Attach bank statement / register / schedule"}
+                <input type="file" className="hidden" onChange={handleFile}
+                  accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
+                  disabled={uploadMut.isPending} />
+              </label>
+              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                PDF, Excel, CSV or image. Max 15 MB per file.
+              </p>
+              {uploadError && (
+                <p className="text-[11px]" style={{ color: "#b91c1c" }}>{uploadError}</p>
+              )}
+            </div>
           </div>
 
           <div className="px-5 py-3 flex items-center justify-between gap-2"
