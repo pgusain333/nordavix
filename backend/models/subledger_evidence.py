@@ -7,9 +7,10 @@ have multiple supporting files (bank stmt + reconciliation worksheet, etc.).
 """
 import uuid
 from datetime import date, datetime
+from typing import Any
 
 from sqlalchemy import Date, DateTime, Integer, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.db.base import TenantBase
@@ -30,3 +31,7 @@ class SubledgerEvidence(TenantBase):
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # Result of asking Anthropic to read the document. See migration 009 for
+    # the JSON shape. Null until the user clicks "Verify with AI" (or the
+    # caller never asked). Cached so re-verification is free.
+    verification: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

@@ -14,13 +14,20 @@ Reconciliations API.
   DELETE /reconciliations/{id}                  hard delete
   GET    /reconciliations/{id}/export           Excel support package
 """
+import asyncio
 import io
+import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
+
+from core.config import settings as _settings
+
+logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -396,6 +403,13 @@ async def set_account_subledger_override(
 
     total_raw = body.get("total")
     source = body.get("source")
+    # Optional reconciling items — list of {txn_id, txn_type, txn_number,
+    # txn_date, amount, memo}. Sum of selected items is expected to equal
+    # the GL−Subledger variance for the account to be "tied out".
+    reconciling_items = body.get("reconciling_items") or []
+    if not isinstance(reconciling_items, list):
+        raise HTTPException(status_code=400, detail="reconciling_items must be a list.")
+
     if total_raw is not None:
         try:
             total = Decimal(str(total_raw))
@@ -423,6 +437,7 @@ async def set_account_subledger_override(
             subledger_source=source,
             subledger_entered_by=user.id if total is not None else None,
             subledger_entered_at=now if total is not None else None,
+            reconciling_items=reconciling_items if total is not None else [],
         )
         db.add(row)
     else:
@@ -430,6 +445,9 @@ async def set_account_subledger_override(
         row.subledger_source = source if total is not None else None
         row.subledger_entered_by = user.id if total is not None else None
         row.subledger_entered_at = now if total is not None else None
+        # When the override is cleared we wipe the reconciling items too —
+        # they only make sense in the context of a manual subledger.
+        row.reconciling_items = reconciling_items if total is not None else []
 
     from core.audit.log import write_audit_event
     await write_audit_event(
@@ -457,6 +475,121 @@ async def set_account_subledger_override(
     }
 
 
+@router.get("/account/{qbo_account_id}/prior-override")
+async def get_prior_period_override(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Current period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Find the most recent prior period (< period_end) where this account had
+    a manual subledger value entered. Used to roll forward — the prior
+    closing becomes context for the new period: user sees the starting
+    point, the delta they're declaring, and can copy-as-starting-point with
+    one click.
+
+    Returns the prior row's value, source, period_end and evidence count.
+    `null` for `prior` when this is the first period with an override.
+    """
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    row = (await db.execute(
+        select(AccountReviewStatus)
+        .where(
+            AccountReviewStatus.qbo_account_id == qbo_account_id,
+            AccountReviewStatus.period_end < pe,
+            AccountReviewStatus.subledger_total.is_not(None),
+        )
+        .order_by(desc(AccountReviewStatus.period_end))
+        .limit(1)
+    )).scalar_one_or_none()
+
+    if row is None:
+        return {"prior": None}
+
+    ev_count = (await db.execute(
+        select(func.count(SubledgerEvidence.id)).where(
+            SubledgerEvidence.qbo_account_id == qbo_account_id,
+            SubledgerEvidence.period_end == row.period_end,
+        )
+    )).scalar_one()
+
+    return {
+        "prior": {
+            "period_end":       row.period_end.isoformat(),
+            "subledger_total":  str(row.subledger_total),
+            "subledger_source": row.subledger_source,
+            "status":           row.status,
+            "evidence_count":   int(ev_count or 0),
+        }
+    }
+
+
+@router.get("/account/{qbo_account_id}/period-entries")
+async def get_account_period_entries(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Return every transaction posted to this account WITHIN the closing
+    period (the month containing period_end). Used inside the manual
+    subledger modal so the user can select which entries explain the
+    GL-vs-subledger variance — the classic bank-rec "outstanding items"
+    pattern, persisted on the override row.
+
+    Falls through to an empty list (not 404) when QBO isn't connected so
+    the modal UI degrades gracefully.
+    """
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    # Month containing period_end. Most close cycles are monthly so this
+    # gives the user the activity they're closing against.
+    period_start = pe.replace(day=1)
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        return {"rows": [], "period_start": period_start.isoformat(),
+                "period_end": pe.isoformat(), "total": "0"}
+
+    from core.qbo_gl import pull_gl_transactions
+    gl_rows = await pull_gl_transactions(conn, db, qbo_account_id, period_start, pe)
+
+    rows = []
+    total = Decimal("0")
+    for r in gl_rows:
+        amount = r["amount"]
+        total += amount
+        rows.append({
+            "txn_id":     r["qbo_txn_id"] or "",
+            "txn_type":   r["txn_type"],
+            "txn_number": r["txn_number"] or "",
+            "txn_date":   r["txn_date"].isoformat() if r["txn_date"] else "",
+            "amount":     str(amount),
+            "memo":       r["memo"] or "",
+            "entity":     r["entity_name"] or "",
+        })
+    return {
+        "rows":         rows,
+        "period_start": period_start.isoformat(),
+        "period_end":   pe.isoformat(),
+        "total":        str(total.quantize(Decimal("0.01"))),
+    }
+
+
 # ── Evidence (attached source documents for manual overrides) ────────────────
 
 _ALLOWED_EVIDENCE_EXTS = {"pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg"}
@@ -479,6 +612,7 @@ def _serialize_evidence(e: SubledgerEvidence) -> dict:
         "mime_type":   e.mime_type,
         "uploaded_by": str(e.uploaded_by),
         "uploaded_at": e.uploaded_at.isoformat() if e.uploaded_at else None,
+        "verification": e.verification,
     }
 
 
@@ -603,6 +737,88 @@ async def download_account_evidence(
     return {"download_url": url, "file_name": row.file_name, "mime_type": row.mime_type}
 
 
+@router.post("/evidence/{evidence_id}/verify")
+async def verify_account_evidence(
+    evidence_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Ask Anthropic to read the attached document and pull out the actual
+    balance + statement date + doc type. Compare against the user-entered
+    subledger value. Cache the result on the evidence row so subsequent
+    requests don't re-spend tokens.
+
+    Returns the merged verification envelope:
+      { extracted_balance, statement_date, doc_type, doc_identifier,
+        match_status, difference, confidence, summary, model, verified_at }
+    """
+    ev = (await db.execute(
+        select(SubledgerEvidence).where(SubledgerEvidence.id == evidence_id)
+    )).scalar_one_or_none()
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Evidence not found.")
+
+    # Fetch the bytes from R2 via signed URL → download.
+    # Avoid pulling the full file through this process if cache exists.
+    review = (await db.execute(
+        select(AccountReviewStatus).where(
+            AccountReviewStatus.qbo_account_id == ev.qbo_account_id,
+            AccountReviewStatus.period_end == ev.period_end,
+        )
+    )).scalar_one_or_none()
+
+    entered = review.subledger_total if review else None
+    account_type_hint: str | None = None  # we'd need a QBO lookup; pass None for now
+
+    # Pull the bytes from R2. The boto3 S3 client is sync — wrap the get +
+    # the AI call in a thread so we don't block the event loop.
+    try:
+        obj = await asyncio.to_thread(
+            r2_storage._s3.get_object,  # type: ignore[attr-defined]  # _s3 is a private but stable client
+            Bucket=_settings.r2_bucket_name, Key=ev.r2_key,
+        )
+        raw = obj["Body"].read()
+    except Exception as e:
+        logger.exception("R2 fetch failed during verify")
+        raise HTTPException(status_code=502, detail=f"Could not load file from storage: {e}")
+
+    from modules.recons.ai_verify import verify_evidence_document, compute_match
+    try:
+        extracted = await asyncio.to_thread(
+            verify_evidence_document,
+            raw, ev.mime_type, ev.file_name, account_type_hint, ev.period_end.isoformat(),
+        )
+    except Exception as e:
+        logger.exception("AI verify failed")
+        raise HTTPException(status_code=502, detail=f"AI verification failed: {e}")
+
+    match_status, diff_str = compute_match(extracted.get("extracted_balance"), entered)
+    merged = {
+        **extracted,
+        "match_status": match_status,
+        "difference":   diff_str,
+        "verified_at":  datetime.now(timezone.utc).isoformat(),
+    }
+    ev.verification = merged
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.evidence_verified",
+        entity_type="subledger_evidence", entity_id=ev.id,
+        metadata={
+            "summary":      f"Verified evidence {ev.file_name} — {match_status}",
+            "match_status": match_status,
+            "confidence":   extracted.get("confidence"),
+            "model":        extracted.get("model"),
+        },
+    )
+    await db.commit()
+    return merged
+
+
 @router.delete("/evidence/{evidence_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account_evidence(
     evidence_id: uuid.UUID,
@@ -664,22 +880,34 @@ async def list_overrides(
     if not rows:
         return {"overrides": []}
 
-    # Bulk-load evidence counts in one query
-    keys = [(r.qbo_account_id, r.period_end) for r in rows]
-    if keys:
-        ev_rows = list((await db.execute(
-            select(
-                SubledgerEvidence.qbo_account_id,
-                SubledgerEvidence.period_end,
-                func.count(SubledgerEvidence.id).label("n"),
-            ).group_by(SubledgerEvidence.qbo_account_id, SubledgerEvidence.period_end)
-        )).all())
-        ev_count = {(e.qbo_account_id, e.period_end): int(e.n) for e in ev_rows}
+    # Bulk-load evidence counts + verification status in one query so the
+    # reviewer dashboard can show AI-verified vs unverified at a glance.
+    if rows:
+        ev_rows_full = list((await db.execute(
+            select(SubledgerEvidence)
+        )).scalars().all())
     else:
-        ev_count = {}
+        ev_rows_full = []
+    ev_index: dict[tuple[str, Any], list[SubledgerEvidence]] = {}
+    for e in ev_rows_full:
+        ev_index.setdefault((e.qbo_account_id, e.period_end), []).append(e)
 
     out = []
     for r in rows:
+        files = ev_index.get((r.qbo_account_id, r.period_end), [])
+        # Verified status: best-of all attached files.
+        match_states = [
+            (f.verification or {}).get("match_status") for f in files if f.verification
+        ]
+        if "match" in match_states:
+            verified_state = "match"
+        elif "mismatch" in match_states:
+            verified_state = "mismatch"
+        elif match_states:
+            verified_state = "unknown"
+        else:
+            verified_state = "unverified"
+
         out.append({
             "qbo_account_id":         r.qbo_account_id,
             "period_end":             r.period_end.isoformat(),
@@ -690,7 +918,8 @@ async def list_overrides(
             "status":                 r.status,
             "reviewed_by":            str(r.reviewed_by) if r.reviewed_by else None,
             "reviewed_at":            r.reviewed_at.isoformat() if r.reviewed_at else None,
-            "evidence_count":         ev_count.get((r.qbo_account_id, r.period_end), 0),
+            "evidence_count":         len(files),
+            "verification_state":     verified_state,
         })
     return {"overrides": out}
 

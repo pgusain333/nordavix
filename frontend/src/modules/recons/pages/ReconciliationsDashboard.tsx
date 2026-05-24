@@ -17,7 +17,7 @@
  * All data is pulled LIVE from QuickBooks on each period change — no
  * persistence overhead, always fresh.
  */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -48,6 +48,8 @@ import {
   type SubledgerDetail,
   type VarianceDetail,
   type AccountReviewStatus,
+  type ReconcilingItem,
+  type EvidenceVerification,
 } from "@/modules/recons/api"
 import { api as fluxApi } from "@/modules/flux/api"
 
@@ -173,8 +175,13 @@ export function ReconciliationsDashboard() {
 
   /** Manual subledger override — used by the editor modal below. */
   const subledgerMut = useMutation({
-    mutationFn: (v: { qboId: string; total: number | null; source: string | null }) =>
-      reconsApi.setSubledgerOverride(v.qboId, periodEnd, v.total, v.source),
+    mutationFn: (v: {
+      qboId: string
+      total: number | null
+      source: string | null
+      items?: ReconcilingItem[]
+    }) =>
+      reconsApi.setSubledgerOverride(v.qboId, periodEnd, v.total, v.source, v.items),
     onSuccess: () => {
       setEditingSubledger(null)
       qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
@@ -648,6 +655,21 @@ export function ReconciliationsDashboard() {
                             <td className="px-3 py-2.5">
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
+                                  onClick={() => setEditingSubledger(a)}
+                                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors relative"
+                                  style={{
+                                    color: a.evidence_count > 0 ? "var(--green)" : "var(--text-2)",
+                                    border: `1px solid ${a.evidence_count > 0 ? "var(--green)" : "var(--border-strong)"}`,
+                                    background: a.evidence_count > 0 ? "var(--green-subtle)" : "var(--surface)",
+                                  }}
+                                  title={a.evidence_count > 0
+                                    ? `${a.evidence_count} supporting file(s) attached — click to manage`
+                                    : "Attach supporting document (bank statement, register, schedule, etc.)"}
+                                >
+                                  <Paperclip size={11} strokeWidth={1.8} />
+                                  {a.evidence_count > 0 ? a.evidence_count : ""}
+                                </button>
+                                <button
                                   onClick={() => openSubledger(a)}
                                   className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
                                   style={{
@@ -732,11 +754,11 @@ export function ReconciliationsDashboard() {
             account={editingSubledger}
             periodEnd={periodEnd}
             saving={subledgerMut.isPending}
-            onSave={(total, source) =>
-              subledgerMut.mutate({ qboId: editingSubledger.qbo_id, total, source })
+            onSave={(total, source, items) =>
+              subledgerMut.mutate({ qboId: editingSubledger.qbo_id, total, source, items })
             }
             onClear={() =>
-              subledgerMut.mutate({ qboId: editingSubledger.qbo_id, total: null, source: null })
+              subledgerMut.mutate({ qboId: editingSubledger.qbo_id, total: null, source: null, items: [] })
             }
             onClose={() => setEditingSubledger(null)}
           />
@@ -776,6 +798,91 @@ function StatusChip({ status, onChange }:
   )
 }
 
+// ── AI verification badge ───────────────────────────────────────────────────
+// Renders Anthropic's extraction result with a clear match/mismatch verdict
+// against the user-entered subledger value. The match check is computed
+// server-side at verify time, but we also surface the *live* delta so if
+// the user changes the amount after verifying they see it immediately.
+
+function VerificationBadge({
+  verification, enteredAmount, valid, onReverify, reverifying,
+}: {
+  verification:  EvidenceVerification
+  enteredAmount: number
+  valid:         boolean
+  onReverify:    () => void
+  reverifying:   boolean
+}) {
+  const v = verification
+  const extracted = v.extracted_balance ? parseFloat(v.extracted_balance) : null
+  const liveDiff =
+    valid && extracted !== null && Number.isFinite(extracted)
+      ? enteredAmount - extracted
+      : null
+  const liveStatus: "match" | "mismatch" | "unknown" =
+    liveDiff === null ? "unknown" : Math.abs(liveDiff) < 1 ? "match" : "mismatch"
+
+  const palette = {
+    match:    { bg: "var(--green-subtle)", fg: "var(--green)", border: "var(--green)",        Icon: CheckCircle2 },
+    mismatch: { bg: "#fef2f2",             fg: "#b91c1c",      border: "#fecaca",             Icon: AlertCircle },
+    unknown:  { bg: "var(--surface)",      fg: "var(--text-muted)", border: "var(--border)",  Icon: AlertTriangle },
+  }[liveStatus]
+  const Icon = palette.Icon
+
+  return (
+    <div className="rounded-md p-2 text-[11px] space-y-1.5"
+      style={{ background: palette.bg, border: `1px solid ${palette.border}` }}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-1 font-semibold" style={{ color: palette.fg }}>
+          <Icon size={11} strokeWidth={2} />
+          {liveStatus === "match"
+            ? "AI-verified: matches entered value"
+            : liveStatus === "mismatch"
+              ? "AI found a different amount"
+              : "AI could not extract a balance"}
+        </span>
+        <button type="button" onClick={onReverify} disabled={reverifying}
+          className="text-[10px] underline-offset-2 hover:underline"
+          style={{ color: palette.fg }}>
+          {reverifying ? "Re-reading…" : "Re-verify"}
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+        <span style={{ color: "var(--text-muted)" }}>Found in document</span>
+        <span className="tabular-nums text-right font-medium text-theme">
+          {extracted !== null ? `$${extracted.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"}
+        </span>
+        <span style={{ color: "var(--text-muted)" }}>Statement date</span>
+        <span className="text-right text-theme">{v.statement_date || "—"}</span>
+        {v.doc_identifier && (
+          <>
+            <span style={{ color: "var(--text-muted)" }}>Identifier</span>
+            <span className="text-right text-theme truncate">{v.doc_identifier}</span>
+          </>
+        )}
+        <span style={{ color: "var(--text-muted)" }}>Doc type</span>
+        <span className="text-right text-theme">{v.doc_type.replace(/_/g, " ")}</span>
+        {liveDiff !== null && (
+          <>
+            <span style={{ color: "var(--text-muted)" }}>You entered − document</span>
+            <span className="tabular-nums text-right font-semibold" style={{ color: palette.fg }}>
+              {liveDiff >= 0 ? "+" : ""}${Math.abs(liveDiff).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            </span>
+          </>
+        )}
+      </div>
+      {v.summary && (
+        <p className="text-[10px] leading-snug pt-1 italic" style={{ color: "var(--text-muted)", borderTop: "1px dashed var(--border)" }}>
+          {v.summary}
+        </p>
+      )}
+      <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+        Confidence: {v.confidence} · Verified {new Date(v.verified_at).toLocaleString()}
+      </p>
+    </div>
+  )
+}
+
 // ── Manual subledger editor ─────────────────────────────────────────────────
 // Lets the user plug in a balance from an external source (bank statement,
 // fixed-asset register, prepaid schedule, etc.) when QuickBooks has no
@@ -789,15 +896,19 @@ function SubledgerEditor({
   account: OverviewAccount
   periodEnd: string
   saving: boolean
-  onSave: (total: number, source: string | null) => void
+  onSave: (total: number, source: string | null, items: ReconcilingItem[]) => void
   onClear: () => void
   onClose: () => void
 }) {
   // Seed from the current override (if any) or the GL balance as a sensible
-  // starting point — most external schedules begin within a few % of GL.
+  // starting point. Once the prior-period closing loads, we auto-roll it
+  // forward — the user shouldn't have to click "use prior balance" every
+  // single month. We only auto-fill when there's no existing override AND
+  // the user hasn't already edited the field.
   const [amount, setAmount] = useState<string>(
     account.subledger_is_manual ? account.subledger_balance : account.gl_balance
   )
+  const [userTouchedAmount, setUserTouchedAmount] = useState(false)
   const [source, setSource] = useState<string>(
     account.subledger_is_manual && account.subledger_source ? account.subledger_source : ""
   )
@@ -811,6 +922,55 @@ function SubledgerEditor({
     queryKey: ["recon-evidence", account.qbo_id, periodEnd],
     queryFn:  () => reconsApi.listAccountEvidence(account.qbo_id, periodEnd),
   })
+
+  // Prior period's closing subledger (if any) — roll-forward context.
+  const { data: prior } = useQuery({
+    queryKey: ["recon-prior-override", account.qbo_id, periodEnd],
+    queryFn:  () => reconsApi.getPriorOverride(account.qbo_id, periodEnd),
+  })
+
+  // Transactions posted to this account in the closing period — these are
+  // the candidates the user picks from to explain GL-vs-subledger variance.
+  const { data: periodEntries, isLoading: entriesLoading } = useQuery({
+    queryKey: ["recon-period-entries", account.qbo_id, periodEnd],
+    queryFn:  () => reconsApi.getPeriodEntries(account.qbo_id, periodEnd),
+  })
+
+  // Pre-select any items the user previously saved on this override so the
+  // selection round-trips cleanly. Map txn_id → ReconcilingItem.
+  const [selectedItemMap, setSelectedItemMap] = useState<Record<string, ReconcilingItem>>(() => {
+    const m: Record<string, ReconcilingItem> = {}
+    for (const it of account.reconciling_items ?? []) m[it.txn_id] = it
+    return m
+  })
+  const selectedItemsRef = useRef(selectedItemMap)
+  selectedItemsRef.current = selectedItemMap
+
+  function toggleItem(item: ReconcilingItem) {
+    setSelectedItemMap((prev) => {
+      const next = { ...prev }
+      if (next[item.txn_id]) delete next[item.txn_id]
+      else next[item.txn_id] = item
+      return next
+    })
+  }
+
+  const selectedItems = Object.values(selectedItemMap)
+  const selectedSum = selectedItems.reduce((n, it) => n + (parseFloat(it.amount) || 0), 0)
+
+  // Auto-roll-forward: once the prior-period closing loads, copy it into
+  // the amount field — but only if (a) there's no existing override on
+  // this period yet, and (b) the user hasn't typed anything themselves.
+  // The blue card explains what we did and shows the delta.
+  useEffect(() => {
+    if (
+      prior?.subledger_total
+      && !account.subledger_is_manual
+      && !userTouchedAmount
+    ) {
+      setAmount(prior.subledger_total)
+    }
+  }, [prior, account.subledger_is_manual, userTouchedAmount])
 
   const uploadMut = useMutation({
     mutationFn: (file: File) => reconsApi.uploadAccountEvidence(account.qbo_id, periodEnd, file),
@@ -833,6 +993,19 @@ function SubledgerEditor({
     },
   })
 
+  // AI verification — extracts the balance/date/doc-type from the uploaded
+  // file and compares to what the user typed. Each call costs an Anthropic
+  // request so it's strictly on-demand (button click), and the server caches
+  // the result on the evidence row.
+  const verifyMut = useMutation({
+    mutationFn: (id: string) => reconsApi.verifyEvidence(id),
+    onSuccess: () => refetchEvidence(),
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setUploadError(ex.response?.data?.detail ?? ex.message ?? "Verification failed")
+    },
+  })
+
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -848,7 +1021,7 @@ function SubledgerEditor({
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!valid) return
-    onSave(parsed, source.trim() || null)
+    onSave(parsed, source.trim() || null, selectedItemsRef.current ? Object.values(selectedItemsRef.current) : [])
   }
 
   const hasEvidence = (evidence?.length ?? 0) > 0
@@ -867,11 +1040,16 @@ function SubledgerEditor({
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 10, scale: 0.97 }}
         transition={{ duration: 0.18, ease: "easeOut" }}
-        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[61] w-[92vw] max-w-md rounded-2xl overflow-hidden"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}
+        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[61] w-[92vw] max-w-md rounded-2xl flex flex-col"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+          maxHeight: "90vh",  // never taller than viewport — body scrolls
+        }}
       >
-        <form onSubmit={submit}>
-          <div className="px-5 pt-4 pb-3 flex items-start gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        <form onSubmit={submit} className="flex flex-col min-h-0 flex-1">
+          <div className="px-5 pt-4 pb-3 flex items-start gap-3 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
             <div className="flex-1 min-w-0">
               <p className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 Manual subledger · {periodEnd}
@@ -890,12 +1068,54 @@ function SubledgerEditor({
             </button>
           </div>
 
-          <div className="px-5 py-4 space-y-3">
+          <div className="px-5 py-4 space-y-3 overflow-y-auto flex-1 min-h-0">
             <p className="text-xs leading-snug" style={{ color: "var(--text-2)" }}>
               QuickBooks doesn't keep a subledger for most account types (Bank, Fixed Assets, Prepaids, Loans, etc).
               Enter the balance from your external source — bank statement, fixed-asset register, amortization
               schedule — and Nordavix will recompute the variance against it.
             </p>
+
+            {/* Roll-forward card — prior period closing auto-flows in as the
+                starting balance. The user sees what was rolled forward, the
+                source, and the delta they're now declaring. No clicks needed. */}
+            {prior && (
+              <div className="rounded-lg p-3 space-y-2"
+                style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+                <div className="flex items-center gap-1.5">
+                  <ShieldCheck size={11} strokeWidth={1.8} style={{ color: "#1d4ed8" }} />
+                  <span className="text-[10px] font-bold uppercase tracking-wide"
+                    style={{ color: "#1d4ed8" }}>
+                    Rolled forward from prior period
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span style={{ color: "#1e3a8a" }}>
+                    Closing as of {prior.period_end}
+                  </span>
+                  <span className="font-bold tabular-nums" style={{ color: "#1e3a8a" }}>
+                    {fmtMoney(prior.subledger_total)}
+                  </span>
+                </div>
+                {prior.subledger_source && (
+                  <p className="text-[10px]" style={{ color: "#1e40af" }}>
+                    Source: {prior.subledger_source}
+                  </p>
+                )}
+                {valid && (
+                  <div className="flex items-center justify-between text-xs pt-1.5"
+                    style={{ borderTop: "1px dashed #bfdbfe" }}>
+                    <span style={{ color: "#1e3a8a" }}>Change vs prior</span>
+                    <span className="font-bold tabular-nums"
+                      style={{
+                        color: parsed - parseFloat(prior.subledger_total) >= 0 ? "var(--green)" : "#dc2626",
+                      }}>
+                      {(parsed - parseFloat(prior.subledger_total)) >= 0 ? "+" : ""}
+                      {fmtMoney(parsed - parseFloat(prior.subledger_total))}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
 
             <label className="block">
               <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
@@ -908,7 +1128,7 @@ function SubledgerEditor({
                   step="0.01"
                   autoFocus
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  onChange={(e) => { setAmount(e.target.value); setUserTouchedAmount(true) }}
                   placeholder="0.00"
                   className="w-full rounded-lg pl-7 pr-3 py-2 text-sm outline-none tabular-nums"
                   style={{
@@ -941,17 +1161,126 @@ function SubledgerEditor({
               </span>
             </label>
 
-            {valid && (
-              <div className="rounded-lg p-2.5 text-xs flex items-center justify-between"
-                style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-                <span style={{ color: "var(--text-muted)" }}>New variance (GL − Subledger)</span>
-                <span className="font-bold tabular-nums"
-                  style={{
-                    color: Math.abs(parseFloat(account.gl_balance) - parsed) < 0.5
-                      ? "var(--green)" : "#dc2626",
-                  }}>
-                  {fmtMoney(parseFloat(account.gl_balance) - parsed)}
-                </span>
+            {valid && (() => {
+              const variance = parseFloat(account.gl_balance) - parsed
+              // Reconciling items "close the gap": if their sum equals the
+              // variance, the account ties out even though GL ≠ subledger.
+              // Classic bank-rec outstanding-items logic.
+              const adjustedVariance = variance - selectedSum
+              const tiedOut = Math.abs(adjustedVariance) < 0.5
+              return (
+                <div className="rounded-lg p-2.5 text-xs space-y-1.5"
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                  <div className="flex items-center justify-between">
+                    <span style={{ color: "var(--text-muted)" }}>Variance (GL − Subledger)</span>
+                    <span className="font-bold tabular-nums"
+                      style={{ color: Math.abs(variance) < 0.5 ? "var(--green)" : "#dc2626" }}>
+                      {fmtMoney(variance)}
+                    </span>
+                  </div>
+                  {selectedItems.length > 0 && (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span style={{ color: "var(--text-muted)" }}>
+                          Reconciling items ({selectedItems.length})
+                        </span>
+                        <span className="font-medium tabular-nums" style={{ color: "var(--text-2)" }}>
+                          {fmtMoney(selectedSum)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1"
+                        style={{ borderTop: "1px dashed var(--border)" }}>
+                        <span className="font-semibold"
+                          style={{ color: tiedOut ? "var(--green)" : "#dc2626" }}>
+                          {tiedOut ? "Reconciled ✓" : "Unexplained gap"}
+                        </span>
+                        <span className="font-bold tabular-nums"
+                          style={{ color: tiedOut ? "var(--green)" : "#dc2626" }}>
+                          {fmtMoney(adjustedVariance)}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )
+            })()}
+
+            {/* Current-period entries — outstanding-items selection. Shown
+                whenever there's any meaningful variance to nullify so the
+                user can tick the GL entries that explain it (e.g. checks
+                the bank hasn't cleared yet). Persisted on the override. */}
+            {valid && Math.abs(parseFloat(account.gl_balance) - parsed) >= 0.5 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide"
+                    style={{ color: "var(--text-muted)" }}>
+                    Current-period entries
+                    {periodEntries?.rows.length ? ` · ${periodEntries.rows.length}` : ""}
+                  </span>
+                  <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                    Select what explains the gap
+                  </span>
+                </div>
+                {entriesLoading ? (
+                  <div className="py-3 flex items-center justify-center">
+                    <Spinner className="h-4 w-4" />
+                  </div>
+                ) : (periodEntries?.rows.length ?? 0) === 0 ? (
+                  <p className="text-[11px] py-2 text-center"
+                    style={{ color: "var(--text-muted)" }}>
+                    No transactions posted to this account this period.
+                  </p>
+                ) : (
+                  <div className="rounded-lg overflow-hidden"
+                    style={{ border: "1px solid var(--border)" }}>
+                    <div className="max-h-56 overflow-y-auto">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr style={{ background: "var(--surface-2)" }}>
+                            <th className="w-6 px-1.5 py-1.5"></th>
+                            <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
+                            <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
+                            <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
+                            <th className="text-right px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {periodEntries!.rows.map((r) => {
+                            const checked = !!selectedItemMap[r.txn_id]
+                            return (
+                              <tr key={r.txn_id}
+                                onClick={() => toggleItem(r)}
+                                className="cursor-pointer transition-colors"
+                                style={{
+                                  borderTop: "1px solid var(--border)",
+                                  background: checked ? "var(--green-subtle)" : "transparent",
+                                }}>
+                                <td className="px-1.5 py-1.5 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleItem(r)}
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                </td>
+                                <td className="px-1.5 py-1.5 text-theme">{r.txn_type}</td>
+                                <td className="px-1.5 py-1.5 font-mono" style={{ color: "var(--text-2)" }}>
+                                  {r.txn_number || "—"}
+                                </td>
+                                <td className="px-1.5 py-1.5" style={{ color: "var(--text-2)" }}>
+                                  {r.txn_date || "—"}
+                                </td>
+                                <td className="px-1.5 py-1.5 text-right tabular-nums font-medium text-theme">
+                                  {fmtMoney(r.amount)}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -970,34 +1299,59 @@ function SubledgerEditor({
                 )}
               </div>
 
-              {/* Attached files list */}
+              {/* Attached files list + per-file AI verification */}
               {hasEvidence && (
-                <ul className="space-y-1">
-                  {evidence!.map((f) => (
-                    <li key={f.id}
-                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs"
-                      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-                      <FileText size={12} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-                      <span className="flex-1 truncate text-theme">{f.file_name}</span>
-                      <span style={{ color: "var(--text-muted)" }}>
-                        {Math.round(f.file_size / 1024)} KB
-                      </span>
-                      <button type="button" onClick={() => handleDownload(f.id)}
-                        className="h-6 w-6 inline-flex items-center justify-center rounded"
-                        title="Download"
-                        style={{ color: "var(--text-muted)" }}>
-                        <Download size={11} strokeWidth={1.8} />
-                      </button>
-                      <button type="button"
-                        onClick={() => deleteMut.mutate(f.id)}
-                        disabled={deleteMut.isPending}
-                        className="h-6 w-6 inline-flex items-center justify-center rounded"
-                        title="Remove"
-                        style={{ color: "#b91c1c" }}>
-                        <X size={12} strokeWidth={1.8} />
-                      </button>
-                    </li>
-                  ))}
+                <ul className="space-y-1.5">
+                  {evidence!.map((f) => {
+                    const v = f.verification
+                    const verifying = verifyMut.isPending && verifyMut.variables === f.id
+                    return (
+                      <li key={f.id}
+                        className="rounded-md px-2 py-1.5 text-xs space-y-1.5"
+                        style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                        <div className="flex items-center gap-2">
+                          <FileText size={12} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                          <span className="flex-1 truncate text-theme">{f.file_name}</span>
+                          <span style={{ color: "var(--text-muted)" }}>
+                            {Math.round(f.file_size / 1024)} KB
+                          </span>
+                          <button type="button" onClick={() => handleDownload(f.id)}
+                            className="h-6 w-6 inline-flex items-center justify-center rounded"
+                            title="Download"
+                            style={{ color: "var(--text-muted)" }}>
+                            <Download size={11} strokeWidth={1.8} />
+                          </button>
+                          <button type="button"
+                            onClick={() => deleteMut.mutate(f.id)}
+                            disabled={deleteMut.isPending}
+                            className="h-6 w-6 inline-flex items-center justify-center rounded"
+                            title="Remove"
+                            style={{ color: "#b91c1c" }}>
+                            <X size={12} strokeWidth={1.8} />
+                          </button>
+                        </div>
+
+                        {/* Verification result — or the trigger button if not yet verified */}
+                        {v ? (
+                          <VerificationBadge verification={v} enteredAmount={parsed} valid={valid}
+                            onReverify={() => verifyMut.mutate(f.id)} reverifying={verifying} />
+                        ) : (
+                          <button type="button"
+                            onClick={() => verifyMut.mutate(f.id)}
+                            disabled={verifying}
+                            className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors"
+                            style={{
+                              background: "var(--surface)",
+                              border: "1px dashed var(--green)",
+                              color: "var(--green)",
+                            }}>
+                            <Sparkles size={11} strokeWidth={1.8} />
+                            {verifying ? "Reading document…" : "Verify with AI"}
+                          </button>
+                        )}
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
 
@@ -1023,7 +1377,7 @@ function SubledgerEditor({
             </div>
           </div>
 
-          <div className="px-5 py-3 flex items-center justify-between gap-2"
+          <div className="px-5 py-3 flex items-center justify-between gap-2 shrink-0 rounded-b-2xl"
             style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
             {account.subledger_is_manual ? (
               <button

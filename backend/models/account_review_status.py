@@ -13,8 +13,10 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Numeric, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from typing import Any
+
+from sqlalchemy import Date, DateTime, Numeric, String, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.db.base import TenantBase
@@ -39,6 +41,15 @@ class AccountReviewStatus(TenantBase):
     subledger_source: Mapped[str | None] = mapped_column(String(255))
     subledger_entered_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     subledger_entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Selected current-period transactions that explain the GL-vs-subledger
+    # variance. Classic bank-rec "outstanding items" pattern: GL has a check
+    # the bank hasn't cleared yet → user selects that check → its amount sums
+    # toward closing the gap. Stored as a JSON list, not a join table, because
+    # the items are snapshots (we never need to query "all overrides that
+    # reconciled against txn X").
+    reconciling_items: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb"), default=list,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

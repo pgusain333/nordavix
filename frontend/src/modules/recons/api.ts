@@ -116,6 +116,16 @@ export interface ReconciliationDashboard {
 
 export type AccountReviewStatus = "pending" | "reviewed" | "approved" | "flagged"
 
+export interface ReconcilingItem {
+  txn_id:     string
+  txn_type:   string
+  txn_number: string
+  txn_date:   string
+  amount:     string
+  memo:       string
+  entity?:    string
+}
+
 export interface OverviewAccount {
   qbo_id:                 string
   account_number:         string
@@ -129,6 +139,7 @@ export interface OverviewAccount {
   subledger_entered_by:   string | null
   subledger_entered_at:   string | null
   evidence_count:         number
+  reconciling_items:      ReconcilingItem[]
   has_subledger_detail:   boolean
   variance:               string
   review_status:          AccountReviewStatus
@@ -137,14 +148,40 @@ export interface OverviewAccount {
   review_notes:           string | null
 }
 
-export interface EvidenceFile {
-  id:          string
-  file_name:   string
-  file_size:   number
-  mime_type:   string
-  uploaded_by: string
-  uploaded_at: string
+export interface PeriodEntries {
+  rows:         ReconcilingItem[]
+  period_start: string
+  period_end:   string
+  total:        string
 }
+
+export type VerificationConfidence = "high" | "medium" | "low"
+export type VerificationMatchStatus = "match" | "mismatch" | "unknown"
+
+export interface EvidenceVerification {
+  extracted_balance: string | null
+  statement_date:    string | null
+  doc_type:          string
+  doc_identifier:    string | null
+  summary:           string
+  confidence:        VerificationConfidence
+  match_status:      VerificationMatchStatus
+  difference:        string | null
+  model:             string
+  verified_at:       string
+}
+
+export interface EvidenceFile {
+  id:           string
+  file_name:    string
+  file_size:    number
+  mime_type:    string
+  uploaded_by:  string
+  uploaded_at:  string
+  verification: EvidenceVerification | null
+}
+
+export type OverrideVerificationState = "match" | "mismatch" | "unknown" | "unverified"
 
 export interface OverrideEntry {
   qbo_account_id:        string
@@ -157,6 +194,7 @@ export interface OverrideEntry {
   reviewed_by:           string | null
   reviewed_at:           string | null
   evidence_count:        number
+  verification_state:    OverrideVerificationState
 }
 
 export interface OverviewGroup {
@@ -289,6 +327,7 @@ async function setSubledgerOverride(
   periodEnd: string,
   total: number | null,
   source: string | null,
+  reconcilingItems?: ReconcilingItem[],
 ): Promise<{
   qbo_account_id: string
   period_end:     string
@@ -302,7 +341,16 @@ async function setSubledgerOverride(
       period_end: periodEnd,
       total,
       source,
+      reconciling_items: reconcilingItems ?? [],
     },
+  )
+  return data
+}
+
+async function getPeriodEntries(qboAccountId: string, periodEnd: string): Promise<PeriodEntries> {
+  const { data } = await apiClient.get<PeriodEntries>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/period-entries`,
+    { params: { period_end: periodEnd } },
   )
   return data
 }
@@ -342,6 +390,29 @@ async function getEvidenceDownloadUrl(evidenceId: string): Promise<{ download_ur
     `/api/reconciliations/evidence/${encodeURIComponent(evidenceId)}/download`,
   )
   return data
+}
+
+async function verifyEvidence(evidenceId: string): Promise<EvidenceVerification> {
+  const { data } = await apiClient.post<EvidenceVerification>(
+    `/api/reconciliations/evidence/${encodeURIComponent(evidenceId)}/verify`,
+  )
+  return data
+}
+
+export interface PriorPeriodOverride {
+  period_end:       string
+  subledger_total:  string
+  subledger_source: string | null
+  status:           AccountReviewStatus
+  evidence_count:   number
+}
+
+async function getPriorOverride(qboAccountId: string, periodEnd: string): Promise<PriorPeriodOverride | null> {
+  const { data } = await apiClient.get<{ prior: PriorPeriodOverride | null }>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/prior-override`,
+    { params: { period_end: periodEnd } },
+  )
+  return data.prior
 }
 
 async function listOverrides(periodEnd?: string): Promise<OverrideEntry[]> {
@@ -452,6 +523,9 @@ export const reconsApi = {
   uploadAccountEvidence,
   deleteAccountEvidence,
   getEvidenceDownloadUrl,
+  verifyEvidence,
+  getPriorOverride,
+  getPeriodEntries,
   listOverrides,
   getReconciliation,
   createReconciliation,

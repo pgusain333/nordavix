@@ -13,7 +13,7 @@ import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import {
-  AlertTriangle, ArrowLeft, CheckCircle2, FileText, Paperclip, Search, User,
+  AlertTriangle, ArrowLeft, CheckCircle2, FileText, Paperclip, Search, Sparkles, User, XCircle,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import {
@@ -174,6 +174,7 @@ export function OverridesDashboard() {
                           { label: "Subledger total", w: "130px", right: true },
                           { label: "Source", w: "auto" },
                           { label: "Evidence", w: "90px" },
+                          { label: "AI verify", w: "130px" },
                           { label: "Entered", w: "120px" },
                           { label: "Status", w: "110px" },
                         ].map((h, i) => (
@@ -216,6 +217,28 @@ export function OverridesDashboard() {
                                 <span className="inline-flex items-center gap-1" style={{ color: "#b91c1c" }}>
                                   <AlertTriangle size={11} strokeWidth={1.8} />
                                   Missing
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5 text-xs">
+                              {o.verification_state === "match" && (
+                                <span className="inline-flex items-center gap-1" style={{ color: "var(--green)" }}>
+                                  <CheckCircle2 size={11} strokeWidth={2} /> AI-verified
+                                </span>
+                              )}
+                              {o.verification_state === "mismatch" && (
+                                <span className="inline-flex items-center gap-1" style={{ color: "#b91c1c" }}>
+                                  <XCircle size={11} strokeWidth={2} /> AI mismatch
+                                </span>
+                              )}
+                              {o.verification_state === "unknown" && (
+                                <span className="inline-flex items-center gap-1" style={{ color: "#92400e" }}>
+                                  <AlertTriangle size={11} strokeWidth={1.8} /> Low confidence
+                                </span>
+                              )}
+                              {o.verification_state === "unverified" && (
+                                <span className="inline-flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
+                                  <Sparkles size={11} strokeWidth={1.8} /> Not run
                                 </span>
                               )}
                             </td>

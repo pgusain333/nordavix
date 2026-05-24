@@ -190,6 +190,7 @@ async def fetch_overview(
             "subledger_entered_at": review.subledger_entered_at.isoformat()
                                     if (review and review.subledger_entered_at) else None,
             "evidence_count":      evidence_count_by_acct.get(qbo_id, 0),
+            "reconciling_items":   review.reconciling_items if review else [],
             "has_subledger_detail":has_detail,
             "variance":            str(variance),
             "review_status":       review.status if review else "pending",
