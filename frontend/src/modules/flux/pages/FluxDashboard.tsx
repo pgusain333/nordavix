@@ -84,12 +84,17 @@ export function FluxDashboard() {
   /** Transient banner shown after Find-reasons runs ("Queued X analyses…") */
   const [runMsg, setRunMsg] = useState<{ kind: "ok" | "info" | "err"; text: string } | null>(null)
 
-  // List of all TBs
+  // List of all TBs — only auto-refresh while one is mid-processing.
+  // Idle list re-fetches on mount / explicit invalidation only.
   const { data: tbs = [], isLoading: tbsLoading } = useQuery({
     queryKey: ["trial-balances"],
     queryFn:  api.listTrialBalances,
-    staleTime: 20_000,
-    refetchInterval: 10_000,
+    staleTime: 30_000,
+    refetchInterval: (q) => {
+      const list = q.state.data
+      if (!list) return false
+      return list.some(t => t.status === "processing" || t.status === "generating") ? 5_000 : false
+    },
   })
 
   // Currently selected TB

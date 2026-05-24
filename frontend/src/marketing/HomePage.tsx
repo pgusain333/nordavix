@@ -6,7 +6,6 @@ import {
   BarChart3, Clock, Lock, ChevronRight, Star, TrendingUp,
   Brain, Download, Upload, Eye, Sparkles,
 } from "lucide-react"
-import { ThemeToggle } from "@/core/theme/ThemeToggle"
 
 // ── Scroll-reveal hook ────────────────────────────────────────────────────────
 function useInView(threshold = 0.15) {
@@ -761,11 +760,7 @@ function Footer() {
           </div>
         </div>
         <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-slate-600">© 2025 Nordavix. All rights reserved.</p>
-          {/* Force dark CSS vars so the toggle renders correctly on the always-dark footer */}
-          <div className="dark">
-            <ThemeToggle />
-          </div>
+          <p className="text-xs text-slate-600">© 2026 Nordavix. All rights reserved.</p>
           <p className="text-xs text-slate-700">Built for accountants, by accountants.</p>
         </div>
       </div>

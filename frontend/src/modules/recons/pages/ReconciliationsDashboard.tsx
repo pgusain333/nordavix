@@ -77,7 +77,15 @@ export function ReconciliationsDashboard() {
   const { data: dash, isLoading } = useQuery({
     queryKey: ["recons-dashboard"],
     queryFn:  reconsApi.getDashboard,
-    refetchInterval: 10_000,
+    // Only poll when something is actively syncing — otherwise the dashboard
+    // is fully cache-driven and refreshes on mount / mutation invalidations.
+    refetchInterval: (q) => {
+      const d = q.state.data
+      if (!d) return false
+      const live = d.recent.some(r => r.status === "syncing" || r.status === "computing")
+      return live ? 5_000 : false
+    },
+    staleTime: 30_000,
   })
   const { data: qbo } = useQuery({
     queryKey: ["qbo-connection"],

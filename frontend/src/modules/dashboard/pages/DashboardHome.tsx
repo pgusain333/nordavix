@@ -144,16 +144,25 @@ export function DashboardHome() {
         <div className="pointer-events-none absolute -top-16 -right-16 h-48 w-48 rounded-full opacity-[0.06]"
           style={{ background: "radial-gradient(circle, var(--green) 0%, transparent 70%)" }} />
 
-        <div className="flex flex-col gap-2">
-          <div className="flex items-start justify-between gap-2">
-            <h1 className="text-lg sm:text-2xl font-bold tracking-tight text-theme leading-tight" style={{ wordBreak: "break-word" }}>
-              {getGreeting(displayName)}
-            </h1>
+        {/*
+          Mobile layout: greeting on its own row (no badge crowding it),
+          badge floats to the right of the date on a second row.
+          Desktop layout: greeting + badge side-by-side as before.
+        */}
+        <div className="flex flex-col gap-1.5">
+          <h1
+            className="text-xl sm:text-2xl font-bold tracking-tight text-theme leading-tight"
+            style={{ wordBreak: "break-word" }}
+          >
+            {getGreeting(displayName)}
+          </h1>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-xs sm:text-sm" style={{ color: "var(--text-muted)" }}>{formatDate()}</p>
             {total > 0 && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.3, duration: 0.4 }}
+                transition={{ delay: 0.25, duration: 0.35 }}
                 className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold shrink-0"
                 style={{ background: "var(--green-subtle)", color: "var(--green)" }}
               >
@@ -163,7 +172,6 @@ export function DashboardHome() {
               </motion.div>
             )}
           </div>
-          <p className="text-xs sm:text-sm" style={{ color: "var(--text-muted)" }}>{formatDate()}</p>
         </div>
       </motion.div>
 

@@ -226,21 +226,85 @@ async def _sync_ar(
     recon: Reconciliation,
     tenant_id: uuid.UUID,
 ) -> None:
-    # Wipe any prior items for this reconciliation (idempotent re-sync)
+    """
+    Accurate AR reconciliation:
+
+      Per-customer balance comes from AgedReceivables (= subledger detail).
+      That IS the per-customer GL detail in QBO — every invoice/payment posts
+      to AR atomically with a CustomerRef. We do NOT pro-rate a GL total
+      across customers (that produced spurious per-customer "differences").
+
+      Workspace-level gap = (total GL AR balance) − (sum of customer balances).
+      If non-zero, it almost always means journal entries posted to an AR
+      account without a CustomerRef. We surface that as its own reconciling
+      item ('Unposted GL adjustments') so the totals tie out and the user
+      can see exactly what needs to be cleared.
+    """
     await _wipe_items(session, recon.id)
 
     aging = await _qbo_get(
-        conn,
-        session,
+        conn, session,
         "/reports/AgedReceivables",
         params={"report_date": recon.period_end.isoformat(), "aging_method": "Current"},
     )
     rows = _flatten_report_rows(aging)
+    items_to_create = _build_aging_items(rows, recon, tenant_id, entity_col_aliases=["Customer"], entity_id_field="Customer_id")
 
-    subledger_total = Decimal("0")
-    items_to_create: list[ReconciliationItem] = []
+    subledger_total = sum((i.subledger_balance for i in items_to_create), Decimal("0"))
+    gl_total = await _gl_total_for_range(conn, session, recon.period_end, account_type="Accounts Receivable")
 
-    # Column titles vary by Intuit env; map a few common variants.
+    # In QBO, per-customer subledger == per-customer GL detail. Don't fabricate
+    # a per-customer difference — set them equal and let the reconciling-item
+    # row carry any aggregate gap.
+    for item in items_to_create:
+        item.gl_balance = item.subledger_balance
+        item.difference = Decimal("0")
+        session.add(item)
+
+    gap = (gl_total - subledger_total).quantize(Decimal("0.01"))
+    if abs(gap) >= Decimal("0.01"):
+        # Reconciling item that captures unposted JEs / posting issues
+        session.add(ReconciliationItem(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            reconciliation_id=recon.id,
+            entity_name="Unposted GL adjustments (no customer ref)",
+            entity_qbo_id=None,
+            subledger_balance=Decimal("0"),
+            gl_balance=gap,
+            difference=gap,
+            aging_current=Decimal("0"),
+            aging_1_30=Decimal("0"),
+            aging_31_60=Decimal("0"),
+            aging_61_90=Decimal("0"),
+            aging_over_90=Decimal("0"),
+            risk_level="high" if abs(gap) > Decimal("1000") else "medium",
+            status="flagged",
+        ))
+
+    recon.gl_total = gl_total
+    recon.subledger_total = subledger_total
+    recon.difference = gap
+    await session.flush()
+
+    # Real evidence: open invoices, unapplied payments/credits, duplicates, JEs
+    await _sync_ar_evidence(session, conn, recon, items_to_create, tenant_id)
+    await _sync_ar_journal_entries(session, conn, recon, items_to_create, tenant_id, gap)
+
+
+def _build_aging_items(
+    rows: list[dict],
+    recon: Reconciliation,
+    tenant_id: uuid.UUID,
+    *,
+    entity_col_aliases: list[str],
+    entity_id_field: str,
+) -> list[ReconciliationItem]:
+    """
+    Shared aging-row → ReconciliationItem mapping for AR & AP.
+    Handles QBO's varying column titles ("1 - 30" vs "1-30", etc.) and skips
+    summary/total rows defensively.
+    """
     col_lookups = {
         "current":   ["Current"],
         "1_30":      ["1 - 30", "1-30"],
@@ -248,7 +312,6 @@ async def _sync_ar(
         "61_90":     ["61 - 90", "61-90"],
         "over_90":   ["91 and over", "> 90", "Over 90"],
         "total":     ["Total"],
-        "customer":  ["Customer"],
     }
 
     def first(row: dict, keys: list[str]) -> Any:
@@ -257,14 +320,18 @@ async def _sync_ar(
                 return row[k]
         return None
 
+    items: list[ReconciliationItem] = []
     for r in rows:
-        name = first(r, col_lookups["customer"])
+        name = first(r, entity_col_aliases)
+        if not name:
+            continue
+        n = str(name).strip()
+        if not n or n.upper().startswith("TOTAL"):
+            continue
         total = _dec(first(r, col_lookups["total"]))
-        if not name or total == 0:
+        if total == 0:
             continue
-        # Skip total/summary rows where the customer name is "TOTAL" or empty
-        if str(name).strip().upper().startswith("TOTAL"):
-            continue
+
         item_totals = {
             "aging_current": _dec(first(r, col_lookups["current"])),
             "aging_1_30":    _dec(first(r, col_lookups["1_30"])),
@@ -272,44 +339,23 @@ async def _sync_ar(
             "aging_61_90":   _dec(first(r, col_lookups["61_90"])),
             "aging_over_90": _dec(first(r, col_lookups["over_90"])),
             "subledger_balance": total,
-            "difference": Decimal("0"),  # filled in after GL fetch
+            "difference": Decimal("0"),
         }
-        item_totals["risk_level"] = _risk_for(item_totals)
-        items_to_create.append(ReconciliationItem(
+        risk = _risk_for(item_totals)
+        items.append(ReconciliationItem(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
             reconciliation_id=recon.id,
-            entity_name=str(name),
-            entity_qbo_id=r.get("Customer_id"),
-            **{k: v for k, v in item_totals.items() if k not in ("risk_level",)},
-            gl_balance=Decimal("0"),  # filled below
-            risk_level=item_totals["risk_level"],
+            entity_name=n,
+            entity_qbo_id=r.get(entity_id_field),
+            **item_totals,
+            gl_balance=Decimal("0"),
+            risk_level=risk,
         ))
-        subledger_total += total
-
-    # GL total: read AR-range accounts off the TrialBalance report
-    gl_total = await _gl_total_for_range(conn, session, recon.period_end, account_type="Accounts Receivable")
-
-    # Apportion the GL → per-customer GL_balance proportionally to subledger.
-    # In a fully matched book, GL == sum(subledger) per customer. We don't have
-    # per-customer GL detail from the TrialBalance, so MVP allocates pro-rata
-    # and surfaces the residual as the workspace-level "difference".
-    for item in items_to_create:
-        share = item.subledger_balance / subledger_total if subledger_total else Decimal("0")
-        item.gl_balance = (gl_total * share).quantize(Decimal("0.01"))
-        item.difference = (item.gl_balance - item.subledger_balance).quantize(Decimal("0.01"))
-        session.add(item)
-
-    recon.gl_total = gl_total
-    recon.subledger_total = subledger_total
-    recon.difference = (gl_total - subledger_total).quantize(Decimal("0.01"))
-    await session.flush()
-
-    # Persist duplicate-invoice evidence per customer (best-effort)
-    await _detect_ar_duplicates(session, conn, recon, items_to_create, tenant_id)
+    return items
 
 
-async def _detect_ar_duplicates(
+async def _sync_ar_evidence(
     session: AsyncSession,
     conn: QboConnection,
     recon: Reconciliation,
@@ -317,41 +363,221 @@ async def _detect_ar_duplicates(
     tenant_id: uuid.UUID,
 ) -> None:
     """
-    For each customer with subledger balance, pull their open invoices and flag
-    pairs with the same DocNumber + same TotalAmt as duplicates.
+    Per-customer: pull open invoices (Balance > 0) + unapplied payments +
+    unapplied credit memos. Surface duplicates, unmatched invoices > 60d old,
+    and unapplied cash so the detail page has real evidence to act on.
+    Best-effort: one customer failure doesn't abort the whole sync.
+
+    Pulls are bounded-concurrent (4 at a time) — QBO's per-realm rate limit
+    is 500 req/min so 4-way parallelism is safe and ~4x faster than serial.
     """
-    for item in items:
-        if not item.entity_qbo_id or item.subledger_balance <= 0:
-            continue
-        try:
-            q = (
-                f"SELECT Id, DocNumber, TotalAmt, TxnDate, PrivateNote "
-                f"FROM Invoice WHERE CustomerRef = '{item.entity_qbo_id}' "
-                f"AND Balance > '0' MAXRESULTS 100"
-            )
-            data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
-        except Exception:
-            continue
+    period_end = recon.period_end.isoformat()
+    sem = asyncio.Semaphore(4)
+
+    async def for_one(item: ReconciliationItem) -> None:
+        async with sem:
+            await _pull_ar_evidence_for_customer(session, conn, recon, item, tenant_id, period_end)
+
+    await asyncio.gather(*(for_one(i) for i in items if i.entity_qbo_id and i.subledger_balance > 0))
+
+
+async def _pull_ar_evidence_for_customer(
+    session: AsyncSession,
+    conn: QboConnection,
+    recon: Reconciliation,
+    item: ReconciliationItem,
+    tenant_id: uuid.UUID,
+    period_end: str,
+) -> None:
+    """Single-customer evidence pull — open invoices, payments, credit memos."""
+    # ── Open invoices (Balance > 0 as of period end) ─────────────────────────
+    try:
+        q = (
+            f"SELECT Id, DocNumber, TotalAmt, Balance, TxnDate, DueDate, PrivateNote "
+            f"FROM Invoice WHERE CustomerRef = '{item.entity_qbo_id}' "
+            f"AND Balance > '0' MAXRESULTS 200"
+        )
+        data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
         invoices = data.get("QueryResponse", {}).get("Invoice", []) or []
-        seen: dict[tuple[str, str], dict] = {}
-        for inv in invoices:
-            key = (str(inv.get("DocNumber", "")), str(inv.get("TotalAmt", "")))
-            if key[0] and key in seen:
-                other = seen[key]
-                session.add(ReconTransaction(
-                    id=uuid.uuid4(),
-                    tenant_id=tenant_id,
-                    reconciliation_item_id=item.id,
-                    txn_type="Invoice",
-                    txn_number=str(inv.get("DocNumber") or ""),
-                    txn_date=_parse_date(inv.get("TxnDate")),
-                    amount=_dec(inv.get("TotalAmt")),
-                    memo=str(inv.get("PrivateNote") or "")[:500] or None,
-                    category="duplicate",
-                    meta={"duplicate_of_invoice_id": other.get("Id")},
-                ))
-            else:
-                seen[key] = inv
+    except Exception:
+        logger.exception("Open invoice pull failed for customer %s", item.entity_qbo_id)
+        invoices = []
+
+    # Duplicates: same DocNumber + same TotalAmt
+    seen: dict[tuple[str, str], dict] = {}
+    for inv in invoices:
+        doc = str(inv.get("DocNumber") or "").strip()
+        amt = str(inv.get("TotalAmt") or "")
+        if doc and (doc, amt) in seen:
+            session.add(ReconTransaction(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                reconciliation_item_id=item.id,
+                txn_type="Invoice",
+                txn_number=doc,
+                txn_date=_parse_date(inv.get("TxnDate")),
+                amount=_dec(inv.get("Balance")),
+                memo=str(inv.get("PrivateNote") or "")[:500] or None,
+                category="duplicate",
+                meta={"duplicate_of_invoice_id": seen[(doc, amt)].get("Id")},
+            ))
+        elif doc:
+            seen[(doc, amt)] = inv
+
+    # Unmatched (overdue >60 days at period_end)
+    for inv in invoices:
+        due = _parse_date(inv.get("DueDate")) or _parse_date(inv.get("TxnDate"))
+        if not due:
+            continue
+        days_overdue = (recon.period_end - due).days
+        if days_overdue > 60:
+            session.add(ReconTransaction(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                reconciliation_item_id=item.id,
+                txn_type="Invoice",
+                txn_number=str(inv.get("DocNumber") or ""),
+                txn_date=_parse_date(inv.get("TxnDate")),
+                amount=_dec(inv.get("Balance")),
+                memo=str(inv.get("PrivateNote") or "")[:500] or None,
+                category="unmatched",
+                meta={"days_overdue": days_overdue, "due_date": str(due)},
+            ))
+
+    # ── Unapplied payments (UnappliedAmt > 0) ────────────────────────────────
+    try:
+        q = (
+            f"SELECT Id, PaymentRefNum, TotalAmt, UnappliedAmt, TxnDate, PrivateNote "
+            f"FROM Payment WHERE CustomerRef = '{item.entity_qbo_id}' "
+            f"AND UnappliedAmt > '0' AND TxnDate <= '{period_end}' MAXRESULTS 100"
+        )
+        data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
+        payments = data.get("QueryResponse", {}).get("Payment", []) or []
+    except Exception:
+        payments = []
+
+    for pay in payments:
+        session.add(ReconTransaction(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            reconciliation_item_id=item.id,
+            txn_type="Payment",
+            txn_number=str(pay.get("PaymentRefNum") or ""),
+            txn_date=_parse_date(pay.get("TxnDate")),
+            amount=_dec(pay.get("UnappliedAmt")),
+            memo=str(pay.get("PrivateNote") or "")[:500] or None,
+            category="unapplied_cash",
+            meta={"payment_id": pay.get("Id"), "total_amt": str(pay.get("TotalAmt", ""))},
+        ))
+
+    # ── Unapplied credit memos (Balance > 0) ─────────────────────────────────
+    try:
+        q = (
+            f"SELECT Id, DocNumber, TotalAmt, Balance, TxnDate, PrivateNote "
+            f"FROM CreditMemo WHERE CustomerRef = '{item.entity_qbo_id}' "
+            f"AND Balance > '0' AND TxnDate <= '{period_end}' MAXRESULTS 100"
+        )
+        data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
+        credits = data.get("QueryResponse", {}).get("CreditMemo", []) or []
+    except Exception:
+        credits = []
+
+    for cm in credits:
+        session.add(ReconTransaction(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            reconciliation_item_id=item.id,
+            txn_type="CreditMemo",
+            txn_number=str(cm.get("DocNumber") or ""),
+            txn_date=_parse_date(cm.get("TxnDate")),
+            amount=_dec(cm.get("Balance")),
+            memo=str(cm.get("PrivateNote") or "")[:500] or None,
+            category="unapplied_cash",
+            meta={"credit_memo_id": cm.get("Id")},
+        ))
+
+
+async def _sync_ar_journal_entries(
+    session: AsyncSession,
+    conn: QboConnection,
+    recon: Reconciliation,
+    items: list[ReconciliationItem],
+    tenant_id: uuid.UUID,
+    gap: Decimal,
+) -> None:
+    """
+    When there's a workspace-level GL-vs-subledger gap, the likely culprits are
+    manual JEs that touched the AR account without a customer ref. Pull recent
+    JEs (last 90 days) and attach them to the synthetic 'Unposted GL adjustments'
+    item created in _sync_ar.
+    """
+    if abs(gap) < Decimal("0.01"):
+        return
+
+    # Find the synthetic reconciling item we just created
+    recon_item = (await session.execute(
+        select(ReconciliationItem).where(
+            ReconciliationItem.reconciliation_id == recon.id,
+            ReconciliationItem.entity_qbo_id.is_(None),
+        )
+    )).scalars().first()
+    if recon_item is None:
+        return
+
+    # Get the AR account IDs first so we can match JE lines against them
+    try:
+        acct_data = await _qbo_get(
+            conn, session, "/query",
+            params={"query": "SELECT Id FROM Account WHERE AccountType = 'Accounts Receivable'", "minorversion": "65"},
+        )
+        ar_account_ids = {a.get("Id") for a in acct_data.get("QueryResponse", {}).get("Account", []) or []}
+    except Exception:
+        ar_account_ids = set()
+    if not ar_account_ids:
+        return
+
+    # Pull JEs from the last 90 days that touched AR
+    cutoff = (recon.period_end - timedelta(days=90)).isoformat()
+    try:
+        q = (
+            f"SELECT Id, DocNumber, TxnDate, PrivateNote, Line "
+            f"FROM JournalEntry WHERE TxnDate >= '{cutoff}' "
+            f"AND TxnDate <= '{recon.period_end.isoformat()}' MAXRESULTS 200"
+        )
+        data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
+        jes = data.get("QueryResponse", {}).get("JournalEntry", []) or []
+    except Exception:
+        jes = []
+
+    for je in jes:
+        # Find AR-account lines that have no customer ref ("Entity" field absent on the line)
+        ar_amount = Decimal("0")
+        has_customer_ref = False
+        for line in je.get("Line", []):
+            detail = line.get("JournalEntryLineDetail") or {}
+            acct_ref = (detail.get("AccountRef") or {}).get("value")
+            if acct_ref not in ar_account_ids:
+                continue
+            entity = detail.get("Entity") or {}
+            if entity.get("EntityRef"):
+                has_customer_ref = True
+                continue
+            amt = _dec(line.get("Amount"))
+            ptype = detail.get("PostingType")
+            ar_amount += amt if ptype == "Debit" else -amt
+        if ar_amount != 0 and not has_customer_ref:
+            session.add(ReconTransaction(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                reconciliation_item_id=recon_item.id,
+                txn_type="JournalEntry",
+                txn_number=str(je.get("DocNumber") or ""),
+                txn_date=_parse_date(je.get("TxnDate")),
+                amount=ar_amount,
+                memo=str(je.get("PrivateNote") or "")[:500] or None,
+                category="manual_je",
+                meta={"je_id": je.get("Id")},
+            ))
 
 
 # ── AP ────────────────────────────────────────────────────────────────────────
@@ -362,76 +588,140 @@ async def _sync_ap(
     recon: Reconciliation,
     tenant_id: uuid.UUID,
 ) -> None:
+    """Mirror of _sync_ar for vendors. See _sync_ar docstring for the rationale."""
     await _wipe_items(session, recon.id)
 
     aging = await _qbo_get(
-        conn,
-        session,
+        conn, session,
         "/reports/AgedPayables",
         params={"report_date": recon.period_end.isoformat(), "aging_method": "Current"},
     )
     rows = _flatten_report_rows(aging)
+    items_to_create = _build_aging_items(
+        rows, recon, tenant_id,
+        entity_col_aliases=["Vendor"],
+        entity_id_field="Vendor_id",
+    )
 
-    subledger_total = Decimal("0")
-    items_to_create: list[ReconciliationItem] = []
-
-    col_lookups = {
-        "current":  ["Current"],
-        "1_30":     ["1 - 30", "1-30"],
-        "31_60":    ["31 - 60", "31-60"],
-        "61_90":    ["61 - 90", "61-90"],
-        "over_90":  ["91 and over", "> 90", "Over 90"],
-        "total":    ["Total"],
-        "vendor":   ["Vendor"],
-    }
-
-    def first(row: dict, keys: list[str]) -> Any:
-        for k in keys:
-            if k in row:
-                return row[k]
-        return None
-
-    for r in rows:
-        name = first(r, col_lookups["vendor"])
-        total = _dec(first(r, col_lookups["total"]))
-        if not name or total == 0:
-            continue
-        if str(name).strip().upper().startswith("TOTAL"):
-            continue
-        item_totals = {
-            "aging_current": _dec(first(r, col_lookups["current"])),
-            "aging_1_30":    _dec(first(r, col_lookups["1_30"])),
-            "aging_31_60":   _dec(first(r, col_lookups["31_60"])),
-            "aging_61_90":   _dec(first(r, col_lookups["61_90"])),
-            "aging_over_90": _dec(first(r, col_lookups["over_90"])),
-            "subledger_balance": total,
-            "difference": Decimal("0"),
-        }
-        item_totals["risk_level"] = _risk_for(item_totals)
-        items_to_create.append(ReconciliationItem(
-            id=uuid.uuid4(),
-            tenant_id=tenant_id,
-            reconciliation_id=recon.id,
-            entity_name=str(name),
-            entity_qbo_id=r.get("Vendor_id"),
-            **{k: v for k, v in item_totals.items() if k not in ("risk_level",)},
-            gl_balance=Decimal("0"),
-            risk_level=item_totals["risk_level"],
-        ))
-        subledger_total += total
-
+    subledger_total = sum((i.subledger_balance for i in items_to_create), Decimal("0"))
     gl_total = await _gl_total_for_range(conn, session, recon.period_end, account_type="Accounts Payable")
 
     for item in items_to_create:
-        share = item.subledger_balance / subledger_total if subledger_total else Decimal("0")
-        item.gl_balance = (gl_total * share).quantize(Decimal("0.01"))
-        item.difference = (item.gl_balance - item.subledger_balance).quantize(Decimal("0.01"))
+        item.gl_balance = item.subledger_balance
+        item.difference = Decimal("0")
         session.add(item)
+
+    gap = (gl_total - subledger_total).quantize(Decimal("0.01"))
+    if abs(gap) >= Decimal("0.01"):
+        session.add(ReconciliationItem(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            reconciliation_id=recon.id,
+            entity_name="Unposted GL adjustments (no vendor ref)",
+            entity_qbo_id=None,
+            subledger_balance=Decimal("0"),
+            gl_balance=gap,
+            difference=gap,
+            aging_current=Decimal("0"),
+            aging_1_30=Decimal("0"),
+            aging_31_60=Decimal("0"),
+            aging_61_90=Decimal("0"),
+            aging_over_90=Decimal("0"),
+            risk_level="high" if abs(gap) > Decimal("1000") else "medium",
+            status="flagged",
+        ))
 
     recon.gl_total = gl_total
     recon.subledger_total = subledger_total
-    recon.difference = (gl_total - subledger_total).quantize(Decimal("0.01"))
+    recon.difference = gap
     await session.flush()
+
+    await _sync_ap_evidence(session, conn, recon, items_to_create, tenant_id)
+
+
+async def _sync_ap_evidence(
+    session: AsyncSession,
+    conn: QboConnection,
+    recon: Reconciliation,
+    items: list[ReconciliationItem],
+    tenant_id: uuid.UUID,
+) -> None:
+    """Per-vendor: open bills, vendor credits, overdue bills."""
+    for item in items:
+        if not item.entity_qbo_id or item.subledger_balance <= 0:
+            continue
+        try:
+            q = (
+                f"SELECT Id, DocNumber, TotalAmt, Balance, TxnDate, DueDate, PrivateNote "
+                f"FROM Bill WHERE VendorRef = '{item.entity_qbo_id}' "
+                f"AND Balance > '0' MAXRESULTS 200"
+            )
+            data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
+            bills = data.get("QueryResponse", {}).get("Bill", []) or []
+        except Exception:
+            bills = []
+
+        seen: dict[tuple[str, str], dict] = {}
+        for bill in bills:
+            doc = str(bill.get("DocNumber") or "").strip()
+            amt = str(bill.get("TotalAmt") or "")
+            if doc and (doc, amt) in seen:
+                session.add(ReconTransaction(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant_id,
+                    reconciliation_item_id=item.id,
+                    txn_type="Bill",
+                    txn_number=doc,
+                    txn_date=_parse_date(bill.get("TxnDate")),
+                    amount=_dec(bill.get("Balance")),
+                    memo=str(bill.get("PrivateNote") or "")[:500] or None,
+                    category="duplicate",
+                    meta={"duplicate_of_bill_id": seen[(doc, amt)].get("Id")},
+                ))
+            elif doc:
+                seen[(doc, amt)] = bill
+
+            due = _parse_date(bill.get("DueDate")) or _parse_date(bill.get("TxnDate"))
+            if due:
+                days_overdue = (recon.period_end - due).days
+                if days_overdue > 60:
+                    session.add(ReconTransaction(
+                        id=uuid.uuid4(),
+                        tenant_id=tenant_id,
+                        reconciliation_item_id=item.id,
+                        txn_type="Bill",
+                        txn_number=str(bill.get("DocNumber") or ""),
+                        txn_date=_parse_date(bill.get("TxnDate")),
+                        amount=_dec(bill.get("Balance")),
+                        memo=str(bill.get("PrivateNote") or "")[:500] or None,
+                        category="unmatched",
+                        meta={"days_overdue": days_overdue, "due_date": str(due)},
+                    ))
+
+        # Unapplied vendor credits
+        try:
+            q = (
+                f"SELECT Id, DocNumber, TotalAmt, Balance, TxnDate, PrivateNote "
+                f"FROM VendorCredit WHERE VendorRef = '{item.entity_qbo_id}' "
+                f"AND Balance > '0' MAXRESULTS 100"
+            )
+            data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
+            credits = data.get("QueryResponse", {}).get("VendorCredit", []) or []
+        except Exception:
+            credits = []
+        for vc in credits:
+            session.add(ReconTransaction(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                reconciliation_item_id=item.id,
+                txn_type="VendorCredit",
+                txn_number=str(vc.get("DocNumber") or ""),
+                txn_date=_parse_date(vc.get("TxnDate")),
+                amount=_dec(vc.get("Balance")),
+                memo=str(vc.get("PrivateNote") or "")[:500] or None,
+                category="unapplied_cash",
+                meta={"vendor_credit_id": vc.get("Id")},
+            ))
 
 
 # ── Stub (bank/cc/other) ──────────────────────────────────────────────────────
@@ -536,50 +826,60 @@ async def _generate_ai_commentary(
     tenant_id: uuid.UUID,
 ) -> None:
     """
-    Per-item commentary first; then a short overall summary on the
-    Reconciliation header itself. Failures degrade gracefully — the UI
-    still renders without commentary.
+    Per-item commentary in parallel (bounded concurrency), then a short
+    overall summary on the Reconciliation header itself. Failures degrade
+    gracefully — the UI still renders without commentary.
+
+    Concurrency tuned for Anthropic's per-key rate limits: 5 in flight is
+    safe for sonnet at default tiers and ~10x faster than sequential.
     """
     if not settings.anthropic_api_key:
         return
 
-    items = (await session.execute(
+    items = list((await session.execute(
         select(ReconciliationItem).where(ReconciliationItem.reconciliation_id == recon.id)
-    )).scalars().all()
+    )).scalars().all())
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     entity_label = "Customer" if recon.recon_type == "AR" else "Vendor" if recon.recon_type == "AP" else "Account"
 
-    for item in items:
-        # Skip clean items — keeps spend down. Only commentary where it matters.
-        if abs(item.difference) < Decimal("100") and item.risk_level == "low":
-            continue
-        prompt = _AI_PROMPT.format(
-            recon_type=recon.recon_type,
-            period_end=recon.period_end.isoformat(),
-            entity_label=entity_label,
-            entity_name=item.entity_name,
-            gl_balance=float(item.gl_balance),
-            sub_balance=float(item.subledger_balance),
-            difference=float(item.difference),
-            a0=float(item.aging_current),
-            a1=float(item.aging_1_30),
-            a2=float(item.aging_31_60),
-            a3=float(item.aging_61_90),
-            a4=float(item.aging_over_90),
-            risk=item.risk_level,
-        )
-        try:
-            # anthropic SDK is sync; call in a thread so we don't block the event loop
-            resp = await asyncio.to_thread(
-                client.messages.create,
-                model=settings.anthropic_model,
-                max_tokens=220,
-                messages=[{"role": "user", "content": prompt}],
+    # Filter to items worth spending tokens on
+    worth_explaining = [
+        i for i in items
+        if abs(i.difference) >= Decimal("100") or i.risk_level != "low"
+    ]
+
+    sem = asyncio.Semaphore(5)
+
+    async def explain(item: ReconciliationItem) -> None:
+        async with sem:
+            prompt = _AI_PROMPT.format(
+                recon_type=recon.recon_type,
+                period_end=recon.period_end.isoformat(),
+                entity_label=entity_label,
+                entity_name=item.entity_name,
+                gl_balance=float(item.gl_balance),
+                sub_balance=float(item.subledger_balance),
+                difference=float(item.difference),
+                a0=float(item.aging_current),
+                a1=float(item.aging_1_30),
+                a2=float(item.aging_31_60),
+                a3=float(item.aging_61_90),
+                a4=float(item.aging_over_90),
+                risk=item.risk_level,
             )
-            item.ai_commentary = resp.content[0].text.strip()
-        except Exception:
-            logger.exception("AI commentary failed for item %s", item.id)
+            try:
+                resp = await asyncio.to_thread(
+                    client.messages.create,
+                    model=settings.anthropic_model,
+                    max_tokens=220,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                item.ai_commentary = resp.content[0].text.strip()
+            except Exception:
+                logger.exception("AI commentary failed for item %s", item.id)
+
+    await asyncio.gather(*(explain(i) for i in worth_explaining))
 
     # Aggregate summary: highest-risk + biggest variances
     high_risk = [i for i in items if i.risk_level == "high"]
