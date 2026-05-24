@@ -59,6 +59,7 @@ from modules.recons.overview import (
     fetch_subledger_detail,
     fetch_variance_detail,
 )
+from models.account_review_status import AccountReviewStatus
 
 router = APIRouter()
 
@@ -188,6 +189,141 @@ async def get_account_variance(
     if conn is None:
         raise HTTPException(status_code=409, detail="QuickBooks isn't connected.")
     return await fetch_variance_detail(conn, db, qbo_account_id, pe)
+
+
+@router.post("/account/{qbo_account_id}/status")
+async def update_account_review_status(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    status_value: str = Query(..., alias="status", description="pending | reviewed | approved | flagged"),
+    notes: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Set the review status for one account+period. Upserts on
+    (tenant_id, qbo_account_id, period_end). Audit-logged.
+    """
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    if status_value not in ("pending", "reviewed", "approved", "flagged"):
+        raise HTTPException(status_code=400, detail="Invalid status value.")
+
+    row = (await db.execute(
+        select(AccountReviewStatus).where(
+            AccountReviewStatus.qbo_account_id == qbo_account_id,
+            AccountReviewStatus.period_end == pe,
+        )
+    )).scalar_one_or_none()
+
+    if row is None:
+        row = AccountReviewStatus(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            qbo_account_id=qbo_account_id,
+            period_end=pe,
+            status=status_value,
+            reviewed_by=user.id if status_value != "pending" else None,
+            reviewed_at=datetime.now(timezone.utc) if status_value != "pending" else None,
+            notes=notes,
+        )
+        db.add(row)
+    else:
+        row.status = status_value
+        row.reviewed_by = user.id if status_value != "pending" else None
+        row.reviewed_at = datetime.now(timezone.utc) if status_value != "pending" else None
+        if notes is not None:
+            row.notes = notes
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action=f"recon.account_{status_value}",
+        entity_type="account_review_status", entity_id=row.id,
+        metadata={
+            "summary": f"Set account {qbo_account_id} ({period_end}) → {status_value}",
+            "qbo_account_id": qbo_account_id,
+            "period_end": period_end,
+        },
+    )
+    await db.commit()
+    return {
+        "qbo_account_id": qbo_account_id,
+        "period_end":     period_end,
+        "status":         row.status,
+        "reviewed_by":    str(row.reviewed_by) if row.reviewed_by else None,
+        "reviewed_at":    row.reviewed_at.isoformat() if row.reviewed_at else None,
+    }
+
+
+@router.post("/account/bulk-status")
+async def bulk_update_account_review_status(
+    body: dict,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Upsert review status for a batch of accounts at the same period.
+    Body shape:
+      { period_end: "2026-04-30", status: "approved", qbo_account_ids: ["123","124"] }
+    Returns the count updated. Audit-logged once for the batch.
+    """
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(body.get("period_end", ""))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    status_value = body.get("status")
+    if status_value not in ("pending", "reviewed", "approved", "flagged"):
+        raise HTTPException(status_code=400, detail="Invalid status value.")
+    ids: list[str] = list(body.get("qbo_account_ids") or [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="qbo_account_ids required.")
+
+    existing = list((await db.execute(
+        select(AccountReviewStatus).where(
+            AccountReviewStatus.period_end == pe,
+            AccountReviewStatus.qbo_account_id.in_(ids),
+        )
+    )).scalars().all())
+    by_id = {r.qbo_account_id: r for r in existing}
+
+    now = datetime.now(timezone.utc)
+    is_reviewed = status_value != "pending"
+    for qid in ids:
+        if qid in by_id:
+            by_id[qid].status = status_value
+            by_id[qid].reviewed_by = user.id if is_reviewed else None
+            by_id[qid].reviewed_at = now if is_reviewed else None
+        else:
+            db.add(AccountReviewStatus(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                qbo_account_id=qid,
+                period_end=pe,
+                status=status_value,
+                reviewed_by=user.id if is_reviewed else None,
+                reviewed_at=now if is_reviewed else None,
+            ))
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action=f"recon.bulk_{status_value}",
+        entity_type="account_review_status", entity_id=None,
+        metadata={
+            "summary": f"Bulk set {len(ids)} accounts → {status_value} for {body.get('period_end')}",
+            "count": len(ids),
+            "status": status_value,
+        },
+    )
+    await db.commit()
+    return {"updated": len(ids), "status": status_value}
 
 
 @router.post("/clear-synced-data", status_code=status.HTTP_200_OK)

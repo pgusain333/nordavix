@@ -118,6 +118,18 @@ async def fetch_overview(
         _tb_lookup(tb_balances, a) for a in accounts_meta if a["AccountType"] == "Accounts Payable"
     )
 
+    # Load persisted per-account review status for this period (one query).
+    # The dashboard merges this into each account row so the user sees their
+    # own approval state for the period they're looking at.
+    from models.account_review_status import AccountReviewStatus
+    from sqlalchemy import select
+    status_rows = list((await session.execute(
+        select(AccountReviewStatus).where(AccountReviewStatus.period_end == period_end)
+    )).scalars().all())
+    status_by_acct: dict[str, AccountReviewStatus] = {
+        s.qbo_account_id: s for s in status_rows
+    }
+
     out_accounts: list[dict] = []
     for a in accounts_meta:
         acct_type = a.get("AccountType", "")
@@ -137,8 +149,10 @@ async def fetch_overview(
         )
         variance = (gl_balance - subledger_balance).quantize(Decimal("0.01"))
 
+        qbo_id = str(a.get("Id"))
+        review = status_by_acct.get(qbo_id)
         out_accounts.append({
-            "qbo_id":              a.get("Id"),
+            "qbo_id":              qbo_id,
             "account_number":      a.get("AcctNum") or "",
             "account_name":        a.get("Name") or "",
             "account_type":        acct_type,
@@ -148,6 +162,10 @@ async def fetch_overview(
             "subledger_source":    source,
             "has_subledger_detail":has_detail,
             "variance":            str(variance),
+            "review_status":       review.status if review else "pending",
+            "reviewed_by":         str(review.reviewed_by) if review and review.reviewed_by else None,
+            "reviewed_at":         review.reviewed_at.isoformat() if review and review.reviewed_at else None,
+            "review_notes":        review.notes if review else None,
         })
 
     # Sort: by group, then by account number
@@ -426,24 +444,44 @@ def _subledger_for_account(
 ) -> tuple[Decimal, str, bool]:
     """
     Decide the subledger balance + source label + whether a detail view exists.
+
+    Sign convention:
+      - QBO TrialBalance returns BALANCES (debit - credit). Liability/Equity
+        accounts have credit balances, so GL comes back NEGATIVE.
+      - QBO AgedReceivables / AgedPayables reports always return POSITIVE
+        amounts (the balance owed/due as a magnitude).
+      - To get a meaningful variance via simple subtraction we must align
+        the signs: for natural-credit account types (AP, Credit Card,
+        liabilities) we negate the subledger to match GL's natural sign.
     """
     if acct_type == "Accounts Receivable":
-        # Apportion the AR aging across multiple AR accounts proportionally
+        # Apportion the AR aging across multiple AR accounts proportionally.
+        # AR is a natural debit — subledger stays positive.
         if ar_gl_total != 0:
             share = gl_balance / ar_gl_total
             return (ar_aging_sum * share).quantize(Decimal("0.01")), \
                    "QuickBooks AgedReceivables report (proportionally allocated when multiple AR accounts exist).", \
                    True
         return ar_aging_sum, "QuickBooks AgedReceivables report.", True
+
     if acct_type == "Accounts Payable":
+        # AP is a natural credit — flip the sign so it lines up with GL's
+        # negative balance. Otherwise GL=-1603 vs Sub=+1603 nets to a phantom
+        # -3206 variance even though the books actually reconcile.
         if ap_gl_total != 0:
-            share = gl_balance / ap_gl_total
-            return (ap_aging_sum * share).quantize(Decimal("0.01")), \
+            # ap_gl_total here is also negative (sum of credit balances) —
+            # use absolute value for the proportional split so the share
+            # itself is positive, then negate the resulting subledger.
+            denom = abs(ap_gl_total) or Decimal("1")
+            share = abs(gl_balance) / denom
+            return (-ap_aging_sum * share).quantize(Decimal("0.01")), \
                    "QuickBooks AgedPayables report (proportionally allocated when multiple AP accounts exist).", \
                    True
-        return ap_aging_sum, "QuickBooks AgedPayables report.", True
+        return -ap_aging_sum, "QuickBooks AgedPayables report.", True
+
     if acct_type in ("Bank", "Credit Card"):
         return gl_balance, "Matches GL — no separate subledger in QuickBooks.", True
+
     return gl_balance, "Matches GL — this account type has no separate subledger.", True
 
 

@@ -114,6 +114,8 @@ export interface ReconciliationDashboard {
 
 // ── Live overview shapes ─────────────────────────────────────────────────────
 
+export type AccountReviewStatus = "pending" | "reviewed" | "approved" | "flagged"
+
 export interface OverviewAccount {
   qbo_id:               string
   account_number:       string
@@ -125,6 +127,10 @@ export interface OverviewAccount {
   subledger_source:     string
   has_subledger_detail: boolean
   variance:             string
+  review_status:        AccountReviewStatus
+  reviewed_by:          string | null
+  reviewed_at:          string | null
+  review_notes:         string | null
 }
 
 export interface OverviewGroup {
@@ -238,6 +244,32 @@ async function clearSyncedData(): Promise<void> {
   await apiClient.post("/api/reconciliations/clear-synced-data")
 }
 
+async function updateAccountReviewStatus(
+  qboAccountId: string,
+  periodEnd: string,
+  status: AccountReviewStatus,
+  notes?: string,
+): Promise<{ qbo_account_id: string; period_end: string; status: AccountReviewStatus; reviewed_by: string | null; reviewed_at: string | null }> {
+  const { data } = await apiClient.post(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/status`,
+    null,
+    { params: { period_end: periodEnd, status, notes } },
+  )
+  return data
+}
+
+async function bulkUpdateAccountReviewStatus(
+  periodEnd: string,
+  status: AccountReviewStatus,
+  qboAccountIds: string[],
+): Promise<{ updated: number; status: AccountReviewStatus }> {
+  const { data } = await apiClient.post(
+    "/api/reconciliations/account/bulk-status",
+    { period_end: periodEnd, status, qbo_account_ids: qboAccountIds },
+  )
+  return data
+}
+
 async function getReconciliation(id: string): Promise<ReconciliationDetail> {
   const { data } = await apiClient.get<ReconciliationDetail>(`/api/reconciliations/${id}`)
   return data
@@ -319,6 +351,8 @@ export const reconsApi = {
   getAccountSubledger,
   getAccountVariance,
   clearSyncedData,
+  updateAccountReviewStatus,
+  bulkUpdateAccountReviewStatus,
   getReconciliation,
   createReconciliation,
   resyncReconciliation,

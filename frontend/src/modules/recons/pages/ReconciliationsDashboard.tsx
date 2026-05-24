@@ -41,6 +41,7 @@ import {
   type OverviewAccount,
   type SubledgerDetail,
   type VarianceDetail,
+  type AccountReviewStatus,
 } from "@/modules/recons/api"
 import { api as fluxApi } from "@/modules/flux/api"
 
@@ -87,6 +88,8 @@ export function ReconciliationsDashboard() {
   const [drawerAccount, setDrawerAccount] = useState<OverviewAccount | null>(null)
   const [drawerMode, setDrawerMode] = useState<"subledger" | "variance">("subledger")
   const [confirmClear, setConfirmClear] = useState(false)
+  /** Set of qbo_account_ids the user has checked for bulk actions */
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   /** "Synced N accounts at HH:MM" — banner that fades out after a few seconds */
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
 
@@ -125,6 +128,10 @@ export function ReconciliationsDashboard() {
     return () => clearTimeout(t)
   }, [syncMsg])
 
+  // Clear bulk selection when the period changes — those rows belong to a
+  // different period now.
+  useEffect(() => { setSelected(new Set()) }, [periodEnd])
+
   // Human-readable "last synced" indicator
   const lastSynced = useMemo(() => {
     if (!dataUpdatedAt) return null
@@ -141,6 +148,23 @@ export function ReconciliationsDashboard() {
       qc.invalidateQueries({ queryKey: ["recons-overview"] })
     },
     onError: () => setConfirmClear(false),
+  })
+
+  /** Per-row status flip (used inline + when no rows are selected). */
+  const setStatusMut = useMutation({
+    mutationFn: (v: { id: string; status: AccountReviewStatus }) =>
+      reconsApi.updateAccountReviewStatus(v.id, periodEnd, v.status),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] }),
+  })
+
+  /** Bulk status flip for all selected accounts. */
+  const bulkStatusMut = useMutation({
+    mutationFn: (status: AccountReviewStatus) =>
+      reconsApi.bulkUpdateAccountReviewStatus(periodEnd, status, Array.from(selected)),
+    onSuccess: () => {
+      setSelected(new Set())
+      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+    },
   })
 
   // Filtered + searched account list
@@ -382,20 +406,89 @@ export function ReconciliationsDashboard() {
                   </p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <>
+                  {/* Bulk-action toolbar — only when rows are selected */}
+                  {selected.size > 0 && (
+                    <div className="px-4 py-2 flex items-center gap-2 flex-wrap"
+                      style={{ background: "var(--green-subtle)", borderBottom: "1px solid var(--border)" }}>
+                      <span className="text-[11px] font-semibold" style={{ color: "var(--green)" }}>
+                        {selected.size} selected
+                      </span>
+                      <Button size="sm" icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
+                        loading={bulkStatusMut.isPending}
+                        onClick={() => bulkStatusMut.mutate("approved")}
+                      >
+                        Approve
+                      </Button>
+                      <Button size="sm" variant="outline" icon={<Eye size={11} strokeWidth={1.8} />}
+                        loading={bulkStatusMut.isPending}
+                        onClick={() => bulkStatusMut.mutate("reviewed")}
+                      >
+                        Mark reviewed
+                      </Button>
+                      <Button size="sm" variant="outline" icon={<AlertTriangle size={11} strokeWidth={1.8} />}
+                        loading={bulkStatusMut.isPending}
+                        onClick={() => bulkStatusMut.mutate("flagged")}
+                        style={{ borderColor: "#fecaca", color: "#b91c1c" }}
+                      >
+                        Flag
+                      </Button>
+                      <Button size="sm" variant="ghost"
+                        loading={bulkStatusMut.isPending}
+                        onClick={() => bulkStatusMut.mutate("pending")}
+                      >
+                        Reset to pending
+                      </Button>
+                      <button
+                        onClick={() => setSelected(new Set())}
+                        className="ml-auto text-[11px] font-medium"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        Clear selection
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{
                         background: "var(--surface-2)",
                         borderBottom: "1px solid var(--border)",
                       }}>
+                        <th className="px-3 py-2.5 text-center" style={{ width: 32 }}>
+                          <input
+                            type="checkbox"
+                            aria-label="Select all visible"
+                            checked={filteredAccounts.length > 0 && filteredAccounts.every((a) => selected.has(a.qbo_id))}
+                            ref={(el) => {
+                              if (!el) return
+                              const someChecked = filteredAccounts.some((a) => selected.has(a.qbo_id))
+                              const allChecked  = filteredAccounts.every((a) => selected.has(a.qbo_id))
+                              el.indeterminate = someChecked && !allChecked
+                            }}
+                            onChange={() => {
+                              const allChecked = filteredAccounts.every((a) => selected.has(a.qbo_id))
+                              if (allChecked) {
+                                const next = new Set(selected)
+                                filteredAccounts.forEach((a) => next.delete(a.qbo_id))
+                                setSelected(next)
+                              } else {
+                                const next = new Set(selected)
+                                filteredAccounts.forEach((a) => next.add(a.qbo_id))
+                                setSelected(next)
+                              }
+                            }}
+                          />
+                        </th>
                         {[
-                          { label: "Account #", w: "90px" },
+                          { label: "Account No.", w: "100px" },
                           { label: "Account", w: "auto" },
                           { label: "Type", w: "130px" },
                           { label: "GL Balance", w: "120px", right: true },
                           { label: "Subledger", w: "120px", right: true },
                           { label: "Variance", w: "120px", right: true },
+                          { label: "Status", w: "120px" },
                           { label: "", w: "160px" },
                         ].map((h, i) => (
                           <th
@@ -417,13 +510,40 @@ export function ReconciliationsDashboard() {
                         const variance = parseFloat(a.variance)
                         const hasVariance = Math.abs(variance) >= 0.5
                         const color = GROUP_COLORS[a.group_label] ?? "var(--text-muted)"
+                        const isSelected = selected.has(a.qbo_id)
+                        const status = a.review_status
                         return (
                           <tr key={a.qbo_id}
-                            style={{ borderBottom: "1px solid var(--border)" }}
+                            style={{
+                              borderBottom: "1px solid var(--border)",
+                              background: isSelected
+                                ? "var(--green-subtle)"
+                                : status === "approved"
+                                  ? "rgba(16, 185, 129, 0.04)"
+                                  : "transparent",
+                            }}
                             className="transition-colors"
-                            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+                            onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) {
+                                (e.currentTarget as HTMLElement).style.background =
+                                  status === "approved" ? "rgba(16, 185, 129, 0.04)" : ""
+                              }
+                            }}
                           >
+                            <td className="px-3 py-2.5 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {
+                                  const next = new Set(selected)
+                                  if (next.has(a.qbo_id)) next.delete(a.qbo_id)
+                                  else next.add(a.qbo_id)
+                                  setSelected(next)
+                                }}
+                                aria-label={`Select ${a.account_name}`}
+                              />
+                            </td>
                             <td className="px-3 py-2.5 font-mono text-xs" style={{ color: "var(--text-2)" }}>
                               {a.account_number || "—"}
                             </td>
@@ -445,6 +565,12 @@ export function ReconciliationsDashboard() {
                             <td className="px-3 py-2.5 text-right tabular-nums text-sm font-medium"
                               style={{ color: hasVariance ? "#dc2626" : "var(--green)" }}>
                               {hasVariance ? fmtMoney(a.variance) : "—"}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <StatusChip
+                                status={status}
+                                onChange={(next) => setStatusMut.mutate({ id: a.qbo_id, status: next })}
+                              />
                             </td>
                             <td className="px-3 py-2.5">
                               <div className="flex items-center justify-end gap-1.5">
@@ -485,7 +611,8 @@ export function ReconciliationsDashboard() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                  </div>
+                </>
               )}
 
               <div className="px-4 py-2.5 flex items-center justify-between flex-wrap gap-2"
@@ -493,7 +620,8 @@ export function ReconciliationsDashboard() {
                 <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                   Showing {filteredAccounts.length} of {overview?.accounts.length ?? 0} accounts
                   {overview?.period_end ? ` as of ${overview.period_end}` : ""}
-                  {lastSynced ? ` · ${lastSynced}` : ""}.
+                  {lastSynced ? ` · ${lastSynced}` : ""}
+                  {overview ? ` · ${overview.accounts.filter(a => a.review_status === "approved").length} approved` : ""}.
                 </p>
                 <a
                   href="/docs/reconciliations.md"
@@ -524,6 +652,36 @@ export function ReconciliationsDashboard() {
         )}
       </AnimatePresence>
     </div>
+  )
+}
+
+// ── StatusChip ──────────────────────────────────────────────────────────────
+// Clickable dropdown-style chip. Click to cycle to the next status, or
+// shift-click to skip back. Inline flow — no modal, no page navigation.
+
+const STATUS_META: Record<AccountReviewStatus, { label: string; bg: string; fg: string }> = {
+  pending:  { label: "Pending",  bg: "var(--surface-2)",     fg: "var(--text-muted)" },
+  reviewed: { label: "Reviewed", bg: "#dbeafe",              fg: "#1d4ed8" },
+  approved: { label: "Approved", bg: "var(--green-subtle)",  fg: "var(--green)" },
+  flagged:  { label: "Flagged",  bg: "#fee2e2",              fg: "#b91c1c" },
+}
+const STATUS_CYCLE: AccountReviewStatus[] = ["pending", "reviewed", "approved", "flagged"]
+
+function StatusChip({ status, onChange }:
+  { status: AccountReviewStatus; onChange: (next: AccountReviewStatus) => void }
+) {
+  const m = STATUS_META[status] ?? STATUS_META.pending
+  const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(status) + 1) % STATUS_CYCLE.length]
+  return (
+    <button
+      onClick={() => onChange(next)}
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-all hover:opacity-80"
+      style={{ background: m.bg, color: m.fg }}
+      title={`Click to set → ${STATUS_META[next].label}`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: m.fg }} />
+      {m.label}
+    </button>
   )
 }
 
