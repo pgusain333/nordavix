@@ -1278,86 +1278,88 @@ function SubledgerEditor({
               )
             })()}
 
-            {/* Current-period entries — outstanding-items selection. Shown
-                whenever there's any meaningful variance to nullify so the
-                user can tick the GL entries that explain it (e.g. checks
-                the bank hasn't cleared yet). Persisted on the override. */}
-            {valid && Math.abs(parseFloat(account.gl_balance) - parsed) >= 0.5 && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide"
-                    style={{ color: "var(--text-muted)" }}>
-                    Current-period entries
-                    {periodEntries?.rows.length ? ` · ${periodEntries.rows.length}` : ""}
-                  </span>
-                  <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                    Select what explains the gap
-                  </span>
-                </div>
-                {entriesLoading ? (
-                  <div className="py-3 flex items-center justify-center">
-                    <Spinner className="h-4 w-4" />
-                  </div>
-                ) : (periodEntries?.rows.length ?? 0) === 0 ? (
-                  <p className="text-[11px] py-2 text-center"
-                    style={{ color: "var(--text-muted)" }}>
-                    No transactions posted to this account this period.
-                  </p>
-                ) : (
-                  <div className="rounded-lg overflow-hidden"
-                    style={{ border: "1px solid var(--border)" }}>
-                    {/* Scroll in both directions — mobile widths can't fit
-                        all 5 columns at the natural min width otherwise. */}
-                    <div className="max-h-56 overflow-auto">
-                      <table className="w-full text-[11px] min-w-[340px]">
-                        <thead>
-                          <tr style={{ background: "var(--surface-2)" }}>
-                            <th className="w-6 px-1.5 py-1.5"></th>
-                            <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
-                            <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
-                            <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
-                            <th className="text-right px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {periodEntries!.rows.map((r) => {
-                            const checked = !!selectedItemMap[r.txn_id]
-                            return (
-                              <tr key={r.txn_id}
-                                onClick={() => toggleItem(r)}
-                                className="cursor-pointer transition-colors"
-                                style={{
-                                  borderTop: "1px solid var(--border)",
-                                  background: checked ? "var(--green-subtle)" : "transparent",
-                                }}>
-                                <td className="px-1.5 py-1.5 text-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={() => toggleItem(r)}
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                </td>
-                                <td className="px-1.5 py-1.5 text-theme">{r.txn_type}</td>
-                                <td className="px-1.5 py-1.5 font-mono" style={{ color: "var(--text-2)" }}>
-                                  {r.txn_number || "—"}
-                                </td>
-                                <td className="px-1.5 py-1.5" style={{ color: "var(--text-2)" }}>
-                                  {r.txn_date || "—"}
-                                </td>
-                                <td className="px-1.5 py-1.5 text-right tabular-nums font-medium text-theme">
-                                  {fmtMoney(r.amount)}
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
+            {/* Reconciling items — always shown so the user can pick items
+                whether or not there's a current variance. Previously gated
+                on |variance| >= $0.50, which hid the whole section the
+                moment the rolled-forward subledger happened to match GL.
+                Now always renders: empty state when QBO has no activity,
+                the picker table otherwise. Selections persist on the
+                override row and pre-select when reopened. */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-wide"
+                  style={{ color: "var(--text-muted)" }}>
+                  Reconciling items
+                  {(periodEntries?.rows.length ?? 0) > 0 && ` · ${periodEntries!.rows.length} this period`}
+                </span>
+                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                  Tick the entries that explain GL − Subledger
+                </span>
               </div>
-            )}
+              {entriesLoading ? (
+                <div className="py-3 flex items-center justify-center">
+                  <Spinner className="h-4 w-4" />
+                </div>
+              ) : (periodEntries?.rows.length ?? 0) === 0 ? (
+                <p className="text-[11px] py-2 px-2 rounded-md"
+                  style={{ color: "var(--text-muted)", background: "var(--surface-2)", border: "1px dashed var(--border)" }}>
+                  No transactions posted to this account in the closing month.
+                  {selectedItems.length > 0 && ` ${selectedItems.length} item(s) carried over from a prior save.`}
+                </p>
+              ) : (
+                <div className="rounded-lg overflow-hidden"
+                  style={{ border: "1px solid var(--border)" }}>
+                  {/* Scroll in both directions — mobile widths can't fit
+                      all 5 columns at the natural min width otherwise. */}
+                  <div className="max-h-56 overflow-auto">
+                    <table className="w-full text-[11px] min-w-[340px]">
+                      <thead>
+                        <tr style={{ background: "var(--surface-2)" }}>
+                          <th className="w-6 px-1.5 py-1.5"></th>
+                          <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
+                          <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
+                          <th className="text-left px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
+                          <th className="text-right px-1.5 py-1.5 font-semibold" style={{ color: "var(--text-muted)" }}>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {periodEntries!.rows.map((r) => {
+                          const checked = !!selectedItemMap[r.txn_id]
+                          return (
+                            <tr key={r.txn_id}
+                              onClick={() => toggleItem(r)}
+                              className="cursor-pointer transition-colors"
+                              style={{
+                                borderTop: "1px solid var(--border)",
+                                background: checked ? "var(--green-subtle)" : "transparent",
+                              }}>
+                              <td className="px-1.5 py-1.5 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleItem(r)}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </td>
+                              <td className="px-1.5 py-1.5 text-theme">{r.txn_type}</td>
+                              <td className="px-1.5 py-1.5 font-mono" style={{ color: "var(--text-2)" }}>
+                                {r.txn_number || "—"}
+                              </td>
+                              <td className="px-1.5 py-1.5" style={{ color: "var(--text-2)" }}>
+                                {r.txn_date || "—"}
+                              </td>
+                              <td className="px-1.5 py-1.5 text-right tabular-nums font-medium text-theme">
+                                {fmtMoney(r.amount)}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Supporting evidence — attach the bank stmt / FA register PDF */}
             <div className="space-y-2">
