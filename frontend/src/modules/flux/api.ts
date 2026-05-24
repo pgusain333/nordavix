@@ -183,6 +183,46 @@ async function regenerateNarrative(tbId: string, varId: string): Promise<{ id: s
   return data
 }
 
+// ── Variance transactions ────────────────────────────────────────────────────
+
+export interface VarianceTxn {
+  id:          string
+  qbo_txn_id:  string | null
+  txn_type:    string
+  txn_number:  string
+  txn_date:    string | null
+  amount:      string
+  memo:        string
+  entity_name: string
+  is_checked:  boolean
+  checked_by:  string | null
+  checked_at:  string | null
+}
+
+export interface VarianceTransactionsResponse {
+  variance_id:    string
+  qbo_account_id: string | null
+  is_material:    boolean
+  checked_count:  number
+  total_count:    number
+  transactions:   VarianceTxn[]
+}
+
+async function getVarianceTransactions(tbId: string, varId: string, refresh = false): Promise<VarianceTransactionsResponse> {
+  const { data } = await apiClient.get<VarianceTransactionsResponse>(
+    `/api/flux/trial-balances/${tbId}/variances/${varId}/transactions`,
+    { params: { refresh } },
+  )
+  return data
+}
+
+async function toggleVarianceTransactionCheck(tbId: string, varId: string, txnId: string): Promise<VarianceTxn> {
+  const { data } = await apiClient.post<VarianceTxn>(
+    `/api/flux/trial-balances/${tbId}/variances/${varId}/transactions/${txnId}/check`,
+  )
+  return data
+}
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 function exportUrl(tbId: string): string {
@@ -250,6 +290,8 @@ export const api = {
   approveVariance,
   updateNarrative,
   regenerateNarrative,
+  getVarianceTransactions,
+  toggleVarianceTransactionCheck,
   // Export
   exportUrl,
   exportExcel,

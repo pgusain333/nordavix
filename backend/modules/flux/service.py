@@ -340,6 +340,7 @@ async def create_accounts_and_variances(
             prior_balance=ad["prior_balance"],
             fs_category=ad["fs_category"],
             fs_line=ad["fs_line"],
+            qbo_account_id=ad.get("qbo_account_id"),
         )
         session.add(account)
         accounts_created += 1
@@ -389,7 +390,14 @@ def parse_qbo_trial_balance_report(
                 first = cols[0].get("value", "").strip()
                 # Skip if it's a header / total row
                 if not first.lower().startswith(("total", "subtotal", "net income", "net loss")):
-                    out.append({"name_raw": first, "cols": cols})
+                    # The QBO TrialBalance report puts the Account ref in col 0's
+                    # `id` attribute. Capturing it lets us drill into per-account
+                    # transactions later (without re-resolving by name).
+                    out.append({
+                        "name_raw": first,
+                        "cols":     cols,
+                        "qbo_id":   cols[0].get("id"),
+                    })
             if sub:
                 walk(sub, out)
 
@@ -419,6 +427,17 @@ def parse_qbo_trial_balance_report(
     current = extract(report_current)
     prior   = extract(report_prior)
 
+    # Map account display name → QBO Id. Current period takes precedence; prior
+    # fills gaps for accounts that disappeared (closed mid-year etc.).
+    def _extract_ids(report: dict) -> dict[str, str]:
+        flat: list[dict] = []
+        walk(report.get("Rows", {}).get("Row", []) or [], flat)
+        return {row["name_raw"]: row["qbo_id"] for row in flat if row.get("qbo_id")}
+
+    id_map: dict[str, str] = {}
+    id_map.update(_extract_ids(report_prior))
+    id_map.update(_extract_ids(report_current))  # current overrides prior
+
     accounts: list[dict] = []
     for key in set(current) | set(prior):
         # Parse "1010 Cash" or "1010-Cash" into (number, name). Fall back to
@@ -444,6 +463,7 @@ def parse_qbo_trial_balance_report(
             "prior_balance":  pri_bal,
             "fs_category":    fs_category,
             "fs_line":        fs_line,
+            "qbo_account_id": id_map.get(key),  # may be None for upload-sourced
         })
     return accounts
 

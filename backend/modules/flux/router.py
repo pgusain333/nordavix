@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime, timezone
 
+from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.config import settings
 from core.db.session import get_db
@@ -49,7 +50,9 @@ from modules.flux.service import (
     parse_qbo_trial_balance_report,
 )
 from modules.flux.tasks import generate_narrative_async, generate_narrative_task  # noqa: F401  (kept for celery)
+from modules.flux.variance_txns import pull_transactions_for_variance
 from models.qbo_connection import QboConnection
+from models.variance_transaction import VarianceTransaction
 from modules.qbo.router import _get_valid_token  # type: ignore  # reuse existing helper
 
 router = APIRouter()
@@ -511,6 +514,12 @@ async def approve_variance(
     var.status = "approved"
     var.approved_by = user.id
     var.approved_at = datetime.now(timezone.utc)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="flux.variance_approved",
+        entity_type="variance", entity_id=var_id,
+        metadata={"summary": "Approved variance line", "trial_balance_id": str(tb_id)},
+    )
     await db.commit()
     return {
         "id": str(var_id),
@@ -541,8 +550,157 @@ async def approve_trial_balance(
     tb.approved_by = user.id
     tb.approved_at = datetime.now(timezone.utc)
     tb.status = "complete"
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="flux.tb_approved",
+        entity_type="trial_balance", entity_id=tb_id,
+        metadata={"summary": f"Approved flux analysis '{tb.name}'"},
+    )
     await db.commit()
     return tb
+
+
+# ── Variance transactions (drill-in evidence) ───────────────────────────────
+
+@router.get("/trial-balances/{tb_id}/variances/{var_id}/transactions")
+async def list_variance_transactions(
+    tb_id: uuid.UUID,
+    var_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+    refresh: bool = False,
+) -> dict:
+    """
+    Return the stored evidence transactions for this variance.
+
+    Pass ?refresh=true to re-pull from QBO (wipes prior rows). Pulls are
+    only allowed for MATERIAL variances and TBs that were sourced from QBO
+    (we need the qbo_account_id to drill in).
+    """
+    # Fetch variance + account in one query so we can validate + use both
+    row = (await db.execute(
+        select(Variance, Account).join(Account, Variance.account_id == Account.id)
+        .where(Variance.id == var_id)
+    )).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Variance not found")
+    var, acct = row
+
+    if refresh:
+        if not var.is_material:
+            raise HTTPException(
+                status_code=409,
+                detail="Transaction drill-in is only available for material variances.",
+            )
+        if not acct.qbo_account_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This analysis wasn't sourced from QuickBooks, so we can't "
+                    "drill into per-account transactions. Re-run from QBO to enable."
+                ),
+            )
+        tb = (await db.execute(
+            select(TrialBalance).where(TrialBalance.id == tb_id)
+        )).scalar_one_or_none()
+        if tb is None:
+            raise HTTPException(status_code=404, detail="Trial balance not found")
+        # Compute period start. If period_start fields weren't captured at TB
+        # creation, fall back to the first day of period_current's month.
+        from datetime import date as _date
+        period_start = _date(tb.period_current.year, tb.period_current.month, 1)
+        try:
+            await pull_transactions_for_variance(
+                db, tenant_id, var_id, acct.qbo_account_id,
+                period_start, tb.period_current,
+            )
+            await write_audit_event(
+                db, tenant_id=tenant_id, user_id=None,
+                action="flux.variance_transactions_pulled",
+                entity_type="variance", entity_id=var_id,
+                metadata={"summary": f"Pulled QBO transactions for variance on {acct.account_number} {acct.account_name}".strip()},
+            )
+            await db.commit()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    # Return current rows (whether we just pulled them or not)
+    txns = list((await db.execute(
+        select(VarianceTransaction).where(VarianceTransaction.variance_id == var_id)
+        .order_by(VarianceTransaction.txn_date.desc().nullslast())
+    )).scalars().all())
+
+    return {
+        "variance_id":        str(var_id),
+        "qbo_account_id":     acct.qbo_account_id,
+        "is_material":        var.is_material,
+        "checked_count":      sum(1 for t in txns if t.is_checked),
+        "total_count":        len(txns),
+        "transactions": [
+            {
+                "id":          str(t.id),
+                "qbo_txn_id":  t.qbo_txn_id,
+                "txn_type":    t.txn_type,
+                "txn_number":  t.txn_number or "",
+                "txn_date":    t.txn_date.isoformat() if t.txn_date else None,
+                "amount":      str(t.amount),
+                "memo":        t.memo or "",
+                "entity_name": t.entity_name or "",
+                "is_checked":  t.is_checked,
+                "checked_by":  str(t.checked_by) if t.checked_by else None,
+                "checked_at":  t.checked_at.isoformat() if t.checked_at else None,
+            }
+            for t in txns
+        ],
+    }
+
+
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/transactions/{txn_id}/check")
+async def toggle_variance_transaction_check(
+    tb_id: uuid.UUID,
+    var_id: uuid.UUID,
+    txn_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Toggle the 'I've checked this transaction' flag and audit-log it."""
+    t = (await db.execute(
+        select(VarianceTransaction).where(
+            VarianceTransaction.id == txn_id,
+            VarianceTransaction.variance_id == var_id,
+        )
+    )).scalar_one_or_none()
+    if t is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    if t.is_checked:
+        t.is_checked = False
+        t.checked_by = None
+        t.checked_at = None
+        action_label = "unchecked"
+    else:
+        t.is_checked = True
+        t.checked_by = user.id
+        t.checked_at = datetime.now(timezone.utc)
+        action_label = "checked"
+
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action=f"flux.variance_txn_{action_label}",
+        entity_type="variance_transaction", entity_id=txn_id,
+        metadata={
+            "summary": f"{action_label.title()} {t.txn_type} {t.txn_number or ''}".strip(),
+            "variance_id": str(var_id),
+        },
+    )
+    await db.commit()
+    return {
+        "id": str(t.id),
+        "is_checked": t.is_checked,
+        "checked_by": str(t.checked_by) if t.checked_by else None,
+        "checked_at": t.checked_at.isoformat() if t.checked_at else None,
+    }
 
 
 @router.post("/trial-balances/{tb_id}/variances/{var_id}/regenerate")

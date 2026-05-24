@@ -31,3 +31,6 @@ class Account(TenantBase):
     fs_category: Mapped[str | None] = mapped_column(String(50))
     # Sub-line within category, e.g. "Current Assets", "Cost of Revenue"
     fs_line: Mapped[str | None] = mapped_column(String(100))
+    # QBO Account.Id (populated only when the TB was pulled from QBO). Lets us
+    # drill into per-account transactions on demand.
+    qbo_account_id: Mapped[str | None] = mapped_column(String(50))

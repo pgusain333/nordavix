@@ -10,6 +10,7 @@ from modules.flux.router import router as flux_router
 from modules.qbo.router import oauth_router as qbo_oauth_router
 from modules.qbo.router import qbo_router
 from modules.recons.router import router as recons_router
+from modules.audit.router import router as audit_router
 
 if settings.sentry_dsn:
     sentry_sdk.init(
@@ -45,6 +46,7 @@ app.include_router(flux_router,      prefix="/api/flux",            tags=["flux"
 app.include_router(qbo_oauth_router, prefix="/api/oauth/qbo",       tags=["oauth"])
 app.include_router(qbo_router,       prefix="/api/qbo",             tags=["qbo"])
 app.include_router(recons_router,    prefix="/api/reconciliations", tags=["reconciliations"])
+app.include_router(audit_router,     prefix="/api/audit",           tags=["audit"])
 
 
 @app.get("/api/health", tags=["system"])
