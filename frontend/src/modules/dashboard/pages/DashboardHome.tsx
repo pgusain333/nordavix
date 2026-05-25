@@ -13,11 +13,11 @@
  * All data is read-only and behind cached queries (5-minute staleTime) so
  * the dashboard doesn't hammer QBO every time the user navigates here.
  */
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useUser } from "@clerk/clerk-react"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
-import { motion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
 import {
   CheckCircle2,
   ArrowRight,
@@ -81,6 +81,12 @@ export function DashboardHome() {
   // dashboard is always showing one month at a time. Click "Open" on either
   // action card to drill into the full module-level view for the same month.
   const [period, setPeriod] = useState<string>(defaultPeriodEnd())
+
+  // Sequential-close gate state — when the user clicks a future tile
+  // that's blocked by an earlier unapproved month, we surface an inline
+  // message instead of refocusing. Cleared automatically after a few
+  // seconds OR when the user clicks a valid tile.
+  const [blockMsg, setBlockMsg] = useState<string | null>(null)
 
   // QBO connection — needed for setup checklist + recons overview
   const { data: qbo, isLoading: qboLoading } = useQuery({
@@ -146,6 +152,38 @@ export function DashboardHome() {
       return d.toLocaleDateString(undefined, { month: "long", year: "numeric" })
     } catch { return period }
   }, [period])
+
+  // Sequential-close gate: a month M is blocked iff any earlier month
+  // M' < M is "in_progress" or "not_started" (i.e. not closed and not
+  // fully approved). Mirrors the backend gate in /admin/close-period.
+  // Map blocked period_end → label of the first earlier month that
+  // needs attention, so the inline error can be specific.
+  const blockedBy = useMemo(() => {
+    const map = new Map<string, { label: string; period_end: string; unapproved: number }>()
+    const periods = tracker?.periods ?? []
+    for (let i = 0; i < periods.length; i++) {
+      const p = periods[i]
+      // Walk earlier periods (the tracker list is sorted chronologically
+      // ascending, so anything before i is earlier in time). Stop at the
+      // first blocker — naming one specific cause is more actionable
+      // than listing all of them.
+      for (let j = 0; j < i; j++) {
+        const prior = periods[j]
+        if (prior.status === "closed" || prior.status === "complete") continue
+        const unapproved = (prior.counts.pending ?? 0) + (prior.counts.reviewed ?? 0) + (prior.counts.flagged ?? 0)
+        map.set(p.period_end, { label: prior.label, period_end: prior.period_end, unapproved })
+        break
+      }
+    }
+    return map
+  }, [tracker])
+
+  // Auto-clear the block message after 4 seconds.
+  useEffect(() => {
+    if (!blockMsg) return
+    const t = setTimeout(() => setBlockMsg(null), 4_000)
+    return () => clearTimeout(t)
+  }, [blockMsg])
 
   // Recons buckets — open / reviewed / approved counts derived from the overview
   const buckets = useMemo(() => {
@@ -349,21 +387,51 @@ export function DashboardHome() {
                     not_started: { bg: "var(--surface-2)",         border: "var(--border)",   fg: "var(--text-muted)", icon: <Circle size={12} strokeWidth={2} /> },
                   }[p.status]
                   const isSelected = p.period_end === period
+                  // Sequential-close gate. If an earlier month isn't
+                  // fully approved (or closed), this tile is locked:
+                  // dimmed visually, click surfaces an inline error
+                  // instead of refocusing, and any Start CTA is
+                  // suppressed (the user has to finish prior months
+                  // first).
+                  const blocker = blockedBy.get(p.period_end)
                   return (
                     <button
                       key={p.period_end}
-                      onClick={() => setPeriod(p.period_end)}
-                      className="rounded-lg p-3 text-left transition-all hover:shadow-md hover:-translate-y-px"
+                      onClick={() => {
+                        if (blocker) {
+                          setBlockMsg(
+                            `${p.label} is locked. ${blocker.label} has ${blocker.unapproved} open account${blocker.unapproved === 1 ? "" : "s"} ` +
+                            `— approve all of them first.`
+                          )
+                          return
+                        }
+                        setBlockMsg(null)
+                        setPeriod(p.period_end)
+                      }}
+                      className="rounded-lg p-3 text-left transition-all hover:shadow-md hover:-translate-y-px relative"
                       style={{
                         background: meta.bg,
                         border: `${isSelected ? "2px" : "1px"} solid ${isSelected ? "var(--green)" : meta.border}`,
                         minWidth: 150,
                         boxShadow: isSelected ? "0 0 0 3px rgba(16, 185, 129, 0.15)" : undefined,
+                        opacity: blocker ? 0.5 : 1,
+                        cursor: blocker ? "not-allowed" : "pointer",
                       }}
+                      title={blocker
+                        ? `Locked — ${blocker.label} must be fully approved first`
+                        : `Refocus the dashboard to ${p.label}`}
                     >
+                      {/* Small lock badge in the corner when blocked,
+                          so the visual reason is obvious at a glance. */}
+                      {blocker && (
+                        <span className="absolute top-1.5 right-1.5"
+                          style={{ color: "var(--text-muted)" }}>
+                          <Lock size={10} strokeWidth={2.4} />
+                        </span>
+                      )}
                       <div className="flex items-center justify-between mb-1.5">
                         <span className="text-xs font-bold" style={{ color: meta.fg }}>{p.label}</span>
-                        <span style={{ color: meta.fg }}>{meta.icon}</span>
+                        {!blocker && <span style={{ color: meta.fg }}>{meta.icon}</span>}
                       </div>
                       {p.total > 0 ? (
                         <>
@@ -390,27 +458,26 @@ export function DashboardHome() {
                           <span className="text-[10px] italic block mb-1.5" style={{ color: meta.fg, opacity: 0.7 }}>
                             Not started
                           </span>
-                          {/* "Start month-end close" CTA — surfaces the
-                              one-click path: navigate to the recons
-                              dashboard for this period with ?autosync=1
-                              so QBO data pulls automatically on arrival.
-                              stopPropagation prevents the wrapping tile
-                              click from also firing setPeriod, which
-                              would feel like a double-action. */}
-                          <span
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              navigate(`/app/reconciliations/period/${p.period_end}?autosync=1`)
-                            }}
-                            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide cursor-pointer transition-colors hover:opacity-80"
-                            style={{
-                              background: "var(--green)",
-                              color: "white",
-                            }}
-                            title={`Start month-end close for ${p.label} — auto-syncs QuickBooks for ${p.period_end}`}
-                          >
-                            Start <ArrowRight size={9} strokeWidth={2.4} />
-                          </span>
+                          {/* "Start month-end close" CTA — only when
+                              this month isn't locked by a prior unapproved
+                              month. Otherwise the lock badge in the
+                              corner already tells the story. */}
+                          {!blocker && (
+                            <span
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                navigate(`/app/reconciliations/period/${p.period_end}?autosync=1`)
+                              }}
+                              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide cursor-pointer transition-colors hover:opacity-80"
+                              style={{
+                                background: "var(--green)",
+                                color: "white",
+                              }}
+                              title={`Start month-end close for ${p.label} — auto-syncs QuickBooks for ${p.period_end}`}
+                            >
+                              Start <ArrowRight size={9} strokeWidth={2.4} />
+                            </span>
+                          )}
                         </>
                       )}
                     </button>
@@ -418,6 +485,27 @@ export function DashboardHome() {
                 })}
               </div>
             </div>
+            {/* Inline block message — shown when the user clicked a
+                locked future tile. Auto-dismisses after 4s. */}
+            <AnimatePresence>
+              {blockMsg && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className="px-4 py-2.5 flex items-start gap-2 text-xs"
+                  style={{
+                    background: "rgba(245, 158, 11, 0.10)",
+                    borderTop: "1px solid #f59e0b",
+                    color: "#92400e",
+                    overflow: "hidden",
+                  }}>
+                  <Lock size={12} strokeWidth={2} className="shrink-0 mt-0.5" style={{ color: "#b45309" }} />
+                  <span className="flex-1">{blockMsg}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
             <div className="px-4 py-2 text-[10px]" style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)" }}>
               Books started {tracker!.books_start_date} · {tracker!.periods.length} period{tracker!.periods.length === 1 ? "" : "s"} ·
               {" "}{tracker!.periods.filter((p) => p.status === "closed").length} closed · click a month to refocus the dashboard
@@ -444,10 +532,30 @@ export function DashboardHome() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
           {/* Open Reconciliations */}
-          <button
-            onClick={() => navigate(`/app/reconciliations/period/${period}`)}
-            className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+          {(() => {
+            const selectedBlocker = blockedBy.get(period)
+            return (
+              <button
+                onClick={() => {
+                  if (selectedBlocker) {
+                    setBlockMsg(
+                      `Cannot open ${monthLabel} reconciliations. ${selectedBlocker.label} has ` +
+                      `${selectedBlocker.unapproved} open account${selectedBlocker.unapproved === 1 ? "" : "s"} — ` +
+                      `approve all of them first.`
+                    )
+                    return
+                  }
+                  navigate(`/app/reconciliations/period/${period}`)
+                }}
+                className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
+                style={{
+                  background: "var(--surface)",
+                  border: `1px solid ${selectedBlocker ? "#f59e0b" : "var(--border)"}`,
+                  boxShadow: "var(--card-shadow)",
+                  cursor: selectedBlocker ? "not-allowed" : "pointer",
+                  opacity: selectedBlocker ? 0.75 : 1,
+                }}
+              >
             <div className="px-4 py-3 flex items-center justify-between"
               style={{ borderBottom: "1px solid var(--border)" }}>
               <div className="flex items-center gap-2">
@@ -502,11 +610,20 @@ export function DashboardHome() {
               <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                 {buckets.total} accounts · {fmtMoney(totalVariance)} variance
               </span>
-              <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "var(--green)" }}>
-                Open dashboard <ArrowRight size={12} strokeWidth={2} />
-              </span>
+              {selectedBlocker ? (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "#b45309" }}>
+                  <Lock size={11} strokeWidth={2} />
+                  Locked by {selectedBlocker.label}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "var(--green)" }}>
+                  Open dashboard <ArrowRight size={12} strokeWidth={2} />
+                </span>
+              )}
             </div>
-          </button>
+              </button>
+            )
+          })()}
 
           {/* Open Flux Analysis */}
           <button

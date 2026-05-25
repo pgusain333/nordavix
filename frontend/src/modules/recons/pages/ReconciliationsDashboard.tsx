@@ -268,13 +268,29 @@ export function ReconciliationsDashboard() {
   // the URL with ?autosync=1. On arrival here we kick off the sync once
   // (per period), then strip the param so a refresh doesn't re-fire.
   // Guard on qbo + !overview so we don't pile on a sync if data's
-  // already cached locally.
+  // already cached locally. ALSO skip when sequential-close gate is
+  // blocking — the user shouldn't be doing any work on this period.
   const didAutoSyncRef = useRef<string | null>(null)
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search)
     if (sp.get("autosync") !== "1") return
     if (!qbo) return
     if (didAutoSyncRef.current === periodEnd) return
+    // Wait for the tracker to load before deciding — otherwise the
+    // blocker check below would always see []. When tracker fetches,
+    // the effect re-runs.
+    if (tracker === undefined) return
+    // Sequential-close gate: if an earlier month is open, skip the
+    // autosync entirely. The blocker banner will render instead.
+    if (priorBlockers.length > 0) {
+      // Still strip the ?autosync= param so a refresh doesn't keep
+      // re-triggering this branch unnecessarily.
+      sp.delete("autosync")
+      const qs = sp.toString()
+      navigate(`/app/reconciliations/period/${periodEnd}${qs ? "?" + qs : ""}`, { replace: true })
+      didAutoSyncRef.current = periodEnd
+      return
+    }
     if (overview) {
       // Already have data — just strip the param, no need to refetch.
       sp.delete("autosync")
@@ -291,7 +307,7 @@ export function ReconciliationsDashboard() {
       navigate(`/app/reconciliations/period/${periodEnd}${qs ? "?" + qs : ""}`, { replace: true })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qbo, periodEnd, overview])
+  }, [qbo, periodEnd, overview, tracker, priorBlockers.length])
 
   // Clear bulk selection when the period changes — those rows belong to a
   // different period now.
@@ -691,7 +707,7 @@ export function ReconciliationsDashboard() {
           </div>
         )}
 
-        {qbo && !overview && !isFetching && (
+        {qbo && !overview && !isFetching && priorBlockers.length === 0 && (
           <div
             className="rounded-xl p-8 text-center"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
@@ -718,54 +734,69 @@ export function ReconciliationsDashboard() {
           </div>
         )}
 
-        {/* ── Prior-period blocker banner ──────────────────────────────
-            Admin-only nudge when there's at least one earlier month
-            that still has open work. Books are closed sequentially:
-            you can't lock April if March still has pending accounts.
-            Frontend gate mirrors the backend's /admin/close-period
-            check, but rendering this banner means the admin sees
-            "what's blocking" without first clicking and reading the
-            409 error. */}
-        {isAdmin && !isClosed && overview && priorBlockers.length > 0 && (
-          <div className="rounded-xl p-4 flex items-start gap-3"
+        {/* ── Prior-period gate ────────────────────────────────────────
+            Sequential close: this period is locked until every earlier
+            month is fully approved + closed. We don't just show a
+            banner — we BLOCK the rest of the dashboard so users can't
+            do work on this period while earlier ones are still open.
+            The block applies to every role; admins, reviewers, and
+            preparers all see the same locked screen with click-to-go
+            links to the blocking periods. */}
+        {!isClosed && priorBlockers.length > 0 && (
+          <div className="rounded-xl overflow-hidden"
             style={{
-              background: "rgba(245, 158, 11, 0.08)",
+              background: "linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, var(--surface) 100%)",
               border: "1px solid #f59e0b",
+              boxShadow: "var(--card-shadow)",
             }}>
-            <AlertTriangle size={18} style={{ color: "#b45309" }} className="shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold" style={{ color: "#b45309" }}>
-                Close earlier months first
-              </p>
-              <p className="text-xs mt-0.5" style={{ color: "#92400e" }}>
-                Books are closed sequentially. These earlier periods still
-                have open work and need to be approved + closed before you
-                can close {periodEnd}:
-              </p>
-              <ul className="text-xs mt-2 space-y-1">
-                {priorBlockers.slice(0, 5).map((b) => (
-                  <li key={b.period_end}>
-                    <button
-                      onClick={() => navigate(`/app/reconciliations/period/${b.period_end}`)}
-                      className="inline-flex items-center gap-2 hover:underline"
-                      style={{ color: "#b45309" }}
-                    >
-                      <span className="font-semibold">{b.label}</span>
-                      <span className="opacity-80">
-                        {b.unapproved > 0
-                          ? `· ${b.unapproved} open account${b.unapproved === 1 ? "" : "s"}`
-                          : "· no work started"}
-                      </span>
-                      <ArrowRight size={11} strokeWidth={1.8} />
-                    </button>
-                  </li>
-                ))}
-                {priorBlockers.length > 5 && (
-                  <li className="text-[10px]" style={{ color: "#92400e", opacity: 0.7 }}>
-                    + {priorBlockers.length - 5} more
-                  </li>
-                )}
-              </ul>
+            <div className="flex items-start gap-4 p-5">
+              <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
+                style={{ background: "rgba(245, 158, 11, 0.18)", border: "2px solid #f59e0b" }}>
+                <Lock size={20} strokeWidth={2} style={{ color: "#b45309" }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5"
+                  style={{ color: "#b45309" }}>
+                  Locked — close earlier months first
+                </p>
+                <h3 className="text-lg sm:text-xl font-bold text-theme leading-tight">
+                  {periodEnd} can't be opened yet
+                </h3>
+                <p className="text-xs mt-2" style={{ color: "var(--text-2)" }}>
+                  Month-end close runs in order. Every earlier month must have all
+                  accounts approved before you can reconcile {periodEnd}. Finish
+                  the period{priorBlockers.length === 1 ? "" : "s"} below first:
+                </p>
+                <ul className="text-sm mt-3 space-y-1.5">
+                  {priorBlockers.slice(0, 8).map((b) => (
+                    <li key={b.period_end}>
+                      <button
+                        onClick={() => navigate(`/app/reconciliations/period/${b.period_end}`)}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md font-medium transition-colors hover:bg-[rgba(245,158,11,0.10)]"
+                        style={{ color: "#b45309", border: "1px solid #fcd34d" }}
+                      >
+                        <span className="font-semibold">{b.label}</span>
+                        <span className="text-xs" style={{ color: "#92400e", opacity: 0.85 }}>
+                          {b.unapproved > 0
+                            ? `${b.unapproved} open account${b.unapproved === 1 ? "" : "s"}`
+                            : "no work started"}
+                        </span>
+                        <ArrowRight size={12} strokeWidth={1.8} />
+                      </button>
+                    </li>
+                  ))}
+                  {priorBlockers.length > 8 && (
+                    <li className="text-xs px-3" style={{ color: "#92400e", opacity: 0.7 }}>
+                      + {priorBlockers.length - 8} more
+                    </li>
+                  )}
+                </ul>
+                <p className="text-[10px] mt-3 italic" style={{ color: "var(--text-muted)" }}>
+                  Why? Sequential close is a standard accounting compliance rule —
+                  it prevents skipping a month or back-dating activity. The same
+                  gate runs server-side when an admin tries to close a period out of order.
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -835,7 +866,11 @@ export function ReconciliationsDashboard() {
           </div>
         )}
 
-        {qbo && (overview || isFetching) && (
+        {/* Hide the entire dashboard body when sequential-close gate
+            blocks this period — the locked banner above is the only
+            actionable thing. Also: auto-sync is suppressed (see the
+            useEffect earlier). */}
+        {qbo && (overview || isFetching) && priorBlockers.length === 0 && (
           <>
             {/* KPI strip — reconciliation-focused metrics across all
                 synced accounts. GL ↔ Subledger ↔ Variance is the core
