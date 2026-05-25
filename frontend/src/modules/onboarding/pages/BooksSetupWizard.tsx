@@ -17,8 +17,9 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { ArrowLeft, ArrowRight, CheckCircle2, AlertTriangle, Calendar, Search } from "lucide-react"
+import { ArrowLeft, ArrowRight, CheckCircle2, AlertTriangle, Search } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { DatePicker } from "@/core/ui/DatePicker"
 import { reconsApi, type SeedPreviewAccount } from "@/modules/recons/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 
@@ -220,29 +221,22 @@ export function BooksSetupWizard() {
               your go-live month. We'll pull GL balances as of one day before this date as the proposed openings.
             </p>
 
-            <label className="block max-w-xs">
+            <div className="block max-w-xs">
               <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 Books start date
               </span>
-              <div className="mt-1 relative">
-                <Calendar size={14} strokeWidth={1.8} className="absolute left-3 top-1/2 -translate-y-1/2"
-                  style={{ color: "var(--text-muted)" }} />
-                <input
-                  type="date"
+              <div className="mt-1">
+                <DatePicker
                   value={booksStart}
-                  onChange={(e) => setBooksStart(e.target.value)}
-                  className="w-full rounded-lg pl-9 pr-3 py-2 text-sm outline-none"
-                  style={{
-                    background: "var(--surface-2)",
-                    border: "1px solid var(--border-strong)",
-                    color: "var(--text)",
-                  }}
+                  onChange={setBooksStart}
+                  className="block w-full"
+                  triggerClassName="inline-flex items-center gap-2 w-full rounded-lg px-3 py-2 text-sm outline-none transition-colors hover:bg-[var(--surface)]"
                 />
               </div>
               <p className="text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>
                 Nordavix will refuse to fetch any data older than this date.
               </p>
-            </label>
+            </div>
 
             <div className="mt-6 flex items-center justify-end">
               <Button

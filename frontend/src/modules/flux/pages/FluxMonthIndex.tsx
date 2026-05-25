@@ -43,6 +43,7 @@ import {
   Sparkles,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { humanize } from "@/core/ui/utils"
 import { api as fluxApi, type TrialBalance } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
@@ -74,6 +75,14 @@ const STATUS_DOT: Record<string, string> = {
   complete:         "var(--green)",
   error:            "#dc2626",
 }
+
+// Human-readable labels for the same status keys. The shared `humanize`
+// helper handles unknown keys with a snake_case → Title Case fallback
+// so a new backend status never leaks raw into the UI again.
+const STATUS_LABEL: Record<string, string> = {
+  ready_for_review: "In review",
+}
+function humanizeStatus(s: string): string { return humanize(s, STATUS_LABEL) }
 
 // ── Component ──────────────────────────────────────────────────────────────
 
@@ -343,19 +352,31 @@ export function FluxMonthIndex() {
                     >
                       <button
                         onClick={() => openMonth(r)}
-                        className="w-full grid grid-cols-[1fr_120px_180px_180px_120px] gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)] items-center"
+                        className="w-full flex flex-col gap-2 sm:grid sm:grid-cols-[1fr_120px_180px_180px_120px] sm:gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)] sm:items-center"
                         style={{ borderBottom: "1px solid var(--border)" }}
                       >
                         {/* Period label */}
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-theme">{r.longLabel}</p>
-                          <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>
-                            {r.periodEnd}
-                          </p>
+                        <div className="min-w-0 flex items-center justify-between sm:block">
+                          <div>
+                            <p className="text-sm font-semibold text-theme">{r.longLabel}</p>
+                            <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>
+                              {r.periodEnd}
+                            </p>
+                          </div>
+                          {/* Mobile-only action chevron — keeps the action affordance
+                              visible on the top row instead of pushing it to the bottom. */}
+                          <span className="sm:hidden inline-flex items-center gap-1 text-xs font-semibold"
+                            style={{ color: r.tbs.length > 0 ? "var(--green)" : "var(--text-muted)" }}>
+                            {r.tbs.length > 0 ? "Open" : "Start"}
+                            {r.tbs.length > 0
+                              ? <ArrowRight size={12} strokeWidth={2} />
+                              : <Sparkles size={12} strokeWidth={2} />}
+                          </span>
                         </div>
 
                         {/* Count */}
-                        <div className="text-xs tabular-nums">
+                        <div className="text-xs tabular-nums sm:block">
+                          <span className="sm:hidden text-[10px] uppercase tracking-wide mr-1.5" style={{ color: "var(--text-muted)" }}>Analyses:</span>
                           {r.tbs.length === 0 ? (
                             <span className="italic" style={{ color: "var(--text-muted)" }}>none yet</span>
                           ) : (
@@ -367,6 +388,7 @@ export function FluxMonthIndex() {
 
                         {/* Status mix */}
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="sm:hidden text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Status:</span>
                           {Object.entries(statusCounts).map(([status, count]) => (
                             <span key={status}
                               className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
@@ -377,7 +399,7 @@ export function FluxMonthIndex() {
                               }}>
                               <span className="h-1.5 w-1.5 rounded-full"
                                 style={{ background: STATUS_DOT[status] ?? "var(--border-strong)" }} />
-                              {status} · {count}
+                              {humanizeStatus(status)} · {count}
                             </span>
                           ))}
                           {r.tbs.length === 0 && (
@@ -389,18 +411,24 @@ export function FluxMonthIndex() {
                         <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                           {latest ? (
                             <>
-                              <p className="truncate text-theme">{latest.name || "Untitled"}</p>
-                              <p className="text-[10px] mt-0.5">
-                                {new Date(latest.created_at).toLocaleDateString()}
-                              </p>
+                              <span className="sm:hidden text-[10px] uppercase tracking-wide mr-1.5">Latest:</span>
+                              <span className="sm:block">
+                                <span className="truncate inline-block max-w-[60vw] align-bottom text-theme">{latest.name || "Untitled"}</span>
+                                <span className="sm:block text-[10px] sm:mt-0.5 ml-1 sm:ml-0">
+                                  · {new Date(latest.created_at).toLocaleDateString()}
+                                </span>
+                              </span>
                             </>
                           ) : (
-                            <span className="italic">no activity</span>
+                            <>
+                              <span className="sm:hidden text-[10px] uppercase tracking-wide mr-1.5">Latest:</span>
+                              <span className="italic">no activity</span>
+                            </>
                           )}
                         </div>
 
-                        {/* Action */}
-                        <span className="inline-flex items-center justify-end gap-1 text-xs font-semibold"
+                        {/* Action — desktop only; mobile shows it in the period row */}
+                        <span className="hidden sm:inline-flex items-center justify-end gap-1 text-xs font-semibold"
                           style={{ color: r.tbs.length > 0 ? "var(--green)" : "var(--text-muted)" }}>
                           {r.tbs.length > 0 ? "Open" : "Start"}
                           {r.tbs.length > 0

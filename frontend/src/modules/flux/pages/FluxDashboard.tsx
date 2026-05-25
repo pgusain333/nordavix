@@ -38,6 +38,7 @@ import { api, type TrialBalance } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
 import { VarianceTable } from "@/modules/flux/components/VarianceTable"
+import { DatePicker } from "@/core/ui/DatePicker"
 import { Button, Spinner } from "@/core/ui/components"
 
 // ── Status dot colours (inline styles — no Tailwind bg-* needed) ────────────
@@ -448,8 +449,9 @@ export function FluxDashboard() {
         className="flex flex-1 flex-col overflow-hidden min-w-0"
         style={{ background: "var(--bg)" }}
       >
-        {/* Header */}
-        <div className="flex items-center gap-2 px-4 sm:px-6 py-3.5 shrink-0"
+        {/* Header — gap shrinks on mobile so the icon-only action cluster
+            still fits next to the back/history/title on a 360px viewport. */}
+        <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-3.5 shrink-0"
           style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
 
           {/* Back to the flux month-index (one step up — obeys URL
@@ -492,7 +494,7 @@ export function FluxDashboard() {
             )}
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             {selectedTb && (
               <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
                 style={{
@@ -1006,10 +1008,18 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
           <input value={threshold} onChange={(e) => setThreshold(e.target.value)} type="number" min="0" className="flux-input" />
         </FieldLabel>
         <FieldLabel label="Period start">
-          <input value={periodStart} onChange={(e) => onPeriodStartChange(e.target.value)} type="date" className="flux-input" />
+          <DatePicker
+            value={periodStart} onChange={onPeriodStartChange}
+            className="block w-full"
+            triggerClassName="flux-input inline-flex items-center gap-2"
+          />
         </FieldLabel>
         <FieldLabel label="Period end">
-          <input value={periodEnd} onChange={(e) => onPeriodEndChange(e.target.value)} type="date" className="flux-input" />
+          <DatePicker
+            value={periodEnd} onChange={onPeriodEndChange}
+            className="block w-full"
+            triggerClassName="flux-input inline-flex items-center gap-2"
+          />
         </FieldLabel>
       </div>
 

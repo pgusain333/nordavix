@@ -248,15 +248,21 @@ export function ReconciliationsMonthIndex() {
                     >
                       <button
                         onClick={() => navigate(`/app/reconciliations/period/${p.period_end}`)}
-                        className="w-full grid grid-cols-[1fr_120px_140px_180px_120px] gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)] items-center"
+                        className="w-full flex flex-col gap-2 sm:grid sm:grid-cols-[1fr_120px_140px_180px_120px] sm:gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)] sm:items-center"
                         style={{ borderBottom: "1px solid var(--border)" }}
                       >
-                        {/* Period label */}
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-theme">{p.label}</p>
-                          <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>
-                            {p.period_end}
-                          </p>
+                        {/* Period label + mobile-only action chevron */}
+                        <div className="min-w-0 flex items-center justify-between sm:block">
+                          <div>
+                            <p className="text-sm font-semibold text-theme">{p.label}</p>
+                            <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>
+                              {p.period_end}
+                            </p>
+                          </div>
+                          <span className="sm:hidden inline-flex items-center gap-1 text-xs font-semibold"
+                            style={{ color: "var(--green)" }}>
+                            Open <ArrowRight size={12} strokeWidth={2} />
+                          </span>
                         </div>
 
                         {/* Status pill */}
@@ -268,6 +274,7 @@ export function ReconciliationsMonthIndex() {
 
                         {/* Counts */}
                         <div className="text-xs tabular-nums" style={{ color: "var(--text)" }}>
+                          <span className="sm:hidden text-[10px] uppercase tracking-wide mr-1.5" style={{ color: "var(--text-muted)" }}>Progress:</span>
                           {p.total === 0 ? (
                             <span style={{ color: "var(--text-muted)" }}>—</span>
                           ) : (
@@ -301,8 +308,8 @@ export function ReconciliationsMonthIndex() {
                           )}
                         </div>
 
-                        {/* Action */}
-                        <span className="inline-flex items-center justify-end gap-1 text-xs font-semibold"
+                        {/* Action — desktop only; mobile shows it on the period row */}
+                        <span className="hidden sm:inline-flex items-center justify-end gap-1 text-xs font-semibold"
                           style={{ color: "var(--green)" }}>
                           Open <ArrowRight size={12} strokeWidth={2} />
                         </span>

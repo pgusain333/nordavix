@@ -47,6 +47,7 @@ import {
   ChevronDown,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { DatePicker } from "@/core/ui/DatePicker"
 import {
   reconsApi,
   type Overview,
@@ -569,24 +570,13 @@ export function ReconciliationsDashboard() {
             </p>
           </div>
 
-          <div className="flex items-end gap-2 flex-wrap">
-            <label className="flex flex-col">
+          <div className="flex items-end gap-2 flex-wrap w-full sm:w-auto">
+            <div className="flex flex-col flex-1 sm:flex-none min-w-[160px]">
               <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
                 Period end
               </span>
-              <input
-                type="date"
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-                disabled={!qbo}
-                className="rounded-lg px-3 py-1.5 text-sm outline-none"
-                style={{
-                  background: "var(--surface-2)",
-                  border: "1px solid var(--border-strong)",
-                  color: "var(--text)",
-                }}
-              />
-            </label>
+              <DatePicker value={periodEnd} onChange={setPeriodEnd} disabled={!qbo} className="block w-full sm:w-auto" />
+            </div>
             <Button
               size="sm"
               variant="outline"
@@ -1066,7 +1056,7 @@ export function ReconciliationsDashboard() {
                   )}
 
                   <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full min-w-[920px] text-sm">
                     <thead>
                       <tr style={{
                         background: "var(--surface-2)",
@@ -1110,7 +1100,7 @@ export function ReconciliationsDashboard() {
                         ].map((h, i) => (
                           <th
                             key={i}
-                            className="text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5"
+                            className="text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5 whitespace-nowrap"
                             style={{
                               color: "var(--text-muted)",
                               textAlign: h.right ? "right" : h.center ? "center" : "left",
@@ -1852,17 +1842,11 @@ function InlineSubledgerForm({
                 style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
               />
             </label>
-            <label className="w-36">
+            <div className="w-36">
               <span className="text-[9px] font-semibold uppercase tracking-wide block mb-1"
                 style={{ color: "var(--text-muted)" }}>Date</span>
-              <input
-                type="date"
-                value={manualDate}
-                onChange={(e) => setManualDate(e.target.value)}
-                className="w-full rounded-md px-2 py-1.5 text-xs outline-none"
-                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-              />
-            </label>
+              <DatePicker value={manualDate} onChange={setManualDate} compact className="block w-full" />
+            </div>
             <Button size="sm" type="button" onClick={saveManualItem}
               disabled={!parseFloat(manualAmount) || !manualMemo.trim()}>
               {editingManualId ? "Update" : "Add"}

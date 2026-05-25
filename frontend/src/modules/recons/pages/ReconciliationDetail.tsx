@@ -27,6 +27,7 @@ import {
   Flag,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { humanize } from "@/core/ui/utils"
 import {
   reconsApi,
   type ReconciliationItem,
@@ -169,7 +170,7 @@ export function ReconciliationDetail() {
           <span style={{ color: "var(--border-strong)" }}>·</span>
           <span className="text-xs" style={{ color: "var(--text-muted)" }}>{periodLabel}</span>
           <span style={{ color: "var(--border-strong)" }}>·</span>
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{recon.status}</span>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{humanize(recon.status, { in_review: "In review" })}</span>
 
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <Button size="sm" variant="outline" icon={<RefreshCw size={12} strokeWidth={1.8} />}

@@ -21,6 +21,7 @@ import {
   Filter,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { humanize } from "@/core/ui/utils"
 import { reconsApi, type ReconType, type Reconciliation, type ReconciliationItem, type RiskLevel } from "@/modules/recons/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 
@@ -229,7 +230,7 @@ function ReconCard({ recon, expanded, onToggle, onSync, riskFilter, navigate }: 
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-theme truncate">{recon.name}</p>
           <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            Period {new Date(recon.period_end).toLocaleDateString()} · {recon.status}
+            Period {new Date(recon.period_end).toLocaleDateString()} · {humanize(recon.status, { in_review: "In review" })}
           </p>
         </div>
         <div className="hidden sm:flex items-center gap-4 text-right">

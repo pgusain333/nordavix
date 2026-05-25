@@ -37,6 +37,7 @@ import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
 import { workspaceApi } from "@/modules/workspace/api"
 import { Button, Spinner } from "@/core/ui/components"
+import { humanize } from "@/core/ui/utils"
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -571,6 +572,19 @@ export function DashboardHome() {
           <Kpi label="Team members" value={String(members?.length ?? 0)} tone="var(--text)" sub="see settings" />
         </div>
 
+        {/* ── Month-end Close Progress card ────────────────────────
+            Updates whenever the user clicks a tile in the tracker.
+            Surfaces where we are in the close cycle for the focused
+            month: % approved, status breakdown, days vs target close
+            (period_end + 15 days, same as the Tasks default due). */}
+        <CloseProgressCard
+          monthLabel={monthLabel}
+          period={period}
+          buckets={buckets}
+          trackerEntry={tracker?.periods.find((p) => p.period_end === period)}
+          onOpen={() => navigate(`/app/reconciliations/period/${period}`)}
+        />
+
         {/* ── Two big "Open" action cards ────────────────────────
             One per workspace module. Each card summarizes the current
             month at a glance and links into the module's full dashboard
@@ -706,7 +720,7 @@ export function DashboardHome() {
                       <span className="h-1.5 w-1.5 rounded-full"
                         style={{ background: tb.status === "completed" ? "var(--green)" : "var(--text-muted)" }} />
                       <span className="flex-1 truncate text-theme">{tb.name || `Period ${tb.period_current}`}</span>
-                      <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{tb.status}</span>
+                      <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{humanize(tb.status, { ready_for_review: "In review" })}</span>
                     </li>
                   ))}
                 </ul>
@@ -781,6 +795,180 @@ export function DashboardHome() {
 }
 
 // ── Subcomponents ──────────────────────────────────────────────────────────
+
+/**
+ * CloseProgressCard — at-a-glance "where am I in this month's close"
+ * for the period the user has focused. Updates whenever the user
+ * clicks a different tile in the month-end tracker above.
+ *
+ * Renders three states:
+ *   • Closed → green confirmation banner ("Books closed on … by …")
+ *   • In progress (has work) → progress bar + status breakdown +
+ *     days into close vs target (period_end + 15 days)
+ *   • Not started (no AccountReviewStatus rows yet) → friendly nudge
+ *     to start the close
+ */
+function CloseProgressCard({ monthLabel, period, buckets, trackerEntry, onOpen }: {
+  monthLabel: string
+  period: string
+  buckets: { open: number; reviewed: number; approved: number; total: number }
+  trackerEntry?: { status: string; approved_pct: number; closed_at: string | null; closed_by: string | null }
+  onOpen: () => void
+}) {
+  // Parse period for date math
+  const periodEnd = (() => {
+    try { return new Date(period + "T00:00:00") } catch { return null }
+  })()
+  const today = new Date(new Date().toDateString())
+  const daysSinceClose = periodEnd ? Math.floor((today.getTime() - periodEnd.getTime()) / 86_400_000) : 0
+  const targetClose = periodEnd ? new Date(periodEnd.getTime() + 15 * 86_400_000) : null
+  const daysToTarget = targetClose ? Math.ceil((targetClose.getTime() - today.getTime()) / 86_400_000) : 0
+  const targetLabel = targetClose
+    ? targetClose.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : ""
+  const periodEndLabel = periodEnd
+    ? periodEnd.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : period
+  const pct = Math.min(100, Math.max(0, Math.round(trackerEntry?.approved_pct ?? 0)))
+  const status = trackerEntry?.status ?? "not_started"
+
+  // ── State 1: closed ─────────────────────────────────────────────
+  if (status === "closed") {
+    const closedAt = trackerEntry?.closed_at
+      ? new Date(trackerEntry.closed_at).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
+      : ""
+    return (
+      <div className="rounded-xl overflow-hidden"
+        style={{ background: "var(--green-subtle)", border: "1px solid var(--green)", boxShadow: "var(--card-shadow)" }}>
+        <div className="px-5 py-4 flex items-center gap-4">
+          <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
+            style={{ background: "var(--green)", color: "white" }}>
+            <Lock size={20} strokeWidth={2} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: "var(--green)" }}>
+              Month-end close complete
+            </p>
+            <h3 className="text-lg font-bold text-theme leading-tight">{monthLabel} books closed</h3>
+            <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
+              {closedAt && <>Closed on {closedAt} · </>}
+              {buckets.approved} of {buckets.total} account{buckets.total === 1 ? "" : "s"} approved
+            </p>
+          </div>
+          <Button size="sm" variant="outline" onClick={onOpen}>View</Button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── State 2: not started ────────────────────────────────────────
+  if (status === "not_started" || buckets.total === 0) {
+    return (
+      <div className="rounded-xl overflow-hidden"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+        <div className="px-5 py-4 flex items-center gap-4">
+          <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
+            style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+            <Circle size={20} strokeWidth={1.8} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: "var(--text-muted)" }}>
+              Month-end close progress · {monthLabel}
+            </p>
+            <h3 className="text-base font-semibold text-theme leading-tight">Not started yet</h3>
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+              Click the {monthLabel} tile above and Start to begin the close.
+            </p>
+          </div>
+          <Button size="sm" onClick={onOpen}>Open</Button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── State 3: in progress (the meat) ─────────────────────────────
+  const isOverdue = daysToTarget < 0
+  return (
+    <div className="rounded-xl overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="px-5 py-4 flex items-center justify-between flex-wrap gap-2"
+        style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-2">
+          <CalendarCheck size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+          <h3 className="text-sm font-semibold text-theme">
+            Month-end close progress · <span style={{ color: "var(--green)" }}>{monthLabel}</span>
+          </h3>
+        </div>
+        <span className="inline-flex items-center gap-1 text-xs font-bold tabular-nums px-2 py-0.5 rounded-full"
+          style={{
+            background: pct === 100 ? "var(--green-subtle)" : "var(--surface-2)",
+            color: pct === 100 ? "var(--green)" : "var(--text-2)",
+          }}>
+          {pct}% approved
+        </span>
+      </div>
+
+      {/* Progress bar */}
+      <div className="px-5 pt-4 pb-2">
+        <div className="h-2 w-full rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.08)" }}>
+          <div className="h-full rounded-full transition-all"
+            style={{
+              width: `${pct}%`,
+              background: pct === 100 ? "var(--green)" : pct >= 50 ? "#3b82f6" : "#f59e0b",
+            }} />
+        </div>
+        <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+          {buckets.approved} of {buckets.total} accounts approved
+          {pct === 100 && <> · ready to lock the books</>}
+        </p>
+      </div>
+
+      {/* Status breakdown — 4 mini-tiles */}
+      <div className="grid grid-cols-4 divide-x" style={{ borderTop: "1px solid var(--border)" }}>
+        <ProgressTile label="Open"     count={buckets.open}                                  fg="#b91c1c"      bg="rgba(220,38,38,0.06)" />
+        <ProgressTile label="Prepared" count={buckets.reviewed}                              fg="#1d4ed8"      bg="rgba(29,78,216,0.06)" />
+        <ProgressTile label="Approved" count={buckets.approved}                              fg="var(--green)" bg="var(--green-subtle)" />
+        <ProgressTile label="Flagged"  count={Math.max(0, buckets.total - buckets.open - buckets.reviewed - buckets.approved)}
+                                                                                              fg="#ef4444"      bg="rgba(239,68,68,0.06)" />
+      </div>
+
+      {/* Timeline footer */}
+      <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2 text-[11px]"
+        style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+        <div style={{ color: "var(--text-muted)" }}>
+          Period ended {periodEndLabel} · Target close {targetLabel}
+        </div>
+        <div className="inline-flex items-center gap-2">
+          <span style={{ color: "var(--text-muted)" }}>
+            {daysSinceClose < 0
+              ? `${Math.abs(daysSinceClose)} days until period-end`
+              : `${daysSinceClose} day${daysSinceClose === 1 ? "" : "s"} into close`}
+          </span>
+          <span style={{
+            color: isOverdue ? "#dc2626" : pct === 100 ? "var(--green)" : "var(--text-2)",
+            fontWeight: 600,
+          }}>
+            ·
+            {" "}{isOverdue
+              ? `${Math.abs(daysToTarget)} day${Math.abs(daysToTarget) === 1 ? "" : "s"} overdue`
+              : `${daysToTarget} day${daysToTarget === 1 ? "" : "s"} to target`}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProgressTile({ label, count, fg, bg }: { label: string; count: number; fg: string; bg: string }) {
+  return (
+    <div className="px-3 py-2.5 text-center" style={{ background: count > 0 ? bg : undefined }}>
+      <p className="text-[10px] uppercase tracking-wide font-semibold"
+        style={{ color: count > 0 ? fg : "var(--text-muted)" }}>{label}</p>
+      <p className="text-lg font-bold tabular-nums mt-0.5"
+        style={{ color: count > 0 ? fg : "var(--text-muted)" }}>{count}</p>
+    </div>
+  )
+}
 
 function Kpi({ label, value, tone, sub }: { label: string; value: string; tone: string; sub?: string }) {
   return (

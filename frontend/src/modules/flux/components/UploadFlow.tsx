@@ -24,6 +24,7 @@ import {
 } from "lucide-react"
 import { api, type ColumnMapping, type UploadPreview, type TrialBalance } from "@/modules/flux/api"
 import { Button, Input, Select, Spinner } from "@/core/ui/components"
+import { DatePicker } from "@/core/ui/DatePicker"
 import { cn } from "@/core/ui/utils"
 
 type Source = "upload" | "qbo"
@@ -276,20 +277,26 @@ export function UploadFlow({ onComplete, qboConnected = false, forceSource }: Pr
                 onChange={(e) => setTbName(e.target.value)}
               />
               <div className="grid grid-cols-2 gap-4">
-                <Input
-                  id="cur-period"
-                  label="Current period end date"
-                  type="date"
-                  value={curPeriod}
-                  onChange={(e) => setCurPeriod(e.target.value)}
-                />
-                <Input
-                  id="prior-period"
-                  label="Prior period end date"
-                  type="date"
-                  value={priorPeriod}
-                  onChange={(e) => setPriorPeriod(e.target.value)}
-                />
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium" style={{ color: "var(--text-2)" }}>
+                    Current period end date
+                  </label>
+                  <DatePicker
+                    value={curPeriod} onChange={setCurPeriod}
+                    className="block w-full"
+                    triggerClassName="inline-flex items-center gap-2 w-full h-9 rounded-[8px] px-2.5 text-sm outline-none transition-colors hover:bg-[var(--surface-2)]"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium" style={{ color: "var(--text-2)" }}>
+                    Prior period end date
+                  </label>
+                  <DatePicker
+                    value={priorPeriod} onChange={setPriorPeriod}
+                    className="block w-full"
+                    triggerClassName="inline-flex items-center gap-2 w-full h-9 rounded-[8px] px-2.5 text-sm outline-none transition-colors hover:bg-[var(--surface-2)]"
+                  />
+                </div>
               </div>
               <Input
                 id="threshold"

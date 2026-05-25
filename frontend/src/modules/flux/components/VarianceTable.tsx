@@ -266,9 +266,10 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
 
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
-      {/* Toolbar */}
+      {/* Toolbar — wraps under 640px so the filter pills + Export don't
+          force horizontal overflow on small screens. */}
       <div
-        className="flex items-center gap-3 px-5 py-3"
+        className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-2.5 sm:py-3 flex-wrap"
         style={{ borderBottom: "1px solid var(--border)", background: "var(--surface)" }}
       >
         <div
@@ -335,14 +336,14 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
             </button>
           </div>
         ) : (
-          <table className="w-full text-sm border-separate border-spacing-0">
+          <table className="w-full min-w-[900px] text-sm border-separate border-spacing-0">
             <thead className="sticky top-0 z-10">
               <tr style={{ background: "var(--surface-2)" }}>
                 {table.getFlatHeaders().map((header) => (
                   <th
                     key={header.id}
                     className={cn(
-                      "px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide select-none",
+                      "px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide select-none whitespace-nowrap",
                       header.column.getCanSort() && "cursor-pointer transition-colors"
                     )}
                     style={{
@@ -807,7 +808,7 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance }:
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full min-w-[700px] text-xs">
             <thead>
               <tr style={{ background: "var(--surface-2)" }}>
                 <th className="px-3 py-2 text-center" style={{ color: "var(--text-muted)", width: 30 }}>

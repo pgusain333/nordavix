@@ -25,7 +25,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard",          path: "/app",                 icon: LayoutDashboard, available: true  },
-  { label: "Tasks",              path: "/app/tasks",           icon: CheckSquare,     available: true  },
+  { label: "Close Tasks",        path: "/app/tasks",           icon: CheckSquare,     available: true  },
   { label: "Connections",        path: "/app/connections",     icon: Plug,            available: true  },
   { label: "Flux Analysis",      path: "/app/flux",            icon: BarChart3,       available: true  },
   { label: "Reconciliations",    path: "/app/reconciliations", icon: Scale,           available: true  },

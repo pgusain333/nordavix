@@ -32,6 +32,7 @@ import {
   Pencil,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { DatePicker } from "@/core/ui/DatePicker"
 import { icApi, type IcAccount, type IcKind } from "@/modules/intercompany/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 
@@ -134,15 +135,12 @@ export function IntercompanyPage() {
             </p>
           </div>
           <div className="flex items-end gap-2 flex-wrap">
-            <label className="flex flex-col">
+            <div className="flex flex-col">
               <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
                 Period end
               </span>
-              <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)}
-                disabled={!qbo}
-                className="rounded-lg px-3 py-1.5 text-sm outline-none"
-                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
-            </label>
+              <DatePicker value={periodEnd} onChange={setPeriodEnd} disabled={!qbo} />
+            </div>
             <Button size="sm" variant="outline"
               icon={<Wand2 size={14} strokeWidth={1.8} />}
               loading={autoDetectMut.isPending}

@@ -20,7 +20,7 @@
  * Any export error is surfaced as a clear inline banner instead of
  * failing silently.
  */
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -32,6 +32,7 @@ import {
   AlertCircle,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { DatePicker } from "@/core/ui/DatePicker"
 import { financialsApi, type Statement, type FinancialRow, type FinancialSource } from "@/modules/financials/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 
@@ -131,14 +132,12 @@ export function FinancialsPage() {
             </p>
           </div>
           <div className="flex items-end gap-2 flex-wrap">
-            <label className="flex flex-col">
+            <div className="flex flex-col">
               <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
                 As of
               </span>
-              <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)}
-                className="rounded-lg px-3 py-1.5 text-sm outline-none"
-                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
-            </label>
+              <DatePicker value={periodEnd} onChange={setPeriodEnd} />
+            </div>
             <label className="flex flex-col">
               <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
                 Source
@@ -465,43 +464,63 @@ function ExportButton({ isClosed, onExport, loading }: {
   loading: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    function h(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener("mousedown", h)
+    return () => document.removeEventListener("mousedown", h)
+  }, [open])
   return (
-    <div className="relative">
+    <div ref={ref} className="relative">
       <Button size="sm" onClick={() => setOpen(!open)}
         icon={<Download size={14} strokeWidth={1.8} />}
         loading={loading}>
         Export PDF
       </Button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-20 rounded-md p-1 min-w-[260px] shadow-lg"
-          style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
-          <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wide"
-            style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
-            {isClosed ? "Final (books closed)" : "DRAFT — books not yet closed"}
-          </div>
-          {[
-            { key: "full", label: "Full package (IS + BS + CF)" },
-            { key: "is",   label: "Income Statement only" },
-            { key: "bs",   label: "Balance Sheet only" },
-            { key: "cf",   label: "Cash Flow Statement only" },
-          ].map((opt) => (
-            <button key={opt.key}
-              onClick={() => { onExport(opt.key as "is" | "bs" | "cf" | "full", !isClosed); setOpen(false) }}
-              className="w-full text-left px-3 py-2 text-xs rounded transition-colors hover:bg-[var(--surface-2)] inline-flex items-center gap-2"
-              style={{ color: "var(--text)" }}>
-              <FileText size={12} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-              {opt.label}
-            </button>
-          ))}
-          {!isClosed && (
-            <p className="px-3 py-2 text-[10px] italic"
-              style={{ color: "var(--text-muted)", borderTop: "1px solid var(--border)" }}>
-              DRAFT PDFs carry a 45° watermark. Close the period in Reconciliations
-              to remove it.
-            </p>
-          )}
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0,  scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.96 }}
+            transition={{ duration: 0.12, ease: "easeOut" }}
+            className="absolute right-0 top-full mt-1.5 z-20 rounded-lg py-1 min-w-[220px] origin-top-right"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border-strong)",
+              boxShadow: "0 6px 24px -8px rgba(0,0,0,0.25), 0 2px 6px -2px rgba(0,0,0,0.10)",
+            }}>
+            <div className="px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wide"
+              style={{ color: "var(--text-muted)" }}>
+              {isClosed ? "Final · books closed" : "Draft · books not closed"}
+            </div>
+            {[
+              { key: "full", label: "Full package" },
+              { key: "is",   label: "Income Statement" },
+              { key: "bs",   label: "Balance Sheet" },
+              { key: "cf",   label: "Cash Flow" },
+            ].map((opt) => (
+              <button key={opt.key}
+                onClick={() => { onExport(opt.key as "is" | "bs" | "cf" | "full", !isClosed); setOpen(false) }}
+                className="w-full text-left px-2.5 py-1 text-[11px] transition-colors hover:bg-[var(--surface-2)] inline-flex items-center gap-2"
+                style={{ color: "var(--text)" }}>
+                <FileText size={11} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+                {opt.label}
+              </button>
+            ))}
+            {!isClosed && (
+              <>
+                <div className="mx-2 my-1 h-px" style={{ background: "var(--border)" }} />
+                <p className="px-2.5 py-1 text-[9px] italic"
+                  style={{ color: "var(--text-muted)" }}>
+                  Draft PDFs carry a watermark. Close the period to remove it.
+                </p>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

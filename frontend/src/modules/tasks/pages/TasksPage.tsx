@@ -33,6 +33,7 @@ import {
   Calendar,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { DatePicker } from "@/core/ui/DatePicker"
 import { tasksApi, type Task, type TaskSeverity, type TaskSourceType } from "@/modules/tasks/api"
 import { useUserNames } from "@/modules/workspace/hooks"
 import { workspaceApi } from "@/modules/workspace/api"
@@ -275,7 +276,7 @@ export function TasksPage() {
               fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 700, lineHeight: 1.2,
               letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
             }}>
-              Tasks
+              Close Tasks
             </h1>
             <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
               One row per synced GL account + per flux analysis.
@@ -575,7 +576,6 @@ function ColumnHeaderFilter({ values, labels, selected, onChange }:
 ) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  // Close on outside click
   useEffect(() => {
     if (!open) return
     function onClick(e: MouseEvent) {
@@ -586,7 +586,6 @@ function ColumnHeaderFilter({ values, labels, selected, onChange }:
   }, [open])
 
   const active = selected.size > 0
-
   return (
     <div ref={ref} className="relative inline-block">
       <button onClick={(e) => { e.stopPropagation(); setOpen(!open) }}
@@ -595,30 +594,49 @@ function ColumnHeaderFilter({ values, labels, selected, onChange }:
         title={active ? `${selected.size} active filter${selected.size === 1 ? "" : "s"}` : "Filter"}>
         <Filter size={11} strokeWidth={active ? 2.5 : 1.8} />
       </button>
-      {open && (
-        <div className="absolute top-full left-0 mt-1 z-10 rounded-md p-2 min-w-[140px] shadow-lg"
-          style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
-          {values.map((v) => (
-            <label key={v} className="flex items-center gap-2 px-1 py-1 text-xs cursor-pointer rounded hover:bg-[var(--surface-2)]"
-              style={{ color: "var(--text)" }}>
-              <input type="checkbox" checked={selected.has(v)}
-                onChange={() => {
-                  const next = new Set(selected)
-                  if (next.has(v)) next.delete(v); else next.add(v)
-                  onChange(next)
-                }} />
-              <span className="normal-case">{labels[v] ?? v}</span>
-            </label>
-          ))}
-          {active && (
-            <button onClick={() => onChange(new Set())}
-              className="mt-1 w-full text-[10px] text-left px-1 py-1 rounded hover:bg-[var(--surface-2)]"
-              style={{ color: "var(--text-muted)" }}>
-              Clear
-            </button>
-          )}
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0,  scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.96 }}
+            transition={{ duration: 0.12, ease: "easeOut" }}
+            className="absolute top-full left-0 mt-1.5 z-10 rounded-lg py-1 min-w-[150px] origin-top-left"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border-strong)",
+              boxShadow: "0 6px 24px -8px rgba(0,0,0,0.25), 0 2px 6px -2px rgba(0,0,0,0.10)",
+            }}>
+            {values.map((v) => {
+              const checked = selected.has(v)
+              return (
+                <label key={v}
+                  className="flex items-center gap-2 px-2.5 py-1 text-[11px] cursor-pointer transition-colors hover:bg-[var(--surface-2)]"
+                  style={{ color: "var(--text)" }}>
+                  <input type="checkbox" checked={checked}
+                    className="h-3 w-3 cursor-pointer"
+                    onChange={() => {
+                      const next = new Set(selected)
+                      if (next.has(v)) next.delete(v); else next.add(v)
+                      onChange(next)
+                    }} />
+                  <span className="normal-case truncate">{labels[v] ?? v}</span>
+                </label>
+              )
+            })}
+            {active && (
+              <>
+                <div className="mx-2 my-1 h-px" style={{ background: "var(--border)" }} />
+                <button onClick={() => onChange(new Set())}
+                  className="w-full text-[10px] text-left px-2.5 py-1 transition-colors hover:bg-[var(--surface-2)]"
+                  style={{ color: "var(--text-muted)" }}>
+                  Clear filter
+                </button>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -672,33 +690,56 @@ function AssignDropdown({ label, members, onPick, current }:
     <div ref={ref} className="relative inline-block">
       <Button size="sm" variant="outline" onClick={() => setOpen(!open)}>
         {label}
-        <ChevronDown size={11} strokeWidth={1.8} />
+        <ChevronDown size={11} strokeWidth={1.8}
+          className="transition-transform"
+          style={{ transform: open ? "rotate(180deg)" : "rotate(0)" }} />
       </Button>
-      {open && (
-        <div className="absolute top-full left-0 mt-1 z-20 rounded-md p-1 min-w-[200px] shadow-lg max-h-[300px] overflow-y-auto"
-          style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
-          {members.length === 0 ? (
-            <p className="px-3 py-2 text-xs italic" style={{ color: "var(--text-muted)" }}>No members</p>
-          ) : (
-            <>
-              {members.filter((m) => m.id).map((m) => (
-                <button key={m.id!} onClick={() => { onPick(m.id); setOpen(false) }}
-                  className="w-full text-left px-3 py-1.5 text-xs rounded transition-colors hover:bg-[var(--surface-2)]"
-                  style={{ color: "var(--text)", background: current === m.id ? "var(--surface-2)" : undefined }}>
-                  {m.display_name} <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>· {m.role}</span>
-                </button>
-              ))}
-              {current && (
-                <button onClick={() => { onPick(null); setOpen(false) }}
-                  className="w-full text-left px-3 py-1.5 text-xs rounded transition-colors hover:bg-[var(--surface-2)] mt-1 border-t"
-                  style={{ color: "#b91c1c", borderColor: "var(--border)" }}>
-                  Clear assignment
-                </button>
-              )}
-            </>
-          )}
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0,  scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.96 }}
+            transition={{ duration: 0.12, ease: "easeOut" }}
+            className="absolute top-full left-0 mt-1.5 z-20 rounded-lg py-1 min-w-[180px] max-h-[240px] overflow-y-auto origin-top-left"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border-strong)",
+              boxShadow: "0 6px 24px -8px rgba(0,0,0,0.25), 0 2px 6px -2px rgba(0,0,0,0.10)",
+            }}>
+            {members.length === 0 ? (
+              <p className="px-3 py-1.5 text-[11px] italic" style={{ color: "var(--text-muted)" }}>No members</p>
+            ) : (
+              <>
+                {members.filter((m) => m.id).map((m) => {
+                  const isCurrent = current === m.id
+                  return (
+                    <button key={m.id!} onClick={() => { onPick(m.id); setOpen(false) }}
+                      className="w-full text-left px-2.5 py-1 text-[11px] transition-colors hover:bg-[var(--surface-2)] flex items-center justify-between gap-2"
+                      style={{ color: "var(--text)",
+                                background: isCurrent ? "var(--surface-2)" : undefined,
+                                fontWeight: isCurrent ? 600 : 400 }}>
+                      <span className="truncate">{m.display_name}</span>
+                      <span className="text-[9px] uppercase tracking-wide shrink-0"
+                        style={{ color: "var(--text-muted)" }}>{m.role}</span>
+                    </button>
+                  )
+                })}
+                {current && (
+                  <>
+                    <div className="mx-2 my-1 h-px" style={{ background: "var(--border)" }} />
+                    <button onClick={() => { onPick(null); setOpen(false) }}
+                      className="w-full text-left px-2.5 py-1 text-[11px] transition-colors hover:bg-[var(--surface-2)]"
+                      style={{ color: "#b91c1c" }}>
+                      Clear assignment
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -723,25 +764,33 @@ function DueDatePopover({ label, onPick, current }:
         icon={<Calendar size={11} strokeWidth={1.8} />}>
         {label}
       </Button>
-      {open && (
-        <div className="absolute top-full left-0 mt-1 z-20 rounded-md p-3 shadow-lg"
-          style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
-          <input type="date" value={val} onChange={(e) => setVal(e.target.value)}
-            className="rounded px-2 py-1 text-sm outline-none"
-            style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-          />
-          <div className="flex items-center gap-2 mt-2">
-            <Button size="sm" onClick={() => { onPick(val || null); setOpen(false) }} disabled={!val}>
-              Apply
-            </Button>
-            {current && (
-              <Button size="sm" variant="ghost" onClick={() => { onPick(null); setOpen(false) }}>
-                Clear
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0,  scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.96 }}
+            transition={{ duration: 0.12, ease: "easeOut" }}
+            className="absolute top-full left-0 mt-1.5 z-20 rounded-lg p-2.5 origin-top-left"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border-strong)",
+              boxShadow: "0 6px 24px -8px rgba(0,0,0,0.25), 0 2px 6px -2px rgba(0,0,0,0.10)",
+            }}>
+            <DatePicker value={val} onChange={setVal} compact className="block w-[160px]" />
+            <div className="flex items-center gap-1.5 mt-2">
+              <Button size="sm" onClick={() => { onPick(val || null); setOpen(false) }} disabled={!val}>
+                Apply
               </Button>
-            )}
-          </div>
-        </div>
-      )}
+              {current && (
+                <Button size="sm" variant="ghost" onClick={() => { onPick(null); setOpen(false) }}>
+                  Clear
+                </Button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -1131,9 +1180,9 @@ function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
           </select>
         </Label>
         <Label text="Period (optional)">
-          <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)}
-            className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
-            style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
+          <div className="mt-1">
+            <DatePicker value={periodEnd} onChange={setPeriodEnd} className="block w-full" triggerClassName="inline-flex items-center gap-2 w-full rounded-lg px-3 py-2 text-sm outline-none transition-colors hover:bg-[var(--surface)]" />
+          </div>
         </Label>
       </div>
       {isAdmin && (
@@ -1159,9 +1208,9 @@ function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
             </select>
           </Label>
           <Label text="Due date (optional)">
-            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
-              style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
+            <div className="mt-1">
+              <DatePicker value={dueDate} onChange={setDueDate} className="block w-full" triggerClassName="inline-flex items-center gap-2 w-full rounded-lg px-3 py-2 text-sm outline-none transition-colors hover:bg-[var(--surface)]" />
+            </div>
           </Label>
         </div>
       )}
