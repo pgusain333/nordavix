@@ -439,7 +439,12 @@ export function TasksPage() {
         {isLoading ? (
           <div className="py-16 flex items-center justify-center"><Spinner /></div>
         ) : filtered.length === 0 ? (
-          <EmptyState tab={tab} />
+          <EmptyState
+            tab={tab}
+            statusFilter={colFilters.status ?? new Set()}
+            onSwitchTab={(t) => setTab(t)}
+            onClearStatusFilter={() => setColFilters({ ...colFilters, status: new Set() })}
+          />
         ) : (
           <div className="rounded-xl overflow-hidden"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
@@ -471,7 +476,26 @@ export function TasksPage() {
                           values={["pending", "reviewed", "approved", "flagged", "manual"]}
                           labels={{ pending: "Pending", reviewed: "Prepared", approved: "Approved", flagged: "Flagged", manual: "Manual" }}
                           selected={colFilters.status ?? new Set()}
-                          onChange={(s) => setColFilters({ ...colFilters, status: s })}
+                          onChange={(s) => {
+                            setColFilters({ ...colFilters, status: s })
+                            // Auto-resolve tab/filter conflicts so the user
+                            // never sees an empty result for a status they
+                            // explicitly picked. Logic:
+                            //   - Open tab + only 'approved'   → Completed
+                            //   - Open tab + 'approved' + others → All
+                            //   - Completed + no 'approved'     → Open
+                            //   - Completed + 'approved' + others → All
+                            //   - 'manual' is bucket-neutral (compatible with both)
+                            //   - clearing the filter restores nothing
+                            if (s.size === 0 || tab === "all") return
+                            const hasApproved = s.has("approved")
+                            const hasOpenish  = [...s].some((v) => v !== "approved" && v !== "manual")
+                            if (tab === "open" && hasApproved) {
+                              setTab(hasOpenish ? "all" : "completed")
+                            } else if (tab === "completed" && hasOpenish) {
+                              setTab(hasApproved ? "all" : "open")
+                            }
+                          }}
                         />
                       } />
                     <Th label="Preparer"
@@ -976,7 +1000,63 @@ function DueCell({ dueDate, overridden, overdue, isAdmin, onSet }:
 
 // ── Empty + manual form ───────────────────────────────────────────────────
 
-function EmptyState({ tab }: { tab: FilterTab }) {
+function EmptyState({ tab, statusFilter, onSwitchTab, onClearStatusFilter }:
+  { tab: FilterTab; statusFilter: Set<string>;
+    onSwitchTab: (t: FilterTab) => void; onClearStatusFilter: () => void }
+) {
+  // Detect the specific case of "status filter conflicts with current tab"
+  // and surface a one-click fix CTA instead of the generic empty state.
+  // Open tab can't show 'approved'; Completed tab can't show open-side
+  // statuses (pending/reviewed/flagged).
+  const sf = [...statusFilter]
+  const hasApproved = statusFilter.has("approved")
+  const hasOpenish  = sf.some((v) => v !== "approved" && v !== "manual")
+  let conflict: { suggestedTab: FilterTab; reason: string } | null = null
+  if (statusFilter.size > 0) {
+    if (tab === "open" && hasApproved && !hasOpenish) {
+      conflict = {
+        suggestedTab: "completed",
+        reason: "Approved tasks live in the Completed tab — the Open tab excludes them by definition.",
+      }
+    } else if (tab === "completed" && hasOpenish && !hasApproved) {
+      conflict = {
+        suggestedTab: "open",
+        reason: "Pending / Prepared / Flagged tasks live in the Open tab — the Completed tab only shows approved or manually-completed work.",
+      }
+    } else if (tab !== "all" && hasApproved && hasOpenish) {
+      conflict = {
+        suggestedTab: "all",
+        reason: "Your status filter spans both open and completed buckets. The All tab shows both.",
+      }
+    }
+  }
+
+  if (conflict) {
+    return (
+      <div className="rounded-xl p-8 text-center"
+        style={{ background: "var(--surface)", border: "1px solid #f59e0b" }}>
+        <div className="h-12 w-12 mx-auto rounded-full flex items-center justify-center mb-3"
+          style={{ background: "rgba(245, 158, 11, 0.15)", border: "2px solid #f59e0b" }}>
+          <Filter size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />
+        </div>
+        <p className="text-sm font-semibold text-theme mb-1">
+          Filter doesn&apos;t match the current tab
+        </p>
+        <p className="text-xs max-w-md mx-auto mb-4" style={{ color: "var(--text-muted)" }}>
+          {conflict.reason}
+        </p>
+        <div className="flex items-center justify-center gap-2 flex-wrap">
+          <Button size="sm" onClick={() => onSwitchTab(conflict!.suggestedTab)}>
+            Switch to {conflict.suggestedTab === "all" ? "All" : conflict.suggestedTab === "open" ? "Open" : "Completed"} tab
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onClearStatusFilter}>
+            Clear status filter
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   const copy: Record<FilterTab, { title: string; body: string }> = {
     open:      { title: "Nothing to do",     body: "No open tasks for the current filters. Try widening the filters or check the Completed tab." },
     completed: { title: "Nothing completed", body: "Tasks finish here as a record of work done." },
