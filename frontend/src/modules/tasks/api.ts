@@ -2,8 +2,9 @@ import { apiClient } from "@/core/api/client"
 
 // ── Types (mirror backend TaskOut) ────────────────────────────────────────────
 
-export type TaskSeverity = "info" | "warn" | "critical"
-export type TaskSourceType = "recon_account" | "manual"
+export type TaskSeverity   = "info" | "warn" | "critical"
+export type TaskSourceType = "recon_account" | "flux" | "manual"
+export type TaskStatus     = "pending" | "reviewed" | "approved" | "flagged" | "manual"
 
 export interface Task {
   key:           string
@@ -14,13 +15,23 @@ export interface Task {
   description:   string | null
   severity:      TaskSeverity
   deep_link:     string | null
-  // Overlay fields
+
+  // Workflow
+  status:        TaskStatus
+  prepared_by:   string | null
+  prepared_at:   string | null
+  approved_by:   string | null
+  approved_at:   string | null
+  due_date:      string | null
+
+  // Overlay
   action_id:     string | null
   assignee_id:   string | null
   snooze_until:  string | null
   notes:         string | null
   completed_at:  string | null
   dismissed_at:  string | null
+
   // Manual-only
   priority:      string | null
   created_by:    string | null
@@ -58,8 +69,8 @@ interface ActionUpsert {
   dismissed?:   boolean
 }
 
-async function upsertAction(body: ActionUpsert): Promise<Task> {
-  const { data } = await apiClient.post<Task>("/api/tasks/action", body)
+async function upsertAction(body: ActionUpsert): Promise<{ ok: true; action_id: string }> {
+  const { data } = await apiClient.post<{ ok: true; action_id: string }>("/api/tasks/action", body)
   return data
 }
 

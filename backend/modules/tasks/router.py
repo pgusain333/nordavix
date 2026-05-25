@@ -1,10 +1,7 @@
 """
 Tasks API.
 
-  GET   /tasks                  list open tasks for the current tenant
-                                (derived from pending/flagged recons,
-                                 merged with any overlay actions,
-                                 plus any manual tasks)
+  GET   /tasks                  list tasks (recon + flux + manual)
   GET   /tasks/count            unread count for the sidebar badge
   POST  /tasks/action           upsert an overlay action on a derived task
                                 (assign / snooze / notes / dismiss)
@@ -12,17 +9,31 @@ Tasks API.
   PATCH /tasks/manual/{id}      update a manual task
   POST  /tasks/{id}/complete    mark a task done (manual or overlay)
 
-Derived task identity:
-  source_type='recon_account', source_id=qbo_account_id, period_end=YYYY-MM-DD
+Task derivation:
 
-Overlay rows attach by that triple. When the underlying status flips
-to approved (no longer in the derived list), the overlay row is left
-in place — orphaned, but harmless. We can prune on a cadence later
-if it matters.
+  One task per balance-sheet account currently visible in QuickBooks
+  (pulled via the same /query call the recons dashboard uses), per
+  unclosed period. Status mirrors AccountReviewStatus when a row
+  exists; otherwise pending. Each row carries preparer + reviewer +
+  timestamps + due date so the Tasks UI can render a true workflow
+  table.
+
+  PLUS one task per Flux trial-balance analysis that's either ready
+  for review or complete-but-unapproved. Variance work tasks come
+  with their own deep-link into the flux module.
+
+  Plus any manual tasks the user created.
+
+Why pull QBO live for the recon side?
+  Account names are the headline info on the task ("Reconcile
+  Accounts Receivable") and we don't persist them locally — the
+  source of truth lives in QBO. One /query per /tasks request
+  keeps the data fresh without a sync table. If QBO is unreachable
+  we degrade to account-id-as-title.
 """
 import logging
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -32,8 +43,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
 from models.account_review_status import AccountReviewStatus
+from models.closed_period import ClosedPeriod
 from models.qbo_connection import QboConnection
 from models.task_action import TaskAction
+from models.tenant import Tenant
+from models.trial_balance import TrialBalance
 
 logger = logging.getLogger(__name__)
 
@@ -44,24 +58,33 @@ router = APIRouter()
 
 class TaskOut(BaseModel):
     """A single row in the user-facing task list."""
-    # Stable identity. For derived tasks: "recon_account:<qbo_id>:<YYYY-MM-DD>".
-    # For manual tasks: "manual:<uuid>".
     key:           str
-    source_type:   str                   # 'recon_account' | 'manual'
+    source_type:   str                   # 'recon_account' | 'flux' | 'manual'
     source_id:     str | None
     period_end:    str | None
     subject:       str                   # human-readable title
-    description:   str | None            # extra context
+    description:   str | None
     severity:      str                   # 'info' | 'warn' | 'critical'
-    deep_link:     str | None            # frontend route to resolve
-    # Overlay fields — null on derived tasks the user hasn't touched yet.
+    deep_link:     str | None
+
+    # Workflow status — driven by the underlying source row.
+    status:        str                   # 'pending' | 'reviewed' (=prepared)
+                                          # | 'approved' | 'flagged' | 'manual'
+    # Actor stamps (UUIDs as strings — frontend resolves names)
+    prepared_by:   str | None
+    prepared_at:   str | None
+    approved_by:   str | None            # also serves as "reviewer"
+    approved_at:   str | None            # = "completed_at" for derived recon
+    due_date:      str | None
+
+    # Overlay fields (null on fresh derived tasks the user hasn't touched)
     action_id:     str | None
     assignee_id:   str | None
     snooze_until:  str | None
     notes:         str | None
-    completed_at:  str | None
+    completed_at:  str | None            # manual completion stamp
     dismissed_at:  str | None
-    # For manual tasks
+    # Manual-only
     priority:      str | None
     created_by:    str | None
     created_at:    str | None
@@ -78,7 +101,7 @@ class TaskActionUpsert(BaseModel):
     assignee_id:   str | None = None
     snooze_until:  str | None = None
     notes:         str | None = None
-    dismissed:     bool | None = None    # True → set dismissed_at, False → clear
+    dismissed:     bool | None = None
 
 
 class ManualTaskCreate(BaseModel):
@@ -100,134 +123,38 @@ class ManualTaskUpdate(BaseModel):
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _derived_key(source_type: str, source_id: str, period_end: date) -> str:
-    return f"{source_type}:{source_id}:{period_end.isoformat()}"
+def _recon_key(qbo_id: str, period_end: date) -> str:
+    return f"recon_account:{qbo_id}:{period_end.isoformat()}"
+
+
+def _flux_key(tb_id: uuid.UUID) -> str:
+    return f"flux:{tb_id}"
 
 
 def _manual_key(task_id: uuid.UUID) -> str:
     return f"manual:{task_id}"
 
 
-def _severity_for_recon(review_status: str, variance: float) -> str:
-    """Pending = info; flagged = warn; flagged with big variance = critical."""
+def _due_date_for(period_end: date) -> date:
+    """
+    Standard month-end close SLA: 15 calendar days after period_end.
+    Most small-firm month-end close happens within ~10 business days
+    (~15 calendar days). Configurable later via tenant settings.
+    """
+    return period_end + timedelta(days=15)
+
+
+def _severity_for_recon(review_status: str, due_date: date) -> str:
+    """
+    Critical: flagged. Warn: open AND overdue. Info: open and on time.
+    Approved tasks are completed and don't surface in the open view,
+    so they get info-level when displayed in completed/all tabs.
+    """
     if review_status == "flagged":
-        return "critical" if abs(variance) >= 1000 else "warn"
+        return "critical"
+    if review_status in ("pending", "reviewed") and date.today() > due_date:
+        return "warn"
     return "info"
-
-
-def _serialize_overlay_action(a: TaskAction, subject: str, description: str | None,
-                              severity: str, deep_link: str | None) -> TaskOut:
-    return TaskOut(
-        key          = (_manual_key(a.id) if a.source_type == "manual"
-                        else _derived_key(a.source_type, a.source_id or "", a.period_end or date.min)),
-        source_type  = a.source_type,
-        source_id    = a.source_id,
-        period_end   = a.period_end.isoformat() if a.period_end else None,
-        subject      = subject,
-        description  = description,
-        severity     = severity,
-        deep_link    = deep_link,
-        action_id    = str(a.id),
-        assignee_id  = str(a.assignee_id) if a.assignee_id else None,
-        snooze_until = a.snooze_until.isoformat() if a.snooze_until else None,
-        notes        = a.notes,
-        completed_at = a.completed_at.isoformat() if a.completed_at else None,
-        dismissed_at = a.dismissed_at.isoformat() if a.dismissed_at else None,
-        priority     = a.priority,
-        created_by   = str(a.created_by),
-        created_at   = a.created_at.isoformat() if a.created_at else None,
-    )
-
-
-# ── Derivation ───────────────────────────────────────────────────────────────
-
-async def _derive_recon_tasks(
-    db: AsyncSession,
-    tenant_id: uuid.UUID,
-    overlays_by_key: dict[str, TaskAction],
-) -> list[TaskOut]:
-    """
-    Pending + flagged recon accounts across ALL periods, joined with
-    any overlay rows that exist. Each surfaces as one task.
-
-    Doesn't need a live QBO call — we read the persisted
-    AccountReviewStatus rows. Newly-synced accounts that haven't been
-    touched yet won't have a row here (they're implicitly "pending"
-    in the dashboard via the no-row-means-pending convention), but
-    they ALSO won't have any open work tracked against them, so we
-    skip them. Once the user opens the dashboard and a sync writes
-    a row, the task appears.
-
-    NOTE: We could also surface "no-row = implicit pending" tasks
-    by reading the QBO TB at request time — costs a network round
-    trip. Defer until users ask for it.
-    """
-    rows = list((await db.execute(
-        select(AccountReviewStatus)
-        .where(AccountReviewStatus.status.in_(("pending", "flagged")))
-    )).scalars().all())
-
-    out: list[TaskOut] = []
-    for r in rows:
-        key = _derived_key("recon_account", r.qbo_account_id, r.period_end)
-        overlay = overlays_by_key.get(key)
-        # Variance: re-derive from override values if present, else
-        # 0 (we don't store GL balance on the review row).
-        variance = float(r.subledger_total or 0)  # signed estimate
-
-        period_label = r.period_end.strftime("%b %Y")
-        # We don't have account name here — would need a join to QBO accounts
-        # table (we don't store it). Frontend can hydrate the name from the
-        # overview cache or display the qbo_account_id as a fallback.
-        subject = f"Reconcile account {r.qbo_account_id} for {period_label}"
-        description = (
-            f"Status: {r.status}. Open the reconciliations dashboard "
-            f"for {period_label} to tick reconciling items and approve."
-        )
-        severity = _severity_for_recon(r.status, variance)
-        deep_link = f"/app/reconciliations/period/{r.period_end.isoformat()}"
-
-        if overlay:
-            # User-touched overlay: serialize that
-            t = _serialize_overlay_action(overlay, subject, description, severity, deep_link)
-        else:
-            # Fresh derived task with no overlay yet — synthesize a TaskOut.
-            t = TaskOut(
-                key=key,
-                source_type="recon_account",
-                source_id=r.qbo_account_id,
-                period_end=r.period_end.isoformat(),
-                subject=subject,
-                description=description,
-                severity=severity,
-                deep_link=deep_link,
-                action_id=None,
-                assignee_id=None,
-                snooze_until=None,
-                notes=None,
-                completed_at=None,
-                dismissed_at=None,
-                priority=None,
-                created_by=None,
-                created_at=r.created_at.isoformat() if r.created_at else None,
-            )
-        out.append(t)
-    return out
-
-
-async def _load_overlays(db: AsyncSession, tenant_id: uuid.UUID) -> tuple[dict[str, TaskAction], list[TaskAction]]:
-    """
-    Returns (overlays_by_key, manual_rows).
-    """
-    all_rows = list((await db.execute(select(TaskAction))).scalars().all())
-    overlays_by_key: dict[str, TaskAction] = {}
-    manual_rows: list[TaskAction] = []
-    for r in all_rows:
-        if r.source_type == "manual":
-            manual_rows.append(r)
-        elif r.source_id and r.period_end:
-            overlays_by_key[_derived_key(r.source_type, r.source_id, r.period_end)] = r
-    return overlays_by_key, manual_rows
 
 
 def _is_open(t: TaskOut) -> bool:
@@ -239,10 +166,273 @@ def _is_open(t: TaskOut) -> bool:
         try:
             d = date.fromisoformat(t.snooze_until)
             if d >= date.today():
-                return False  # snoozed into the future = not open right now
+                return False
         except Exception:
             pass
+    # Approved recons + flux are "done" from a workflow perspective even
+    # without an overlay completed_at — they don't belong in the open list.
+    if t.status == "approved":
+        return False
     return True
+
+
+async def _list_qbo_accounts(
+    db: AsyncSession, tenant_id: uuid.UUID,
+) -> dict[str, dict]:
+    """
+    {qbo_id: {Name, AccountType, AcctNum}} for every active
+    balance-sheet account in QBO. Single /query call; empty dict when
+    QBO isn't connected.
+    """
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        return {}
+
+    try:
+        from modules.recons.overview import _list_balance_sheet_accounts
+        accts = await _list_balance_sheet_accounts(conn, db)
+    except Exception:
+        logger.exception("Could not list QBO accounts for tasks")
+        return {}
+
+    return {str(a.get("Id")): a for a in accts if a.get("Id")}
+
+
+async def _enumerate_open_periods(
+    db: AsyncSession, tenant_id: uuid.UUID,
+) -> list[date]:
+    """Month-end dates from books_start through current month, minus
+    any periods already closed. Defines which months get one
+    recon-task-per-account."""
+    from calendar import monthrange
+
+    t = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if t is None or t.books_start_date is None:
+        return []
+
+    today = date.today()
+    cur = date(t.books_start_date.year, t.books_start_date.month, 1)
+    out: list[date] = []
+    while cur <= today.replace(day=1):
+        last = monthrange(cur.year, cur.month)[1]
+        out.append(date(cur.year, cur.month, last))
+        if cur.month == 12:
+            cur = date(cur.year + 1, 1, 1)
+        else:
+            cur = date(cur.year, cur.month + 1, 1)
+    return out
+
+
+# ── Derivation ───────────────────────────────────────────────────────────────
+
+async def _derive_recon_tasks(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    overlays_by_key: dict[str, TaskAction],
+) -> list[TaskOut]:
+    """
+    One task per (period, account). Pulls all balance-sheet accounts
+    from QBO so accounts that have never been touched still show up
+    as pending tasks. Status / actors / timestamps are joined from
+    AccountReviewStatus where rows exist; otherwise default to pending.
+    """
+    periods = await _enumerate_open_periods(db, tenant_id)
+    if not periods:
+        return []
+
+    accounts = await _list_qbo_accounts(db, tenant_id)
+
+    # Closed periods are read-only — we still surface them as tasks
+    # (with status=approved) so the Completed tab shows the historical
+    # work, but they're never "open".
+    closed_rows = list((await db.execute(
+        select(ClosedPeriod).where(ClosedPeriod.period_end.in_(periods))
+    )).scalars().all())
+    closed_set = {c.period_end for c in closed_rows}
+
+    # Bulk-load status rows for these periods.
+    status_rows = list((await db.execute(
+        select(AccountReviewStatus)
+        .where(AccountReviewStatus.period_end.in_(periods))
+    )).scalars().all())
+    by_key: dict[tuple[date, str], AccountReviewStatus] = {
+        (r.period_end, r.qbo_account_id): r for r in status_rows
+    }
+
+    out: list[TaskOut] = []
+    for pe in periods:
+        period_label = pe.strftime("%b %Y")
+        due = _due_date_for(pe)
+        is_closed = pe in closed_set
+
+        # Iterate every QBO account (so untouched accounts surface as
+        # pending tasks). If QBO isn't connected `accounts` is empty —
+        # fall back to whatever review rows we DO have, so the user
+        # still sees their historical work.
+        ids_to_render: set[str] = set(accounts.keys())
+        for (period, qid) in by_key.keys():
+            if period == pe:
+                ids_to_render.add(qid)
+
+        for qid in ids_to_render:
+            row = by_key.get((pe, qid))
+            acct = accounts.get(qid, {})
+            acct_name = acct.get("Name") or row and "(no QBO data)" or qid
+            acct_num  = acct.get("AcctNum") or ""
+
+            # Status for closed periods: treat as approved even if the
+            # row's status didn't make it to approved (shouldn't happen
+            # — the close gate blocks it — but defend anyway).
+            if is_closed:
+                effective_status = "approved"
+            else:
+                effective_status = row.status if row else "pending"
+
+            subject_acct = f"{acct_num} {acct_name}".strip() if acct_num else acct_name
+            subject = f"Reconciliation — {subject_acct} · {period_label}"
+            description = None
+
+            severity = _severity_for_recon(effective_status, due)
+            deep_link = f"/app/reconciliations/period/{pe.isoformat()}"
+
+            key = _recon_key(qid, pe)
+            overlay = overlays_by_key.get(key)
+
+            out.append(TaskOut(
+                key=key,
+                source_type="recon_account",
+                source_id=qid,
+                period_end=pe.isoformat(),
+                subject=subject,
+                description=description,
+                severity=severity,
+                deep_link=deep_link,
+                status=effective_status,
+                prepared_by = str(row.prepared_by) if row and row.prepared_by else None,
+                prepared_at = row.prepared_at.isoformat() if row and row.prepared_at else None,
+                approved_by = str(row.approved_by) if row and row.approved_by else None,
+                approved_at = row.approved_at.isoformat() if row and row.approved_at else None,
+                due_date    = due.isoformat(),
+                action_id   = str(overlay.id) if overlay else None,
+                assignee_id = str(overlay.assignee_id) if overlay and overlay.assignee_id else None,
+                snooze_until= overlay.snooze_until.isoformat() if overlay and overlay.snooze_until else None,
+                notes       = (overlay.notes if overlay else None) or (row.notes if row else None),
+                completed_at= overlay.completed_at.isoformat() if overlay and overlay.completed_at else None,
+                dismissed_at= overlay.dismissed_at.isoformat() if overlay and overlay.dismissed_at else None,
+                priority    = None,
+                created_by  = None,
+                created_at  = row.created_at.isoformat() if row and row.created_at else None,
+            ))
+    return out
+
+
+async def _derive_flux_tasks(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    overlays_by_key: dict[str, TaskAction],
+) -> list[TaskOut]:
+    """
+    One task per flux trial-balance analysis. Status mapping:
+      pending / processing / parsed / ready_for_review / generating
+        → still working, surfaces as open ("Review flux ...")
+      complete (approved_at is null)
+        → "Approve flux ..."
+      complete (approved_at set)
+        → status=approved, lives in Completed
+      error → critical, "Investigate flux error..."
+    """
+    tbs = list((await db.execute(select(TrialBalance))).scalars().all())
+
+    out: list[TaskOut] = []
+    for tb in tbs:
+        key = _flux_key(tb.id)
+        overlay = overlays_by_key.get(key)
+
+        # Pick a label for the period this analysis covers — use the
+        # year-month of period_current so it lines up with recon months.
+        try:
+            tb_pe = tb.period_current  # date
+            period_iso = tb_pe.isoformat()
+            period_label = tb_pe.strftime("%b %Y")
+        except Exception:
+            period_iso = None
+            period_label = "(unknown period)"
+
+        action_verb = "Review"
+        sev = "info"
+        if tb.status == "complete":
+            if tb.approved_at:
+                effective_status = "approved"
+                action_verb = "Approve"
+            else:
+                effective_status = "reviewed"  # ready for the reviewer
+                action_verb = "Approve"
+        elif tb.status in ("parsed", "ready_for_review"):
+            effective_status = "reviewed"
+            action_verb = "Review"
+        elif tb.status == "error":
+            effective_status = "flagged"
+            action_verb = "Investigate"
+            sev = "critical"
+        elif tb.status in ("pending", "processing", "generating"):
+            # In-progress; surface as pending so the user can see it,
+            # but no due-date pressure yet.
+            effective_status = "pending"
+            action_verb = "Continue"
+        else:
+            effective_status = "pending"
+
+        subject = f"Flux analysis — {action_verb} {tb.name or 'analysis'} · {period_label}"
+
+        out.append(TaskOut(
+            key=key,
+            source_type="flux",
+            source_id=str(tb.id),
+            period_end=period_iso,
+            subject=subject,
+            description=f"Status: {tb.status}.",
+            severity=sev,
+            deep_link=f"/app/flux/{tb.id}",
+            status=effective_status,
+            prepared_by=None,    # flux module doesn't track prep actor separately yet
+            prepared_at=None,
+            approved_by=str(tb.approved_by) if tb.approved_by else None,
+            approved_at=tb.approved_at.isoformat() if tb.approved_at else None,
+            due_date=_due_date_for(tb.period_current).isoformat() if tb.period_current else None,
+            action_id   = str(overlay.id) if overlay else None,
+            assignee_id = str(overlay.assignee_id) if overlay and overlay.assignee_id else None,
+            snooze_until= overlay.snooze_until.isoformat() if overlay and overlay.snooze_until else None,
+            notes       = overlay.notes if overlay else None,
+            completed_at= overlay.completed_at.isoformat() if overlay and overlay.completed_at else None,
+            dismissed_at= overlay.dismissed_at.isoformat() if overlay and overlay.dismissed_at else None,
+            priority    = None,
+            created_by  = None,
+            created_at  = tb.created_at.isoformat() if tb.created_at else None,
+        ))
+    return out
+
+
+async def _load_overlays(db: AsyncSession, tenant_id: uuid.UUID) -> tuple[dict[str, TaskAction], list[TaskAction]]:
+    all_rows = list((await db.execute(select(TaskAction))).scalars().all())
+    overlays_by_key: dict[str, TaskAction] = {}
+    manual_rows: list[TaskAction] = []
+    for r in all_rows:
+        if r.source_type == "manual":
+            manual_rows.append(r)
+        elif r.source_type == "recon_account" and r.source_id and r.period_end:
+            overlays_by_key[_recon_key(r.source_id, r.period_end)] = r
+        elif r.source_type == "flux" and r.source_id:
+            try:
+                overlays_by_key[_flux_key(uuid.UUID(r.source_id))] = r
+            except ValueError:
+                pass
+    return overlays_by_key, manual_rows
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -255,30 +445,52 @@ async def list_tasks(
 ) -> TasksResponse:
     """All tasks visible to the current tenant — derived + manual."""
     overlays_by_key, manual_rows = await _load_overlays(db, tenant_id)
-    derived = await _derive_recon_tasks(db, tenant_id, overlays_by_key)
+    recon  = await _derive_recon_tasks(db, tenant_id, overlays_by_key)
+    flux   = await _derive_flux_tasks(db, tenant_id, overlays_by_key)
 
-    # Manual tasks → TaskOut
     manual_tasks: list[TaskOut] = []
     for m in manual_rows:
-        manual_tasks.append(_serialize_overlay_action(
-            m,
-            subject     = m.subject or "(no subject)",
-            description = m.description,
-            severity    = (m.priority == "critical" and "critical")
-                           or (m.priority == "high" and "warn")
-                           or "info",
-            deep_link   = None,
+        manual_tasks.append(TaskOut(
+            key          = _manual_key(m.id),
+            source_type  = "manual",
+            source_id    = None,
+            period_end   = m.period_end.isoformat() if m.period_end else None,
+            subject      = m.subject or "(no subject)",
+            description  = m.description,
+            severity     = (
+                "critical" if m.priority == "critical"
+                else "warn" if m.priority == "high"
+                else "info"
+            ),
+            deep_link    = None,
+            status       = "manual",
+            prepared_by  = None,
+            prepared_at  = None,
+            approved_by  = None,
+            approved_at  = None,
+            due_date     = m.period_end.isoformat() if m.period_end else None,
+            action_id    = str(m.id),
+            assignee_id  = str(m.assignee_id) if m.assignee_id else None,
+            snooze_until = m.snooze_until.isoformat() if m.snooze_until else None,
+            notes        = m.notes,
+            completed_at = m.completed_at.isoformat() if m.completed_at else None,
+            dismissed_at = m.dismissed_at.isoformat() if m.dismissed_at else None,
+            priority     = m.priority,
+            created_by   = str(m.created_by),
+            created_at   = m.created_at.isoformat() if m.created_at else None,
         ))
 
-    tasks = derived + manual_tasks
+    tasks = recon + flux + manual_tasks
     if not include_closed:
         tasks = [t for t in tasks if _is_open(t)]
 
-    # Sort: severity (critical → warn → info), then newest period first.
+    # Sort: severity first, then earliest due date.
     sev_order = {"critical": 0, "warn": 1, "info": 2}
     tasks.sort(key=lambda t: (
         sev_order.get(t.severity, 3),
-        t.period_end or "0000-00-00",
+        t.due_date or "9999-12-31",
+        t.period_end or "9999-12-31",
+        t.subject,
     ))
     return TasksResponse(tasks=tasks)
 
@@ -288,19 +500,22 @@ async def count_open_tasks(
     tenant_id: CurrentTenantId,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Just the count — for the sidebar badge. Lighter than the full list."""
+    """Sidebar badge — lightweight counts only."""
     overlays_by_key, manual_rows = await _load_overlays(db, tenant_id)
-    derived = await _derive_recon_tasks(db, tenant_id, overlays_by_key)
+    recon = await _derive_recon_tasks(db, tenant_id, overlays_by_key)
+    flux  = await _derive_flux_tasks(db, tenant_id, overlays_by_key)
 
     manual_open = [m for m in manual_rows
                    if not m.completed_at and not m.dismissed_at
                    and (not m.snooze_until or m.snooze_until >= date.today())]
-    derived_open = [t for t in derived if _is_open(t)]
+    open_recon = [t for t in recon if _is_open(t)]
+    open_flux  = [t for t in flux  if _is_open(t)]
+    all_open   = open_recon + open_flux
     return {
-        "open":      len(derived_open) + len(manual_open),
-        "critical":  sum(1 for t in derived_open if t.severity == "critical"),
+        "open":      len(all_open) + len(manual_open),
+        "critical":  sum(1 for t in all_open if t.severity == "critical"),
         "manual":    len(manual_open),
-        "derived":   len(derived_open),
+        "derived":   len(all_open),
     }
 
 
@@ -310,16 +525,22 @@ async def upsert_action(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
-) -> TaskOut:
-    """Create/update an overlay on a derived task."""
+) -> dict:
     if body.source_type == "manual":
         raise HTTPException(400, "Use /tasks/manual for manual tasks.")
-    if not body.source_id or not body.period_end:
-        raise HTTPException(400, "source_id and period_end are required for derived overlays.")
-    try:
-        pe = date.fromisoformat(body.period_end)
-    except ValueError:
-        raise HTTPException(400, "period_end must be YYYY-MM-DD.")
+    if body.source_type not in ("recon_account", "flux"):
+        raise HTTPException(400, "Unknown source_type.")
+    if not body.source_id:
+        raise HTTPException(400, "source_id is required.")
+
+    pe: date | None = None
+    if body.source_type == "recon_account":
+        if not body.period_end:
+            raise HTTPException(400, "period_end is required for recon_account overlays.")
+        try:
+            pe = date.fromisoformat(body.period_end)
+        except ValueError:
+            raise HTTPException(400, "period_end must be YYYY-MM-DD.")
 
     snooze: date | None = None
     if body.snooze_until:
@@ -335,10 +556,8 @@ async def upsert_action(
         except ValueError:
             raise HTTPException(400, "assignee_id must be a UUID.")
 
-    # Look up existing overlay row (unique by source_type+source_id+period_end+tenant).
     existing = (await db.execute(
-        select(TaskAction)
-        .where(
+        select(TaskAction).where(
             TaskAction.source_type == body.source_type,
             TaskAction.source_id == body.source_id,
             TaskAction.period_end == pe,
@@ -347,16 +566,13 @@ async def upsert_action(
 
     if existing is None:
         existing = TaskAction(
-            source_type = body.source_type,
-            source_id   = body.source_id,
-            period_end  = pe,
-            created_by  = user.id,
+            source_type=body.source_type,
+            source_id  =body.source_id,
+            period_end =pe,
+            created_by =user.id,
         )
         db.add(existing)
 
-    # Apply patches — None means "leave alone" for assignee/snooze/notes;
-    # to clear, send an explicit empty string for notes or use the
-    # dedicated POST /complete endpoint to mark done.
     if body.assignee_id is not None:
         existing.assignee_id = assignee
     if body.snooze_until is not None:
@@ -369,15 +585,7 @@ async def upsert_action(
         existing.dismissed_at = None
 
     await db.commit()
-    await db.refresh(existing)
-
-    # Reconstruct the derived subject for the response (so the client
-    # gets back the same shape as the list endpoint).
-    period_label = pe.strftime("%b %Y")
-    subject = f"Reconcile account {body.source_id} for {period_label}"
-    description = f"Status: pending. Open the reconciliations dashboard for {period_label}."
-    return _serialize_overlay_action(existing, subject, description, "info",
-                                     f"/app/reconciliations/period/{body.period_end}")
+    return {"ok": True, "action_id": str(existing.id)}
 
 
 @router.post("/manual", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
@@ -387,7 +595,6 @@ async def create_manual_task(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> TaskOut:
-    """Create a freeform task that isn't tied to any derived source."""
     pe: date | None = None
     if body.period_end:
         try:
@@ -403,27 +610,44 @@ async def create_manual_task(
             raise HTTPException(400, "assignee_id must be a UUID.")
 
     row = TaskAction(
-        source_type = "manual",
-        source_id   = None,
-        period_end  = pe,
-        subject     = body.subject,
-        description = body.description,
-        priority    = body.priority or "normal",
-        assignee_id = assignee,
-        created_by  = user.id,
+        source_type="manual",
+        source_id=None,
+        period_end=pe,
+        subject=body.subject,
+        description=body.description,
+        priority=body.priority or "normal",
+        assignee_id=assignee,
+        created_by=user.id,
     )
     db.add(row)
     await db.commit()
     await db.refresh(row)
 
-    return _serialize_overlay_action(
-        row,
-        subject     = row.subject or "(no subject)",
-        description = row.description,
-        severity    = (row.priority == "critical" and "critical")
-                       or (row.priority == "high" and "warn")
-                       or "info",
-        deep_link   = None,
+    return TaskOut(
+        key=_manual_key(row.id),
+        source_type="manual",
+        source_id=None,
+        period_end=row.period_end.isoformat() if row.period_end else None,
+        subject=row.subject or "",
+        description=row.description,
+        severity=(
+            "critical" if row.priority == "critical"
+            else "warn" if row.priority == "high"
+            else "info"
+        ),
+        deep_link=None,
+        status="manual",
+        prepared_by=None, prepared_at=None,
+        approved_by=None, approved_at=None,
+        due_date=row.period_end.isoformat() if row.period_end else None,
+        action_id=str(row.id),
+        assignee_id=str(row.assignee_id) if row.assignee_id else None,
+        snooze_until=row.snooze_until.isoformat() if row.snooze_until else None,
+        notes=row.notes,
+        completed_at=None, dismissed_at=None,
+        priority=row.priority,
+        created_by=str(row.created_by),
+        created_at=row.created_at.isoformat() if row.created_at else None,
     )
 
 
@@ -459,14 +683,32 @@ async def update_manual_task(
         row.notes = body.notes or None
     await db.commit()
     await db.refresh(row)
-    return _serialize_overlay_action(
-        row,
-        subject     = row.subject or "(no subject)",
-        description = row.description,
-        severity    = (row.priority == "critical" and "critical")
-                       or (row.priority == "high" and "warn")
-                       or "info",
-        deep_link   = None,
+    return TaskOut(
+        key=_manual_key(row.id),
+        source_type="manual",
+        source_id=None,
+        period_end=row.period_end.isoformat() if row.period_end else None,
+        subject=row.subject or "",
+        description=row.description,
+        severity=(
+            "critical" if row.priority == "critical"
+            else "warn" if row.priority == "high"
+            else "info"
+        ),
+        deep_link=None,
+        status="manual",
+        prepared_by=None, prepared_at=None,
+        approved_by=None, approved_at=None,
+        due_date=row.period_end.isoformat() if row.period_end else None,
+        action_id=str(row.id),
+        assignee_id=str(row.assignee_id) if row.assignee_id else None,
+        snooze_until=row.snooze_until.isoformat() if row.snooze_until else None,
+        notes=row.notes,
+        completed_at=row.completed_at.isoformat() if row.completed_at else None,
+        dismissed_at=row.dismissed_at.isoformat() if row.dismissed_at else None,
+        priority=row.priority,
+        created_by=str(row.created_by),
+        created_at=row.created_at.isoformat() if row.created_at else None,
     )
 
 
@@ -476,7 +718,6 @@ async def complete_task(
     tenant_id: CurrentTenantId,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Mark a task done — works for both manual and overlay rows."""
     row = (await db.execute(
         select(TaskAction).where(TaskAction.id == action_id)
     )).scalar_one_or_none()

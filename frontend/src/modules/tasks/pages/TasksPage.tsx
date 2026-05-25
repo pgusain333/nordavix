@@ -1,20 +1,24 @@
 /**
- * TasksPage — single "everything that needs doing" inbox.
+ * TasksPage — month-end close worklist (v2).
  *
- * The list is derived from existing data (pending/flagged
- * reconciliation accounts) and merged with action overlays
- * the user has attached (snoozed, dismissed, notes, completed).
- * Manual ad-hoc tasks live in the same list.
+ * One row per balance-sheet account synced from QBO, per open period
+ * (so users see every account that needs reconciliation, not just
+ * the ones they've touched). Plus one row per flux analysis. Plus
+ * any manual tasks the user added.
  *
- * Layout:
- *   [Header]   Title + counts + "New task" button
- *   [Filter]   Tabs: Open · Snoozed · Completed · All
- *   [List]     One row per task with subject + context + actions
+ * Columns: Task name · Period · Status · Preparer · Reviewer · Due ·
+ * Completed · Actions. User names resolved via the workspace lookup
+ * hook (audit-feed-style "Jane (3d ago)" labels).
  *
- * Each row links back to the page that resolves it (recons dashboard
- * for the relevant month). Snoozing pushes the row out of the "Open"
- * view until the snooze date; dismissing hides it permanently. Each
- * action is server-persisted in task_actions so it survives refresh.
+ * Top toolbar:
+ *   - Status tabs: Open / Snoozed / Completed / All
+ *   - Period filter dropdown
+ *   - Source filter (recon / flux / manual)
+ *   - Search box (subject contains)
+ *   - "New task" CTA
+ *
+ * Per-row actions live in a dropdown caret on the right: snooze
+ * presets, dismiss, manually complete, deep-link out.
  */
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
@@ -31,43 +35,80 @@ import {
   X,
   CheckCircle2,
   Plus,
+  Search,
+  ExternalLink,
   StickyNote,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
-import { tasksApi, type Task, type TaskSeverity } from "@/modules/tasks/api"
+import { tasksApi, type Task, type TaskSeverity, type TaskSourceType } from "@/modules/tasks/api"
+import { useUserNames } from "@/modules/workspace/hooks"
 
-type FilterTab = "open" | "snoozed" | "completed" | "all"
+type FilterTab    = "open" | "snoozed" | "completed" | "all"
+type SourceFilter = "all" | TaskSourceType
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function severityMeta(s: TaskSeverity) {
   if (s === "critical")
-    return { fg: "#b91c1c", bg: "#fef2f2", border: "rgba(220, 38, 38, 0.40)",
-             label: "Critical", Icon: AlertCircle }
+    return { fg: "#b91c1c", bg: "#fef2f2", Icon: AlertCircle, label: "Critical" }
   if (s === "warn")
-    return { fg: "#92400e", bg: "#fef3c7", border: "#fcd34d",
-             label: "High",     Icon: AlertTriangle }
-  return     { fg: "var(--text-2)", bg: "var(--surface-2)", border: "var(--border)",
-             label: "Normal",   Icon: CheckSquare }
+    return { fg: "#92400e", bg: "#fef3c7", Icon: AlertTriangle, label: "High" }
+  return     { fg: "var(--text-2)", bg: "var(--surface-2)", Icon: CheckSquare, label: "Normal" }
+}
+
+function statusMeta(s: Task["status"]) {
+  const map = {
+    pending:  { label: "Pending",  fg: "var(--text-muted)", bg: "var(--surface-2)" },
+    reviewed: { label: "Prepared", fg: "#1d4ed8",           bg: "#dbeafe"          },
+    approved: { label: "Approved", fg: "var(--green)",      bg: "var(--green-subtle)" },
+    flagged:  { label: "Flagged",  fg: "#b91c1c",           bg: "#fee2e2"          },
+    manual:   { label: "Manual",   fg: "#a855f7",           bg: "rgba(168, 85, 247, 0.15)" },
+  } as const
+  return map[s] ?? map.pending
+}
+
+function sourceMeta(s: TaskSourceType) {
+  if (s === "recon_account")
+    return { label: "Recon", fg: "var(--green)", bg: "var(--green-subtle)" }
+  if (s === "flux")
+    return { label: "Flux", fg: "#1d4ed8",  bg: "#dbeafe" }
+  return     { label: "Manual",fg: "#a855f7", bg: "rgba(168, 85, 247, 0.15)" }
 }
 
 function isSnoozed(t: Task): boolean {
   if (!t.snooze_until) return false
-  try {
-    return new Date(t.snooze_until + "T00:00:00") > new Date()
-  } catch { return false }
+  try { return new Date(t.snooze_until + "T00:00:00") > new Date() } catch { return false }
 }
-
+function isCompleted(t: Task): boolean {
+  return !!t.completed_at || t.status === "approved"
+}
 function isOpen(t: Task): boolean {
-  return !t.completed_at && !t.dismissed_at && !isSnoozed(t)
+  return !isCompleted(t) && !t.dismissed_at && !isSnoozed(t)
 }
 
 function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return ""
+  if (!iso) return "—"
   try {
     return new Date(iso + (iso.includes("T") ? "" : "T00:00:00"))
       .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
   } catch { return iso }
+}
+function fmtRelDate(iso: string | null | undefined): string {
+  if (!iso) return ""
+  try {
+    const d = new Date(iso + (iso.includes("T") ? "" : "T00:00:00")).getTime()
+    const s = Math.floor((Date.now() - d) / 1000)
+    if (Math.abs(s) < 60) return "now"
+    if (s < 0) {
+      const a = Math.abs(s)
+      if (a < 3600) return `in ${Math.floor(a / 60)}m`
+      if (a < 86400) return `in ${Math.floor(a / 3600)}h`
+      return `in ${Math.floor(a / 86400)}d`
+    }
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+    return `${Math.floor(s / 86400)}d ago`
+  } catch { return "" }
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -75,48 +116,64 @@ function fmtDate(iso: string | null | undefined): string {
 export function TasksPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [tab, setTab] = useState<FilterTab>("open")
-  const [expandedKey, setExpandedKey] = useState<string | null>(null)
+  const [tab,         setTab]         = useState<FilterTab>("open")
+  const [sourceFilter,setSourceFilter]= useState<SourceFilter>("all")
+  const [periodFilter,setPeriodFilter]= useState<string>("all")
+  const [search,      setSearch]      = useState("")
   const [showManualForm, setShowManualForm] = useState(false)
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
 
   const { data: tasks = [], isLoading } = useQuery({
     queryKey: ["tasks", "all"],
-    // Always pull EVERYTHING so the filter tabs work without refetching.
     queryFn:  () => tasksApi.list(true),
     staleTime: 30_000,
   })
 
+  // Resolve every preparer / reviewer / assignee UUID to display names.
+  const userIds = useMemo(() => {
+    const s = new Set<string>()
+    for (const t of tasks) {
+      if (t.prepared_by) s.add(t.prepared_by)
+      if (t.approved_by) s.add(t.approved_by)
+      if (t.assignee_id) s.add(t.assignee_id)
+      if (t.created_by)  s.add(t.created_by)
+    }
+    return Array.from(s)
+  }, [tasks])
+  const userNames = useUserNames(userIds)
+
+  // Distinct periods present (for the period dropdown)
+  const periodOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of tasks) if (t.period_end) set.add(t.period_end)
+    return Array.from(set).sort().reverse()
+  }, [tasks])
+
+  // Tab counts
   const counts = useMemo(() => {
     let open = 0, snoozed = 0, completed = 0
     for (const t of tasks) {
-      if (t.completed_at) completed++
+      if (isCompleted(t)) completed++
       else if (isSnoozed(t)) snoozed++
       else if (!t.dismissed_at) open++
     }
     return { open, snoozed, completed, all: tasks.length }
   }, [tasks])
 
+  // Applied filters
   const filtered = useMemo(() => {
     let list = tasks
-    if (tab === "open")      list = list.filter(isOpen)
-    else if (tab === "snoozed")   list = list.filter((t) => isSnoozed(t) && !t.completed_at && !t.dismissed_at)
-    else if (tab === "completed") list = list.filter((t) => !!t.completed_at)
-    // "all" → no filter
-    return list
-  }, [tasks, tab])
+    if (tab === "open")        list = list.filter(isOpen)
+    else if (tab === "snoozed")   list = list.filter((t) => isSnoozed(t) && !isCompleted(t) && !t.dismissed_at)
+    else if (tab === "completed") list = list.filter(isCompleted)
+    // 'all' = no tab filter
 
-  // Group filtered tasks by period (newest first). Manual tasks
-  // without a period are bucketed under "No period set".
-  const grouped = useMemo(() => {
-    const map = new Map<string, Task[]>()
-    for (const t of filtered) {
-      const key = t.period_end ?? "(no period)"
-      if (!map.has(key)) map.set(key, [])
-      map.get(key)!.push(t)
-    }
-    const keys = Array.from(map.keys()).sort((a, b) => (a < b ? 1 : -1))
-    return keys.map((k) => ({ period: k, tasks: map.get(k)! }))
-  }, [filtered])
+    if (sourceFilter !== "all") list = list.filter((t) => t.source_type === sourceFilter)
+    if (periodFilter !== "all") list = list.filter((t) => t.period_end === periodFilter)
+    const q = search.trim().toLowerCase()
+    if (q) list = list.filter((t) => t.subject.toLowerCase().includes(q))
+    return list
+  }, [tasks, tab, sourceFilter, periodFilter, search])
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
@@ -131,7 +188,6 @@ export function TasksPage() {
               onClick={() => navigate("/app")}
               className="inline-flex items-center gap-1 text-[11px] font-medium mb-2 transition-opacity hover:opacity-70"
               style={{ color: "var(--text-muted)" }}
-              title="Back to the workspace dashboard"
             >
               <ArrowLeft size={12} strokeWidth={2} />
               Back to dashboard
@@ -143,8 +199,8 @@ export function TasksPage() {
               Tasks
             </h1>
             <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              Everything left to do for month-end close — auto-generated from your reconciliation
-              status, plus any ad-hoc tasks you create.
+              One task per synced GL account + per flux analysis. Status, preparer,
+              and reviewer reflect the underlying workflow in real time.
             </p>
           </div>
           <Button size="sm" icon={<Plus size={12} strokeWidth={1.8} />}
@@ -154,31 +210,70 @@ export function TasksPage() {
         </div>
       </motion.div>
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-5xl w-full mx-auto space-y-4">
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-[1400px] w-full mx-auto space-y-4">
 
-        {/* Filter tabs */}
-        <div className="flex items-center gap-1 flex-wrap rounded-lg p-1 w-fit"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-          {([
-            { key: "open",      label: "Open",      count: counts.open      },
-            { key: "snoozed",   label: "Snoozed",   count: counts.snoozed   },
-            { key: "completed", label: "Completed", count: counts.completed },
-            { key: "all",       label: "All",       count: counts.all       },
-          ] as const).map((b) => {
-            const active = tab === b.key
-            return (
-              <button key={b.key} onClick={() => setTab(b.key)}
-                className="inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all"
-                style={{
-                  background: active ? "var(--surface)" : "transparent",
-                  color:      active ? "var(--text)"    : "var(--text-muted)",
-                  border:     active ? "1px solid var(--border-strong)" : "1px solid transparent",
-                }}>
-                {b.label}
-                <span className="text-[10px] tabular-nums opacity-80">{b.count}</span>
-              </button>
-            )
-          })}
+        {/* Toolbar: tabs + filters */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Status tabs */}
+          <div className="flex items-center gap-1 flex-wrap rounded-lg p-1"
+            style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+            {([
+              { key: "open",      label: "Open",      count: counts.open      },
+              { key: "snoozed",   label: "Snoozed",   count: counts.snoozed   },
+              { key: "completed", label: "Completed", count: counts.completed },
+              { key: "all",       label: "All",       count: counts.all       },
+            ] as const).map((b) => {
+              const active = tab === b.key
+              return (
+                <button key={b.key} onClick={() => setTab(b.key)}
+                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all"
+                  style={{
+                    background: active ? "var(--surface)" : "transparent",
+                    color:      active ? "var(--text)"    : "var(--text-muted)",
+                    border:     active ? "1px solid var(--border-strong)" : "1px solid transparent",
+                  }}>
+                  {b.label}
+                  <span className="text-[10px] tabular-nums opacity-80">{b.count}</span>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Source filter */}
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}
+            className="rounded-lg px-3 py-1.5 text-sm outline-none"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+            <option value="all">All sources</option>
+            <option value="recon_account">Reconciliations</option>
+            <option value="flux">Flux analyses</option>
+            <option value="manual">Manual</option>
+          </select>
+
+          {/* Period filter */}
+          <select
+            value={periodFilter}
+            onChange={(e) => setPeriodFilter(e.target.value)}
+            className="rounded-lg px-3 py-1.5 text-sm outline-none"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+            <option value="all">All periods</option>
+            {periodOptions.map((p) => (
+              <option key={p} value={p}>{fmtDate(p)}</option>
+            ))}
+          </select>
+
+          {/* Search */}
+          <div className="relative flex-1 min-w-[180px] max-w-md">
+            <Search size={14} strokeWidth={1.8}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: "var(--text-muted)" }} />
+            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search task name…"
+              className="w-full rounded-lg pl-8 pr-3 py-1.5 text-sm outline-none"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+            />
+          </div>
         </div>
 
         {/* Manual task form */}
@@ -199,38 +294,55 @@ export function TasksPage() {
           )}
         </AnimatePresence>
 
-        {/* List */}
+        {/* Table */}
         {isLoading ? (
           <div className="py-16 flex items-center justify-center"><Spinner /></div>
         ) : filtered.length === 0 ? (
           <EmptyState tab={tab} />
         ) : (
-          <div className="space-y-4">
-            {grouped.map((g) => (
-              <div key={g.period}>
-                <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5 px-1"
-                  style={{ color: "var(--text-muted)" }}>
-                  {g.period === "(no period)" ? "No period set" :
-                    new Date(g.period + "T00:00:00").toLocaleDateString(undefined, {
-                      month: "long", year: "numeric",
-                    })}
-                  <span className="ml-2 opacity-70">· {g.tasks.length}</span>
-                </div>
-                <div className="rounded-xl overflow-hidden divide-y"
-                  style={{
-                    background: "var(--surface)",
-                    border: "1px solid var(--border)",
-                    boxShadow: "var(--card-shadow)",
-                  }}>
-                  {g.tasks.map((t) => (
+          <div className="rounded-xl overflow-hidden"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[1000px]">
+                <thead>
+                  <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
+                    {[
+                      { label: "Task",     w: "auto" },
+                      { label: "Period",   w: "100px" },
+                      { label: "Status",   w: "110px" },
+                      { label: "Preparer", w: "150px" },
+                      { label: "Reviewer", w: "150px" },
+                      { label: "Due",      w: "110px" },
+                      { label: "Completed",w: "120px" },
+                      { label: "",         w: "100px" },
+                    ].map((h) => (
+                      <th key={h.label}
+                        className="text-left text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5"
+                        style={{ color: "var(--text-muted)", width: h.w }}>
+                        {h.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((t) => (
                     <TaskRow key={t.key} task={t}
+                      userNames={userNames}
                       expanded={expandedKey === t.key}
                       onToggleExpand={() => setExpandedKey(expandedKey === t.key ? null : t.key)}
                     />
                   ))}
-                </div>
-              </div>
-            ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-4 py-2 text-[10px] flex items-center justify-between"
+              style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+              <span>{filtered.length} of {tasks.length} task{tasks.length === 1 ? "" : "s"}</span>
+              <span>
+                Due dates default to 15 days after period-end. Tasks auto-update as
+                underlying work progresses.
+              </span>
+            </div>
           </div>
         )}
       </div>
@@ -240,19 +352,23 @@ export function TasksPage() {
 
 // ── TaskRow ────────────────────────────────────────────────────────────────
 
-function TaskRow({ task, expanded, onToggleExpand }:
-  { task: Task; expanded: boolean; onToggleExpand: () => void }
-) {
+function TaskRow({ task, userNames, expanded, onToggleExpand }: {
+  task: Task
+  userNames: Record<string, string>
+  expanded: boolean
+  onToggleExpand: () => void
+}) {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const meta = severityMeta(task.severity)
-  const SeverityIcon = meta.Icon
+  const sev = severityMeta(task.severity)
+  const stat = statusMeta(task.status)
+  const src = sourceMeta(task.source_type)
+  const SeverityIcon = sev.Icon
+  const overdue = task.due_date && !isCompleted(task) && new Date(task.due_date) < new Date(new Date().toDateString())
   const snoozed = isSnoozed(task)
-  const completed = !!task.completed_at
+  const completed = isCompleted(task)
   const dismissed = !!task.dismissed_at
 
-  // Mutation helpers: every action invalidates the tasks query so the
-  // counts + list re-derive once the server confirms.
   const actionMut = useMutation({
     mutationFn: (patch: Parameters<typeof tasksApi.upsertAction>[0]) => tasksApi.upsertAction(patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
@@ -289,144 +405,212 @@ function TaskRow({ task, expanded, onToggleExpand }:
     })
   }
 
+  const preparerName = task.prepared_by ? (userNames[task.prepared_by] ?? "Someone") : null
+  const reviewerName = task.approved_by ? (userNames[task.approved_by] ?? "Someone") : null
+
+  // Pick the most relevant "completed" timestamp: the manual complete
+  // overrides everything; otherwise approved_at (the reviewer's stamp).
+  const completedAt = task.completed_at ?? task.approved_at
+
+  const rowBg = completed
+    ? "rgba(16, 185, 129, 0.04)"
+    : dismissed
+      ? "var(--surface-2)"
+      : undefined
+
   return (
-    <div className="px-4 py-3"
-      style={{
-        background: completed || dismissed ? "var(--surface-2)" : undefined,
-        opacity: completed || dismissed ? 0.6 : 1,
-      }}>
-      <div className="flex items-start gap-3">
-        {/* Severity dot */}
-        <div className="shrink-0 mt-0.5">
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full"
-            style={{ background: meta.bg, border: `1px solid ${meta.border}`, color: meta.fg }}>
-            <SeverityIcon size={11} strokeWidth={2} />
-          </span>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-theme"
-              style={{ textDecoration: completed ? "line-through" : "none" }}>
-              {task.subject}
+    <>
+      <tr style={{ borderBottom: "1px solid var(--border)", background: rowBg,
+                   opacity: dismissed ? 0.5 : 1 }}>
+        {/* Task */}
+        <td className="px-3 py-3">
+          <div className="flex items-start gap-2">
+            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full shrink-0 mt-0.5"
+              style={{ background: sev.bg, color: sev.fg }}>
+              <SeverityIcon size={11} strokeWidth={2} />
             </span>
-            {task.source_type === "manual" && (
-              <span className="text-[9px] font-bold uppercase tracking-wide rounded px-1 py-0.5"
-                style={{ background: "rgba(168, 85, 247, 0.15)", color: "#a855f7" }}>
-                Manual
-              </span>
-            )}
-            {snoozed && (
-              <span className="text-[9px] font-medium inline-flex items-center gap-0.5"
-                style={{ color: "var(--text-muted)" }}>
-                <Clock size={9} strokeWidth={2} /> snoozed until {fmtDate(task.snooze_until)}
-              </span>
-            )}
-            {completed && (
-              <span className="text-[9px] font-medium inline-flex items-center gap-0.5"
-                style={{ color: "var(--green)" }}>
-                <CheckCircle2 size={9} strokeWidth={2} /> completed {fmtDate(task.completed_at)}
-              </span>
-            )}
-          </div>
-          {task.description && (
-            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-              {task.description}
-            </p>
-          )}
-          {task.notes && (
-            <p className="text-[11px] mt-1.5 italic px-2 py-1 rounded"
-              style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
-              <StickyNote size={10} strokeWidth={1.8} className="inline mr-1" />
-              {task.notes}
-            </p>
-          )}
-        </div>
-
-        {/* Actions: deep-link + expand-for-more */}
-        <div className="flex items-center gap-1 shrink-0">
-          {task.deep_link && !completed && !dismissed && (
-            <Button size="sm" variant="outline"
-              icon={<ArrowRight size={11} strokeWidth={1.8} />}
-              onClick={() => navigate(task.deep_link!)}>
-              <span className="hidden sm:inline">Open</span>
-            </Button>
-          )}
-          <button
-            onClick={onToggleExpand}
-            className="h-7 w-7 rounded-md flex items-center justify-center transition-colors hover:bg-[var(--surface-2)]"
-            style={{ color: "var(--text-muted)" }}
-            title={expanded ? "Hide actions" : "Show actions"}
-          >
-            <ChevronDown size={14} strokeWidth={2}
-              className="transition-transform"
-              style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}
-            />
-          </button>
-        </div>
-      </div>
-
-      {/* Expanded action area */}
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.18 }}
-            style={{ overflow: "hidden" }}
-          >
-            <div className="mt-3 pt-3 flex items-center gap-2 flex-wrap"
-              style={{ borderTop: "1px dashed var(--border)" }}>
-              {/* Snooze quick-picks */}
-              {!completed && !dismissed && (
-                <>
-                  <span className="text-[10px] font-semibold uppercase tracking-wide mr-1"
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-theme"
+                  style={{ textDecoration: completed ? "line-through" : "none" }}>
+                  {task.subject}
+                </span>
+                <span className="text-[9px] font-bold uppercase tracking-wide rounded px-1 py-0.5"
+                  style={{ background: src.bg, color: src.fg }}>
+                  {src.label}
+                </span>
+                {snoozed && (
+                  <span className="text-[9px] inline-flex items-center gap-0.5"
                     style={{ color: "var(--text-muted)" }}>
-                    Snooze:
+                    <Clock size={9} strokeWidth={2} /> snoozed
                   </span>
-                  {snoozed ? (
-                    <Button size="sm" variant="outline" onClick={clearSnooze}
-                      loading={actionMut.isPending}>
-                      Wake now
-                    </Button>
-                  ) : (
-                    <>
-                      <Button size="sm" variant="outline" onClick={() => setSnooze(1)}
-                        loading={actionMut.isPending}>Tomorrow</Button>
-                      <Button size="sm" variant="outline" onClick={() => setSnooze(3)}
-                        loading={actionMut.isPending}>3 days</Button>
-                      <Button size="sm" variant="outline" onClick={() => setSnooze(7)}
-                        loading={actionMut.isPending}>1 week</Button>
-                    </>
-                  )}
-                </>
-              )}
-
-              <div className="mx-1 h-4 w-px" style={{ background: "var(--border)" }} />
-
-              {!completed && task.action_id && (
-                <Button size="sm" variant="outline"
-                  icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
-                  loading={completeMut.isPending}
-                  onClick={() => completeMut.mutate()}
-                  style={{ borderColor: "var(--green)", color: "var(--green)" }}
-                >
-                  Mark done
-                </Button>
-              )}
-              {!dismissed && !completed && (
-                <Button size="sm" variant="ghost" onClick={dismiss}
-                  loading={actionMut.isPending}>
-                  <X size={11} strokeWidth={1.8} /> Dismiss
-                </Button>
+                )}
+              </div>
+              {task.notes && (
+                <p className="text-[11px] mt-1 italic inline-flex items-center gap-1"
+                  style={{ color: "var(--text-2)" }}>
+                  <StickyNote size={9} strokeWidth={1.8} />
+                  {task.notes}
+                </p>
               )}
             </div>
-          </motion.div>
+          </div>
+        </td>
+
+        {/* Period */}
+        <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+          {task.period_end
+            ? new Date(task.period_end + "T00:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })
+            : "—"}
+        </td>
+
+        {/* Status */}
+        <td className="px-3 py-3">
+          <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+            style={{ background: stat.bg, color: stat.fg }}>
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: stat.fg }} />
+            {stat.label}
+          </span>
+        </td>
+
+        {/* Preparer */}
+        <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+          {preparerName ? (
+            <>
+              <p className="text-theme truncate">{preparerName}</p>
+              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                {fmtRelDate(task.prepared_at)}
+              </p>
+            </>
+          ) : "—"}
+        </td>
+
+        {/* Reviewer */}
+        <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+          {reviewerName ? (
+            <>
+              <p className="text-theme truncate">{reviewerName}</p>
+              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                {fmtRelDate(task.approved_at)}
+              </p>
+            </>
+          ) : "—"}
+        </td>
+
+        {/* Due */}
+        <td className="px-3 py-3 text-xs">
+          {task.due_date ? (
+            <>
+              <p style={{ color: overdue ? "#dc2626" : "var(--text-2)" }}>
+                {fmtDate(task.due_date)}
+              </p>
+              {overdue && (
+                <p className="text-[10px] font-semibold" style={{ color: "#dc2626" }}>
+                  overdue
+                </p>
+              )}
+            </>
+          ) : "—"}
+        </td>
+
+        {/* Completed */}
+        <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+          {completedAt ? (
+            <>
+              <p className="text-theme">{fmtDate(completedAt)}</p>
+              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                {fmtRelDate(completedAt)}
+              </p>
+            </>
+          ) : "—"}
+        </td>
+
+        {/* Actions */}
+        <td className="px-3 py-3">
+          <div className="flex items-center justify-end gap-1">
+            {task.deep_link && !completed && !dismissed && (
+              <Button size="sm" variant="outline"
+                icon={<ExternalLink size={11} strokeWidth={1.8} />}
+                onClick={() => navigate(task.deep_link!)}>
+                <span className="hidden md:inline">Open</span>
+              </Button>
+            )}
+            <button onClick={onToggleExpand}
+              className="h-7 w-7 rounded-md flex items-center justify-center transition-colors hover:bg-[var(--surface-2)]"
+              style={{ color: "var(--text-muted)" }}
+              title={expanded ? "Hide actions" : "More actions"}>
+              <ChevronDown size={14} strokeWidth={2}
+                className="transition-transform"
+                style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }} />
+            </button>
+          </div>
+        </td>
+      </tr>
+
+      {/* Expanded row: per-task action drawer */}
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <tr>
+            <td colSpan={8} className="p-0">
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.18 }}
+                style={{ overflow: "hidden" }}>
+                <div className="px-4 py-3 flex items-center gap-2 flex-wrap"
+                  style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide"
+                    style={{ color: "var(--text-muted)" }}>
+                    Actions:
+                  </span>
+                  {!completed && !dismissed && (
+                    <>
+                      {snoozed ? (
+                        <Button size="sm" variant="outline" onClick={clearSnooze}
+                          loading={actionMut.isPending}>Wake now</Button>
+                      ) : (
+                        <>
+                          <Button size="sm" variant="outline" onClick={() => setSnooze(1)}
+                            loading={actionMut.isPending}>
+                            <Clock size={11} strokeWidth={1.8} className="inline mr-1" />
+                            Snooze 1d
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setSnooze(3)}
+                            loading={actionMut.isPending}>3d</Button>
+                          <Button size="sm" variant="outline" onClick={() => setSnooze(7)}
+                            loading={actionMut.isPending}>1w</Button>
+                        </>
+                      )}
+                      <div className="mx-1 h-4 w-px" style={{ background: "var(--border)" }} />
+                      {task.action_id && (
+                        <Button size="sm" variant="outline"
+                          icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
+                          loading={completeMut.isPending}
+                          onClick={() => completeMut.mutate()}
+                          style={{ borderColor: "var(--green)", color: "var(--green)" }}>
+                          Mark done
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" onClick={dismiss}
+                        loading={actionMut.isPending}>
+                        <X size={11} strokeWidth={1.8} /> Dismiss
+                      </Button>
+                    </>
+                  )}
+                  {(completed || dismissed) && (
+                    <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                      {completed ? "Task is completed." : "Task is dismissed."}
+                      {" "}Re-open by syncing the underlying source.
+                    </span>
+                  )}
+                </div>
+              </motion.div>
+            </td>
+          </tr>
         )}
       </AnimatePresence>
-    </div>
+    </>
   )
 }
 
@@ -434,10 +618,10 @@ function TaskRow({ task, expanded, onToggleExpand }:
 
 function EmptyState({ tab }: { tab: FilterTab }) {
   const copy: Record<FilterTab, { title: string; body: string }> = {
-    open:      { title: "Nothing to do",     body: "No open tasks. As soon as a recon goes pending or flagged, it'll show up here." },
-    snoozed:   { title: "No snoozed tasks",  body: "Tasks you've snoozed appear here until their wake date." },
-    completed: { title: "Nothing completed", body: "Done tasks land here as a record of work finished." },
-    all:       { title: "No tasks yet",      body: "When recons need attention, they'll surface here automatically." },
+    open:      { title: "Nothing to do",     body: "No open tasks for the current filters. Try widening the filters or check the Completed tab." },
+    snoozed:   { title: "No snoozed tasks",  body: "Tasks you've snoozed will appear here until their wake date." },
+    completed: { title: "Nothing completed", body: "Tasks finish here as a record of work done." },
+    all:       { title: "No tasks",          body: "Sync QuickBooks accounts and they'll show up as reconciliation tasks." },
   }
   const c = copy[tab]
   return (
@@ -537,3 +721,5 @@ function ManualTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated
   )
 }
 
+// Unused import shim — we may add an ArrowRight icon on a future row hover state.
+void ArrowRight

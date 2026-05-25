@@ -304,6 +304,23 @@ async def update_account_review_status(
         if notes is not None:
             row.notes = notes
 
+    # Stamp preparer / reviewer separately so the Tasks UI can show
+    # both actors. We DON'T clear them on a downstream status flip —
+    # historical "who did what" is more useful than "current actor".
+    now = datetime.now(UTC)
+    if status_value == "reviewed":
+        row.prepared_by = user.id
+        row.prepared_at = now
+    elif status_value == "approved":
+        # Approving promotes through prepared. If no prepared stamp
+        # exists yet (admin skipped straight to approved), record this
+        # user as the preparer too so the audit trail is complete.
+        if not row.prepared_by:
+            row.prepared_by = user.id
+            row.prepared_at = now
+        row.approved_by = user.id
+        row.approved_at = now
+
     from core.audit.log import write_audit_event
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
@@ -394,11 +411,24 @@ async def bulk_update_account_review_status(
 
     now = datetime.now(UTC)
     is_reviewed = status_value != "pending"
+    # Same prep/approve stamping rule as the per-row endpoint:
+    # promote-only, never clear, and approve cascades through prepare
+    # if prepare hasn't happened yet.
     for qid in ids:
         if qid in by_id:
-            by_id[qid].status = status_value
-            by_id[qid].reviewed_by = user.id if is_reviewed else None
-            by_id[qid].reviewed_at = now if is_reviewed else None
+            r = by_id[qid]
+            r.status = status_value
+            r.reviewed_by = user.id if is_reviewed else None
+            r.reviewed_at = now if is_reviewed else None
+            if status_value == "reviewed":
+                r.prepared_by = user.id
+                r.prepared_at = now
+            elif status_value == "approved":
+                if not r.prepared_by:
+                    r.prepared_by = user.id
+                    r.prepared_at = now
+                r.approved_by = user.id
+                r.approved_at = now
         else:
             db.add(AccountReviewStatus(
                 id=uuid.uuid4(),
@@ -408,6 +438,10 @@ async def bulk_update_account_review_status(
                 status=status_value,
                 reviewed_by=user.id if is_reviewed else None,
                 reviewed_at=now if is_reviewed else None,
+                prepared_by=user.id if status_value in ("reviewed", "approved") else None,
+                prepared_at=now      if status_value in ("reviewed", "approved") else None,
+                approved_by=user.id if status_value == "approved" else None,
+                approved_at=now      if status_value == "approved" else None,
             ))
 
     from core.audit.log import write_audit_event

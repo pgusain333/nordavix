@@ -31,6 +31,13 @@ class AccountReviewStatus(TenantBase):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Preparer / reviewer split — tracked independently so the Tasks
+    # UI can show both actors without overwriting each other. Migration
+    # 014 added these; older rows get backfilled from reviewed_*.
+    prepared_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    prepared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
     # Manual subledger override: when set, the overview uses this value as the
     # subledger balance for this account+period (overrides the QBO default).
