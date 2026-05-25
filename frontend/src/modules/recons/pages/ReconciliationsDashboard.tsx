@@ -90,6 +90,32 @@ const GROUP_COLORS: Record<string, string> = {
   Equity:                     "#a855f7",
 }
 
+// Credit-natural account groups. For these, GL balances are stored
+// signed-negative in our convention (liabilities + equity show in
+// parentheses on the dashboard, e.g. AP = "($60,371)"). QBO's
+// GeneralLedger report, however, returns each transaction's
+// `subt_nat_amount` in the account's NATURAL sign — meaning a credit
+// posted to a liability comes back POSITIVE (because credit is the
+// natural direction for a liability).
+//
+// If we summed those raw amounts directly against the signed opening
+// balance, the variance would move the wrong way: -371 (opening) +
+// 60000 (credit invoice raw amount) = +59,629, when the right answer
+// is -371 + (-60,000) = -60,371. So for these account groups we flip
+// the sign of QBO reconciling items at sum + display time.
+//
+// Asset accounts (Bank, AR, Fixed Assets, Other Current Assets, Other
+// Assets) are debit-natural — QBO's raw amounts already line up with
+// our signed balances and no flip is needed.
+const CREDIT_NATURAL_GROUPS = new Set([
+  "Credit Card", "AP",
+  "Other Current Liabilities", "Long Term Liabilities", "Equity",
+])
+
+function isCreditNatural(groupLabel: string): boolean {
+  return CREDIT_NATURAL_GROUPS.has(groupLabel)
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function ReconciliationsDashboard() {
@@ -1295,7 +1321,20 @@ function InlineSubledgerForm({
   }
 
   const selectedItems = Object.values(selectedItemMap)
-  const selectedSum = selectedItems.reduce((n, it) => n + (parseFloat(it.amount) || 0), 0)
+  // Liability/equity accounts are credit-natural: GL balance is stored
+  // signed-negative ("($60,371)"), but QBO returns each transaction's
+  // amount in its account-natural sign (a credit on a liability comes
+  // back POSITIVE). To make the build-up math work — opening + items
+  // = closing, in the same sign convention as the GL balance — we
+  // flip the sign of QBO items on credit-natural accounts. Manual
+  // items entered by the user already use signed convention (the form
+  // labels the field "Amount (± signed)") so they're not flipped.
+  const flipSign = isCreditNatural(account.group_label) ? -1 : 1
+  const signedAmount = (it: ReconcilingItem): number => {
+    const raw = parseFloat(it.amount) || 0
+    return it.txn_id.startsWith("manual-") ? raw : flipSign * raw
+  }
+  const selectedSum = selectedItems.reduce((n, it) => n + signedAmount(it), 0)
 
   // Subledger is CALCULATED now, not typed: opening (rolled forward from
   // the prior period) ± reconciling items = closing subledger. This
@@ -1503,6 +1542,7 @@ function InlineSubledgerForm({
         selectedItems={selectedItems}
         selectedSum={selectedSum}
         computedSubledger={computedSubledger}
+        flipSign={flipSign}
         onUntickItem={(it) => toggleItem(it)}
         onEditManual={(it) => startEditManualItem(it)}
         onDeleteManual={(id) => deleteManualItem(id)}
@@ -1816,7 +1856,7 @@ function InlineSubledgerForm({
 // total. Pure presentation — all state lives in the parent form.
 
 function SubledgerBuildup({
-  openingBalance, prior, selectedItems, selectedSum, computedSubledger,
+  openingBalance, prior, selectedItems, selectedSum, computedSubledger, flipSign,
   onUntickItem, onEditManual, onDeleteManual,
 }: {
   openingBalance:    number
@@ -1827,6 +1867,12 @@ function SubledgerBuildup({
   selectedItems:     ReconcilingItem[]
   selectedSum:       number
   computedSubledger: number
+  // Sign-flip multiplier for QBO items on credit-natural accounts.
+  // 1 for assets (debit-natural — no flip needed), −1 for AP/CC/
+  // liability/equity (QBO returns credits as positive, we display as
+  // negative to match the signed GL balance). Manual items are NOT
+  // flipped — they're entered by the user in signed convention.
+  flipSign:          number
   onUntickItem:      (it: ReconcilingItem) => void
   onEditManual:      (it: ReconcilingItem) => void
   onDeleteManual:    (id: string) => void
@@ -1869,7 +1915,13 @@ function SubledgerBuildup({
           <ul className="space-y-0.5 max-h-48 overflow-y-auto">
             {selectedItems.map((it) => {
               const isManual = it.txn_id.startsWith("manual-")
-              const amt = parseFloat(it.amount) || 0
+              // Signed effective amount. For QBO items on a credit-
+              // natural account this is the NEGATIVE of the raw QBO
+              // amount (so a credit invoice on AP shows here as
+              // "−$60,000" — reducing the signed balance further
+              // negative, which matches what the closing total does).
+              // Manual items already in signed convention, no flip.
+              const amt = (isManual ? 1 : flipSign) * (parseFloat(it.amount) || 0)
               return (
                 <li key={it.txn_id}
                   className="flex items-center gap-2 py-1 px-1 text-xs rounded"
