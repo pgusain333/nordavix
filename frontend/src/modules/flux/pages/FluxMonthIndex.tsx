@@ -44,6 +44,7 @@ import {
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { api as fluxApi, type TrialBalance } from "@/modules/flux/api"
+import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -90,11 +91,7 @@ export function FluxMonthIndex() {
   const navigate = useNavigate()
   const [search, setSearch] = useState("")
 
-  const { data: qbo, isLoading: qboLoading } = useQuery({
-    queryKey: ["qbo-connection"],
-    queryFn:  fluxApi.getQboConnection,
-    staleTime: 5 * 60_000,
-  })
+  const { data: qbo, isLoading: qboLoading } = useQboConnection()
 
   const { data: books, isLoading: booksLoading } = useQuery({
     queryKey: ["books-status"],

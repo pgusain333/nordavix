@@ -33,6 +33,7 @@ import {
   CalendarCheck,
 } from "lucide-react"
 import { api as fluxApi } from "@/modules/flux/api"
+import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
 import { workspaceApi } from "@/modules/workspace/api"
 import { Button, Spinner } from "@/core/ui/components"
@@ -88,12 +89,10 @@ export function DashboardHome() {
   // seconds OR when the user clicks a valid tile.
   const [blockMsg, setBlockMsg] = useState<string | null>(null)
 
-  // QBO connection — needed for setup checklist + recons overview
-  const { data: qbo, isLoading: qboLoading } = useQuery({
-    queryKey: ["qbo-connection"],
-    queryFn:  fluxApi.getQboConnection,
-    staleTime: 5 * 60_000,
-  })
+  // QBO connection — uses the localStorage-cached hook so refreshes
+  // don't flash the "not connected" banner while the verify-fetch
+  // round-trips.
+  const { data: qbo, isLoading: qboLoading } = useQboConnection()
 
   // Books status — needed for setup checklist
   const { data: books } = useQuery({
@@ -152,6 +151,44 @@ export function DashboardHome() {
       return d.toLocaleDateString(undefined, { month: "long", year: "numeric" })
     } catch { return period }
   }, [period])
+
+  // Year filter — drives which months render in the tracker. Months
+  // are visible as tiles below, so the dropdown only needs to scope
+  // the year (vs. picking individual months which was redundant).
+  // Defaults to current year, or the most recent year with data when
+  // the tracker arrives.
+  const [year, setYear] = useState<string>(() => String(new Date().getFullYear()))
+  const yearOptions = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of tracker?.periods ?? []) s.add(p.period_end.slice(0, 4))
+    const arr = Array.from(s).sort().reverse()
+    const cur = String(new Date().getFullYear())
+    if (!arr.includes(cur)) arr.unshift(cur)
+    return arr
+  }, [tracker])
+  // If the picked year isn't actually in the list when tracker loads,
+  // snap to the most recent available year.
+  useEffect(() => {
+    if (yearOptions.length === 0) return
+    if (!yearOptions.includes(year)) setYear(yearOptions[0])
+  }, [yearOptions, year])
+  // When the year changes, re-anchor the focused period to the most
+  // recent month within that year (so KPIs / Open cards align).
+  useEffect(() => {
+    const periods = tracker?.periods ?? []
+    const inYear = periods.filter((p) => p.period_end.startsWith(year))
+    if (inYear.length === 0) return
+    if (!period.startsWith(year)) {
+      // Most recent month in the new year (tracker is sorted ascending)
+      setPeriod(inYear[inYear.length - 1].period_end)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, tracker])
+  // Filter tracker tiles to the selected year.
+  const trackerPeriodsInYear = useMemo(() => {
+    if (!tracker?.periods) return []
+    return tracker.periods.filter((p) => p.period_end.startsWith(year))
+  }, [tracker, year])
 
   // Sequential-close gate: a month M is blocked iff any earlier month
   // M' < M is "in_progress" or "not_started" (i.e. not closed and not
@@ -269,19 +306,22 @@ export function DashboardHome() {
             </h1>
             <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
               {books?.seeded
-                ? `Viewing ${monthLabel}. Pick another month above to refocus KPIs and quick-open targets.`
+                ? `Viewing ${monthLabel}. Click any month tile below to refocus KPIs, or pick a different year above.`
                 : "Welcome to Nordavix — finish the setup below to start reconciling."}
             </p>
           </div>
-          {/* Month picker — drives every KPI + Open card on this page. */}
-          {books?.seeded && (tracker?.periods.length ?? 0) > 0 && (
+          {/* Year picker — scopes the tracker tiles below to one year.
+              Individual months are clickable as tiles, so the dropdown
+              just narrows by year (used to be a Month picker; was
+              redundant with the tiles). */}
+          {books?.seeded && yearOptions.length > 0 && (
             <label className="flex flex-col">
               <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
-                Month
+                Year
               </span>
               <select
-                value={period}
-                onChange={(e) => setPeriod(e.target.value)}
+                value={year}
+                onChange={(e) => setYear(e.target.value)}
                 className="rounded-lg px-3 py-1.5 text-sm outline-none"
                 style={{
                   background: "var(--surface-2)",
@@ -289,8 +329,8 @@ export function DashboardHome() {
                   color: "var(--text)",
                 }}
               >
-                {tracker!.periods.slice().reverse().map((p) => (
-                  <option key={p.period_end} value={p.period_end}>{p.label}</option>
+                {yearOptions.map((y) => (
+                  <option key={y} value={y}>{y}</option>
                 ))}
               </select>
             </label>
@@ -375,11 +415,17 @@ export function DashboardHome() {
                 Books start date is set but no monthly periods yet. They'll appear here once you reconcile your first month.
               </p>
             </div>
+          ) : trackerPeriodsInYear.length === 0 ? (
+            <div className="px-6 py-8 text-center">
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                No months in {year} yet. Pick a different year above.
+              </p>
+            </div>
           ) : (
             <>
             <div className="overflow-x-auto">
               <div className="flex gap-2 px-4 py-3" style={{ minWidth: "min-content" }}>
-                {tracker!.periods.map((p) => {
+                {trackerPeriodsInYear.map((p) => {
                   const meta = {
                     closed:      { bg: "rgba(245, 158, 11, 0.10)", border: "#f59e0b",         fg: "#b45309",         icon: <Lock size={12} strokeWidth={2} /> },
                     complete:    { bg: "var(--green-subtle)",      border: "var(--green)",    fg: "var(--green)",    icon: <CheckCircle2 size={12} strokeWidth={2} /> },

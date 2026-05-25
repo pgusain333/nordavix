@@ -35,6 +35,7 @@ import {
   ArrowLeft,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
+import { useQboConnection } from "@/modules/flux/hooks"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
 import { VarianceTable } from "@/modules/flux/components/VarianceTable"
 import { Button, Spinner } from "@/core/ui/components"
@@ -114,12 +115,8 @@ export function FluxDashboard() {
     refetchInterval: selectedTb?.status === "generating" ? 5_000 : false,
   })
 
-  // QBO connection status
-  const { data: qboConn } = useQuery({
-    queryKey: ["qbo-connection"],
-    queryFn:  api.getQboConnection,
-    staleTime: 60_000,
-  })
+  // QBO connection status — localStorage-cached for instant render on refresh.
+  const { data: qboConn } = useQboConnection()
 
   // Auto-select most recent TB on first visit (desktop UX convenience).
   // Skipped when ?new=1 is present — that signals the user explicitly asked

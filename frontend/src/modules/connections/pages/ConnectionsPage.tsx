@@ -10,7 +10,7 @@
  */
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Zap,
@@ -24,6 +24,7 @@ import {
   ChevronUp,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
+import { useQboConnection } from "@/modules/flux/hooks"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
 import { Button, Spinner } from "@/core/ui/components"
 
@@ -34,12 +35,8 @@ export function ConnectionsPage() {
   const [qboError, setQboError] = useState<string | null>(null)
   const [qboLoading, setQboLoading] = useState(false)
 
-  // QBO connection status
-  const { data: qbo, isLoading: qboLoadingQuery } = useQuery({
-    queryKey: ["qbo-connection"],
-    queryFn:  api.getQboConnection,
-    staleTime: 60_000,
-  })
+  // QBO connection status — localStorage-cached for instant render on refresh.
+  const { data: qbo, isLoading: qboLoadingQuery } = useQboConnection()
 
   async function connectQbo() {
     setQboError(null)

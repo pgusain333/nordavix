@@ -22,7 +22,7 @@ import {
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { reconsApi, type ReconType, type Reconciliation, type ReconciliationItem, type RiskLevel } from "@/modules/recons/api"
-import { api as fluxApi } from "@/modules/flux/api"
+import { useQboConnection } from "@/modules/flux/hooks"
 
 interface Props {
   title:    string
@@ -58,11 +58,7 @@ export function ReconciliationsList({ title, subtitle, type }: Props) {
     },
   })
 
-  const { data: qbo } = useQuery({
-    queryKey: ["qbo-connection"],
-    queryFn:  fluxApi.getQboConnection,
-    staleTime: 60_000,
-  })
+  const { data: qbo } = useQboConnection()
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()

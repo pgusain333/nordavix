@@ -40,7 +40,7 @@ import {
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { reconsApi, type PeriodStatus } from "@/modules/recons/api"
-import { api as fluxApi } from "@/modules/flux/api"
+import { useQboConnection } from "@/modules/flux/hooks"
 
 // ── Status visuals ─────────────────────────────────────────────────────────
 
@@ -77,11 +77,7 @@ export function ReconciliationsMonthIndex() {
   const navigate = useNavigate()
   const [search, setSearch] = useState("")
 
-  const { data: qbo, isLoading: qboLoading } = useQuery({
-    queryKey: ["qbo-connection"],
-    queryFn:  fluxApi.getQboConnection,
-    staleTime: 5 * 60_000,
-  })
+  const { data: qbo, isLoading: qboLoading } = useQboConnection()
 
   const { data: books, isLoading: booksLoading } = useQuery({
     queryKey: ["books-status"],

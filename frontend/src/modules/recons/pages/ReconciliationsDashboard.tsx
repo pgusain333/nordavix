@@ -59,7 +59,7 @@ import {
 } from "@/modules/recons/api"
 import { workspaceApi } from "@/modules/workspace/api"
 import { useUserNames } from "@/modules/workspace/hooks"
-import { api as fluxApi } from "@/modules/flux/api"
+import { useQboConnection } from "@/modules/flux/hooks"
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
 
@@ -161,11 +161,7 @@ export function ReconciliationsDashboard() {
   /** "Synced N accounts at HH:MM" — banner that fades out after a few seconds */
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
 
-  const { data: qbo } = useQuery({
-    queryKey: ["qbo-connection"],
-    queryFn:  fluxApi.getQboConnection,
-    staleTime: 60_000,
-  })
+  const { data: qbo } = useQboConnection()
 
   // Current user's role — gates the visibility of Approve / Reviewed / Flag
   // buttons in the bulk toolbar (preparers don't see them).

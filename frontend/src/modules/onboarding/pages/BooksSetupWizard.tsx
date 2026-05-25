@@ -20,7 +20,7 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import { ArrowLeft, ArrowRight, CheckCircle2, AlertTriangle, Calendar, Search } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { reconsApi, type SeedPreviewAccount } from "@/modules/recons/api"
-import { api as fluxApi } from "@/modules/flux/api"
+import { useQboConnection } from "@/modules/flux/hooks"
 
 /**
  * Coerce any error shape (axios, fetch, raw Error, plain object) into a
@@ -90,11 +90,8 @@ export function BooksSetupWizard() {
   const [search, setSearch] = useState("")
 
   // QBO must be connected before we can pull the seed trial balance.
-  const { data: qbo } = useQuery({
-    queryKey: ["qbo-connection"],
-    queryFn:  fluxApi.getQboConnection,
-    staleTime: 60_000,
-  })
+  // Uses the cached hook so the wizard renders instantly on refresh.
+  const { data: qbo } = useQboConnection()
 
   // Books status — if already seeded we redirect away.
   const { data: status, isLoading: statusLoading } = useQuery({
