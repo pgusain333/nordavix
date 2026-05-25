@@ -52,7 +52,7 @@ dependencies = [
     # Error tracking — PII stripping configured in main.py
     "sentry-sdk[fastapi]>=1.45.0",
 
-    # PDF generation for the Financial Package export (Big-4 style
+    # PDF generation for the Financial Package export (audit-ready style
     # statements). reportlab is pure Python — no system libs needed,
     # which keeps the Fly image tiny and the deploy reliable.
     "reportlab>=4.2.0",

@@ -1,5 +1,5 @@
 """
-Big-4 styled PDF generator for the Financial Package.
+audit-ready styled PDF generator for the Financial Package.
 
 Design language matches an audited financial-statement package:
   • Cover page: ENTITY name 36pt navy, statement titles, period,
@@ -17,7 +17,7 @@ Design language matches an audited financial-statement package:
       grand_total      → bold + navy + double navy rule (top + bottom)
   • Numbers right-aligned, parens for negatives, em-dash for zero,
     comma thousands. $ only on the first row of each section + on
-    totals (a Big-4 convention).
+    totals (a audit-ready convention).
   • DRAFT watermark (45° rotated, large grey) when exporting before
     books are closed.
   • Footer on every page: company · page X of Y · "Generated <date>".
@@ -273,7 +273,7 @@ def _statement_table(stmt: Any) -> Table:
         else:
             continue
 
-        # Color negative numbers red — Big-4 style. Apply to data rows;
+        # Color negative numbers red — audit-ready style. Apply to data rows;
         # totals/computed already have bold styling.
         for col in (1, 2 if comparative else 1):
             cell = data[-1][col] if col < len(data[-1]) else ""

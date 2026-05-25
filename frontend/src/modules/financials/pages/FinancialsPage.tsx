@@ -64,16 +64,21 @@ export function FinancialsPage() {
   const [periodEnd, setPeriodEnd]     = useState<string>(defaultPeriodEnd())
   const [comparative, setComparative] = useState<boolean>(true)
   const [exportError, setExportError] = useState<string | null>(null)
+  // Don't auto-fetch on mount — financial-statement pulls are
+  // expensive (multiple QBO API calls) and the user typically wants
+  // to pick the period first. Once they click Load, subsequent tab
+  // switches AND period changes auto-refresh (the user has opted in).
+  const [hasLoaded, setHasLoaded] = useState(false)
 
   const { data: qbo } = useQboConnection()
-  const { data: stmt, isLoading, error } = useQuery({
+  const { data: stmt, isLoading, error, refetch } = useQuery({
     queryKey: ["financial-statement", tab, periodEnd, comparative],
     queryFn:  () => {
       if (tab === "is") return financialsApi.getIncomeStatement(periodEnd, comparative)
       if (tab === "bs") return financialsApi.getBalanceSheet(periodEnd, comparative)
       return financialsApi.getCashFlow(periodEnd, comparative)
     },
-    enabled:  !!qbo,
+    enabled:  hasLoaded && !!qbo,
     staleTime: 60_000,
   })
 
@@ -105,8 +110,8 @@ export function FinancialsPage() {
               Financial Package
             </h1>
             <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              Big-4 styled Income Statement, Balance Sheet, and Statement of Cash Flows —
-              pulled live from QuickBooks and translated to US GAAP labels.
+              Audit-ready Income Statement, Balance Sheet, and Statement of Cash Flows —
+              pulled live from QuickBooks and labeled in US GAAP style.
               {" "}Export a final PDF once the period is closed, or a DRAFT for preview.
             </p>
           </div>
@@ -124,11 +129,24 @@ export function FinancialsPage() {
               <input type="checkbox" checked={comparative} onChange={(e) => setComparative(e.target.checked)} />
               Show prior year
             </label>
-            <ExportButton
-              isClosed={stmt?.is_closed ?? false}
-              onExport={(kind, draft) => exportMut.mutate({ kind, draft })}
-              loading={exportMut.isPending}
-            />
+            {hasLoaded ? (
+              <Button size="sm" variant="outline" onClick={() => refetch()}
+                loading={isLoading}>
+                Reload
+              </Button>
+            ) : (
+              <Button size="sm" onClick={() => setHasLoaded(true)}
+                disabled={!qbo}>
+                Load financials
+              </Button>
+            )}
+            {hasLoaded && (
+              <ExportButton
+                isClosed={stmt?.is_closed ?? false}
+                onExport={(kind, draft) => exportMut.mutate({ kind, draft })}
+                loading={exportMut.isPending}
+              />
+            )}
           </div>
         </div>
       </motion.div>
@@ -168,49 +186,71 @@ export function FinancialsPage() {
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="flex items-center gap-1 flex-wrap rounded-lg p-1 w-fit"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-          {(Object.entries(TAB_LABEL) as [Tab, string][]).map(([key, label]) => {
-            const active = tab === key
-            return (
-              <button key={key} onClick={() => setTab(key)}
-                className="rounded-md px-3 py-1 text-xs font-medium transition-all"
-                style={{
-                  background: active ? "var(--surface)" : "transparent",
-                  color:      active ? "var(--text)"    : "var(--text-muted)",
-                  border:     active ? "1px solid var(--border-strong)" : "1px solid transparent",
-                }}>
-                {label}
-              </button>
-            )
-          })}
-        </div>
-
-        {/* Closed pill */}
-        {stmt?.is_closed && (
-          <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold"
-            style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
-            <Lock size={11} strokeWidth={2} />
-            Books closed for {periodEnd} — final PDF export available
-          </div>
-        )}
-
-        {/* Statement body */}
-        {isLoading ? (
-          <div className="py-16 flex items-center justify-center"><Spinner /></div>
-        ) : error ? (
+        {/* Initial gate — explicit Load before any QBO pull */}
+        {!hasLoaded ? (
           <div className="rounded-xl p-10 text-center"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <AlertCircle size={28} strokeWidth={1.6} className="mx-auto mb-3" style={{ color: "#dc2626" }} />
-            <p className="text-sm font-semibold text-theme mb-1">Could not pull statement from QuickBooks</p>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {((error as { message?: string })?.message) ?? "Try a different period or re-sync."}
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+            <div className="h-14 w-14 mx-auto rounded-full flex items-center justify-center mb-4"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              <FileText size={26} strokeWidth={1.6} />
+            </div>
+            <p className="text-base font-semibold text-theme mb-1">Choose a period to load</p>
+            <p className="text-sm max-w-md mx-auto mb-5" style={{ color: "var(--text-muted)" }}>
+              Pick the period-end date above (and whether to include a prior-year
+              comparative). Click <b>Load financials</b> to pull the statements live
+              from QuickBooks.
             </p>
+            <Button size="sm" onClick={() => setHasLoaded(true)} disabled={!qbo}>
+              Load financials
+            </Button>
           </div>
-        ) : stmt ? (
-          <StatementView stmt={stmt} />
-        ) : null}
+        ) : (
+          <>
+            {/* Tabs */}
+            <div className="flex items-center gap-1 flex-wrap rounded-lg p-1 w-fit"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+              {(Object.entries(TAB_LABEL) as [Tab, string][]).map(([key, label]) => {
+                const active = tab === key
+                return (
+                  <button key={key} onClick={() => setTab(key)}
+                    className="rounded-md px-3 py-1 text-xs font-medium transition-all"
+                    style={{
+                      background: active ? "var(--surface)" : "transparent",
+                      color:      active ? "var(--text)"    : "var(--text-muted)",
+                      border:     active ? "1px solid var(--border-strong)" : "1px solid transparent",
+                    }}>
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Closed pill */}
+            {stmt?.is_closed && (
+              <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold"
+                style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
+                <Lock size={11} strokeWidth={2} />
+                Books closed for {periodEnd} — final PDF export available
+              </div>
+            )}
+
+            {/* Statement body */}
+            {isLoading ? (
+              <div className="py-16 flex items-center justify-center"><Spinner /></div>
+            ) : error ? (
+              <div className="rounded-xl p-10 text-center"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <AlertCircle size={28} strokeWidth={1.6} className="mx-auto mb-3" style={{ color: "#dc2626" }} />
+                <p className="text-sm font-semibold text-theme mb-1">Could not pull statement from QuickBooks</p>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {((error as { message?: string })?.message) ?? "Try a different period or re-sync."}
+                </p>
+              </div>
+            ) : stmt ? (
+              <StatementView stmt={stmt} />
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   )
@@ -224,7 +264,7 @@ function StatementView({ stmt }: { stmt: Statement }) {
     <div className="rounded-xl overflow-hidden"
       style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
 
-      {/* Big-4 style masthead — BIG company name + statement title + subtitle */}
+      {/* audit style masthead — BIG company name + statement title + subtitle */}
       <div className="px-8 py-6 text-center"
         style={{ borderBottom: "2px solid #1f3a5f", background: "var(--surface-2)" }}>
         <h2 style={{
@@ -283,7 +323,7 @@ function StatementView({ stmt }: { stmt: Statement }) {
 
 /**
  * "First data row after a section header" — used to decide whether to
- * stamp a $ on the value. Big-4 convention: only first row of a section
+ * stamp a $ on the value. audit convention: only first row of a section
  * + totals carry the $ symbol.
  */
 function isFirstDataInSection(rows: FinancialRow[], idx: number): boolean {

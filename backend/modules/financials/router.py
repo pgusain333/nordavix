@@ -6,7 +6,7 @@ Endpoints:
   GET  /financials/balance-sheet?period_end=…&comparative=true
   GET  /financials/cash-flow?period_end=…&comparative=true
   GET  /financials/pdf?statement=is|bs|cf|full&period_end=…
-       — Big-4 styled PDF. Books must be closed to export.
+       — audit-ready styled PDF. Books must be closed to export.
 
 Design:
   • Statements return a FLAT list of `FinancialRow`s with explicit
@@ -25,6 +25,7 @@ Design:
     Equivalents", "Total Assets") via the GAAP_LABEL_MAP. Keeps the
     statements reading like an audited package.
 """
+import asyncio
 import io
 import logging
 from calendar import monthrange
@@ -325,12 +326,57 @@ def _merge_periods(cur: list[_ParsedRow], prior: list[_ParsedRow]) -> list[Finan
 
 # ── Per-statement builders ──────────────────────────────────────────────────
 
-async def _company_name(db: AsyncSession, tenant_id) -> str:
+async def _company_name(db: AsyncSession, tenant_id, conn: QboConnection | None = None) -> str:
+    """
+    Resolve the entity name that appears on every statement masthead.
+
+    Source priority:
+      1. QboConnection.company_name — cached on connect; refreshed
+         lazily here from QBO's /companyinfo endpoint when stale.
+      2. Tenant.name — the workspace name the user set in our app.
+      3. Hard fallback "Your Company" — only when neither is available.
+
+    QBO's CompanyInfo.CompanyName is the entity's official legal /
+    DBA name as set up in QuickBooks, which is the right value for a
+    financial-statement masthead. The Clerk-org-ID fallback we used
+    previously (e.g. "org_2abc…") obviously doesn't belong there.
+    """
+    if conn is None:
+        conn = (await db.execute(
+            select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+            execution_options={"skip_tenant_filter": True},
+        )).scalar_one_or_none()
+
+    # 1. Cached on the connection
+    if conn and conn.company_name and conn.company_name.strip():
+        return conn.company_name.strip()
+
+    # 2. Live fetch from QBO if connected
+    if conn:
+        try:
+            data = await _qbo_get(
+                conn, db,
+                f"/companyinfo/{conn.realm_id}",
+                params={"minorversion": "65"},
+            )
+            ci = (data.get("CompanyInfo") or {})
+            name = (ci.get("CompanyName") or ci.get("LegalName") or "").strip()
+            if name:
+                conn.company_name = name
+                await db.commit()
+                return name
+        except Exception:
+            logger.exception("CompanyInfo fetch failed")
+
+    # 3. Workspace name from our DB (often the user's company name)
     t = (await db.execute(
         select(Tenant).where(Tenant.id == tenant_id),
         execution_options={"skip_tenant_filter": True},
     )).scalar_one_or_none()
-    return (t.name if t else "") or "Your Company"
+    if t and t.name and not t.name.startswith(("user_", "org_")):
+        return t.name.strip()
+
+    return "Your Company"
 
 
 async def _is_period_closed(db: AsyncSession, pe: date) -> ClosedPeriod | None:
@@ -404,15 +450,33 @@ async def _build_statement(
     else:
         raise HTTPException(400, f"Unknown statement: {statement_kind}")
 
-    cur_rows = await fetch_fn(conn, db, pe)
-    prior_rows: list[_ParsedRow] = []
+    # Parallelize current + prior fetches — QBO reports are independent
+    # network calls, so blocking sequentially doubles the latency. With
+    # gather() the PDF endpoint comfortably finishes inside Fly's request
+    # window even when exporting the full 3-statement package (6 calls
+    # total, all concurrent).
     notes: list[str] = []
+    cur_rows: list[_ParsedRow] = []
+    prior_rows: list[_ParsedRow] = []
     if comparative:
-        try:
-            prior_rows = await fetch_fn(conn, db, prior_pe)
-        except Exception:
-            logger.exception("Comparative fetch failed for %s @ %s", statement_kind, prior_pe)
+        cur_task   = fetch_fn(conn, db, pe)
+        prior_task = fetch_fn(conn, db, prior_pe)
+        cur_result, prior_result = await asyncio.gather(cur_task, prior_task, return_exceptions=True)
+        if isinstance(cur_result, Exception):
+            logger.exception("Current fetch failed for %s @ %s", statement_kind, pe)
+            raise HTTPException(502, "Could not pull statement data from QuickBooks. Try again.") from cur_result
+        cur_rows = cur_result
+        if isinstance(prior_result, Exception):
+            logger.warning("Comparative fetch failed for %s @ %s — continuing without it", statement_kind, prior_pe)
             notes.append("Prior-year comparative could not be loaded.")
+        else:
+            prior_rows = prior_result
+    else:
+        try:
+            cur_rows = await fetch_fn(conn, db, pe)
+        except Exception as e:
+            logger.exception("Current fetch failed for %s @ %s", statement_kind, pe)
+            raise HTTPException(502, "Could not pull statement data from QuickBooks. Try again.") from e
 
     merged = _merge_periods(cur_rows, prior_rows)
     closed = await _is_period_closed(db, pe)
@@ -481,7 +545,7 @@ async def export_pdf(
     draft: bool = Query(False, description="Allow draft export for unclosed period; PDF will be watermarked"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Returns a Big-4 styled PDF. Closed periods produce a clean final
+    """Returns a audit-ready styled PDF. Closed periods produce a clean final
     version; unclosed periods can be exported as DRAFT with watermark."""
     try: pe = date.fromisoformat(period_end)
     except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
@@ -495,19 +559,23 @@ async def export_pdf(
         )
 
     statement = statement.lower()
-    statements: list[StatementOut] = []
+    # Run all three statement builds concurrently when exporting the
+    # full package. Each call internally already runs cur+prior in
+    # parallel — so a "full" PDF is 6 QBO calls all in flight at once
+    # instead of 6 sequential calls.
     if statement in ("is", "income_statement"):
-        statements.append(await _build_statement(tenant_id, db, pe, "income_statement", comparative))
+        kinds = ["income_statement"]
     elif statement in ("bs", "balance_sheet"):
-        statements.append(await _build_statement(tenant_id, db, pe, "balance_sheet", comparative))
+        kinds = ["balance_sheet"]
     elif statement in ("cf", "cash_flow"):
-        statements.append(await _build_statement(tenant_id, db, pe, "cash_flow", comparative))
+        kinds = ["cash_flow"]
     elif statement == "full":
-        statements.append(await _build_statement(tenant_id, db, pe, "income_statement", comparative))
-        statements.append(await _build_statement(tenant_id, db, pe, "balance_sheet", comparative))
-        statements.append(await _build_statement(tenant_id, db, pe, "cash_flow", comparative))
+        kinds = ["income_statement", "balance_sheet", "cash_flow"]
     else:
         raise HTTPException(400, "statement must be is | bs | cf | full.")
+    statements = list(await asyncio.gather(
+        *[_build_statement(tenant_id, db, pe, k, comparative) for k in kinds],
+    ))
 
     from modules.financials.pdf import build_pdf
     buf = io.BytesIO()

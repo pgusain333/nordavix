@@ -57,7 +57,7 @@ async function getCashFlow(periodEnd: string, comparative = true): Promise<State
 }
 
 /**
- * Export the chosen statement(s) as a Big-4 styled PDF. When `draft`
+ * Export the chosen statement(s) as a audit-ready styled PDF. When `draft`
  * is true, the backend allows export for unclosed periods and stamps
  * the PDF with a large DRAFT watermark. Throws on HTTP error so the
  * caller can surface a useful message — axios's blob responseType
@@ -74,7 +74,15 @@ async function exportPdf(
     const resp = await apiClient.get("/api/financials/pdf", {
       params: { statement, period_end: periodEnd, comparative, draft },
       responseType: "blob",
+      // PDF generation can take ~10-30s on the "full" package while
+      // QBO reports come back. Override axios's per-instance default
+      // (none set, so this is just future-proofing) AND cover the
+      // edge case where the browser drops a slow XHR.
+      timeout: 5 * 60_000,
     })
+    if (!resp.data || (resp.data as Blob).size === 0) {
+      throw new Error("Server returned an empty PDF. Try again.")
+    }
     const url  = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }))
     const a    = document.createElement("a")
     a.href     = url
@@ -84,7 +92,10 @@ async function exportPdf(
     URL.revokeObjectURL(url)
   } catch (e: unknown) {
     // axios + responseType=blob → error body is a Blob. Read it back.
-    const err = e as { response?: { data?: Blob; status?: number }; message?: string }
+    const err = e as { response?: { data?: Blob; status?: number }; message?: string; code?: string }
+    if (err.code === "ECONNABORTED") {
+      throw new Error("PDF export timed out. QuickBooks may be slow — please try again.")
+    }
     if (err.response?.data instanceof Blob) {
       try {
         const txt = await err.response.data.text()
@@ -95,7 +106,7 @@ async function exportPdf(
         throw new Error(err.message ?? "PDF export failed")
       }
     }
-    throw new Error(err.message ?? "PDF export failed")
+    throw new Error(err.message ?? "PDF export failed — check your network and try again.")
   }
 }
 
