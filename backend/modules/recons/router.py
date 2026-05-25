@@ -32,7 +32,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.auth.dependencies import CurrentTenantId, CurrentUser
+from core.auth.dependencies import CurrentTenantId, CurrentUser, ROLE_ORDER, require_role
 from core.db.session import get_db
 from core.storage import r2 as r2_storage
 from models.qbo_connection import QboConnection
@@ -223,6 +223,18 @@ async def update_account_review_status(
     if status_value not in ("pending", "reviewed", "approved", "flagged"):
         raise HTTPException(status_code=400, detail="Invalid status value.")
 
+    # Role gate: only reviewer+ can flip to reviewed/approved/flagged.
+    # Preparers can only reset to pending (un-do their own work).
+    if status_value in ("reviewed", "approved", "flagged"):
+        if ROLE_ORDER.get(user.role or "preparer", 0) < ROLE_ORDER["reviewer"]:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Only reviewers and admins can mark accounts as {status_value}. "
+                    f"Your role is {user.role or 'preparer'}."
+                ),
+            )
+
     row = (await db.execute(
         select(AccountReviewStatus).where(
             AccountReviewStatus.qbo_account_id == qbo_account_id,
@@ -312,6 +324,17 @@ async def bulk_update_account_review_status(
     ids: list[str] = list(body.get("qbo_account_ids") or [])
     if not ids:
         raise HTTPException(status_code=400, detail="qbo_account_ids required.")
+
+    # Role gate — same rules as the per-row endpoint.
+    if status_value in ("reviewed", "approved", "flagged"):
+        if ROLE_ORDER.get(user.role or "preparer", 0) < ROLE_ORDER["reviewer"]:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Only reviewers and admins can bulk-set {status_value}. "
+                    f"Your role is {user.role or 'preparer'}."
+                ),
+            )
 
     existing = list((await db.execute(
         select(AccountReviewStatus).where(
@@ -559,7 +582,7 @@ async def get_seed_preview(
     }
 
 
-@router.post("/seed")
+@router.post("/seed", dependencies=[Depends(require_role("admin"))])
 async def seed_books(
     body: dict,
     tenant_id: CurrentTenantId,

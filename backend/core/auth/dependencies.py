@@ -5,6 +5,11 @@ from fastapi import Depends, HTTPException, Request, status
 
 from models.user import User
 
+# Role hierarchy — higher index = more privilege.
+# admin can do everything; reviewer can approve; preparer can enter/edit but
+# not approve.
+ROLE_ORDER = {"preparer": 0, "reviewer": 1, "admin": 2}
+
 
 def get_current_user(request: Request) -> User:
     """
@@ -27,5 +32,31 @@ def get_current_tenant_id(request: Request) -> uuid.UUID:
     return tenant_id
 
 
+def require_role(min_role: str):
+    """
+    Build a dependency that 403s unless the current user's role is at least
+    `min_role` in the ROLE_ORDER hierarchy. Use as:
+
+        @router.post("/something", dependencies=[Depends(require_role("admin"))])
+    """
+    threshold = ROLE_ORDER.get(min_role, 0)
+
+    def _check(user: User = Depends(get_current_user)) -> User:
+        actual = ROLE_ORDER.get(user.role or "preparer", 0)
+        if actual < threshold:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"This action requires the {min_role} role. "
+                    f"Your role is {user.role or 'preparer'}."
+                ),
+            )
+        return user
+
+    return _check
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentTenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
+RequireAdmin    = Annotated[User, Depends(require_role("admin"))]
+RequireReviewer = Annotated[User, Depends(require_role("reviewer"))]

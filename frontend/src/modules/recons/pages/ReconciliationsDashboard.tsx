@@ -52,6 +52,7 @@ import {
   type ReconcilingItem,
   type EvidenceVerification,
 } from "@/modules/recons/api"
+import { workspaceApi } from "@/modules/workspace/api"
 import { api as fluxApi } from "@/modules/flux/api"
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
@@ -114,6 +115,15 @@ export function ReconciliationsDashboard() {
     queryFn:  fluxApi.getQboConnection,
     staleTime: 60_000,
   })
+
+  // Current user's role — gates the visibility of Approve / Reviewed / Flag
+  // buttons in the bulk toolbar (preparers don't see them).
+  const { data: me } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 60_000,
+  })
+  const canReview = me?.role === "admin" || me?.role === "reviewer"
 
   // Manual-fetch only. We never auto-pull from QBO on mount or period change —
   // every sync is an explicit user action. `enabled: false` keeps the query
@@ -590,25 +600,34 @@ export function ReconciliationsDashboard() {
                       <span className="text-[11px] font-semibold" style={{ color: "var(--green)" }}>
                         {selected.size} selected
                       </span>
-                      <Button size="sm" icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
-                        loading={bulkStatusMut.isPending}
-                        onClick={() => bulkStatusMut.mutate("approved")}
-                      >
-                        Approve
-                      </Button>
-                      <Button size="sm" variant="outline" icon={<Eye size={11} strokeWidth={1.8} />}
-                        loading={bulkStatusMut.isPending}
-                        onClick={() => bulkStatusMut.mutate("reviewed")}
-                      >
-                        Mark reviewed
-                      </Button>
-                      <Button size="sm" variant="outline" icon={<AlertTriangle size={11} strokeWidth={1.8} />}
-                        loading={bulkStatusMut.isPending}
-                        onClick={() => bulkStatusMut.mutate("flagged")}
-                        style={{ borderColor: "#fecaca", color: "#b91c1c" }}
-                      >
-                        Flag
-                      </Button>
+                      {canReview && (
+                        <>
+                          <Button size="sm" icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
+                            loading={bulkStatusMut.isPending}
+                            onClick={() => bulkStatusMut.mutate("approved")}
+                          >
+                            Approve
+                          </Button>
+                          <Button size="sm" variant="outline" icon={<Eye size={11} strokeWidth={1.8} />}
+                            loading={bulkStatusMut.isPending}
+                            onClick={() => bulkStatusMut.mutate("reviewed")}
+                          >
+                            Mark reviewed
+                          </Button>
+                          <Button size="sm" variant="outline" icon={<AlertTriangle size={11} strokeWidth={1.8} />}
+                            loading={bulkStatusMut.isPending}
+                            onClick={() => bulkStatusMut.mutate("flagged")}
+                            style={{ borderColor: "#fecaca", color: "#b91c1c" }}
+                          >
+                            Flag
+                          </Button>
+                        </>
+                      )}
+                      {!canReview && (
+                        <span className="text-[11px] italic" style={{ color: "var(--text-muted)" }}>
+                          Ask a reviewer to approve / flag selected accounts.
+                        </span>
+                      )}
                       <Button size="sm" variant="ghost"
                         loading={bulkStatusMut.isPending}
                         onClick={() => bulkStatusMut.mutate("pending")}

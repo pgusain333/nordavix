@@ -7,7 +7,7 @@ import { NavLink, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
-  Plug, X, Pencil, Check, type LucideIcon,
+  Plug, Users, X, Pencil, Check, type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/core/ui/utils"
 import { Badge } from "@/core/ui/components"
@@ -25,6 +25,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Connections",     path: "/app/connections",     icon: Plug,            available: true  },
   { label: "Flux Analysis",   path: "/app/flux",            icon: BarChart3,       available: true  },
   { label: "Reconciliations", path: "/app/reconciliations", icon: Scale,           available: true  },
+  { label: "Team",            path: "/app/team",            icon: Users,           available: true  },
   { label: "Workpapers",      path: "/app/workpapers",      icon: FileText,        available: false },
   { label: "Intercompany",    path: "/app/intercompany",    icon: ArrowLeftRight,  available: false },
 ]

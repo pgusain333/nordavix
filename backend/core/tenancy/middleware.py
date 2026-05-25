@@ -92,12 +92,33 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
             if user is None:
                 email: str = claims.get("email", "")  # type: ignore[assignment]
+                # Provision the new user's role:
+                # - First user in the tenant → admin (sole-owner case)
+                # - Subsequent users → "preparer" by default; if the user
+                #   was invited and their Clerk invitation carried a
+                #   `nordavix_role` in public_metadata, honor it.
+                existing_users = list((await session.execute(
+                    select(User).where(User.tenant_id == tenant.id),
+                    execution_options=skip,
+                )).scalars().all())
+
+                if not existing_users:
+                    role = "admin"
+                else:
+                    role = "preparer"
+                    # JWT claims sometimes include public_metadata for invited users.
+                    pm = claims.get("public_metadata") or claims.get("user_public_metadata") or {}
+                    if isinstance(pm, dict):
+                        invited_role = (pm.get("nordavix_role") or "").strip().lower()
+                        if invited_role in {"admin", "reviewer", "preparer"}:
+                            role = invited_role
+
                 user = User(
                     id=uuid.uuid4(),
                     tenant_id=tenant.id,
                     clerk_user_id=clerk_user_id,
                     email=email,
-                    role="member",
+                    role=role,
                 )
                 session.add(user)
 
