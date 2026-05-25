@@ -216,24 +216,31 @@ export interface OverviewGroup {
 }
 
 export interface TbCheck {
-  // Both sides of the accounting equation, summed from the dashboard's
-  // own data (so any discrepancy points at QBO, not at us).
-  assets:               string
-  liab_equity:          string
-  // Net income IMPLIED by the balance sheet: assets − (liab + equity).
-  implied_net_income:   string
-  // Net income ACTUALLY reported by QBO's ProfitAndLoss YTD report.
-  // Null when the P&L call failed (UI then hides the comparison).
-  actual_net_income:    string | null
-  // implied − actual; null when actual_net_income is null. Tiny rounding
-  // diffs (< $1) are considered balanced.
-  difference:           string | null
-  // First day of the YTD window we asked QBO for (Jan 1 of period_end's year).
-  ytd_start:            string
-  // True iff actual_net_income is present AND |difference| < $1.
-  balanced:             boolean
-  // Set when QBO returned an error or the P&L row couldn't be parsed.
-  error:                string | null
+  period_end:                 string
+  ytd_start:                  string
+  // Totals our sync parsed from QBO's per-account TrialBalance pull.
+  sync_assets:                string
+  sync_liab_equity:           string
+  // sync_liab_equity + YTD net income (= our credit side, comparable
+  // to what QBO's BS report puts under "Total Liabilities and Equity").
+  // Null when the P&L pull failed and we couldn't compute it.
+  sync_liab_equity_plus_ni:   string | null
+  // Source-of-truth values pulled DIRECTLY from QBO reports — what we're
+  // verifying against. Null when the underlying QBO report call failed.
+  qbo_assets:                 string | null
+  qbo_liab_equity:            string | null
+  qbo_net_income:             string | null
+  // Per-side match flags. True = our parsed total matches QBO's report
+  // within $1 rounding tolerance. Null when we couldn't fetch QBO's side.
+  assets_match:               boolean | null
+  assets_diff:                string | null
+  liab_equity_match:          boolean | null
+  liab_equity_diff:           string | null
+  // True iff BOTH sides matched. False otherwise (including partial pulls).
+  balanced:                   boolean
+  // Error strings — surface to the user when their side-of-truth call failed.
+  bs_error:                   string | null
+  pl_error:                   string | null
 }
 
 export interface Overview {
