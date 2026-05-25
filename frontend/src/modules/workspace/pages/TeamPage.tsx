@@ -44,15 +44,41 @@ export function TeamPage() {
   const [inviteError, setInviteError] = useState<string | null>(null)
   const [inviteSuccess, setInviteSuccess] = useState<string | null>(null)
 
-  const { data: me } = useQuery({
+  const {
+    data: me,
+    error: meError,
+    isLoading: meLoading,
+    refetch: refetchMe,
+  } = useQuery({
     queryKey: ["workspace-me"], queryFn: workspaceApi.getMe, staleTime: 60_000,
+    retry: false,
   })
-  const { data: members, isLoading: membersLoading } = useQuery({
+  const {
+    data: members,
+    isLoading: membersLoading,
+    error: membersError,
+    refetch: refetchMembers,
+  } = useQuery({
     queryKey: ["workspace-members"], queryFn: workspaceApi.listMembers, staleTime: 60_000,
+    retry: false,
   })
   const { data: invitations } = useQuery({
     queryKey: ["workspace-invitations"], queryFn: workspaceApi.listInvitations, staleTime: 60_000,
+    retry: false,
   })
+
+  function extractErrorMessage(err: unknown): string {
+    if (!err) return "Unknown error"
+    const e = err as { response?: { status?: number; data?: { detail?: unknown } }; message?: unknown; config?: { url?: string } }
+    const detail = e.response?.data?.detail
+    const status = e.response?.status
+    if (typeof detail === "string") return `${status ?? ""} ${detail} (${e.config?.url ?? ""})`.trim()
+    if (Array.isArray(detail)) {
+      return `${status ?? ""} ${detail.map((d) => (d as { msg?: string }).msg).join("; ")}`.trim()
+    }
+    if (typeof e.message === "string") return `${e.message} (${e.config?.url ?? ""})`
+    return "Unknown error"
+  }
 
   const isAdmin = me?.role === "admin"
 
@@ -179,10 +205,28 @@ export function TeamPage() {
             </span>.
             Only admins can invite members or change roles. Ask your workspace admin for changes.
           </div>
-        ) : (
-          <div className="rounded-xl p-3 text-xs"
+        ) : meError ? (
+          <div className="rounded-xl p-3 text-xs flex items-center gap-2 flex-wrap"
+            style={{ background: "rgba(220, 38, 38, 0.10)", border: "1px solid rgba(220, 38, 38, 0.40)", color: "#b91c1c" }}>
+            <AlertTriangle size={14} strokeWidth={1.8} />
+            <span className="flex-1 min-w-0">
+              Couldn't load your role: {extractErrorMessage(meError)}
+            </span>
+            <Button size="sm" variant="outline" onClick={() => refetchMe()}>Retry</Button>
+          </div>
+        ) : meLoading ? (
+          <div className="rounded-xl p-3 text-xs flex items-center gap-2"
             style={{ background: "var(--surface-2)", border: "1px dashed var(--border)", color: "var(--text-muted)" }}>
-            Loading your workspace role…
+            <Spinner className="h-3 w-3" /> Loading your workspace role…
+          </div>
+        ) : (
+          <div className="rounded-xl p-3 text-xs flex items-center gap-2 flex-wrap"
+            style={{ background: "rgba(245, 158, 11, 0.10)", border: "1px solid #f59e0b", color: "#b45309" }}>
+            <AlertTriangle size={14} strokeWidth={1.8} />
+            <span className="flex-1">
+              /api/workspace/me returned nothing. Backend may be deploying — wait a minute and retry.
+            </span>
+            <Button size="sm" variant="outline" onClick={() => refetchMe()}>Retry</Button>
           </div>
         )}
 
@@ -199,9 +243,18 @@ export function TeamPage() {
           </div>
           {membersLoading ? (
             <div className="py-8 flex items-center justify-center"><Spinner className="h-5 w-5" /></div>
+          ) : membersError ? (
+            <div className="py-6 px-4 text-xs text-center flex flex-col items-center gap-2"
+              style={{ color: "#b91c1c" }}>
+              <AlertTriangle size={16} strokeWidth={1.8} />
+              <span>Couldn't load members: {extractErrorMessage(membersError)}</span>
+              <Button size="sm" variant="outline" onClick={() => refetchMembers()}>Retry</Button>
+            </div>
           ) : sortedMembers.length === 0 ? (
             <p className="py-6 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-              No members yet.
+              No members returned from Clerk. Usually means the workspace
+              membership API is empty for this org. Check Clerk dashboard or
+              wait for backend redeploy.
             </p>
           ) : (
             <table className="w-full text-sm">
