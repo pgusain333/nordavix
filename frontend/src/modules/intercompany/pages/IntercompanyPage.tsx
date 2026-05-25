@@ -14,7 +14,7 @@
  * The drawer-style transaction drill-in shares pattern with the
  * reconciliations variance drawer.
  */
-import { Fragment, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -76,6 +76,24 @@ export function IntercompanyPage() {
     mutationFn: () => icApi.autoDetect(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["intercompany-overview"] }),
   })
+
+  // Auto-run detection on first visit when there's QBO data but the user
+  // hasn't tracked anything yet. Cuts the setup from "Read about IC,
+  // click Auto-detect, review results" down to "Page loads, results are
+  // already there." Fires once per session.
+  const didAutoRunRef = useRef(false)
+  useEffect(() => {
+    if (didAutoRunRef.current) return
+    if (!overview || !qbo) return
+    // Only auto-run when: zero marks yet, AND QBO returned candidate accounts.
+    if (overview.accounts.length === 0 && overview.detected_pending > 0) {
+      didAutoRunRef.current = true
+      autoDetectMut.mutate()
+    } else {
+      didAutoRunRef.current = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overview, qbo])
 
   const filtered = useMemo(() => {
     const list = overview?.accounts ?? []
@@ -143,15 +161,20 @@ export function IntercompanyPage() {
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
 
-        {/* Auto-detect success toast */}
+        {/* Auto-detect success toast — explains both detection + classification */}
         <AnimatePresence>
           {autoDetectMut.isSuccess && autoDetectMut.data && autoDetectMut.data.added > 0 && (
             <motion.div
               initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
               className="rounded-lg px-4 py-2.5 text-xs"
               style={{ background: "var(--green-subtle)", border: "1px solid var(--green)", color: "var(--green)" }}>
-              Auto-detected and marked {autoDetectMut.data.added} new IC account
-              {autoDetectMut.data.added === 1 ? "" : "s"} based on naming patterns.
+              Marked {autoDetectMut.data.added} new IC account
+              {autoDetectMut.data.added === 1 ? "" : "s"} based on QBO names
+              {autoDetectMut.data.classified > 0 && (
+                <> · auto-classified counterparty for {autoDetectMut.data.classified} of them
+                {" "}(from transaction entity names + account-name parsing)</>
+              )}
+              . Edit any row to refine.
             </motion.div>
           )}
         </AnimatePresence>

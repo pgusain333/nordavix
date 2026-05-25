@@ -227,8 +227,30 @@ async def auto_detect(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    classify: bool = True,
 ) -> dict:
-    """Scan QBO accounts; mark anything matching the IC name pattern."""
+    """
+    Two-pass scan that does most of the IC setup work automatically:
+      1. Name-pattern detection — flag accounts whose names look like
+         IC (Due to/from, Intercompany, etc.).
+      2. (when classify=true) Auto-fill counterparty from the modal
+         entity name across the last 6 months of transactions per
+         newly-detected account. Skips accounts whose transactions
+         span multiple entities (under 50% modal).
+      3. Counterparty inference also tries to read it from the
+         account NAME itself when the txn pull yields nothing —
+         e.g. "Due from Acme Sub LLC" → counterparty="Acme Sub LLC".
+
+    Run on every QBO sync (cheap — names rarely change) or
+    on-demand via the Intercompany page.
+    """
+    from collections import Counter
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    from core.qbo_gl import pull_gl_transactions
+    from modules.recons.overview import _list_balance_sheet_accounts
+
     conn = (await db.execute(
         select(QboConnection).where(QboConnection.tenant_id == tenant_id),
         execution_options={"skip_tenant_filter": True},
@@ -236,13 +258,16 @@ async def auto_detect(
     if conn is None:
         raise HTTPException(409, "QuickBooks isn't connected.")
 
-    from modules.recons.overview import _list_balance_sheet_accounts
     accts = await _list_balance_sheet_accounts(conn, db)
-
     existing = list((await db.execute(select(IntercompanyAccount))).scalars().all())
     existing_ids = {m.qbo_account_id for m in existing}
 
+    today = _date.today()
+    period_start = (today - _td(days=6 * 31)).replace(day=1)
+
     added = 0
+    classified = 0
+    new_marks: list[IntercompanyAccount] = []
     for a in accts:
         qid = str(a.get("Id") or "")
         if not qid or qid in existing_ids:
@@ -250,17 +275,54 @@ async def auto_detect(
         name = str(a.get("Name") or "")
         if not _IC_REGEX.search(name):
             continue
+
+        # Heuristic counterparty from the account name: strip the
+        # "Due to / Due from / Intercompany — " prefix and take the rest.
+        cp_from_name: str | None = None
+        cleaned = re.sub(
+            r"^(intercompany|inter-?company|due\s+to|due\s+from|i\.?c\.?|loan\s+(?:to|from))[\s\-:]*",
+            "", name, flags=re.IGNORECASE,
+        ).strip(" -—:")
+        if cleaned and len(cleaned) >= 2 and cleaned.lower() != name.lower():
+            cp_from_name = cleaned
+
         row = IntercompanyAccount(
             qbo_account_id=qid,
-            counterparty=None,
+            counterparty=cp_from_name,
             kind=_kind_for_account_type(str(a.get("AccountType") or "")),
             auto_detected=True,
             created_by=user.id,
         )
         db.add(row)
+        new_marks.append(row)
         added += 1
+        if cp_from_name:
+            classified += 1
+
+    # Flush so new rows have IDs before we query against them
+    await db.flush()
+
+    # Pass 2 — transaction-derived counterparty for any new marks that
+    # didn't get one from the name heuristic.
+    if classify:
+        for m in new_marks:
+            if m.counterparty:
+                continue
+            try:
+                rows = await pull_gl_transactions(conn, db, m.qbo_account_id, period_start, today)
+            except Exception:
+                continue
+            names = [(r["entity_name"] or "").strip() for r in rows]
+            names = [n for n in names if n]
+            if not names:
+                continue
+            top = Counter(names).most_common(1)[0]
+            if top[1] / len(rows) >= 0.5:
+                m.counterparty = top[0]
+                classified += 1
+
     await db.commit()
-    return {"added": added}
+    return {"added": added, "classified": classified}
 
 
 @router.post("/marks")
@@ -311,6 +373,69 @@ async def delete_mark(
     await db.delete(row)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/auto-classify")
+async def auto_classify(
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+    lookback_months: int = 6,
+) -> dict:
+    """
+    For every marked IC account that doesn't already have a
+    counterparty filled in, scan recent transactions and use the
+    most-common `entity_name` as the counterparty. This dramatically
+    reduces the amount of manual classification work — most IC
+    accounts only ever transact with ONE related entity, so
+    transaction-name → counterparty is reliable.
+
+    Idempotent: only fills empty counterparty fields. Doesn't overwrite
+    user-entered values.
+    """
+    from collections import Counter
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    from core.qbo_gl import pull_gl_transactions
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(409, "QuickBooks isn't connected.")
+
+    today = _date.today()
+    period_start = (today - _td(days=lookback_months * 31)).replace(day=1)
+
+    marks = list((await db.execute(
+        select(IntercompanyAccount).where(IntercompanyAccount.counterparty.is_(None))
+    )).scalars().all())
+
+    classified = 0
+    for m in marks:
+        try:
+            rows = await pull_gl_transactions(conn, db, m.qbo_account_id, period_start, today)
+        except Exception:
+            logger.exception("auto-classify: GL pull failed for %s", m.qbo_account_id)
+            continue
+        if not rows:
+            continue
+        # Tally entity_name occurrences; pick the modal value if it
+        # accounts for >= 50% of transactions (otherwise the account
+        # transacts with multiple parties and we leave it blank for
+        # the user to decide).
+        names = [(r["entity_name"] or "").strip() for r in rows]
+        names = [n for n in names if n]
+        if not names:
+            continue
+        c = Counter(names).most_common(1)[0]
+        winner, votes = c[0], c[1]
+        if votes / len(rows) >= 0.5:
+            m.counterparty = winner
+            classified += 1
+    await db.commit()
+    return {"classified": classified, "considered": len(marks)}
 
 
 @router.get("/account/{qbo_account_id}/transactions")

@@ -51,8 +51,13 @@ async function getOverview(periodEnd: string): Promise<IcOverview> {
   return data
 }
 
-async function autoDetect(): Promise<{ added: number }> {
-  const { data } = await apiClient.post<{ added: number }>("/api/intercompany/auto-detect")
+async function autoDetect(): Promise<{ added: number; classified: number }> {
+  const { data } = await apiClient.post<{ added: number; classified: number }>("/api/intercompany/auto-detect")
+  return data
+}
+
+async function autoClassify(): Promise<{ classified: number; considered: number }> {
+  const { data } = await apiClient.post<{ classified: number; considered: number }>("/api/intercompany/auto-classify")
   return data
 }
 
@@ -75,4 +80,4 @@ async function getTransactions(qboAccountId: string, periodEnd: string): Promise
   return data
 }
 
-export const icApi = { getOverview, autoDetect, upsertMark, deleteMark, getTransactions }
+export const icApi = { getOverview, autoDetect, autoClassify, upsertMark, deleteMark, getTransactions }
