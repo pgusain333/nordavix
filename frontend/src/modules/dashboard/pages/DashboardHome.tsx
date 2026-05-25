@@ -76,7 +76,11 @@ function timeAgo(iso: string | null | undefined): string {
 export function DashboardHome() {
   const { user } = useUser()
   const navigate = useNavigate()
-  const [period] = useState<string>(defaultPeriodEnd())
+  // Selected month drives every KPI + action card on this page. Changing it
+  // refetches the recons overview and re-derives the flux summary, so the
+  // dashboard is always showing one month at a time. Click "Open" on either
+  // action card to drill into the full module-level view for the same month.
+  const [period, setPeriod] = useState<string>(defaultPeriodEnd())
 
   // QBO connection — needed for setup checklist + recons overview
   const { data: qbo, isLoading: qboLoading } = useQuery({
@@ -123,10 +127,25 @@ export function DashboardHome() {
     staleTime: 60_000,
   })
 
-  const recentTBs = useMemo(
-    () => (trialBalances ?? []).slice(0, 4),
-    [trialBalances],
-  )
+  // TBs whose current period falls in the selected month — the "flux for
+  // this month" count and link target. Match by year+month of period_current.
+  const monthlyFlux = useMemo(() => {
+    if (!trialBalances || !period) return []
+    const [y, m] = period.split("-")
+    return trialBalances.filter((tb) => {
+      const pc = (tb.period_current || "").split("-")
+      return pc[0] === y && pc[1] === m
+    })
+  }, [trialBalances, period])
+
+  // Friendly label for the selected month (e.g. "April 2026")
+  const monthLabel = useMemo(() => {
+    if (!period) return ""
+    try {
+      const d = new Date(period + "T00:00:00")
+      return d.toLocaleDateString(undefined, { month: "long", year: "numeric" })
+    } catch { return period }
+  }, [period])
 
   // Recons buckets — open / reviewed / approved counts derived from the overview
   const buckets = useMemo(() => {
@@ -202,17 +221,43 @@ export function DashboardHome() {
         initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
         className="px-4 sm:px-8 pt-6 pb-4"
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-        <h1 style={{
-          fontSize: "clamp(22px, 5vw, 28px)", fontWeight: 700, lineHeight: 1.2,
-          letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
-        }}>
-          {getGreeting(user?.fullName || user?.firstName || "")}
-        </h1>
-        <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-          {books?.seeded
-            ? `Books locked to ${books.books_start_date}. Reconciling period ${overview?.period_end ?? period}.`
-            : "Welcome to Nordavix — finish the setup below to start reconciling."}
-        </p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <h1 style={{
+              fontSize: "clamp(22px, 5vw, 28px)", fontWeight: 700, lineHeight: 1.2,
+              letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
+            }}>
+              {getGreeting(user?.fullName || user?.firstName || "")}
+            </h1>
+            <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
+              {books?.seeded
+                ? `Viewing ${monthLabel}. Pick another month above to refocus KPIs and quick-open targets.`
+                : "Welcome to Nordavix — finish the setup below to start reconciling."}
+            </p>
+          </div>
+          {/* Month picker — drives every KPI + Open card on this page. */}
+          {books?.seeded && (tracker?.periods.length ?? 0) > 0 && (
+            <label className="flex flex-col">
+              <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
+                Month
+              </span>
+              <select
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border-strong)",
+                  color: "var(--text)",
+                }}
+              >
+                {tracker!.periods.slice().reverse().map((p) => (
+                  <option key={p.period_end} value={p.period_end}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
       </motion.div>
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
@@ -356,81 +401,68 @@ export function DashboardHome() {
           )}
         </div>
 
-        {/* ── KPI strip ────────────────────────────────────────── */}
+        {/* ── KPI strip — reflects the selected month ───────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <Kpi label="Open accounts to reconcile" value={String(buckets.open)} tone="#dc2626"
-            sub={buckets.total > 0 ? `${buckets.total} total this period` : "Sync to see"} />
-          <Kpi label="Total variance" value={fmtMoney(totalVariance)} tone="var(--text)"
-            sub={buckets.total > 0 ? "across all accounts" : "—"} />
-          <Kpi label="Recent flux analyses" value={String((trialBalances ?? []).length)} tone="var(--text)"
-            sub={recentTBs.length > 0 ? "ready to drill in" : "no analyses yet"} />
+          <Kpi label={`Open in ${monthLabel}`} value={String(buckets.open)} tone="#dc2626"
+            sub={buckets.total > 0 ? `${buckets.total} accounts total` : "—"} />
+          <Kpi label="Variance this month" value={fmtMoney(totalVariance)} tone={totalVariance > 0 ? "#dc2626" : "var(--green)"}
+            sub={buckets.total > 0 ? "absolute, all accounts" : "—"} />
+          <Kpi label="Flux analyses" value={String(monthlyFlux.length)} tone="var(--text)"
+            sub={monthlyFlux.length > 0 ? `for ${monthLabel}` : `no flux for ${monthLabel}`} />
           <Kpi label="Team members" value={String(members?.length ?? 0)} tone="var(--text)" sub="see settings" />
         </div>
 
-        {/* ── Two-column body ─────────────────────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* ── Two big "Open" action cards ────────────────────────
+            One per workspace module. Each card summarizes the current
+            month at a glance and links into the module's full dashboard
+            (which also defaults to the same month). */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
-          {/* Reconciliations panel — spans 2/3 */}
-          <div className="lg:col-span-2 rounded-xl overflow-hidden"
+          {/* Open Reconciliations */}
+          <button
+            onClick={() => navigate(`/app/reconciliations?period=${period}`)}
+            className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
             <div className="px-4 py-3 flex items-center justify-between"
               style={{ borderBottom: "1px solid var(--border)" }}>
               <div className="flex items-center gap-2">
-                <Scale size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-                <h2 className="text-sm font-semibold text-theme">Reconciliations</h2>
+                <Scale size={18} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                <h2 className="text-base font-semibold text-theme">Open Reconciliations</h2>
               </div>
-              <Button size="sm" variant="outline" icon={<ArrowRight size={12} strokeWidth={1.8} />}
-                onClick={() => navigate("/app/reconciliations")}>
-                Open dashboard
-              </Button>
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                {monthLabel}
+              </span>
             </div>
-
             {/* Buckets summary */}
             <div className="grid grid-cols-3 divide-x" style={{ borderBottom: "1px solid var(--border)" }}>
-              <BucketTile label="Open" count={buckets.open} fg="#b91c1c" bg="#fef2f2"
-                onClick={() => navigate("/app/reconciliations")} />
-              <BucketTile label="Reviewed" count={buckets.reviewed} fg="#1d4ed8" bg="#dbeafe"
-                onClick={() => navigate("/app/reconciliations")} />
-              <BucketTile label="Approved" count={buckets.approved} fg="var(--green)" bg="var(--green-subtle)"
-                onClick={() => navigate("/app/reconciliations")} />
+              <BucketTile label="Open" count={buckets.open} fg="#b91c1c" bg="#fef2f2" />
+              <BucketTile label="Reviewed" count={buckets.reviewed} fg="#1d4ed8" bg="#dbeafe" />
+              <BucketTile label="Approved" count={buckets.approved} fg="var(--green)" bg="var(--green-subtle)" />
             </div>
-
-            {/* Top open accounts */}
+            {/* Top 3 open accounts */}
             <div className="px-4 py-3">
               <p className="text-[10px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
-                Top open accounts by variance
+                Top open accounts
               </p>
               {!overview ? (
-                <p className="text-xs py-4" style={{ color: "var(--text-muted)" }}>
-                  {!qbo ? "Connect QuickBooks to load."
-                    : !books?.seeded ? "Finish books setup to load."
-                    : "No reconciliation data for this period yet."}
+                <p className="text-xs py-3" style={{ color: "var(--text-muted)" }}>
+                  {!qbo ? "Connect QuickBooks to load." : !books?.seeded ? "Finish books setup." : "Sync to load."}
                 </p>
               ) : topOpen.length === 0 ? (
-                <div className="py-4 text-center text-xs" style={{ color: "var(--text-muted)" }}>
-                  <CheckCircle2 size={20} strokeWidth={1.6} className="mx-auto mb-1" style={{ color: "var(--green)" }} />
-                  Nothing open. All accounts reviewed or approved.
-                </div>
+                <p className="text-xs py-3 text-center inline-flex items-center justify-center gap-1.5 w-full"
+                  style={{ color: "var(--green)" }}>
+                  <CheckCircle2 size={14} strokeWidth={2} /> Everything reconciled.
+                </p>
               ) : (
-                <ul className="divide-y" style={{ borderColor: "var(--border)" }}>
-                  {topOpen.map((a) => {
+                <ul>
+                  {topOpen.slice(0, 3).map((a) => {
                     const v = parseFloat(a.variance) || 0
                     return (
-                      <li key={a.qbo_id}
-                        className="flex items-center gap-3 py-2 px-1 rounded transition-colors cursor-pointer"
-                        onClick={() => navigate("/app/reconciliations")}>
-                        <span className="font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>
-                          {a.account_number || "—"}
-                        </span>
-                        <span className="flex-1 truncate text-sm text-theme">{a.account_name}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full"
-                          style={{
-                            background: a.review_status === "flagged" ? "#fee2e2" : "var(--surface-2)",
-                            color: a.review_status === "flagged" ? "#b91c1c" : "var(--text-muted)",
-                          }}>
-                          {a.review_status}
-                        </span>
-                        <span className="text-sm tabular-nums font-semibold"
+                      <li key={a.qbo_id} className="flex items-center gap-2 py-1 text-xs">
+                        <span className="font-mono" style={{ color: "var(--text-muted)" }}>{a.account_number || "—"}</span>
+                        <span className="flex-1 truncate text-theme">{a.account_name}</span>
+                        <span className="tabular-nums font-semibold"
                           style={{ color: Math.abs(v) >= 1 ? "#dc2626" : "var(--green)" }}>
                           {fmtMoney(a.variance)}
                         </span>
@@ -440,89 +472,109 @@ export function DashboardHome() {
                 </ul>
               )}
             </div>
-          </div>
+            <div className="px-4 py-2.5 flex items-center justify-between"
+              style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                {buckets.total} accounts · {fmtMoney(totalVariance)} variance
+              </span>
+              <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "var(--green)" }}>
+                Open dashboard <ArrowRight size={12} strokeWidth={2} />
+              </span>
+            </div>
+          </button>
 
-          {/* Right side: Flux + Recent activity */}
-          <div className="space-y-5">
-            <div className="rounded-xl overflow-hidden"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-              <div className="px-4 py-3 flex items-center justify-between"
-                style={{ borderBottom: "1px solid var(--border)" }}>
-                <div className="flex items-center gap-2">
-                  <BarChart3 size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-                  <h2 className="text-sm font-semibold text-theme">Flux Analysis</h2>
+          {/* Open Flux Analysis */}
+          <button
+            onClick={() => navigate(`/app/flux?period=${period}`)}
+            className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+            <div className="px-4 py-3 flex items-center justify-between"
+              style={{ borderBottom: "1px solid var(--border)" }}>
+              <div className="flex items-center gap-2">
+                <BarChart3 size={18} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                <h2 className="text-base font-semibold text-theme">Open Flux Analysis</h2>
+              </div>
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                {monthLabel}
+              </span>
+            </div>
+            <div className="px-4 py-3">
+              {monthlyFlux.length === 0 ? (
+                <div className="py-6 text-center">
+                  <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>
+                    No flux analysis for {monthLabel} yet.
+                  </p>
+                  <span className="inline-block text-[11px] px-2 py-1 rounded"
+                    style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+                    Click to start one in the Flux Analysis dashboard
+                  </span>
                 </div>
-                <Button size="sm" variant="outline" icon={<ArrowRight size={12} strokeWidth={1.8} />}
-                  onClick={() => navigate("/app/flux")}>
-                  Open
-                </Button>
-              </div>
-              <div className="px-4 py-3">
-                {recentTBs.length === 0 ? (
-                  <p className="text-xs py-2 text-center" style={{ color: "var(--text-muted)" }}>
-                    No analyses yet.
-                  </p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {recentTBs.map((tb) => (
-                      <li key={tb.id}
-                        className="flex items-center gap-2 text-xs cursor-pointer rounded px-1 py-1 transition-colors"
-                        onClick={() => navigate(`/app/flux/${tb.id}`)}>
-                        <span className="h-1.5 w-1.5 rounded-full"
-                          style={{ background: tb.status === "completed" ? "var(--green)" : "var(--text-muted)" }} />
-                        <span className="flex-1 truncate text-theme">
-                          {tb.name || `Period ${tb.period_current}`}
-                        </span>
-                        <span style={{ color: "var(--text-muted)" }}>{tb.status}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              ) : (
+                <ul>
+                  {monthlyFlux.slice(0, 4).map((tb) => (
+                    <li key={tb.id} className="flex items-center gap-2 py-1.5 text-xs"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/app/flux/${tb.id}`) }}>
+                      <span className="h-1.5 w-1.5 rounded-full"
+                        style={{ background: tb.status === "completed" ? "var(--green)" : "var(--text-muted)" }} />
+                      <span className="flex-1 truncate text-theme">{tb.name || `Period ${tb.period_current}`}</span>
+                      <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{tb.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
+            <div className="px-4 py-2.5 flex items-center justify-between"
+              style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                {monthlyFlux.length} this month · {(trialBalances ?? []).length} total
+              </span>
+              <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "var(--green)" }}>
+                Open dashboard <ArrowRight size={12} strokeWidth={2} />
+              </span>
+            </div>
+          </button>
+        </div>
 
-            <div className="rounded-xl overflow-hidden"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-              <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
-                <Clock size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-                <h2 className="text-sm font-semibold text-theme">Recent activity</h2>
-              </div>
-              <div className="px-4 py-3">
-                {!audit ? (
-                  <div className="py-4 flex items-center justify-center"><Spinner className="h-4 w-4" /></div>
-                ) : audit.length === 0 ? (
-                  <p className="text-xs py-2 text-center" style={{ color: "var(--text-muted)" }}>
-                    No activity yet.
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {audit.slice(0, 8).map((e) => {
-                      const who = e.user_id ? (userNames?.[e.user_id]?.display_name ?? "Someone") : "System"
-                      const verb = humanizeAction(e.action)
-                      return (
-                        <li key={e.id} className="flex items-start gap-2 text-[11px]">
-                          <span className="h-1.5 w-1.5 rounded-full mt-1.5 shrink-0"
-                            style={{ background: "var(--green)" }} />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-theme">
-                              <span className="font-medium">{who}</span> {verb}
-                            </p>
-                            {e.summary && (
-                              <p className="truncate" style={{ color: "var(--text-muted)" }}>
-                                {e.summary}
-                              </p>
-                            )}
-                          </div>
-                          <span className="text-[10px] whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
-                            {timeAgo(e.created_at)}
-                          </span>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </div>
-            </div>
+        {/* ── Recent activity feed (slim, full-width below) ──────── */}
+        <div className="rounded-xl overflow-hidden"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+          <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
+            <Clock size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+            <h2 className="text-sm font-semibold text-theme">Recent activity</h2>
+          </div>
+          <div className="px-4 py-3">
+            {!audit ? (
+              <div className="py-4 flex items-center justify-center"><Spinner className="h-4 w-4" /></div>
+            ) : audit.length === 0 ? (
+              <p className="text-xs py-2 text-center" style={{ color: "var(--text-muted)" }}>
+                No activity yet.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {audit.slice(0, 8).map((e) => {
+                  const who = e.user_id ? (userNames?.[e.user_id]?.display_name ?? "Someone") : "System"
+                  const verb = humanizeAction(e.action)
+                  return (
+                    <li key={e.id} className="flex items-start gap-2 text-[11px]">
+                      <span className="h-1.5 w-1.5 rounded-full mt-1.5 shrink-0"
+                        style={{ background: "var(--green)" }} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-theme">
+                          <span className="font-medium">{who}</span> {verb}
+                        </p>
+                        {e.summary && (
+                          <p className="truncate" style={{ color: "var(--text-muted)" }}>{e.summary}</p>
+                        )}
+                      </div>
+                      <span className="text-[10px] whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
+                        {timeAgo(e.created_at)}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </div>
         </div>
 
@@ -554,17 +606,17 @@ function Kpi({ label, value, tone, sub }: { label: string; value: string; tone: 
 }
 
 function BucketTile({ label, count, fg, bg, onClick }:
-  { label: string; count: number; fg: string; bg: string; onClick: () => void }) {
+  { label: string; count: number; fg: string; bg: string; onClick?: () => void }) {
   return (
-    <button onClick={onClick}
-      className="px-4 py-3 text-left transition-colors hover:opacity-80"
-      style={{ borderColor: "var(--border)" }}>
+    <div onClick={onClick}
+      className="px-4 py-3 text-left"
+      style={{ borderColor: "var(--border)", cursor: onClick ? "pointer" : "default" }}>
       <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
       <div className="mt-1 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-bold"
         style={{ background: bg, color: fg }}>
         {count}
       </div>
-    </button>
+    </div>
   )
 }
 
