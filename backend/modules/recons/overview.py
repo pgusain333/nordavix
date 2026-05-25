@@ -408,7 +408,18 @@ async def _qbo_trial_balance_by_account(
     try:
         report = await _qbo_get(
             conn, session, "/reports/TrialBalance",
-            params={"end_date": period_end.isoformat(), "accounting_method": "Accrual"},
+            params={
+                # start_date forces QBO to compute balance-sheet account
+                # opening + activity instead of returning empty cells. For
+                # accounts that had activity but no posting in the period,
+                # without start_date QBO often returns null cells. Anchoring
+                # to Jan 1 of the period_end year is the safe default.
+                "start_date":         f"{period_end.year}-01-01",
+                "end_date":           period_end.isoformat(),
+                "accounting_method":  "Accrual",
+                "summarize_column_by":"Total",
+                "minorversion":       "65",
+            },
         )
     except Exception:
         logger.exception("TrialBalance pull failed for %s", period_end)

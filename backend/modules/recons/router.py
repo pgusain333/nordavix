@@ -848,10 +848,8 @@ async def get_seed_preview(
     # any HTTPException up to a 502.
     from modules.recons.overview import (
         ACCOUNT_TYPE_GROUPS,
-        _qbo_trial_balance_by_account,
-        _tb_lookup,
     )
-    from modules.recons.service import _qbo_get
+    from modules.recons.service import _dec, _qbo_get
     seed_date = bs - _td(days=1)
 
     # Direct account list fetch (no swallowed exception)
@@ -884,28 +882,126 @@ async def get_seed_preview(
             "warning":     "QuickBooks returned zero active balance-sheet accounts for this company.",
         }
 
-    tb = await _qbo_trial_balance_by_account(conn, db, seed_date)
+    # Pull the TrialBalance report once for the seed date. This is the
+    # canonical source — QBO's TrialBalance report is what every QBO user
+    # reconciles against. We use the date_macro=Custom path with explicit
+    # start + end dates spanning the entire year-to-period so historical
+    # balance sheet accounts include all activity (some QBO files don't
+    # return BS account snapshots without a start_date).
+    try:
+        tb_report = await _qbo_get(
+            conn, db, "/reports/TrialBalance",
+            params={
+                "start_date":         f"{seed_date.year}-01-01",
+                "end_date":           seed_date.isoformat(),
+                "accounting_method":  "Accrual",
+                "summarize_column_by":"Total",
+                "minorversion":       "65",
+            },
+        )
+    except Exception as e:
+        logger.exception("Seed-preview TrialBalance pull failed")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not fetch trial balance from QuickBooks ({e}).",
+        )
+
+    # Walk the report — track BOTH the qbo id (canonical) and the display
+    # name in several variants, so we can debug name-mismatch issues by
+    # looking at the raw payload.
+    tb_by_id: dict[str, Decimal] = {}
+    tb_by_name: dict[str, Decimal] = {}
+
+    def walk(rows: list[dict]) -> None:
+        for r in rows:
+            cols = r.get("ColData") or []
+            sub  = r.get("Rows", {}).get("Row", []) or []
+            if cols and cols[0].get("value"):
+                name    = str(cols[0]["value"]).strip()
+                acct_id = cols[0].get("id") or ""
+                low     = name.lower()
+                if name and not low.startswith(("total", "subtotal", "net income", "net loss")):
+                    debit  = _dec(cols[1].get("value", "")) if len(cols) > 1 else Decimal("0")
+                    credit = _dec(cols[2].get("value", "")) if len(cols) > 2 else Decimal("0")
+                    bal = debit - credit
+                    if acct_id:
+                        tb_by_id[str(acct_id)] = bal
+                    tb_by_name[name] = bal
+                    tb_by_name[" ".join(name.split())] = bal
+                    if ":" in name:
+                        tb_by_name[name.split(":")[-1].strip()] = bal
+                    if " " in name:
+                        # First-token might be the account number
+                        first_tok = name.split(" ", 1)[0]
+                        if first_tok.replace("-", "").replace(".", "").isdigit():
+                            tb_by_name[first_tok] = bal
+            if sub:
+                walk(sub)
+
+    walk(tb_report.get("Rows", {}).get("Row", []) or [])
 
     rows = []
+    misses: list[str] = []
     for a in accounts_meta:
         acct_type = a.get("AccountType", "")
         if acct_type not in ACCOUNT_TYPE_GROUPS:
             continue
-        gl = _tb_lookup(tb, a)
+        acct_id  = str(a.get("Id") or "")
+        name     = str(a.get("Name") or "").strip()
+        acct_num = str(a.get("AcctNum") or "").strip()
+
+        # Try id, then several name variants. Prefer NUMBER match when present.
+        gl: Decimal | None = None
+        if acct_id and acct_id in tb_by_id:
+            gl = tb_by_id[acct_id]
+        elif acct_num and acct_num in tb_by_name:
+            gl = tb_by_name[acct_num]
+        else:
+            for k in [
+                f"{acct_num} {name}".strip(),
+                name,
+                f"{name} ({acct_num})".strip() if acct_num else "",
+                name.split(":")[-1].strip() if ":" in name else "",
+            ]:
+                if k and k in tb_by_name:
+                    gl = tb_by_name[k]
+                    break
+
+        if gl is None:
+            gl = Decimal("0")
+            misses.append(f"{acct_num or '—'} {name}")
+
         rows.append({
-            "qbo_id":           str(a.get("Id")),
-            "account_number":   a.get("AcctNum") or "",
-            "account_name":     a.get("Name") or "",
+            "qbo_id":           acct_id,
+            "account_number":   acct_num,
+            "account_name":     name,
             "account_type":     acct_type,
             "group_label":      ACCOUNT_TYPE_GROUPS[acct_type],
             "proposed_opening": str(gl.quantize(Decimal("0.01"))),
+            "is_unmatched":     gl == Decimal("0") and any(name.lower() in n.lower() for n in misses),
         })
     rows.sort(key=lambda r: (r["group_label"], r["account_number"]))
+
+    warning_msg = None
+    if misses:
+        logger.warning("Seed-preview matched 0 for %d accounts: %s", len(misses), misses[:10])
+        warning_msg = (
+            f"{len(misses)} account(s) did not have a balance in the "
+            f"QuickBooks TrialBalance report on {seed_date}: "
+            f"{', '.join(misses[:5])}{'…' if len(misses) > 5 else ''}. "
+            "Edit those rows manually in the next step."
+        )
+
     return {
         "books_start": bs.isoformat(),
         "seed_date":   seed_date.isoformat(),
         "accounts":    rows,
-        "warning":     None,
+        "warning":     warning_msg,
+        "diagnostics": {
+            "tb_rows":   len(tb_by_id),
+            "tb_names":  list(tb_by_name.keys())[:30],
+            "misses":    misses[:20],
+        },
     }
 
 
