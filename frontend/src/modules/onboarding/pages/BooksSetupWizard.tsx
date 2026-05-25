@@ -22,6 +22,26 @@ import { Button, Spinner } from "@/core/ui/components"
 import { reconsApi, type SeedPreviewAccount } from "@/modules/recons/api"
 import { api as fluxApi } from "@/modules/flux/api"
 
+/**
+ * Coerce any error shape (axios, fetch, raw Error, plain object) into a
+ * safe string for React rendering. Never throws; never returns an object.
+ * Prevents the wizard from going blank when React encounters a non-string
+ * child node from a malformed error payload.
+ */
+function extractErrorMessage(err: unknown): string {
+  if (!err) return "Unknown error."
+  if (typeof err === "string") return err
+  const e = err as { response?: { data?: { detail?: unknown } }; message?: unknown }
+  const detail = e.response?.data?.detail
+  if (typeof detail === "string") return detail
+  if (typeof e.message === "string") return e.message
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return "Unknown error."
+  }
+}
+
 function fmtMoney(s: string | number): string {
   const n = typeof s === "string" ? parseFloat(s) : s
   if (!Number.isFinite(n)) return "$0"
@@ -207,7 +227,16 @@ export function BooksSetupWizard() {
                 icon={<ArrowRight size={14} strokeWidth={1.8} />}
                 disabled={!qbo}
                 onClick={async () => {
-                  await refetchPreview()
+                  // Defensively catch any thrown error so we always advance
+                  // to step 2 — the step-2 UI then handles the error state
+                  // (showing a Retry button etc.) instead of leaving the
+                  // user on a blank screen.
+                  try {
+                    await refetchPreview()
+                  } catch (e) {
+                    // eslint-disable-next-line no-console
+                    console.error("Seed-preview refetch threw", e)
+                  }
                   setStep(2)
                 }}
               >
@@ -241,10 +270,7 @@ export function BooksSetupWizard() {
                 <AlertTriangle size={28} strokeWidth={1.6} style={{ color: "#dc2626" }} className="mx-auto mb-3" />
                 <p className="text-sm font-semibold text-theme mb-1">Couldn't load from QuickBooks</p>
                 <p className="text-xs mb-4 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
-                  {(previewError as { response?: { data?: { detail?: string } }; message?: string })
-                    .response?.data?.detail
-                    ?? (previewError as { message?: string }).message
-                    ?? "Unknown error"}
+                  {extractErrorMessage(previewError)}
                 </p>
                 <div className="flex items-center gap-2 justify-center">
                   <Button size="sm" variant="outline" onClick={() => navigate("/app/connections")}>
