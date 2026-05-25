@@ -757,24 +757,37 @@ export function ReconciliationsDashboard() {
 
         {qbo && (overview || isFetching) && (
           <>
-            {/* KPI strip — three balance-sheet sides plus reconciliation
-                status. The three top-level totals come straight from the
-                synced GL grouped by account type (assets / liabilities /
-                equity), so the user can eyeball the scale of each side
-                + spot a wildly-wrong number at a glance. */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <Kpi label="Total assets"       value={fmtMoney(breakdown.assets)}      tone="var(--text)"
-                sub="Bank, AR, Fixed Assets, Other" />
-              <Kpi label="Total liabilities"  value={fmtMoney(breakdown.liabilities)} tone="var(--text)"
-                sub="AP, Credit Card, Liabilities" />
-              <Kpi label="Total equity"       value={fmtMoney(breakdown.equity)}      tone="var(--text)"
-                sub="excl. current-year P&L" />
-              <Kpi label="Net variance"       value={fmtMoney(overview?.totals.variance ?? 0)}
-                tone={Math.abs(parseFloat(overview?.totals.variance ?? "0")) > 0.5 ? "#dc2626" : "var(--green)"}
-                sub={varianceCount > 0
-                  ? `${varianceCount} account${varianceCount === 1 ? "" : "s"} off`
-                  : `${overview?.accounts.length ?? 0} accounts · all reconciled`} />
-            </div>
+            {/* KPI strip — reconciliation-focused metrics across all
+                synced accounts. GL ↔ Subledger ↔ Variance is the core
+                reconciliation question; the progress card pairs the
+                dollars with the workflow status (X of Y approved).
+                The financial-sides breakdown (Assets / Liab / Equity)
+                moved into the Sync Verification accordion below. */}
+            {(() => {
+              // Reconciliation progress derived from the same account list
+              // the table uses. Approved-only / total / pct triple drives
+              // the progress card.
+              const approvedCount = overview?.accounts.filter((a) => a.review_status === "approved").length ?? 0
+              const totalCount    = overview?.accounts.length ?? 0
+              const progressPct   = totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 0
+              return (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <Kpi label="GL balance"        value={fmtMoney(overview?.totals.gl ?? 0)}        tone="var(--text)"
+                    sub="signed sum across synced accounts" />
+                  <Kpi label="Subledger balance" value={fmtMoney(overview?.totals.subledger ?? 0)} tone="var(--text)"
+                    sub="signed sum across subledgers" />
+                  <Kpi label="Variance"          value={fmtMoney(overview?.totals.variance ?? 0)}
+                    tone={Math.abs(parseFloat(overview?.totals.variance ?? "0")) > 0.5 ? "#dc2626" : "var(--green)"}
+                    sub={varianceCount > 0
+                      ? `${varianceCount} account${varianceCount === 1 ? "" : "s"} off`
+                      : `${totalCount} account${totalCount === 1 ? "" : "s"} · all reconciled`} />
+                  <Kpi label="Reconciliation progress"
+                    value={`${approvedCount} / ${totalCount}`}
+                    tone={progressPct === 100 ? "var(--green)" : "var(--text)"}
+                    sub={`${progressPct}% approved`} />
+                </div>
+              )
+            })()}
 
             {/* Trial-Balance Check — proves the QBO sync is internally
                 consistent. Assets − (L+E) MUST equal YTD Net Income from
@@ -782,9 +795,11 @@ export function ReconciliationsDashboard() {
                 you can trust everything else on this page. If they
                 don't, something's missing from the sync (unposted JE,
                 gap in the P&L pull, wrong fiscal year, …) and the
-                user should re-sync before doing reconciliation work. */}
+                user should re-sync before doing reconciliation work.
+                Financial-side cards (Assets / Liab / Equity / Implied NI)
+                live inside the accordion body alongside the equation. */}
             {overview?.tb_check && (
-              <TrialBalanceCheckCard check={overview.tb_check} />
+              <TrialBalanceCheckCard check={overview.tb_check} breakdown={breakdown} />
             )}
 
             {/* Status buckets — clicking Approve on a row moves it from
@@ -2257,7 +2272,13 @@ function Kpi({ label, value, tone, sub }:
 // expands the equation + verdict for the full breakdown. Default
 // collapsed so it doesn't dominate the dashboard once verified.
 
-function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api").TbCheck }) {
+function TrialBalanceCheckCard({ check, breakdown }: {
+  check:     import("@/modules/recons/api").TbCheck
+  // Asset / Liabilities / Equity totals from the same per-account sync
+  // the page renders elsewhere. Rendered as financial KPI cards INSIDE
+  // the expanded accordion body so the equation below has visual anchors.
+  breakdown: { assets: number; liabilities: number; equity: number }
+}) {
   const [expanded, setExpanded] = useState(false)
   const hasActual = check.actual_net_income !== null
   const balanced = check.balanced === true
@@ -2349,6 +2370,35 @@ function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api"
               A balanced GL means: <span className="font-mono font-semibold text-theme">Assets − Liabilities − Equity = Net Income</span>.
               If the implied NI from the synced balance sheet matches QuickBooks&apos; reported NI on the P&L,
               the math ties out and the sync pulled correct figures.
+            </div>
+
+            {/* Financial-side cards — Assets / Liabilities / Equity from
+                the synced GL grouped by account type, plus the implied
+                NI (the equation's left-hand side) as the fourth tile so
+                the math at the bottom is anchored visually. */}
+            <div className="px-4 pt-3 grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <MiniKpi
+                label="Total assets"
+                value={fmtMoney(breakdown.assets)}
+                sub="Bank, AR, Fixed Assets, Other"
+              />
+              <MiniKpi
+                label="Total liabilities"
+                value={fmtMoney(breakdown.liabilities)}
+                sub="AP, Credit Card, Liabilities"
+              />
+              <MiniKpi
+                label="Total equity"
+                value={fmtMoney(breakdown.equity)}
+                sub="excludes current-year P&L"
+              />
+              <MiniKpi
+                label="Implied net income"
+                value={fmtMoney(impliedNi)}
+                valueColor={impliedNi < 0 ? "#dc2626" : "var(--text)"}
+                sub="Assets − Liab − Equity"
+                highlight
+              />
             </div>
 
       {/* Three-side equation */}
@@ -2456,6 +2506,28 @@ function EquationRow({ label, sub, value, valueColor, bold }:
       </div>
       <span className={`tabular-nums ${bold ? "text-base font-bold" : "font-semibold"}`}
         style={{ color: valueColor }}>{value}</span>
+    </div>
+  )
+}
+
+// Compact KPI tile for use inside the Sync Verification accordion body.
+// Smaller padding + tighter type than the main Kpi component since this
+// renders four-up inside a card that already has its own padding +
+// header. `highlight` pulls the visual weight onto the "Implied NI"
+// tile since that's the equation's headline number.
+function MiniKpi({ label, value, sub, valueColor, highlight }:
+  { label: string; value: string; sub?: string; valueColor?: string; highlight?: boolean }
+) {
+  return (
+    <div className="rounded-lg p-3"
+      style={{
+        background: highlight ? "var(--green-subtle)" : "var(--surface)",
+        border: `1px solid ${highlight ? "var(--green)" : "var(--border)"}`,
+      }}>
+      <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
+      <p className="text-lg font-bold tabular-nums mt-0.5"
+        style={{ color: valueColor ?? "var(--text)" }}>{value}</p>
+      {sub && <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{sub}</p>}
     </div>
   )
 }
