@@ -25,16 +25,42 @@ import { api as fluxApi } from "@/modules/flux/api"
 /**
  * Coerce any error shape (axios, fetch, raw Error, plain object) into a
  * safe string for React rendering. Never throws; never returns an object.
- * Prevents the wizard from going blank when React encounters a non-string
- * child node from a malformed error payload.
+ * Handles FastAPI's 422 validation array format specifically so we don't
+ * surface a useless "Request failed with status code 422" — we show the
+ * actual field that's missing/invalid.
  */
 function extractErrorMessage(err: unknown): string {
   if (!err) return "Unknown error."
   if (typeof err === "string") return err
-  const e = err as { response?: { data?: { detail?: unknown } }; message?: unknown }
+  const e = err as {
+    response?: { data?: { detail?: unknown }; status?: number }
+    message?: unknown
+    config?: { url?: string }
+  }
   const detail = e.response?.data?.detail
   if (typeof detail === "string") return detail
-  if (typeof e.message === "string") return e.message
+  // FastAPI 422 — detail is an array of validation errors
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => {
+        const loc = Array.isArray((d as { loc?: unknown[] }).loc)
+          ? ((d as { loc: unknown[] }).loc).join(".")
+          : ""
+        const msg = typeof (d as { msg?: unknown }).msg === "string"
+          ? (d as { msg: string }).msg
+          : "invalid"
+        return loc ? `${loc}: ${msg}` : msg
+      })
+      .filter(Boolean)
+    if (parts.length > 0) {
+      const status = e.response?.status
+      return `${status ?? ""} ${parts.join("; ")}`.trim()
+    }
+  }
+  if (typeof e.message === "string") {
+    const url = e.config?.url ? ` (${e.config.url})` : ""
+    return `${e.message}${url}`
+  }
   try {
     return JSON.stringify(err)
   } catch {
