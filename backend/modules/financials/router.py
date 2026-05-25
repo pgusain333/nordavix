@@ -429,44 +429,95 @@ async def _fetch_cf(conn: QboConnection, db: AsyncSession, pe: date) -> list[_Pa
 
 async def _build_statement(
     tenant_id, db, pe: date, statement_kind: str, comparative: bool,
+    source: str = "quickbooks",
 ) -> StatementOut:
-    conn = await _qbo_connection(db, tenant_id)
-    # Pre-refresh the OAuth token BEFORE any QBO calls. Subsequent
-    # calls inside this function (and parallel calls elsewhere)
-    # share the same SQLAlchemy session — concurrent commits inside
-    # the auto-refresh path were causing intermittent "Network
-    # Error" failures on PDF export. Refreshing once upfront means
-    # downstream _qbo_get calls all hit the fast-path early-return
-    # in _refresh_token_if_needed (no DB writes).
-    from modules.recons.service import _refresh_token_if_needed
-    await _refresh_token_if_needed(conn, db)
-    company = await _company_name(db, tenant_id, conn)
+    """
+    `source` controls where the underlying data comes from:
+      • "quickbooks" — live QBO Reports API (default). Always matches
+        what QBO would show; requires QBO to be reachable.
+      • "nordavix"   — Built from gl_balance_snapshots captured on
+        every reconciliations sync. Works offline; respects manual
+        subledger overrides; deterministic GAAP layout.
+        Cash Flow stays QBO-backed in this mode for now.
+    """
+    company = await _company_name(db, tenant_id)
+    conn = None
+    if source != "nordavix" or statement_kind == "cash_flow":
+        conn = await _qbo_connection(db, tenant_id)
+        # Pre-refresh the OAuth token BEFORE any QBO calls. Subsequent
+        # calls inside this function share the same SQLAlchemy session —
+        # concurrent commits inside the auto-refresh path used to cause
+        # intermittent "Network Error" failures on PDF export.
+        from modules.recons.service import _refresh_token_if_needed
+        await _refresh_token_if_needed(conn, db)
+        company = await _company_name(db, tenant_id, conn)
 
     if statement_kind == "income_statement":
         title = "Income Statement"
         subtitle = f"For the Year-to-Date Ended {pe.strftime('%B %d, %Y')}"
         period_label = f"YTD {pe.strftime('%b %Y')}"
-        fetch_fn, prior_pe = _fetch_pl, _prior_year_period(pe)
     elif statement_kind == "balance_sheet":
         title = "Balance Sheet"
         subtitle = f"As of {pe.strftime('%B %d, %Y')}"
         period_label = pe.strftime("%b %d, %Y")
-        fetch_fn, prior_pe = _fetch_bs, _prior_year_period(pe)
     elif statement_kind == "cash_flow":
         title = "Statement of Cash Flows"
         subtitle = f"For the Year-to-Date Ended {pe.strftime('%B %d, %Y')}"
         period_label = f"YTD {pe.strftime('%b %Y')}"
-        fetch_fn, prior_pe = _fetch_cf, _prior_year_period(pe)
     else:
         raise HTTPException(400, f"Unknown statement: {statement_kind}")
+    prior_pe = _prior_year_period(pe)
 
-    # Sequential cur + prior fetches. Tried parallelizing with
-    # asyncio.gather but multiple httpx calls sharing one SQLAlchemy
-    # AsyncSession through the token-refresh path triggered intermittent
-    # session errors that surfaced as "Network Error" on the client.
-    # The QBO calls themselves are ~2-3s each, so going sequential is
-    # an acceptable ~5s round trip vs. flakiness of parallel.
     notes: list[str] = []
+
+    # ── Nordavix-synced source (BS + IS) ─────────────────────────────
+    # Build from the gl_balance_snapshots table populated on every
+    # recons sync. Cash Flow stays QBO-backed even in this mode since
+    # it requires non-cash adjustments we don't yet decompose.
+    if source == "nordavix" and statement_kind in ("balance_sheet", "income_statement"):
+        from modules.financials.internal import (
+            build_balance_sheet as _bs_internal,
+            build_income_statement as _is_internal,
+        )
+        builder = _bs_internal if statement_kind == "balance_sheet" else _is_internal
+        rows_raw, internal_notes = await builder(
+            db, tenant_id, pe, prior_pe if comparative else None,
+        )
+        notes.extend(internal_notes)
+        # Normalize internal dict rows to FinancialRow models, applying
+        # the same GAAP label translator the QBO path uses for consistency.
+        rows = [FinancialRow(
+            label=_gaap(r["label"]),
+            current=r["current"],
+            prior=r["prior"],
+            level=r["level"],
+            kind=r["kind"],
+        ) for r in rows_raw]
+        closed = await _is_period_closed(db, pe)
+        return StatementOut(
+            statement=statement_kind,
+            title=title,
+            subtitle=subtitle + " · Source: Nordavix synced data",
+            company=company,
+            period_label=period_label,
+            comparative_label=(prior_pe.strftime("%b %d, %Y") if comparative else None) if statement_kind == "balance_sheet"
+                              else (f"YTD {prior_pe.strftime('%b %Y')}" if comparative else None),
+            period_end=pe.isoformat(),
+            comparative_end=prior_pe.isoformat() if comparative else None,
+            rows=rows,
+            is_closed=closed is not None,
+            closed_at=closed.closed_at.isoformat() if closed and closed.closed_at else None,
+            notes=notes,
+        )
+
+    # ── QuickBooks source (live API) ─────────────────────────────────
+    if statement_kind == "income_statement":
+        fetch_fn = _fetch_pl
+    elif statement_kind == "balance_sheet":
+        fetch_fn = _fetch_bs
+    else:
+        fetch_fn = _fetch_cf
+
     cur_rows: list[_ParsedRow] = []
     prior_rows: list[_ParsedRow] = []
     try:
@@ -508,11 +559,12 @@ async def get_income_statement(
     tenant_id: CurrentTenantId,
     period_end: str = Query(...),
     comparative: bool = Query(True),
+    source: str = Query("quickbooks", description="quickbooks | nordavix"),
     db: AsyncSession = Depends(get_db),
 ) -> StatementOut:
     try: pe = date.fromisoformat(period_end)
     except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
-    return await _build_statement(tenant_id, db, pe, "income_statement", comparative)
+    return await _build_statement(tenant_id, db, pe, "income_statement", comparative, source=source)
 
 
 @router.get("/balance-sheet", response_model=StatementOut)
@@ -520,11 +572,12 @@ async def get_balance_sheet(
     tenant_id: CurrentTenantId,
     period_end: str = Query(...),
     comparative: bool = Query(True),
+    source: str = Query("quickbooks", description="quickbooks | nordavix"),
     db: AsyncSession = Depends(get_db),
 ) -> StatementOut:
     try: pe = date.fromisoformat(period_end)
     except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
-    return await _build_statement(tenant_id, db, pe, "balance_sheet", comparative)
+    return await _build_statement(tenant_id, db, pe, "balance_sheet", comparative, source=source)
 
 
 @router.get("/cash-flow", response_model=StatementOut)
@@ -532,11 +585,12 @@ async def get_cash_flow(
     tenant_id: CurrentTenantId,
     period_end: str = Query(...),
     comparative: bool = Query(True),
+    source: str = Query("quickbooks", description="quickbooks | nordavix"),
     db: AsyncSession = Depends(get_db),
 ) -> StatementOut:
     try: pe = date.fromisoformat(period_end)
     except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
-    return await _build_statement(tenant_id, db, pe, "cash_flow", comparative)
+    return await _build_statement(tenant_id, db, pe, "cash_flow", comparative, source=source)
 
 
 @router.get("/pdf")
@@ -547,6 +601,7 @@ async def export_pdf(
     period_end: str = Query(...),
     comparative: bool = Query(True),
     draft: bool = Query(False, description="Allow draft export for unclosed period; PDF will be watermarked"),
+    source: str = Query("quickbooks", description="quickbooks | nordavix"),
     db: AsyncSession = Depends(get_db),
 ):
     """Returns a audit-ready styled PDF. Closed periods produce a clean final
@@ -574,11 +629,10 @@ async def export_pdf(
     else:
         raise HTTPException(400, "statement must be is | bs | cf | full.")
     # Sequential builds — see note in _build_statement about the
-    # SQLAlchemy session race that asyncio.gather triggers. Full
-    # package ends up at ~12-15s which is well inside the timeout.
+    # SQLAlchemy session race that asyncio.gather triggers.
     statements: list[StatementOut] = []
     for k in kinds:
-        statements.append(await _build_statement(tenant_id, db, pe, k, comparative))
+        statements.append(await _build_statement(tenant_id, db, pe, k, comparative, source=source))
 
     from modules.financials.pdf import build_pdf
     buf = io.BytesIO()

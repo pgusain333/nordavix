@@ -32,7 +32,7 @@ import {
   AlertCircle,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
-import { financialsApi, type Statement, type FinancialRow } from "@/modules/financials/api"
+import { financialsApi, type Statement, type FinancialRow, type FinancialSource } from "@/modules/financials/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 
 type Tab = "is" | "bs" | "cf"
@@ -63,6 +63,10 @@ export function FinancialsPage() {
   const [tab, setTab]                 = useState<Tab>("is")
   const [periodEnd, setPeriodEnd]     = useState<string>(defaultPeriodEnd())
   const [comparative, setComparative] = useState<boolean>(true)
+  // Default to Nordavix synced data — works offline + respects the
+  // user's manual reconciliation overrides. Users can flip back to
+  // Live QuickBooks if they want to verify against QBO's own reports.
+  const [source, setSource]           = useState<FinancialSource>("nordavix")
   const [exportError, setExportError] = useState<string | null>(null)
   // Don't auto-fetch on mount — financial-statement pulls are
   // expensive (multiple QBO API calls) and the user typically wants
@@ -71,20 +75,30 @@ export function FinancialsPage() {
   const [hasLoaded, setHasLoaded] = useState(false)
 
   const { data: qbo } = useQboConnection()
+  // Cash Flow always goes through QuickBooks even in Nordavix-synced
+  // mode — building CF properly from internal data requires more
+  // decomposition (non-cash adjustments etc) than the snapshot
+  // currently carries. The selector still shows nordavix, but the
+  // CF tab transparently uses QBO.
+  const effectiveSource: FinancialSource = tab === "cf" ? "quickbooks" : source
+
   const { data: stmt, isLoading, error, refetch } = useQuery({
-    queryKey: ["financial-statement", tab, periodEnd, comparative],
+    queryKey: ["financial-statement", tab, periodEnd, comparative, effectiveSource],
     queryFn:  () => {
-      if (tab === "is") return financialsApi.getIncomeStatement(periodEnd, comparative)
-      if (tab === "bs") return financialsApi.getBalanceSheet(periodEnd, comparative)
-      return financialsApi.getCashFlow(periodEnd, comparative)
+      if (tab === "is") return financialsApi.getIncomeStatement(periodEnd, comparative, effectiveSource)
+      if (tab === "bs") return financialsApi.getBalanceSheet(periodEnd, comparative, effectiveSource)
+      return financialsApi.getCashFlow(periodEnd, comparative, effectiveSource)
     },
-    enabled:  hasLoaded && !!qbo,
+    // Nordavix mode reads from our DB so QBO connection isn't strictly
+    // required (snapshot may exist from past syncs even after disconnect).
+    // CF always needs QBO regardless of source selection.
+    enabled:  hasLoaded && (effectiveSource === "nordavix" || !!qbo),
     staleTime: 60_000,
   })
 
   const exportMut = useMutation({
     mutationFn: ({ kind, draft }: { kind: "is" | "bs" | "cf" | "full"; draft: boolean }) =>
-      financialsApi.exportPdf(kind, periodEnd, comparative, draft),
+      financialsApi.exportPdf(kind, periodEnd, comparative, draft, source),
     onMutate: () => setExportError(null),
     onError: (e: Error) => setExportError(e.message),
   })
@@ -110,9 +124,10 @@ export function FinancialsPage() {
               Financial Package
             </h1>
             <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              Audit-ready Income Statement, Balance Sheet, and Statement of Cash Flows —
-              pulled live from QuickBooks and labeled in US GAAP style.
-              {" "}Export a final PDF once the period is closed, or a DRAFT for preview.
+              Audit-ready Income Statement, Balance Sheet, and Statement of Cash Flows.
+              {" "}<b>Nordavix synced</b> source builds from GL snapshots captured during
+              reconciliation work — works offline, respects manual overrides.
+              {" "}<b>QuickBooks live</b> calls QBO reports directly. Cash Flow always uses QBO.
             </p>
           </div>
           <div className="flex items-end gap-2 flex-wrap">
@@ -123,6 +138,19 @@ export function FinancialsPage() {
               <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)}
                 className="rounded-lg px-3 py-1.5 text-sm outline-none"
                 style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
+            </label>
+            <label className="flex flex-col">
+              <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
+                Source
+              </span>
+              <select value={source}
+                onChange={(e) => setSource(e.target.value as FinancialSource)}
+                className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+                title="Nordavix synced data: builds from snapshots captured on every reconciliations sync. QuickBooks live: calls QBO reports each render.">
+                <option value="nordavix">Nordavix synced</option>
+                <option value="quickbooks">QuickBooks (live)</option>
+              </select>
             </label>
             <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none mb-1.5"
               style={{ color: "var(--text-2)" }}>

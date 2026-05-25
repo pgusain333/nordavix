@@ -106,6 +106,18 @@ async def fetch_overview(
 
     tb_balances = await _qbo_trial_balance_by_account(conn, session, period_end)
 
+    # Capture a snapshot of every account's balance at this period_end
+    # to power the Financial Package's "Nordavix synced" source. Runs
+    # transparently — failure here doesn't break the recons overview.
+    try:
+        from core.db.base import current_tenant_id
+        from core.gl_snapshot import capture_snapshot
+        tid = current_tenant_id.get()
+        if tid is not None:
+            await capture_snapshot(session, tid, period_end, conn=conn)
+    except Exception:
+        logger.exception("GL snapshot capture failed for %s — continuing", period_end)
+
     # Pull AR / AP aging once each — used to derive per-AR-account subledger
     ar_aging_sum = await _aging_total(conn, session, "AgedReceivables", period_end)
     ap_aging_sum = await _aging_total(conn, session, "AgedPayables", period_end)

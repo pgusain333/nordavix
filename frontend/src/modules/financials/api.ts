@@ -37,21 +37,23 @@ export interface Statement {
   notes:             string[]
 }
 
-async function getIncomeStatement(periodEnd: string, comparative = true): Promise<Statement> {
+export type FinancialSource = "quickbooks" | "nordavix"
+
+async function getIncomeStatement(periodEnd: string, comparative = true, source: FinancialSource = "quickbooks"): Promise<Statement> {
   const { data } = await apiClient.get<Statement>("/api/financials/income-statement", {
-    params: { period_end: periodEnd, comparative },
+    params: { period_end: periodEnd, comparative, source },
   })
   return data
 }
-async function getBalanceSheet(periodEnd: string, comparative = true): Promise<Statement> {
+async function getBalanceSheet(periodEnd: string, comparative = true, source: FinancialSource = "quickbooks"): Promise<Statement> {
   const { data } = await apiClient.get<Statement>("/api/financials/balance-sheet", {
-    params: { period_end: periodEnd, comparative },
+    params: { period_end: periodEnd, comparative, source },
   })
   return data
 }
-async function getCashFlow(periodEnd: string, comparative = true): Promise<Statement> {
+async function getCashFlow(periodEnd: string, comparative = true, source: FinancialSource = "quickbooks"): Promise<Statement> {
   const { data } = await apiClient.get<Statement>("/api/financials/cash-flow", {
-    params: { period_end: periodEnd, comparative },
+    params: { period_end: periodEnd, comparative, source },
   })
   return data
 }
@@ -69,10 +71,11 @@ async function exportPdf(
   periodEnd: string,
   comparative = true,
   draft = false,
+  source: FinancialSource = "quickbooks",
 ): Promise<void> {
   try {
     const resp = await apiClient.get("/api/financials/pdf", {
-      params: { statement, period_end: periodEnd, comparative, draft },
+      params: { statement, period_end: periodEnd, comparative, draft, source },
       responseType: "blob",
       // PDF generation can take ~10-30s on the "full" package while
       // QBO reports come back. Override axios's per-instance default
