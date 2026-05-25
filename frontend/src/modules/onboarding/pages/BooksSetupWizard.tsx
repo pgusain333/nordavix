@@ -60,10 +60,16 @@ export function BooksSetupWizard() {
     if (status?.seeded) navigate("/app/reconciliations", { replace: true })
   }, [status?.seeded, navigate])
 
-  const { data: preview, isFetching: previewLoading, refetch: refetchPreview } = useQuery({
+  const {
+    data: preview,
+    isFetching: previewLoading,
+    refetch: refetchPreview,
+    error: previewError,
+  } = useQuery({
     queryKey: ["seed-preview", booksStart],
     queryFn:  () => reconsApi.getSeedPreview(booksStart),
     enabled:  false,
+    retry: false,  // surface the real error instead of retrying silently
   })
 
   const seedMut = useMutation({
@@ -218,18 +224,54 @@ export function BooksSetupWizard() {
             <div className="px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
               <h2 className="text-base font-semibold text-theme">Review opening balances</h2>
               <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-                GL trial balance as of {preview?.seed_date}. Edit any account where the real subledger
-                (bank statement, FA register, prepaid schedule, etc.) doesn't match QBO on day 1.
+                GL trial balance as of {preview?.seed_date || "(loading…)"}. Edit any account where the real
+                subledger (bank statement, FA register, prepaid schedule, etc.) doesn't match QBO on day 1.
               </p>
             </div>
 
             {previewLoading ? (
-              <div className="py-16 flex items-center justify-center"><Spinner className="h-6 w-6" /></div>
-            ) : (preview?.accounts.length ?? 0) === 0 ? (
-              <div className="py-12 text-center">
-                <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-                  QuickBooks didn't return any balance-sheet accounts.
+              <div className="py-16 flex flex-col items-center justify-center gap-2">
+                <Spinner className="h-6 w-6" />
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  Pulling trial balance from QuickBooks…
                 </p>
+              </div>
+            ) : previewError ? (
+              <div className="py-12 px-6 text-center">
+                <AlertTriangle size={28} strokeWidth={1.6} style={{ color: "#dc2626" }} className="mx-auto mb-3" />
+                <p className="text-sm font-semibold text-theme mb-1">Couldn't load from QuickBooks</p>
+                <p className="text-xs mb-4 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+                  {(previewError as { response?: { data?: { detail?: string } }; message?: string })
+                    .response?.data?.detail
+                    ?? (previewError as { message?: string }).message
+                    ?? "Unknown error"}
+                </p>
+                <div className="flex items-center gap-2 justify-center">
+                  <Button size="sm" variant="outline" onClick={() => navigate("/app/connections")}>
+                    Check QuickBooks connection
+                  </Button>
+                  <Button size="sm" onClick={() => refetchPreview()}>
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            ) : (preview?.accounts.length ?? 0) === 0 ? (
+              <div className="py-12 px-6 text-center">
+                <AlertTriangle size={28} strokeWidth={1.6} style={{ color: "#f59e0b" }} className="mx-auto mb-3" />
+                <p className="text-sm font-semibold text-theme mb-1">No balance-sheet accounts in QuickBooks</p>
+                <p className="text-xs mb-4 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+                  {preview?.warning
+                    ?? "QuickBooks returned zero active Bank / AR / AP / Fixed Asset / Other accounts. "
+                       + "This usually means a brand-new sandbox or that all accounts are inactive."}
+                </p>
+                <div className="flex items-center gap-2 justify-center">
+                  <Button size="sm" variant="outline" onClick={() => navigate("/app/connections")}>
+                    Check connection
+                  </Button>
+                  <Button size="sm" onClick={() => refetchPreview()}>
+                    Retry
+                  </Button>
+                </div>
               </div>
             ) : (
               <>

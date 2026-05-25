@@ -832,14 +832,48 @@ async def get_seed_preview(
         raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
 
     # Use the existing overview machinery to enumerate balance-sheet accounts.
+    # When QBO calls fail (expired token, network blip), we want the user to
+    # see *what* went wrong instead of an empty list with no explanation —
+    # so we re-do the calls without their try/except wrappers and propagate
+    # any HTTPException up to a 502.
     from modules.recons.overview import (
-        _list_balance_sheet_accounts,
         _qbo_trial_balance_by_account,
         _tb_lookup,
         ACCOUNT_TYPE_GROUPS,
     )
+    from modules.recons.service import _qbo_get
     seed_date = bs - _td(days=1)
-    accounts_meta = await _list_balance_sheet_accounts(conn, db)
+
+    # Direct account list fetch (no swallowed exception)
+    types = list(ACCOUNT_TYPE_GROUPS.keys())
+    quoted = ", ".join(f"'{t}'" for t in types)
+    q = (
+        f"SELECT Id, Name, AcctNum, AccountType, CurrentBalance "
+        f"FROM Account WHERE AccountType IN ({quoted}) AND Active = true "
+        f"MAXRESULTS 500"
+    )
+    try:
+        data = await _qbo_get(conn, db, "/query", params={"query": q, "minorversion": "65"})
+    except Exception as e:
+        logger.exception("Seed-preview account list failed")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Could not fetch accounts from QuickBooks ({e}). "
+                "Try reconnecting QuickBooks from Connections, then come back here."
+            ),
+        )
+    accounts_meta = data.get("QueryResponse", {}).get("Account", []) or []
+
+    if not accounts_meta:
+        # Empty list but no error — usually means a brand-new / wiped sandbox.
+        return {
+            "books_start": bs.isoformat(),
+            "seed_date":   seed_date.isoformat(),
+            "accounts":    [],
+            "warning":     "QuickBooks returned zero active balance-sheet accounts for this company.",
+        }
+
     tb = await _qbo_trial_balance_by_account(conn, db, seed_date)
 
     rows = []
@@ -861,6 +895,7 @@ async def get_seed_preview(
         "books_start": bs.isoformat(),
         "seed_date":   seed_date.isoformat(),
         "accounts":    rows,
+        "warning":     None,
     }
 
 

@@ -450,6 +450,7 @@ export interface SeedPreview {
   books_start: string
   seed_date:   string
   accounts:    SeedPreviewAccount[]
+  warning?:    string | null
 }
 
 async function getBooksStatus(): Promise<BooksStatus> {
