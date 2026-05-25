@@ -7,13 +7,14 @@ import { NavLink, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
-  Plug, Users, X, Pencil, Check, type LucideIcon,
+  Plug, Users, X, Pencil, Check, CheckSquare, type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { cn } from "@/core/ui/utils"
 import { Badge } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { workspaceApi } from "@/modules/workspace/api"
+import { tasksApi } from "@/modules/tasks/api"
 
 interface NavItem {
   label:     string
@@ -24,6 +25,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard",       path: "/app",                 icon: LayoutDashboard, available: true  },
+  { label: "Tasks",           path: "/app/tasks",           icon: CheckSquare,     available: true  },
   { label: "Connections",     path: "/app/connections",     icon: Plug,            available: true  },
   { label: "Flux Analysis",   path: "/app/flux",            icon: BarChart3,       available: true  },
   { label: "Reconciliations", path: "/app/reconciliations", icon: Scale,           available: true  },
@@ -48,6 +50,18 @@ export function LeftNav({ onClose }: Props) {
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
     staleTime: 10 * 60_000,
+    enabled:  !!organization,
+  })
+
+  // Open-tasks count for the Tasks nav badge. Lightweight call — server
+  // returns just the numbers, not the full list. 30-second freshness +
+  // refetch-on-focus is enough so the badge follows what the user does
+  // without hammering the API.
+  const { data: tasksCount } = useQuery({
+    queryKey: ["tasks", "count"],
+    queryFn:  tasksApi.getCount,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
     enabled:  !!organization,
   })
   const roleMeta = me ? ({
@@ -126,17 +140,40 @@ export function LeftNav({ onClose }: Props) {
                 : { color: "var(--nav-text)" }
               }
             >
-              {({ isActive }) => (
-                <>
-                  <Icon size={22} strokeWidth={1.6} className="shrink-0"
-                    style={{ color: isActive ? "var(--green)" : "var(--nav-text)" }} />
-                  <span className="truncate">{item.label}</span>
-                  {isActive && (
-                    <span className="ml-auto h-1.5 w-1.5 rounded-full shrink-0"
-                      style={{ background: "var(--green)" }} />
-                  )}
-                </>
-              )}
+              {({ isActive }) => {
+                // Tasks nav item gets a count badge when there's open
+                // work. Critical items get a red pill; routine open
+                // count gets a neutral pill. Hides entirely at 0 so
+                // the nav doesn't look noisy on a clean day.
+                const isTasksItem = item.path === "/app/tasks"
+                const taskBadge = isTasksItem && tasksCount
+                  ? (tasksCount.critical > 0
+                      ? { count: tasksCount.open, bg: "#fee2e2", fg: "#b91c1c" }
+                      : tasksCount.open > 0
+                        ? { count: tasksCount.open, bg: "var(--green-subtle)", fg: "var(--green)" }
+                        : null)
+                  : null
+                return (
+                  <>
+                    <Icon size={22} strokeWidth={1.6} className="shrink-0"
+                      style={{ color: isActive ? "var(--green)" : "var(--nav-text)" }} />
+                    <span className="truncate flex-1">{item.label}</span>
+                    {taskBadge && (
+                      <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold tabular-nums shrink-0"
+                        style={{ background: taskBadge.bg, color: taskBadge.fg }}
+                        title={tasksCount?.critical
+                          ? `${tasksCount.critical} critical of ${tasksCount.open} open tasks`
+                          : `${tasksCount?.open ?? 0} open tasks`}>
+                        {taskBadge.count > 99 ? "99+" : taskBadge.count}
+                      </span>
+                    )}
+                    {isActive && !taskBadge && (
+                      <span className="ml-auto h-1.5 w-1.5 rounded-full shrink-0"
+                        style={{ background: "var(--green)" }} />
+                    )}
+                  </>
+                )
+              }}
             </NavLink>
           )
         })}

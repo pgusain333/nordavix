@@ -13,6 +13,7 @@ import { APReconciliations } from "@/modules/recons/pages/APReconciliations"
 import { ReconciliationDetail } from "@/modules/recons/pages/ReconciliationDetail"
 import { OverridesDashboard } from "@/modules/recons/pages/OverridesDashboard"
 import { FluxMonthIndex } from "@/modules/flux/pages/FluxMonthIndex"
+import { TasksPage } from "@/modules/tasks/pages/TasksPage"
 import { BooksSetupWizard } from "@/modules/onboarding/pages/BooksSetupWizard"
 import { TeamPage } from "@/modules/workspace/pages/TeamPage"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
@@ -48,6 +49,7 @@ function AppRoutes() {
           <Route path="setup/books"  element={<BooksSetupWizard />} />
           <Route path="team"         element={<TeamPage />} />
           <Route path="connections"  element={<ConnectionsPage />} />
+          <Route path="tasks"        element={<TasksPage />} />
           {/* Flux: index = month-row list, /analyses = full workspace,
               /:tbId = deep link into a specific analysis. */}
           <Route path="flux"                  element={<FluxMonthIndex />} />
