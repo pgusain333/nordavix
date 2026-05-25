@@ -7,7 +7,7 @@ import { NavLink, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
-  Plug, Users, X, Pencil, Check, CheckSquare, type LucideIcon,
+  Plug, Users, X, Pencil, Check, CheckSquare, BookOpen, type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { cn } from "@/core/ui/utils"
@@ -24,14 +24,15 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard",       path: "/app",                 icon: LayoutDashboard, available: true  },
-  { label: "Tasks",           path: "/app/tasks",           icon: CheckSquare,     available: true  },
-  { label: "Connections",     path: "/app/connections",     icon: Plug,            available: true  },
-  { label: "Flux Analysis",   path: "/app/flux",            icon: BarChart3,       available: true  },
-  { label: "Reconciliations", path: "/app/reconciliations", icon: Scale,           available: true  },
-  { label: "Team",            path: "/app/team",            icon: Users,           available: true  },
-  { label: "Workpapers",      path: "/app/workpapers",      icon: FileText,        available: false },
-  { label: "Intercompany",    path: "/app/intercompany",    icon: ArrowLeftRight,  available: false },
+  { label: "Dashboard",          path: "/app",                 icon: LayoutDashboard, available: true  },
+  { label: "Tasks",              path: "/app/tasks",           icon: CheckSquare,     available: true  },
+  { label: "Connections",        path: "/app/connections",     icon: Plug,            available: true  },
+  { label: "Flux Analysis",      path: "/app/flux",            icon: BarChart3,       available: true  },
+  { label: "Reconciliations",    path: "/app/reconciliations", icon: Scale,           available: true  },
+  { label: "Intercompany",       path: "/app/intercompany",    icon: ArrowLeftRight,  available: true  },
+  { label: "Financial Package",  path: "/app/financials",      icon: BookOpen,        available: true  },
+  { label: "Team",               path: "/app/team",            icon: Users,           available: true  },
+  { label: "Workpapers",         path: "/app/workpapers",      icon: FileText,        available: false },
 ]
 
 interface Props {

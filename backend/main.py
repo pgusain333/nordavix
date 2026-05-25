@@ -10,6 +10,8 @@ from modules.audit.router import router as audit_router
 from modules.flux.router import router as flux_router
 from modules.qbo.router import oauth_router as qbo_oauth_router
 from modules.qbo.router import qbo_router
+from modules.financials.router import router as financials_router
+from modules.intercompany.router import router as intercompany_router
 from modules.recons.router import router as recons_router
 from modules.tasks.router import router as tasks_router
 from modules.workspace.router import router as workspace_router
@@ -51,6 +53,8 @@ app.include_router(recons_router,    prefix="/api/reconciliations", tags=["recon
 app.include_router(audit_router,     prefix="/api/audit",           tags=["audit"])
 app.include_router(workspace_router, prefix="/api/workspace",       tags=["workspace"])
 app.include_router(tasks_router,     prefix="/api/tasks",           tags=["tasks"])
+app.include_router(intercompany_router, prefix="/api/intercompany", tags=["intercompany"])
+app.include_router(financials_router,   prefix="/api/financials",   tags=["financials"])
 
 
 @app.get("/api/health", tags=["system"])
