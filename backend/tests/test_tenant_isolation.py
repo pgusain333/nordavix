@@ -16,7 +16,6 @@ from core.db.base import current_tenant_id
 from models.trial_balance import TrialBalance
 from modules.flux.service import classify_account, compute_variance, detect_anomalies
 
-
 # ── Tenant isolation ─────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

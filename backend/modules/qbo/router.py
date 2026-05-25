@@ -15,19 +15,19 @@ can associate the tokens with the right tenant without an auth token.
 import base64
 import json
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId
 from core.config import settings
-from core.db.session import get_db, AsyncSessionLocal
 from core.db.base import current_tenant_id as _current_tenant_id
+from core.db.session import AsyncSessionLocal, get_db
 from models.qbo_connection import QboConnection
 
 # Two routers: oauth (no auth gate) and qbo (requires tenant auth)
@@ -130,7 +130,7 @@ async def qbo_callback(
     access_token   = token_data["access_token"]
     refresh_token  = token_data["refresh_token"]
     expires_in     = int(token_data.get("expires_in", 3600))
-    expires_at     = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    expires_at     = datetime.now(UTC) + timedelta(seconds=expires_in)
 
     # Fetch company name
     company_name: str | None = None
@@ -282,7 +282,7 @@ async def fetch_qbo_trial_balance(
 
 async def _get_valid_token(conn: QboConnection, db: AsyncSession) -> str:
     """Return a valid access token, refreshing if close to expiry."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if conn.token_expires_at and conn.token_expires_at > now + timedelta(minutes=5):
         return conn.access_token
 

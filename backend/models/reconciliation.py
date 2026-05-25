@@ -19,7 +19,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from core.db.base import TenantBase
 from core.db.mixins import TimestampMixin
 
-
 # AR | AP | BANK | CC | OTHER
 ReconType = str
 

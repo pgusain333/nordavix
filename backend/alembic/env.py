@@ -6,10 +6,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from alembic import context
-
-from core.db.base import Base
 import models  # noqa: F401 — side effect: registers all models with Base.metadata
+from alembic import context
+from core.db.base import Base
 
 config = context.config
 

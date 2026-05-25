@@ -21,7 +21,7 @@ from core.config import settings
 logger = logging.getLogger(__name__)
 
 _TTL_SECONDS = 300  # 5 minutes
-_cache: dict[str, tuple["ClerkUser", float]] = {}
+_cache: dict[str, tuple[ClerkUser, float]] = {}
 
 
 class ClerkUser(TypedDict):

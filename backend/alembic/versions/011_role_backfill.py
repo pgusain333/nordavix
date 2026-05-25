@@ -12,14 +12,14 @@ the admin so nobody loses access. New users default to "preparer"
 No schema change — the `role` column is already a String. This migration
 just rewrites legacy 'member' values to 'admin'.
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
 revision: str = "011"
-down_revision: Union[str, None] = "010"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "010"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

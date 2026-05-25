@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 ReconType = Literal[
     # Specialized with sub-ledger detail
     "AR", "AP", "BANK", "CC",

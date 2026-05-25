@@ -72,7 +72,21 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = [
-    "B008",   # FastAPI Depends() calls in function defaults are intentional
+    # Pragmatic style ignores — the underlying codebase has accepted these
+    # patterns from day one and chasing them all is a separate cleanup.
+    "B008",    # FastAPI Depends() calls in function defaults are intentional
+    "B904",    # raise-from is style, not correctness
+    "SIM102",  # collapsible-if — explicit nested checks read better
+    "SIM105",  # use-contextlib-suppress — try/except/pass is more explicit
+    "SIM108",  # if-else-block-instead-of-if-exp — readability preference
+    "SIM117",  # multiple-with — nested with blocks easier to debug
+    "UP045",   # use-pep604-annotation in non-runtime contexts
+    "E402",    # module-import-not-at-top — intentional inline imports for
+               # avoiding name conflicts (e.g. `from datetime import date as _date`)
+    "E501",    # line-too-long — we use 100 char target but tolerate longer for clarity
+    "E701",    # multiple-statements-on-one-line-colon — short inline class/if statements
+    "E702",    # multiple-statements-on-one-line-semicolon — short helper functions
+    "E712",    # comparison-to-true — `x == True` is sometimes more explicit in SQL filters
 ]
 
 [tool.mypy]

@@ -14,16 +14,17 @@ A row in this table = the period is currently closed.
 Closing the same period twice is prevented by the unique index.
 Re-opening DELETES the row (with an audit event for history).
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
+from alembic import op
+
 revision: str = "012"
-down_revision: Union[str, None] = "011"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "011"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

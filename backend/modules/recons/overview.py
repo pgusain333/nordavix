@@ -33,10 +33,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import settings
 from models.qbo_connection import QboConnection
 from modules.recons.service import (
     _dec,
@@ -121,9 +119,10 @@ async def fetch_overview(
     # Load persisted per-account review status for this period (one query).
     # The dashboard merges this into each account row so the user sees their
     # own approval state for the period they're looking at.
+    from sqlalchemy import select
+
     from models.account_review_status import AccountReviewStatus
     from models.subledger_evidence import SubledgerEvidence
-    from sqlalchemy import func as _func, select
     status_rows = list((await session.execute(
         select(AccountReviewStatus).where(AccountReviewStatus.period_end == period_end)
     )).scalars().all())
@@ -323,8 +322,9 @@ async def fetch_variance_detail(
     For AR/AP accounts we also annotate JEs that lack a customer/vendor ref
     — those are the canonical drivers of an aging-vs-GL gap.
     """
-    from core.qbo_gl import pull_gl_transactions
     from datetime import timedelta
+
+    from core.qbo_gl import pull_gl_transactions
 
     accts = await _list_balance_sheet_accounts(conn, session)
     acct = next((a for a in accts if str(a.get("Id")) == str(qbo_account_id)), None)

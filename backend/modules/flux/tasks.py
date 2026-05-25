@@ -81,6 +81,7 @@ async def generate_narrative_async(variance_id: str, tenant_id: str) -> dict[str
         # Best-effort: mark the variance as flagged so the UI doesn't poll forever
         try:
             from sqlalchemy import select
+
             from core.db.session import get_async_session_context
             from models.variance import Variance
 
@@ -99,6 +100,7 @@ async def generate_narrative_async(variance_id: str, tenant_id: str) -> dict[str
 async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
     """Async implementation: load data, call Anthropic, save result."""
     from sqlalchemy import select
+
     from core.db.session import get_async_session_context
     from models.account import Account
     from models.narrative import Narrative
@@ -268,7 +270,8 @@ async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
 
 async def _maybe_mark_tb_ready(session: object, var: object, acct: object) -> None:
     """Mark the TB as ready_for_review when all material variances are generated."""
-    from sqlalchemy import select, func
+    from sqlalchemy import func, select
+
     from models.account import Account
     from models.trial_balance import TrialBalance
     from models.variance import Variance

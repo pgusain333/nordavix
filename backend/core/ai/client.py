@@ -1,6 +1,5 @@
 import hashlib
 import time
-import uuid
 from dataclasses import dataclass
 
 import anthropic

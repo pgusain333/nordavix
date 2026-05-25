@@ -18,12 +18,21 @@ import asyncio
 import io
 import logging
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
 import pandas as pd
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 
 from core.config import settings as _settings
 
@@ -32,9 +41,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.auth.dependencies import CurrentTenantId, CurrentUser, ROLE_ORDER, require_role
+from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
 from core.storage import r2 as r2_storage
+from models.account_review_status import AccountReviewStatus
+from models.closed_period import ClosedPeriod
 from models.qbo_connection import QboConnection
 from models.reconciliation import (
     Reconciliation,
@@ -42,9 +53,13 @@ from models.reconciliation import (
     ReconNote,
     ReconTransaction,
 )
-from models.closed_period import ClosedPeriod
 from models.subledger_evidence import SubledgerEvidence
 from models.tenant import Tenant
+from modules.recons.overview import (
+    fetch_overview,
+    fetch_subledger_detail,
+    fetch_variance_detail,
+)
 from modules.recons.schemas import (
     ActivityFeedEntry,
     AssignBody,
@@ -65,12 +80,6 @@ from modules.recons.service import (
     insights_from,
     run_sync,
 )
-from modules.recons.overview import (
-    fetch_overview,
-    fetch_subledger_detail,
-    fetch_variance_detail,
-)
-from models.account_review_status import AccountReviewStatus
 
 router = APIRouter()
 
@@ -284,14 +293,14 @@ async def update_account_review_status(
             period_end=pe,
             status=status_value,
             reviewed_by=user.id if status_value != "pending" else None,
-            reviewed_at=datetime.now(timezone.utc) if status_value != "pending" else None,
+            reviewed_at=datetime.now(UTC) if status_value != "pending" else None,
             notes=notes,
         )
         db.add(row)
     else:
         row.status = status_value
         row.reviewed_by = user.id if status_value != "pending" else None
-        row.reviewed_at = datetime.now(timezone.utc) if status_value != "pending" else None
+        row.reviewed_at = datetime.now(UTC) if status_value != "pending" else None
         if notes is not None:
             row.notes = notes
 
@@ -383,7 +392,7 @@ async def bulk_update_account_review_status(
                 ),
             )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     is_reviewed = status_value != "pending"
     for qid in ids:
         if qid in by_id:
@@ -469,7 +478,7 @@ async def set_account_subledger_override(
         )
     )).scalar_one_or_none()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if row is None:
         row = AccountReviewStatus(
             id=uuid.uuid4(),
@@ -818,7 +827,8 @@ async def get_seed_preview(
     opening subledger. The frontend wizard lets the user edit each row
     before committing via POST /seed.
     """
-    from datetime import date as _date, timedelta as _td
+    from datetime import date as _date
+    from datetime import timedelta as _td
     try:
         bs = _date.fromisoformat(books_start)
     except ValueError:
@@ -837,9 +847,9 @@ async def get_seed_preview(
     # so we re-do the calls without their try/except wrappers and propagate
     # any HTTPException up to a 502.
     from modules.recons.overview import (
+        ACCOUNT_TYPE_GROUPS,
         _qbo_trial_balance_by_account,
         _tb_lookup,
-        ACCOUNT_TYPE_GROUPS,
     )
     from modules.recons.service import _qbo_get
     seed_date = bs - _td(days=1)
@@ -919,7 +929,8 @@ async def seed_books(
           { "qbo_id": "12", "opening_balance": "10000.00",
             "source_note": "GL on 3/31" }, ... ] }
     """
-    from datetime import date as _date, timedelta as _td
+    from datetime import date as _date
+    from datetime import timedelta as _td
 
     try:
         bs = _date.fromisoformat(str(body.get("books_start", "")))
@@ -947,7 +958,7 @@ async def seed_books(
         )
 
     seed_date = bs - _td(days=1)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Replace any pre-existing review rows at this seed_date for safety —
     # tenant-scoped delete then bulk insert. (Pre-seed values shouldn't
@@ -1337,7 +1348,7 @@ async def verify_account_evidence(
         logger.exception("R2 fetch failed during verify")
         raise HTTPException(status_code=502, detail=f"Could not load file from storage: {e}")
 
-    from modules.recons.ai_verify import verify_evidence_document, compute_match
+    from modules.recons.ai_verify import compute_match, verify_evidence_document
     try:
         extracted = await asyncio.to_thread(
             verify_evidence_document,
@@ -1352,7 +1363,7 @@ async def verify_account_evidence(
         **extracted,
         "match_status": match_status,
         "difference":   diff_str,
-        "verified_at":  datetime.now(timezone.utc).isoformat(),
+        "verified_at":  datetime.now(UTC).isoformat(),
     }
     ev.verification = merged
 
@@ -1664,7 +1675,7 @@ async def approve_reconciliation(
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
     recon.approved_by = user.id
-    recon.approved_at = datetime.now(timezone.utc)
+    recon.approved_at = datetime.now(UTC)
     recon.status = "approved"
     await db.commit()
     return recon
@@ -1738,7 +1749,7 @@ async def set_item_status(
     item.status = body.status
     if body.status == "approved":
         item.approved_by = user.id
-        item.approved_at = datetime.now(timezone.utc)
+        item.approved_at = datetime.now(UTC)
     await db.commit()
     return item
 

@@ -6,11 +6,11 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from core.config import settings
 from core.tenancy.middleware import TenantMiddleware
+from modules.audit.router import router as audit_router
 from modules.flux.router import router as flux_router
 from modules.qbo.router import oauth_router as qbo_oauth_router
 from modules.qbo.router import qbo_router
 from modules.recons.router import router as recons_router
-from modules.audit.router import router as audit_router
 from modules.workspace.router import router as workspace_router
 
 if settings.sentry_dsn:

@@ -24,13 +24,13 @@ import base64
 import hashlib
 import logging
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 import anthropic
 import httpx
-from sqlalchemy import and_, delete, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
@@ -52,7 +52,7 @@ _TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 
 async def _refresh_token_if_needed(conn: QboConnection, db: AsyncSession) -> str:
     """Refresh the access token if it's within 5 minutes of expiry."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if conn.token_expires_at and conn.token_expires_at > now + timedelta(minutes=5):
         return conn.access_token
 

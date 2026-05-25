@@ -24,7 +24,6 @@ from core.auth.dependencies import (
     CurrentTenantId,
     CurrentUser,
     RequireAdmin,
-    ROLE_ORDER,
     require_role,
 )
 from core.config import settings
@@ -60,13 +59,11 @@ async def list_members(
     # Clerk membership = authoritative list
     memberships = await list_org_memberships(tenant.clerk_org_id)
 
-    # Map clerk_user_id → our user.id so audit-log UUID refs resolve.
+    # Index our DB users by clerk_id so we can attach our internal UUID +
+    # Nordavix role to each Clerk membership row.
     our_users = list((await db.execute(
         select(User).where(User.tenant_id == tenant_id)
     )).scalars().all())
-    clerk_to_uuid = {u.clerk_user_id: str(u.id) for u in our_users if u.clerk_user_id}
-
-    # Index our DB users by clerk_id so we can attach our role to each row.
     clerk_to_user = {u.clerk_user_id: u for u in our_users if u.clerk_user_id}
 
     members = []

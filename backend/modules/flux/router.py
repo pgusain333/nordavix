@@ -15,15 +15,14 @@ Endpoints:
 """
 import io
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pandas as pd
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from datetime import datetime, timezone
 
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser
@@ -31,8 +30,10 @@ from core.config import settings
 from core.db.session import get_db
 from models.account import Account
 from models.narrative import Narrative
+from models.qbo_connection import QboConnection
 from models.trial_balance import TrialBalance
 from models.variance import Variance
+from models.variance_transaction import VarianceTransaction
 from modules.flux.schemas import (
     ColumnMappingBody,
     FluxRunResponse,
@@ -49,10 +50,11 @@ from modules.flux.service import (
     parse_file_to_preview,
     parse_qbo_trial_balance_report,
 )
-from modules.flux.tasks import generate_narrative_async, generate_narrative_task  # noqa: F401  (kept for celery)
+from modules.flux.tasks import (  # noqa: F401  (kept for celery)
+    generate_narrative_async,
+    generate_narrative_task,
+)
 from modules.flux.variance_txns import pull_transactions_for_variance
-from models.qbo_connection import QboConnection
-from models.variance_transaction import VarianceTransaction
 from modules.qbo.router import _get_valid_token  # type: ignore  # reuse existing helper
 
 router = APIRouter()
@@ -120,8 +122,9 @@ async def create_trial_balance_from_qbo(
     Periods are interpreted as the LAST day of each comparison period. We pull
     two TrialBalance reports (one per period) and merge them by account.
     """
-    import httpx
     from datetime import date as _date
+
+    import httpx
 
     # 1) Validate QBO connection
     conn = (await db.execute(
@@ -542,7 +545,7 @@ async def approve_variance(
 
     var.status = "approved"
     var.approved_by = user.id
-    var.approved_at = datetime.now(timezone.utc)
+    var.approved_at = datetime.now(UTC)
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
         action="flux.variance_approved",
@@ -577,7 +580,7 @@ async def approve_trial_balance(
     if tb is None:
         raise HTTPException(status_code=404, detail="Trial balance not found")
     tb.approved_by = user.id
-    tb.approved_at = datetime.now(timezone.utc)
+    tb.approved_at = datetime.now(UTC)
     tb.status = "complete"
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
@@ -716,7 +719,7 @@ async def toggle_variance_transaction_check(
     else:
         t.is_checked = True
         t.checked_by = user.id
-        t.checked_at = datetime.now(timezone.utc)
+        t.checked_at = datetime.now(UTC)
         action_label = "checked"
 
     await write_audit_event(
@@ -782,7 +785,7 @@ async def update_narrative(
 ) -> dict:
     """Create or update the narrative for a variance (manual edit)."""
     import hashlib
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     var_result = await db.execute(select(Variance).where(Variance.id == var_id))
     var = var_result.scalar_one_or_none()
@@ -799,7 +802,7 @@ async def update_narrative(
     if narr:
         narr.content   = body.content
         narr.edited_by = user.id
-        narr.edited_at = datetime.now(timezone.utc)
+        narr.edited_at = datetime.now(UTC)
     else:
         narr = Narrative(
             id=uuid.uuid4(),
@@ -811,7 +814,7 @@ async def update_narrative(
             input_tokens=0,
             output_tokens=len(body.content.split()),
             edited_by=user.id,
-            edited_at=datetime.now(timezone.utc),
+            edited_at=datetime.now(UTC),
         )
         db.add(narr)
 
@@ -885,7 +888,6 @@ async def export_excel(
         df.to_excel(writer, sheet_name="Variance Analysis", index=False)
 
         # Basic formatting
-        wb = writer.book
         for sheet_name in writer.sheets:
             ws = writer.sheets[sheet_name]
             for col in ws.columns:

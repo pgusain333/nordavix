@@ -12,7 +12,6 @@ has exactly one status row.
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-
 from typing import Any
 
 from sqlalchemy import Date, DateTime, Numeric, String, Text, func, text
