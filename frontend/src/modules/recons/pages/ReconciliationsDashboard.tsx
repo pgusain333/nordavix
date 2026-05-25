@@ -43,6 +43,7 @@ import {
   Lock,
   Unlock,
   ArrowLeft,
+  ArrowRight,
   ChevronDown,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
@@ -193,6 +194,29 @@ export function ReconciliationsDashboard() {
   const closedByName = useUserNames([overview?.closed_by])[overview?.closed_by ?? ""]
   const allApproved = !!overview && overview.accounts.length > 0
     && overview.accounts.every((a) => a.review_status === "approved")
+
+  // Sequential-close gate (mirrored on the backend in /admin/close-period).
+  // Pull the same tracker the main dashboard uses, then look for any prior
+  // periods that block the close: open work AND not yet closed. We disable
+  // the Close button and surface the list inline so the admin doesn't have
+  // to click and read the error to learn what's blocking.
+  const { data: tracker } = useQuery({
+    queryKey: ["period-tracker"],
+    queryFn:  reconsApi.listPeriodTracker,
+    staleTime: 60_000,
+    enabled:  !!qbo,
+  })
+  const priorBlockers = useMemo(() => {
+    if (!tracker?.periods) return [] as { label: string; period_end: string; unapproved: number }[]
+    return tracker.periods
+      .filter((p) => p.period_end < periodEnd)
+      .filter((p) => p.status !== "closed" && p.status !== "complete")
+      .map((p) => {
+        const unapproved = (p.counts.pending ?? 0) + (p.counts.reviewed ?? 0) + (p.counts.flagged ?? 0)
+        return { label: p.label, period_end: p.period_end, unapproved }
+      })
+  }, [tracker, periodEnd])
+  const canCloseNow = allApproved && priorBlockers.length === 0
 
   const closeMut = useMutation({
     mutationFn: () => reconsApi.closePeriod(periodEnd),
@@ -580,15 +604,19 @@ export function ReconciliationsDashboard() {
                   variant="outline"
                   icon={<Lock size={14} strokeWidth={1.8} />}
                   loading={closeMut.isPending}
-                  disabled={!allApproved}
+                  disabled={!canCloseNow}
                   onClick={() => {
                     if (confirm(`Close the books for ${periodEnd}? Once locked, reviewers and preparers can't edit anything for this period.`)) {
                       closeMut.mutate()
                     }
                   }}
-                  title={allApproved
-                    ? "Lock the period so nobody can edit it anymore"
-                    : "All accounts must be approved before you can close the period"}
+                  title={
+                    !allApproved
+                      ? "All accounts must be approved before you can close the period."
+                      : priorBlockers.length > 0
+                        ? `Earlier periods are still open — close them first: ${priorBlockers.map((b) => b.label).join(", ")}.`
+                        : "Lock the period so nobody can edit it anymore."
+                  }
                 >
                   <span className="hidden sm:inline">Close period</span>
                 </Button>
@@ -687,6 +715,58 @@ export function ReconciliationsDashboard() {
             <Button size="sm" icon={<RefreshCw size={14} strokeWidth={1.8} />} onClick={handleSync}>
               Sync from QuickBooks
             </Button>
+          </div>
+        )}
+
+        {/* ── Prior-period blocker banner ──────────────────────────────
+            Admin-only nudge when there's at least one earlier month
+            that still has open work. Books are closed sequentially:
+            you can't lock April if March still has pending accounts.
+            Frontend gate mirrors the backend's /admin/close-period
+            check, but rendering this banner means the admin sees
+            "what's blocking" without first clicking and reading the
+            409 error. */}
+        {isAdmin && !isClosed && overview && priorBlockers.length > 0 && (
+          <div className="rounded-xl p-4 flex items-start gap-3"
+            style={{
+              background: "rgba(245, 158, 11, 0.08)",
+              border: "1px solid #f59e0b",
+            }}>
+            <AlertTriangle size={18} style={{ color: "#b45309" }} className="shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold" style={{ color: "#b45309" }}>
+                Close earlier months first
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "#92400e" }}>
+                Books are closed sequentially. These earlier periods still
+                have open work and need to be approved + closed before you
+                can close {periodEnd}:
+              </p>
+              <ul className="text-xs mt-2 space-y-1">
+                {priorBlockers.slice(0, 5).map((b) => (
+                  <li key={b.period_end}>
+                    <button
+                      onClick={() => navigate(`/app/reconciliations/period/${b.period_end}`)}
+                      className="inline-flex items-center gap-2 hover:underline"
+                      style={{ color: "#b45309" }}
+                    >
+                      <span className="font-semibold">{b.label}</span>
+                      <span className="opacity-80">
+                        {b.unapproved > 0
+                          ? `· ${b.unapproved} open account${b.unapproved === 1 ? "" : "s"}`
+                          : "· no work started"}
+                      </span>
+                      <ArrowRight size={11} strokeWidth={1.8} />
+                    </button>
+                  </li>
+                ))}
+                {priorBlockers.length > 5 && (
+                  <li className="text-[10px]" style={{ color: "#92400e", opacity: 0.7 }}>
+                    + {priorBlockers.length - 5} more
+                  </li>
+                )}
+              </ul>
+            </div>
           </div>
         )}
 

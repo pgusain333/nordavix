@@ -699,6 +699,28 @@ async def close_period(
             detail=f"Period {pe} is already closed by another admin.",
         )
 
+    # Sequential-close gate — closes must happen in order. If ANY earlier
+    # period (after books_start) has open work AND isn't already closed,
+    # block this close until those finish first. Prevents skipping a
+    # month, which is a common accounting compliance issue.
+    blockers = await _find_unclosed_prior_periods(db, tenant_id, pe)
+    if blockers:
+        # Friendly labels like "Apr 2026, Mar 2026" instead of raw dates.
+        labels = ", ".join(
+            b["period_end"].strftime("%b %Y") + (
+                f" ({b['unapproved']} open)" if b["unapproved"] > 0 else " (no work started)"
+            )
+            for b in blockers[:5]
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot close {pe.strftime('%b %Y')} — earlier periods are still open. "
+                f"Close them in order first: {labels}"
+                + ("…" if len(blockers) > 5 else "")
+            ),
+        )
+
     # Pull every review row for the period; require ALL to be approved.
     status_rows = list((await db.execute(
         select(AccountReviewStatus).where(AccountReviewStatus.period_end == pe)
@@ -1101,6 +1123,80 @@ async def _enforce_books_floor(db: AsyncSession, tenant_id: uuid.UUID, period_en
                 "Reconciliations cannot reference periods before books were set up."
             ),
         )
+
+
+async def _find_unclosed_prior_periods(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    period_end: 'date',
+) -> list[dict]:
+    """
+    Sequential-close gate: returns every month-end between books_start
+    and `period_end` (exclusive) that has open work AND isn't already
+    closed. Empty list means it's safe to close `period_end`.
+
+    "Open work" = any AccountReviewStatus row in that period whose
+    status is not 'approved'. Periods with zero rows AND no close
+    record are also flagged (the user skipped the month).
+    """
+    from calendar import monthrange
+    from datetime import date as _date
+
+    t = (await db.execute(
+        select(Tenant.books_start_date).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if t is None:
+        # No books_start set → nothing to gate against. The wizard will
+        # have blocked the user well before this point.
+        return []
+
+    # Enumerate month-ends from books_start through the month BEFORE
+    # period_end (we're checking PRIOR periods, not the one being closed).
+    cur = _date(t.year, t.month, 1)
+    prior_month_ends: list[_date] = []
+    while cur < _date(period_end.year, period_end.month, 1):
+        last_day = monthrange(cur.year, cur.month)[1]
+        me = _date(cur.year, cur.month, last_day)
+        if me >= t:
+            prior_month_ends.append(me)
+        if cur.month == 12:
+            cur = _date(cur.year + 1, 1, 1)
+        else:
+            cur = _date(cur.year, cur.month + 1, 1)
+    if not prior_month_ends:
+        return []
+
+    # Bulk-load review + close rows for those periods.
+    review_rows = list((await db.execute(
+        select(AccountReviewStatus)
+        .where(AccountReviewStatus.period_end.in_(prior_month_ends))
+    )).scalars().all())
+    closed_rows = list((await db.execute(
+        select(ClosedPeriod).where(ClosedPeriod.period_end.in_(prior_month_ends))
+    )).scalars().all())
+    closed_set = {c.period_end for c in closed_rows}
+
+    by_pe: dict[_date, list[AccountReviewStatus]] = {}
+    for r in review_rows:
+        by_pe.setdefault(r.period_end, []).append(r)
+
+    blockers: list[dict] = []
+    for pe in prior_month_ends:
+        if pe in closed_set:
+            continue  # Closed periods are settled, never a blocker.
+        rows = by_pe.get(pe, [])
+        unapproved = [r for r in rows if r.status != "approved"]
+        if rows and not unapproved:
+            # All approved but not yet closed — that's a "ready to close"
+            # not a blocker. Don't list it as a blocker; the admin can
+            # close it whenever. Same convention as the tracker's
+            # "complete" status.
+            continue
+        # Either has open work, or has zero rows (skipped month). Either
+        # way, it needs attention before the user closes `period_end`.
+        blockers.append({"period_end": pe, "unapproved": len(unapproved)})
+    return blockers
 
 
 @router.get("/account/{qbo_account_id}/prior-override")

@@ -226,6 +226,23 @@ async def create_invitation(
     if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found.")
 
+    # When a user signs into Nordavix without ever creating a Clerk
+    # organization, the tenancy middleware provisions a personal
+    # pseudo-org keyed `user_<clerk_user_id>`. That's not a real
+    # Clerk org — calling Clerk's /v1/organizations/{id}/invitations
+    # with a pseudo-org id returns 404 ("Clerk: not found"), which
+    # is what the user just hit. Detect it up-front and tell them
+    # the actual fix: create a workspace via the Companies page.
+    if not tenant.clerk_org_id or tenant.clerk_org_id.startswith("user_"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "You're using a personal workspace which can't have team "
+                "members. Create a company workspace first from the "
+                "Companies page, then switch to it and invite from there."
+            ),
+        )
+
     # Map our role → Clerk's built-in roles. Admin = org:admin so they can
     # manage the org in Clerk's hosted pages; reviewer/preparer = basic.
     clerk_role = "org:admin" if role == "admin" else "org:basic_member"
@@ -247,6 +264,26 @@ async def create_invitation(
                 detail = resp.json().get("errors", [{}])[0].get("message") or resp.text
             except Exception:
                 detail = resp.text
+            # Translate Clerk's two most common errors into actionable copy.
+            if resp.status_code == 404:
+                logger.warning(
+                    "Clerk 404 inviting %s to org=%s inviter=%s — org or inviter missing in Clerk",
+                    email, tenant.clerk_org_id, current_user.clerk_user_id,
+                )
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "The workspace's Clerk organization isn't accessible "
+                        "(it may have been deleted or the link is stale). "
+                        "Go to Companies and pick / recreate the workspace, "
+                        "then try again."
+                    ),
+                )
+            if resp.status_code == 422 and "already" in detail.lower():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{email} already has an invitation or is already a member.",
+                )
             raise HTTPException(status_code=resp.status_code, detail=f"Clerk: {detail}")
         inv = resp.json()
     except HTTPException:
