@@ -43,6 +43,7 @@ import {
   Lock,
   Unlock,
   ArrowLeft,
+  ChevronDown,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import {
@@ -2250,8 +2251,14 @@ function Kpi({ label, value, tone, sub }:
 // from QBO's own ProfitAndLoss report. If our implied NI matches QBO's
 // reported NI, the math ties out and the sync is good. If not, the
 // gap tells you the size of the sync problem.
+//
+// Rendered as an accordion: the header (always visible) shows the
+// status pill so the user sees the verdict at a glance. Clicking
+// expands the equation + verdict for the full breakdown. Default
+// collapsed so it doesn't dominate the dashboard once verified.
 
 function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api").TbCheck }) {
+  const [expanded, setExpanded] = useState(false)
   const hasActual = check.actual_net_income !== null
   const balanced = check.balanced === true
 
@@ -2283,9 +2290,14 @@ function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api"
     <div className="rounded-xl overflow-hidden"
       style={{ background: tone.bg, border: `1px solid ${tone.border}`, boxShadow: "var(--card-shadow)" }}>
 
-      {/* Header */}
-      <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
-        style={{ borderBottom: `1px solid ${tone.border}` }}>
+      {/* Header — always visible, click anywhere to toggle. */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="w-full px-4 py-3 flex items-center justify-between flex-wrap gap-2 text-left transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.03]"
+        style={{ borderBottom: expanded ? `1px solid ${tone.border}` : "none" }}
+      >
         <div className="flex items-center gap-2 min-w-0">
           <span className="inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold"
             style={{ background: tone.fg, color: "white" }}>
@@ -2296,18 +2308,48 @@ function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api"
             style={{ background: "var(--surface-2)", color: tone.fg, border: `1px solid ${tone.border}` }}>
             {!hasActual ? "P&L unavailable" : balanced ? "Math ties out" : "Math doesn't match"}
           </span>
+          {/* When collapsed and there's a mismatch, surface the dollar
+              delta inline so the user knows the magnitude without opening. */}
+          {!expanded && !balanced && diff !== null && hasActual && (
+            <span className="text-[10px] tabular-nums font-semibold ml-1" style={{ color: tone.fg }}>
+              off by {fmtMoney(Math.abs(diff))}
+            </span>
+          )}
         </div>
-        <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-          BS @ {periodEndLabel} · YTD P&L from {ytdStartLabel}
-        </span>
-      </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] hidden sm:inline" style={{ color: "var(--text-muted)" }}>
+            BS @ {periodEndLabel} · YTD P&L from {ytdStartLabel}
+          </span>
+          <ChevronDown
+            size={16} strokeWidth={2}
+            className="transition-transform"
+            style={{
+              color: "var(--text-muted)",
+              transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+            }}
+          />
+        </div>
+      </button>
 
-      {/* Intro */}
-      <div className="px-4 pt-3 text-xs" style={{ color: "var(--text-muted)" }}>
-        A balanced GL means: <span className="font-mono font-semibold text-theme">Assets − Liabilities − Equity = Net Income</span>.
-        If the implied NI from the synced balance sheet matches QuickBooks&apos; reported NI on the P&L,
-        the math ties out and the sync pulled correct figures.
-      </div>
+      {/* Body — collapsible. Default closed; the header alone tells the
+          user whether the sync verified. Smooth height + opacity transition
+          via framer-motion so it doesn't snap. */}
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="tb-check-body"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            style={{ overflow: "hidden" }}
+          >
+            {/* Intro */}
+            <div className="px-4 pt-3 text-xs" style={{ color: "var(--text-muted)" }}>
+              A balanced GL means: <span className="font-mono font-semibold text-theme">Assets − Liabilities − Equity = Net Income</span>.
+              If the implied NI from the synced balance sheet matches QuickBooks&apos; reported NI on the P&L,
+              the math ties out and the sync pulled correct figures.
+            </div>
 
       {/* Three-side equation */}
       <div className="px-4 py-3 text-sm space-y-1.5">
@@ -2366,34 +2408,37 @@ function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api"
         )}
       </div>
 
-      {/* Plain-English verdict */}
-      <div className="px-4 py-2.5 text-[11px] flex items-start gap-2"
-        style={{ borderTop: `1px solid ${tone.border}`, background: "var(--surface-2)", color: "var(--text-2)" }}>
-        <span style={{ color: tone.fg, fontWeight: 700 }}>{tone.icon}</span>
-        <span className="flex-1">
-          {!hasActual ? (
-            <>
-              The P&L pull failed — we can&apos;t auto-verify against QuickBooks. Re-sync to retry,
-              or compare the implied NI manually against your own P&L for the YTD window.
-            </>
-          ) : balanced ? (
-            <>
-              The implied Net Income from the synced balance sheet matches QuickBooks&apos; P&L
-              exactly. The sync is correct and the math is consistent — safe to start reconciling.
-            </>
-          ) : (
-            <>
-              The implied Net Income doesn&apos;t match QuickBooks&apos; P&L by
-              {" "}<span className="font-semibold">{fmtMoney(Math.abs(diff!))}</span>.
-              Most common causes: an account was renamed/recategorized in QBO,
-              a non-Jan-1 fiscal year (the P&L pull spans Jan 1 → period-end),
-              or an unposted journal entry. Click <b>Sync</b> to pull fresh data; if the gap
-              persists, look for an account that&apos;s missing or sitting under the wrong
-              category in QuickBooks.
-            </>
-          )}
-        </span>
-      </div>
+            {/* Plain-English verdict */}
+            <div className="px-4 py-2.5 text-[11px] flex items-start gap-2"
+              style={{ borderTop: `1px solid ${tone.border}`, background: "var(--surface-2)", color: "var(--text-2)" }}>
+              <span style={{ color: tone.fg, fontWeight: 700 }}>{tone.icon}</span>
+              <span className="flex-1">
+                {!hasActual ? (
+                  <>
+                    The P&L pull failed — we can&apos;t auto-verify against QuickBooks. Re-sync to retry,
+                    or compare the implied NI manually against your own P&L for the YTD window.
+                  </>
+                ) : balanced ? (
+                  <>
+                    The implied Net Income from the synced balance sheet matches QuickBooks&apos; P&L
+                    exactly. The sync is correct and the math is consistent — safe to start reconciling.
+                  </>
+                ) : (
+                  <>
+                    The implied Net Income doesn&apos;t match QuickBooks&apos; P&L by
+                    {" "}<span className="font-semibold">{fmtMoney(Math.abs(diff!))}</span>.
+                    Most common causes: an account was renamed/recategorized in QBO,
+                    a non-Jan-1 fiscal year (the P&L pull spans Jan 1 → period-end),
+                    or an unposted journal entry. Click <b>Sync</b> to pull fresh data; if the gap
+                    persists, look for an account that&apos;s missing or sitting under the wrong
+                    category in QuickBooks.
+                  </>
+                )}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
