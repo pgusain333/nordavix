@@ -143,6 +143,8 @@ export interface OverviewAccount {
   subledger_balance:      string
   subledger_source:       string
   subledger_is_manual:    boolean
+  subledger_is_rollforward?: boolean    // default subledger came from prior period close
+  rollforward_from?:      string | null  // ISO date of the prior close we rolled from
   subledger_entered_by:   string | null
   subledger_entered_at:   string | null
   evidence_count:         number

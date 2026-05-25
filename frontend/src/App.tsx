@@ -15,6 +15,7 @@ import { BooksSetupWizard } from "@/modules/onboarding/pages/BooksSetupWizard"
 import { TeamPage } from "@/modules/workspace/pages/TeamPage"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
 import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
+import { TopProgressBar } from "@/core/ui/TopProgressBar"
 
 /**
  * Route-level transition wrapper.
@@ -60,6 +61,9 @@ function AppRoutes() {
 
 export default function App() {
   return (
+    <>
+    {/* Global top progress bar — lights up on any in-flight query/mutation. */}
+    <TopProgressBar />
     <Routes>
       {/* Public marketing pages */}
       <Route path="/" element={<HomePage />} />
@@ -100,5 +104,6 @@ export default function App() {
       <Route path="/flux/*" element={<Navigate to="/app/flux" replace />} />
       <Route path="*"       element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   )
 }

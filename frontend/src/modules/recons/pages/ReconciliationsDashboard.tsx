@@ -917,6 +917,13 @@ export function ReconciliationsDashboard() {
                                   style={{ background: "var(--green)" }}
                                   title="Subledger saved for this period" />
                               )}
+                              {!a.subledger_is_manual && a.subledger_is_rollforward && (
+                                <span className="ml-1.5 inline-flex items-center text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded align-middle"
+                                  style={{ background: "rgba(59, 130, 246, 0.15)", color: "#1d4ed8" }}
+                                  title={`Rolled forward from prior close (${a.rollforward_from}). Open the row to tick reconciling items.`}>
+                                  Roll fwd
+                                </span>
+                              )}
                             </td>
                             <td className="px-3 py-2.5 text-right tabular-nums text-sm font-medium"
                               style={{ color: hasVariance ? "#dc2626" : "var(--green)" }}>

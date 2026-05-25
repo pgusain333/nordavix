@@ -133,6 +133,23 @@ async def fetch_overview(
         s.qbo_account_id: s for s in status_rows
     }
 
+    # Also load every PRIOR-period override per account so we can default the
+    # current period's subledger to the most recent prior closing — the
+    # roll-forward. Without this the dashboard auto-matches AR/AP to their
+    # aging totals, hiding the actual variance the user needs to investigate.
+    # We sort desc by period_end and keep the FIRST row per account = most
+    # recent prior.
+    prior_rows = list((await session.execute(
+        select(AccountReviewStatus)
+        .where(AccountReviewStatus.period_end < period_end)
+        .where(AccountReviewStatus.subledger_total.is_not(None))
+        .order_by(AccountReviewStatus.qbo_account_id, AccountReviewStatus.period_end.desc())
+    )).scalars().all())
+    prior_by_acct: dict[str, AccountReviewStatus] = {}
+    for r in prior_rows:
+        if r.qbo_account_id not in prior_by_acct:
+            prior_by_acct[r.qbo_account_id] = r
+
     # Pull the actual evidence rows so the dashboard can render an inline
     # "attachments" column with click-to-download — no second fetch needed.
     # Bounded per-period set; one query, fan out in memory below.
@@ -155,14 +172,27 @@ async def fetch_overview(
         qbo_id = str(a.get("Id"))
         review = status_by_acct.get(qbo_id)
 
-        # Manual override beats the QBO default. Lets users plug in balances
-        # from external sources (bank statements, FA register, prepaid
-        # schedule) for account types where QBO has no separate subledger.
+        # Subledger resolution priority:
+        #   1) Current-period manual override (what the user explicitly saved
+        #      for this exact period) — final answer, takes precedence.
+        #   2) Most recent PRIOR override — rolled forward. This is the
+        #      starting point for reconciliation; user opens the row, sees
+        #      the gap vs GL, ticks reconciling items to close it.
+        #   3) QBO-computed default (AR aging total, AP aging, GL fallback)
+        #      — only when no history exists for this account.
         is_manual = review is not None and review.subledger_total is not None
+        prior_review = prior_by_acct.get(qbo_id)
         if is_manual:
             subledger_balance = review.subledger_total
             source = review.subledger_source or "Manually entered"
-            has_detail = True  # users can re-edit
+            has_detail = True
+        elif prior_review is not None and prior_review.subledger_total is not None:
+            subledger_balance = prior_review.subledger_total
+            source = (
+                f"Rolled forward from {prior_review.period_end} closing — "
+                "open the row to add reconciling items and adjust to current period."
+            )
+            has_detail = True
         else:
             subledger_balance, source, has_detail = _subledger_for_account(
                 acct_type=acct_type,
@@ -185,6 +215,13 @@ async def fetch_overview(
             "subledger_balance":   str(subledger_balance.quantize(Decimal("0.01"))),
             "subledger_source":    source,
             "subledger_is_manual": is_manual,
+            "subledger_is_rollforward": (
+                not is_manual
+                and prior_review is not None
+                and prior_review.subledger_total is not None
+            ),
+            "rollforward_from":    prior_review.period_end.isoformat()
+                                    if prior_review and not is_manual else None,
             "subledger_entered_by": str(review.subledger_entered_by)
                                     if (review and review.subledger_entered_by) else None,
             "subledger_entered_at": review.subledger_entered_at.isoformat()
