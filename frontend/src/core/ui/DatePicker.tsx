@@ -74,8 +74,8 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
   const today = new Date()
   const todayTriple = { y: today.getFullYear(), m: today.getMonth(), d: today.getDate() }
   const selected = fromIso(value)
-  const minP = min ? fromIso(min) : null
-  const maxP = max ? fromIso(max) : null
+  // `min` / `max` are kept as ISO strings — comparisons happen in
+  // pickDay / pickToday / isDisabledDay via direct string compare.
 
   // Calendar's currently-displayed month — independent of `value` so the
   // user can browse months without changing their selection.
