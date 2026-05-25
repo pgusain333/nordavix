@@ -18,7 +18,7 @@
  * persistence overhead, always fresh.
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
@@ -94,13 +94,26 @@ const GROUP_COLORS: Record<string, string> = {
 export function ReconciliationsDashboard() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  // Seed period from ?period=YYYY-MM-DD when the user navigated here
-  // from the dashboard's month-end tracker.
+  // Seed period from /reconciliations/period/:periodEnd (preferred)
+  // or fall back to ?period=YYYY-MM-DD (legacy) when navigated from the
+  // dashboard's month-end tracker.
+  const { periodEnd: routePeriodEnd } = useParams<{ periodEnd?: string }>()
   const initialPeriod = (() => {
+    if (routePeriodEnd && /^\d{4}-\d{2}-\d{2}$/.test(routePeriodEnd)) return routePeriodEnd
     const sp = new URLSearchParams(window.location.search).get("period")
     return sp && /^\d{4}-\d{2}-\d{2}$/.test(sp) ? sp : defaultPeriodEnd()
   })()
   const [periodEnd, setPeriodEnd] = useState<string>(initialPeriod)
+
+  // Keep the URL and the picker in sync — when the user changes the
+  // period selector in the header, push the new path so refresh / bookmark
+  // / browser back-button all do the right thing.
+  useEffect(() => {
+    if (routePeriodEnd !== periodEnd) {
+      navigate(`/app/reconciliations/period/${periodEnd}`, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodEnd])
   const [search, setSearch] = useState("")
   const [groupFilter, setGroupFilter] = useState<string>("all")
   const [showOnlyVariance, setShowOnlyVariance] = useState(false)

@@ -1,0 +1,459 @@
+/**
+ * FluxMonthIndex — month-by-month landing page for the Flux Analysis module.
+ *
+ * Layout:
+ *   [Header]      Title + "what this is" tagline + New Analysis button
+ *   [Search]      Quick filter by month label (e.g. "Apr 2026")
+ *   [Month rows]  One per month from books_start through current.
+ *                 Each row shows:
+ *                   - Month label + ISO date
+ *                   - Count of flux analyses for that month
+ *                   - Status mix (complete / generating / pending / error)
+ *                   - "Open" button → /app/flux?period=YYYY-MM-DD (sidebar
+ *                     scrolls to that month; existing UploadFlow handles
+ *                     the no-TB case)
+ *
+ * Why a separate index instead of dumping the user straight into
+ * FluxDashboard:
+ *   The user explicitly requested a month-wise dashboard like the recons
+ *   one. This index gives them a single-glance view of "which months
+ *   have flux done, which don't" and a one-click route to the actual
+ *   analysis workspace.
+ *
+ * Empty states:
+ *   - QBO not connected     → CTA to /app/connections
+ *   - Books not seeded      → CTA to /app/setup/books
+ *   - Seeded but no flux    → friendly placeholder + New Analysis CTA
+ */
+import { useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
+import { motion } from "framer-motion"
+import {
+  BarChart3,
+  ArrowRight,
+  Search,
+  CheckCircle2,
+  Circle,
+  Plug,
+  ShieldCheck,
+  Plus,
+  AlertCircle,
+  Sparkles,
+} from "lucide-react"
+import { Button, Spinner } from "@/core/ui/components"
+import { api as fluxApi, type TrialBalance } from "@/modules/flux/api"
+import { reconsApi } from "@/modules/recons/api"
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function monthLabelFromIso(iso: string): string {
+  try {
+    const d = new Date(iso + "T00:00:00")
+    return d.toLocaleDateString(undefined, { month: "short", year: "numeric" })
+  } catch { return iso }
+}
+
+function longMonthLabelFromIso(iso: string): string {
+  try {
+    const d = new Date(iso + "T00:00:00")
+    return d.toLocaleDateString(undefined, { month: "long", year: "numeric" })
+  } catch { return iso }
+}
+
+// ── Status visuals ─────────────────────────────────────────────────────────
+
+const STATUS_DOT: Record<string, string> = {
+  pending:          "var(--border-strong)",
+  processing:       "#f59e0b",
+  parsed:           "#3b82f6",
+  ready_for_review: "#3b82f6",
+  generating:       "#f59e0b",
+  complete:         "var(--green)",
+  error:            "#dc2626",
+}
+
+// ── Component ──────────────────────────────────────────────────────────────
+
+interface MonthRow {
+  periodEnd:    string   // ISO YYYY-MM-DD
+  label:        string   // "Apr 2026"
+  longLabel:    string   // "April 2026"
+  tbs:          TrialBalance[]
+  hasComplete:  boolean
+  hasInflight:  boolean   // processing | generating
+  hasError:     boolean
+}
+
+export function FluxMonthIndex() {
+  const navigate = useNavigate()
+  const [search, setSearch] = useState("")
+
+  const { data: qbo, isLoading: qboLoading } = useQuery({
+    queryKey: ["qbo-connection"],
+    queryFn:  fluxApi.getQboConnection,
+    staleTime: 5 * 60_000,
+  })
+
+  const { data: books, isLoading: booksLoading } = useQuery({
+    queryKey: ["books-status"],
+    queryFn:  reconsApi.getBooksStatus,
+    staleTime: 5 * 60_000,
+  })
+
+  // Use the same tracker as Recons so months are listed identically.
+  // Falls back to TB-derived months if tracker is unavailable.
+  const { data: tracker } = useQuery({
+    queryKey: ["period-tracker"],
+    queryFn:  reconsApi.listPeriodTracker,
+    enabled:  books?.seeded === true,
+    staleTime: 60_000,
+  })
+
+  const { data: tbs = [], isLoading: tbsLoading } = useQuery({
+    queryKey: ["flux-trial-balances"],
+    queryFn:  fluxApi.listTrialBalances,
+    staleTime: 60_000,
+  })
+
+  // Build month rows. Source of truth for "which months exist" is the
+  // tracker (so empty months still show); each row attaches its matching
+  // TBs by year+month of period_current.
+  const rows: MonthRow[] = useMemo(() => {
+    const trackerMonths = tracker?.periods ?? []
+    // Index TBs by YYYY-MM of period_current
+    const tbByMonth = new Map<string, TrialBalance[]>()
+    for (const tb of tbs) {
+      const pc = (tb.period_current || "").slice(0, 7)
+      if (!pc) continue
+      const list = tbByMonth.get(pc) ?? []
+      list.push(tb)
+      tbByMonth.set(pc, list)
+    }
+
+    const built: MonthRow[] = []
+    const seenMonths = new Set<string>()
+
+    // First: every month the tracker knows about (even with zero flux)
+    for (const p of trackerMonths) {
+      const ym = p.period_end.slice(0, 7)
+      seenMonths.add(ym)
+      const monthTbs = tbByMonth.get(ym) ?? []
+      built.push({
+        periodEnd:   p.period_end,
+        label:       p.label,
+        longLabel:   longMonthLabelFromIso(p.period_end),
+        tbs:         monthTbs,
+        hasComplete: monthTbs.some((t) => t.status === "complete"),
+        hasInflight: monthTbs.some((t) => t.status === "processing" || t.status === "generating"),
+        hasError:    monthTbs.some((t) => t.status === "error"),
+      })
+    }
+
+    // Second: any TB months NOT in tracker (e.g. flux ran for a month
+    // outside the books-start range). Surface them so they're not lost.
+    for (const [ym, list] of tbByMonth.entries()) {
+      if (seenMonths.has(ym)) continue
+      // Synthesize a period_end (last day of month) from any TB
+      const sample = list[0].period_current
+      built.push({
+        periodEnd:   sample,
+        label:       monthLabelFromIso(sample),
+        longLabel:   longMonthLabelFromIso(sample),
+        tbs:         list,
+        hasComplete: list.some((t) => t.status === "complete"),
+        hasInflight: list.some((t) => t.status === "processing" || t.status === "generating"),
+        hasError:    list.some((t) => t.status === "error"),
+      })
+    }
+
+    return built
+  }, [tracker, tbs])
+
+  // Filter + newest-first sort.
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const filtered = q
+      ? rows.filter((r) => r.label.toLowerCase().includes(q) || r.periodEnd.includes(q))
+      : rows
+    return filtered.slice().sort((a, b) => (a.periodEnd < b.periodEnd ? 1 : -1))
+  }, [rows, search])
+
+  const totals = useMemo(() => ({
+    months:     rows.length,
+    withFlux:   rows.filter((r) => r.tbs.length > 0).length,
+    complete:   rows.filter((r) => r.hasComplete && !r.hasInflight && !r.hasError).length,
+    inflight:   rows.filter((r) => r.hasInflight).length,
+    error:      rows.filter((r) => r.hasError).length,
+    totalTbs:   tbs.length,
+  }), [rows, tbs])
+
+  const loading = qboLoading || booksLoading || tbsLoading
+
+  // Click → land in FluxDashboard scoped to this month. FluxDashboard
+  // reads ?period= from search params, scrolls to that month group, and
+  // highlights it. If the month has no flux yet, the new-analysis wizard
+  // is what the user sees by default.
+  function openMonth(r: MonthRow) {
+    // If exactly one complete analysis exists, deep-link straight to it.
+    if (r.tbs.length === 1) {
+      navigate(`/app/flux/${r.tbs[0].id}`)
+      return
+    }
+    navigate(`/app/flux/analyses?period=${r.periodEnd}`)
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
+      {/* Header */}
+      <motion.div
+        initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
+        className="px-4 sm:px-8 pt-6 pb-4"
+        style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <h1 style={{
+              fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 700, lineHeight: 1.2,
+              letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
+            }}>
+              Flux Analysis
+            </h1>
+            <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
+              Pick a month to run or review variance analysis between the
+              current and prior period. Material movements are flagged and
+              AI narratives explain the &quot;why&quot; for each one.
+            </p>
+          </div>
+          <Button size="sm" icon={<Plus size={12} strokeWidth={1.8} />}
+            onClick={() => navigate("/app/flux/analyses")}>
+            New analysis
+          </Button>
+        </div>
+      </motion.div>
+
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+
+        {/* Setup-required CTAs */}
+        {!loading && !qbo && (
+          <SetupCard
+            icon={<Plug size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />}
+            title="Connect QuickBooks first"
+            body="Flux analysis pulls TrialBalance reports for the current and prior period live from QuickBooks. Connect once and run analyses for any month with two clicks."
+            cta="Connect QuickBooks"
+            onClick={() => navigate("/app/connections")}
+          />
+        )}
+        {!loading && qbo && books && !books.seeded && (
+          <SetupCard
+            icon={<ShieldCheck size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />}
+            title="Set your books start date"
+            body="Once books are seeded, every closeable month appears here automatically — you can run flux for any of them and the comparison period defaults to one year prior."
+            cta="Set books start date"
+            onClick={() => navigate("/app/setup/books")}
+          />
+        )}
+
+        {/* Toolbar: search + summary chips */}
+        {!loading && qbo && (rows.length > 0 || tbs.length > 0) && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[200px] max-w-md">
+              <Search size={14} strokeWidth={1.8}
+                className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                style={{ color: "var(--text-muted)" }} />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Filter months (e.g. Apr 2026)…"
+                className="w-full rounded-lg pl-9 pr-3 py-2 text-sm outline-none"
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--border-strong)",
+                  color: "var(--text)",
+                }}
+              />
+            </div>
+            <div className="flex items-center gap-2 text-[11px] flex-wrap" style={{ color: "var(--text-muted)" }}>
+              <Chip label={`${totals.months} month${totals.months === 1 ? "" : "s"}`} />
+              <Chip label={`${totals.withFlux} with flux`} fg="var(--green)" bg="var(--green-subtle)" />
+              {totals.inflight > 0 && <Chip label={`${totals.inflight} running`} fg="#92400e" bg="#fef3c7" />}
+              {totals.error > 0 && <Chip label={`${totals.error} error`} fg="#b91c1c" bg="#fef2f2" />}
+              <Chip label={`${totals.totalTbs} total`} />
+            </div>
+          </div>
+        )}
+
+        {/* Month rows */}
+        {loading ? (
+          <div className="py-16 flex items-center justify-center"><Spinner /></div>
+        ) : !qbo ? null : rows.length === 0 ? (
+          <div className="rounded-xl p-10 text-center"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <BarChart3 size={28} strokeWidth={1.6}
+              className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
+            <p className="text-sm font-semibold text-theme mb-1">No analyses yet</p>
+            <p className="text-xs mb-4 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+              Run your first flux analysis to start tracking month-over-month
+              variances. You can pull data straight from QuickBooks or upload a
+              trial balance file.
+            </p>
+            <Button size="sm" icon={<Plus size={12} strokeWidth={1.8} />}
+              onClick={() => navigate("/app/flux/analyses")}>
+              Start a new analysis
+            </Button>
+          </div>
+        ) : (
+          <div className="rounded-xl overflow-hidden"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+            {/* Table header */}
+            <div className="hidden sm:grid grid-cols-[1fr_120px_180px_180px_120px] gap-3 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide"
+              style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)" }}>
+              <span>Period</span>
+              <span>Analyses</span>
+              <span>Status mix</span>
+              <span>Latest activity</span>
+              <span className="text-right">Action</span>
+            </div>
+
+            {filteredRows.length === 0 ? (
+              <div className="px-4 py-10 text-center text-xs" style={{ color: "var(--text-muted)" }}>
+                No months match &quot;{search}&quot;.
+              </div>
+            ) : (
+              <ul>
+                {filteredRows.map((r, idx) => {
+                  const latest = r.tbs.length
+                    ? r.tbs.slice().sort((a, b) =>
+                        (a.created_at < b.created_at ? 1 : -1))[0]
+                    : null
+                  const statusCounts: Record<string, number> = {}
+                  for (const tb of r.tbs) statusCounts[tb.status] = (statusCounts[tb.status] || 0) + 1
+                  return (
+                    <motion.li
+                      key={r.periodEnd}
+                      initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.18, delay: Math.min(idx * 0.015, 0.18) }}
+                    >
+                      <button
+                        onClick={() => openMonth(r)}
+                        className="w-full grid grid-cols-[1fr_120px_180px_180px_120px] gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)] items-center"
+                        style={{ borderBottom: "1px solid var(--border)" }}
+                      >
+                        {/* Period label */}
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-theme">{r.longLabel}</p>
+                          <p className="text-[10px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>
+                            {r.periodEnd}
+                          </p>
+                        </div>
+
+                        {/* Count */}
+                        <div className="text-xs tabular-nums">
+                          {r.tbs.length === 0 ? (
+                            <span className="italic" style={{ color: "var(--text-muted)" }}>none yet</span>
+                          ) : (
+                            <span className="font-semibold text-theme">
+                              {r.tbs.length} analysis{r.tbs.length === 1 ? "" : "es"}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Status mix */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {Object.entries(statusCounts).map(([status, count]) => (
+                            <span key={status}
+                              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                              style={{
+                                background: "var(--surface-2)",
+                                color: "var(--text)",
+                                border: `1px solid ${STATUS_DOT[status] ?? "var(--border)"}`,
+                              }}>
+                              <span className="h-1.5 w-1.5 rounded-full"
+                                style={{ background: STATUS_DOT[status] ?? "var(--border-strong)" }} />
+                              {status} · {count}
+                            </span>
+                          ))}
+                          {r.tbs.length === 0 && (
+                            <span className="text-[10px] italic" style={{ color: "var(--text-muted)" }}>—</span>
+                          )}
+                        </div>
+
+                        {/* Latest activity */}
+                        <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                          {latest ? (
+                            <>
+                              <p className="truncate text-theme">{latest.name || "Untitled"}</p>
+                              <p className="text-[10px] mt-0.5">
+                                {new Date(latest.created_at).toLocaleDateString()}
+                              </p>
+                            </>
+                          ) : (
+                            <span className="italic">no activity</span>
+                          )}
+                        </div>
+
+                        {/* Action */}
+                        <span className="inline-flex items-center justify-end gap-1 text-xs font-semibold"
+                          style={{ color: r.tbs.length > 0 ? "var(--green)" : "var(--text-muted)" }}>
+                          {r.tbs.length > 0 ? "Open" : "Start"}
+                          {r.tbs.length > 0
+                            ? <ArrowRight size={12} strokeWidth={2} />
+                            : <Sparkles size={12} strokeWidth={2} />}
+                        </span>
+                      </button>
+                    </motion.li>
+                  )
+                })}
+              </ul>
+            )}
+            <div className="px-4 py-2 text-[10px] flex items-center justify-between"
+              style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+              <span>
+                {tracker?.books_start_date && `Books started ${tracker.books_start_date} · `}
+                {totals.totalTbs} total analyses
+              </span>
+              <span className="inline-flex items-center gap-1">
+                {totals.error > 0 && <AlertCircle size={10} strokeWidth={2} style={{ color: "#dc2626" }} />}
+                {totals.inflight > 0 && <Circle size={10} strokeWidth={2} style={{ color: "#f59e0b" }} />}
+                {totals.complete > 0 && <CheckCircle2 size={10} strokeWidth={2} style={{ color: "var(--green)" }} />}
+                {totals.withFlux} of {totals.months} months have flux
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Subcomponents ──────────────────────────────────────────────────────────
+
+function Chip({ label, fg = "var(--text)", bg = "var(--surface)" }: { label: string; fg?: string; bg?: string }) {
+  return (
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
+      style={{ background: bg, color: fg, border: "1px solid var(--border)" }}>
+      {label}
+    </span>
+  )
+}
+
+function SetupCard({ icon, title, body, cta, onClick }:
+  { icon: React.ReactNode; title: string; body: string; cta: string; onClick: () => void }) {
+  return (
+    <div className="rounded-xl p-5 flex items-start gap-4"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="h-10 w-10 rounded-full flex items-center justify-center shrink-0"
+        style={{ background: "rgba(245, 158, 11, 0.15)", border: "2px dashed #f59e0b" }}>
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-theme">{title}</p>
+        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{body}</p>
+        <Button size="sm" className="mt-3" icon={<ArrowRight size={12} strokeWidth={1.8} />}
+          onClick={onClick}>
+          {cta}
+        </Button>
+      </div>
+    </div>
+  )
+}

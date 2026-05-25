@@ -348,15 +348,17 @@ export function DashboardHome() {
                     in_progress: { bg: "#dbeafe",                  border: "#3b82f6",         fg: "#1d4ed8",         icon: <Circle size={12} strokeWidth={2} /> },
                     not_started: { bg: "var(--surface-2)",         border: "var(--border)",   fg: "var(--text-muted)", icon: <Circle size={12} strokeWidth={2} /> },
                   }[p.status]
+                  const isSelected = p.period_end === period
                   return (
                     <button
                       key={p.period_end}
-                      onClick={() => navigate(`/app/reconciliations?period=${p.period_end}`)}
+                      onClick={() => setPeriod(p.period_end)}
                       className="rounded-lg p-3 text-left transition-all hover:shadow-md hover:-translate-y-px"
                       style={{
                         background: meta.bg,
-                        border: `1px solid ${meta.border}`,
+                        border: `${isSelected ? "2px" : "1px"} solid ${isSelected ? "var(--green)" : meta.border}`,
                         minWidth: 150,
+                        boxShadow: isSelected ? "0 0 0 3px rgba(16, 185, 129, 0.15)" : undefined,
                       }}
                     >
                       <div className="flex items-center justify-between mb-1.5">
@@ -395,7 +397,7 @@ export function DashboardHome() {
             </div>
             <div className="px-4 py-2 text-[10px]" style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)" }}>
               Books started {tracker!.books_start_date} · {tracker!.periods.length} period{tracker!.periods.length === 1 ? "" : "s"} ·
-              {" "}{tracker!.periods.filter((p) => p.status === "closed").length} closed · click a month to drill in
+              {" "}{tracker!.periods.filter((p) => p.status === "closed").length} closed · click a month to refocus the dashboard
             </div>
             </>
           )}
@@ -420,7 +422,7 @@ export function DashboardHome() {
 
           {/* Open Reconciliations */}
           <button
-            onClick={() => navigate(`/app/reconciliations?period=${period}`)}
+            onClick={() => navigate(`/app/reconciliations/period/${period}`)}
             className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
             <div className="px-4 py-3 flex items-center justify-between"
@@ -485,7 +487,7 @@ export function DashboardHome() {
 
           {/* Open Flux Analysis */}
           <button
-            onClick={() => navigate(`/app/flux?period=${period}`)}
+            onClick={() => navigate(`/app/flux/analyses?period=${period}`)}
             className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
             <div className="px-4 py-3 flex items-center justify-between"

@@ -7,10 +7,12 @@ import { FluxDashboard } from "@/modules/flux/pages/FluxDashboard"
 import { HomePage } from "@/marketing/HomePage"
 import { WorkspaceGate } from "@/core/auth/WorkspaceGate"
 import { ReconciliationsDashboard } from "@/modules/recons/pages/ReconciliationsDashboard"
+import { ReconciliationsMonthIndex } from "@/modules/recons/pages/ReconciliationsMonthIndex"
 import { ARReconciliations } from "@/modules/recons/pages/ARReconciliations"
 import { APReconciliations } from "@/modules/recons/pages/APReconciliations"
 import { ReconciliationDetail } from "@/modules/recons/pages/ReconciliationDetail"
 import { OverridesDashboard } from "@/modules/recons/pages/OverridesDashboard"
+import { FluxMonthIndex } from "@/modules/flux/pages/FluxMonthIndex"
 import { BooksSetupWizard } from "@/modules/onboarding/pages/BooksSetupWizard"
 import { TeamPage } from "@/modules/workspace/pages/TeamPage"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
@@ -46,13 +48,20 @@ function AppRoutes() {
           <Route path="setup/books"  element={<BooksSetupWizard />} />
           <Route path="team"         element={<TeamPage />} />
           <Route path="connections"  element={<ConnectionsPage />} />
-          <Route path="flux"         element={<FluxDashboard />} />
-          <Route path="flux/:tbId"   element={<FluxDashboard />} />
-          <Route path="reconciliations"            element={<ReconciliationsDashboard />} />
-          <Route path="reconciliations/overrides"  element={<OverridesDashboard />} />
-          <Route path="reconciliations/ar"         element={<ARReconciliations />} />
-          <Route path="reconciliations/ap"         element={<APReconciliations />} />
-          <Route path="reconciliations/:reconId"   element={<ReconciliationDetail />} />
+          {/* Flux: index = month-row list, /analyses = full workspace,
+              /:tbId = deep link into a specific analysis. */}
+          <Route path="flux"                  element={<FluxMonthIndex />} />
+          <Route path="flux/analyses"         element={<FluxDashboard />} />
+          <Route path="flux/:tbId"            element={<FluxDashboard />} />
+          {/* Recons: index = month-row list, /period/:periodEnd = full
+              dashboard for that month, /overrides = manual overrides admin.
+              :reconId stays last so it doesn't gobble static children. */}
+          <Route path="reconciliations"                         element={<ReconciliationsMonthIndex />} />
+          <Route path="reconciliations/period/:periodEnd"       element={<ReconciliationsDashboard />} />
+          <Route path="reconciliations/overrides"               element={<OverridesDashboard />} />
+          <Route path="reconciliations/ar"                      element={<ARReconciliations />} />
+          <Route path="reconciliations/ap"                      element={<APReconciliations />} />
+          <Route path="reconciliations/:reconId"                element={<ReconciliationDetail />} />
         </Routes>
       </motion.div>
     </AnimatePresence>
