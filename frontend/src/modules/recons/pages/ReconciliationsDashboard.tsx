@@ -94,7 +94,13 @@ const GROUP_COLORS: Record<string, string> = {
 export function ReconciliationsDashboard() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  // Seed period from ?period=YYYY-MM-DD when the user navigated here
+  // from the dashboard's month-end tracker.
+  const initialPeriod = (() => {
+    const sp = new URLSearchParams(window.location.search).get("period")
+    return sp && /^\d{4}-\d{2}-\d{2}$/.test(sp) ? sp : defaultPeriodEnd()
+  })()
+  const [periodEnd, setPeriodEnd] = useState<string>(initialPeriod)
   const [search, setSearch] = useState("")
   const [groupFilter, setGroupFilter] = useState<string>("all")
   const [showOnlyVariance, setShowOnlyVariance] = useState(false)

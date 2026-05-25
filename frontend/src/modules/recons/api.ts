@@ -476,6 +476,26 @@ async function seedBooks(
   return data
 }
 
+export type PeriodStatus = "not_started" | "in_progress" | "complete" | "closed"
+
+export interface PeriodTrackerEntry {
+  period_end:   string
+  label:        string             // "Apr 2026"
+  status:       PeriodStatus
+  counts:       { pending: number; reviewed: number; approved: number; flagged: number }
+  total:        number
+  approved_pct: number
+  closed_by:    string | null
+  closed_at:    string | null
+}
+
+async function listPeriodTracker(): Promise<{ books_start_date: string; periods: PeriodTrackerEntry[] }> {
+  const { data } = await apiClient.get<{ books_start_date: string; periods: PeriodTrackerEntry[] }>(
+    "/api/reconciliations/periods",
+  )
+  return data
+}
+
 async function closePeriod(periodEnd: string, notes?: string): Promise<{ period_end: string; closed_at: string; closed_by: string }> {
   const { data } = await apiClient.post("/api/reconciliations/close-period", {
     period_end: periodEnd, notes,
@@ -612,6 +632,7 @@ export const reconsApi = {
   closePeriod,
   reopenPeriod,
   listClosedPeriods,
+  listPeriodTracker,
   listOverrides,
   getReconciliation,
   createReconciliation,

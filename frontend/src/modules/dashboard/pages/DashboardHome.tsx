@@ -28,6 +28,9 @@ import {
   Users,
   Clock,
   ShieldCheck,
+  Lock,
+  Circle,
+  CalendarCheck,
 } from "lucide-react"
 import { api as fluxApi } from "@/modules/flux/api"
 import { reconsApi } from "@/modules/recons/api"
@@ -95,6 +98,15 @@ export function DashboardHome() {
     queryFn:  () => reconsApi.getOverview(period),
     enabled:  !!qbo && books?.seeded === true,
     staleTime: 5 * 60_000,
+  })
+
+  // Month-end close tracker — one entry per month from books_start
+  // through current. Drives the close-status timeline component below.
+  const { data: tracker } = useQuery({
+    queryKey: ["period-tracker"],
+    queryFn:  reconsApi.listPeriodTracker,
+    enabled:  books?.seeded === true,
+    staleTime: 60_000,
   })
 
   // Workspace members count
@@ -233,6 +245,84 @@ export function DashboardHome() {
                 </li>
               ))}
             </ol>
+          </div>
+        )}
+
+        {/* ── Month-end close tracker — one tile per month ───────── */}
+        {(tracker?.periods.length ?? 0) > 0 && (
+          <div className="rounded-xl overflow-hidden"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+            <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
+              style={{ borderBottom: "1px solid var(--border)" }}>
+              <div className="flex items-center gap-2">
+                <CalendarCheck size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                <h2 className="text-sm font-semibold text-theme">Month-end close tracker</h2>
+              </div>
+              <div className="flex items-center gap-3 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                <span className="inline-flex items-center gap-1"><Lock size={9} strokeWidth={2} style={{ color: "#b45309" }} /> Closed</span>
+                <span className="inline-flex items-center gap-1"><CheckCircle2 size={9} strokeWidth={2} style={{ color: "var(--green)" }} /> Complete</span>
+                <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "#1d4ed8" }} /> In progress</span>
+                <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "var(--text-muted)" }} /> Open</span>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <div className="flex gap-2 px-4 py-3" style={{ minWidth: "min-content" }}>
+                {tracker!.periods.map((p) => {
+                  const meta = {
+                    closed:      { bg: "rgba(245, 158, 11, 0.10)", border: "#f59e0b",         fg: "#b45309",         icon: <Lock size={12} strokeWidth={2} /> },
+                    complete:    { bg: "var(--green-subtle)",      border: "var(--green)",    fg: "var(--green)",    icon: <CheckCircle2 size={12} strokeWidth={2} /> },
+                    in_progress: { bg: "#dbeafe",                  border: "#3b82f6",         fg: "#1d4ed8",         icon: <Circle size={12} strokeWidth={2} /> },
+                    not_started: { bg: "var(--surface-2)",         border: "var(--border)",   fg: "var(--text-muted)", icon: <Circle size={12} strokeWidth={2} /> },
+                  }[p.status]
+                  return (
+                    <button
+                      key={p.period_end}
+                      onClick={() => navigate(`/app/reconciliations?period=${p.period_end}`)}
+                      className="rounded-lg p-3 text-left transition-all hover:shadow-md hover:-translate-y-px"
+                      style={{
+                        background: meta.bg,
+                        border: `1px solid ${meta.border}`,
+                        minWidth: 150,
+                      }}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold" style={{ color: meta.fg }}>{p.label}</span>
+                        <span style={{ color: meta.fg }}>{meta.icon}</span>
+                      </div>
+                      {p.total > 0 ? (
+                        <>
+                          <div className="text-[10px] mb-1" style={{ color: meta.fg }}>
+                            {p.counts.approved} / {p.total} approved
+                          </div>
+                          {/* Progress bar */}
+                          <div className="h-1.5 w-full rounded-full overflow-hidden"
+                            style={{ background: "rgba(0,0,0,0.08)" }}>
+                            <div className="h-full rounded-full transition-all"
+                              style={{
+                                width: `${p.approved_pct}%`,
+                                background: meta.fg,
+                              }} />
+                          </div>
+                          <div className="flex items-center gap-1 mt-1.5 text-[9px]" style={{ color: meta.fg, opacity: 0.85 }}>
+                            {p.counts.flagged > 0 && <span>🚩 {p.counts.flagged}</span>}
+                            {p.counts.pending > 0 && <span>⌛ {p.counts.pending}</span>}
+                            {p.counts.reviewed > 0 && <span>👁 {p.counts.reviewed}</span>}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-[10px] italic" style={{ color: meta.fg, opacity: 0.7 }}>
+                          Not started
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="px-4 py-2 text-[10px]" style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)" }}>
+              Books started {tracker!.books_start_date} · {tracker!.periods.length} period{tracker!.periods.length === 1 ? "" : "s"} ·
+              {" "}{tracker!.periods.filter((p) => p.status === "closed").length} closed · click a month to drill in
+            </div>
           </div>
         )}
 

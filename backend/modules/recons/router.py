@@ -256,8 +256,12 @@ async def update_account_review_status(
     # Maker/checker: a manual subledger override cannot be approved by
     # the same user who entered it. Self-approval defeats the whole point
     # of the control. Preparer enters → independent reviewer approves.
+    # ADMINS BYPASS this rule — they have master access and can override
+    # any policy when the workflow demands it (e.g. solo bookkeepers,
+    # urgent close at end of period).
     if (
         status_value == "approved"
+        and user.role != "admin"
         and row is not None
         and row.subledger_total is not None
         and row.subledger_entered_by is not None
@@ -267,7 +271,8 @@ async def update_account_review_status(
             status_code=403,
             detail=(
                 "You entered the manual subledger for this account — "
-                "approval must come from a different user (maker/checker control)."
+                "approval must come from a different user (maker/checker control). "
+                "Admins can bypass this rule."
             ),
         )
 
@@ -359,7 +364,8 @@ async def bulk_update_account_review_status(
     # Maker/checker — block bulk approval of any account whose override the
     # current user entered. Bulk action either fully succeeds or fails as a
     # set, so we surface every conflict in the error message.
-    if status_value == "approved":
+    # Admins bypass the rule (master access).
+    if status_value == "approved" and user.role != "admin":
         own_overrides = [
             qid for qid, r in by_id.items()
             if r.subledger_total is not None
@@ -537,6 +543,101 @@ async def _block_if_closed(db: AsyncSession, period_end: date) -> None:
                 "An admin must reopen the period before edits are allowed."
             ),
         )
+
+
+@router.get("/periods")
+async def list_periods_tracker(
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Month-end close tracker: returns one entry per month-end date from
+    the books start through the current month, with:
+      - total accounts that have a review row
+      - status counts (pending / reviewed / approved / flagged)
+      - closed flag + close date if locked
+      - simple progress percentage
+
+    The dashboard renders these as a horizontal timeline so the user can
+    see at a glance which months are open, in progress, or closed.
+    """
+    from calendar import monthrange
+    from datetime import date as _date
+
+    t = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if t is None or t.books_start_date is None:
+        return {"periods": []}
+
+    # Generate month-end dates from books_start month through the current month.
+    today = _date.today()
+    cur = _date(t.books_start_date.year, t.books_start_date.month, 1)
+    month_ends: list[_date] = []
+    while cur <= today.replace(day=1):
+        last_day = monthrange(cur.year, cur.month)[1]
+        month_ends.append(_date(cur.year, cur.month, last_day))
+        # advance one month
+        if cur.month == 12:
+            cur = _date(cur.year + 1, 1, 1)
+        else:
+            cur = _date(cur.year, cur.month + 1, 1)
+
+    # Bulk-load all review + closed-period rows in two queries so we don't
+    # do N+1 lookups.
+    review_rows = list((await db.execute(
+        select(AccountReviewStatus).where(AccountReviewStatus.period_end.in_(month_ends))
+    )).scalars().all())
+    closed_rows = list((await db.execute(
+        select(ClosedPeriod).where(ClosedPeriod.period_end.in_(month_ends))
+    )).scalars().all())
+    closed_by_pe: dict[_date, ClosedPeriod] = {c.period_end: c for c in closed_rows}
+
+    # Index review rows by period_end + status
+    by_pe: dict[_date, list[AccountReviewStatus]] = {}
+    for r in review_rows:
+        by_pe.setdefault(r.period_end, []).append(r)
+
+    out = []
+    for pe in month_ends:
+        rows = by_pe.get(pe, [])
+        # Don't surface the seed-date row as a "real" period
+        if pe < t.books_start_date:
+            continue
+        cnt = {"pending": 0, "reviewed": 0, "approved": 0, "flagged": 0}
+        for r in rows:
+            cnt[r.status if r.status in cnt else "pending"] += 1
+        total = sum(cnt.values())
+        closed = closed_by_pe.get(pe)
+        # Workflow status:
+        #   closed         → books locked
+        #   complete       → all accounts approved but not yet closed
+        #   in_progress    → some activity
+        #   not_started    → no review rows yet
+        if closed:
+            wf_status = "closed"
+        elif total > 0 and cnt["approved"] == total:
+            wf_status = "complete"
+        elif total > 0:
+            wf_status = "in_progress"
+        else:
+            wf_status = "not_started"
+
+        out.append({
+            "period_end": pe.isoformat(),
+            "label":      pe.strftime("%b %Y"),
+            "status":     wf_status,
+            "counts":     cnt,
+            "total":      total,
+            "approved_pct": (cnt["approved"] / total * 100) if total else 0,
+            "closed_by":  str(closed.closed_by) if closed else None,
+            "closed_at":  closed.closed_at.isoformat() if closed and closed.closed_at else None,
+        })
+    return {
+        "books_start_date": t.books_start_date.isoformat(),
+        "periods":          out,
+    }
 
 
 @router.get("/closed-periods")

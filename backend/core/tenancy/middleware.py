@@ -122,6 +122,14 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 )
                 session.add(user)
 
+            # Heal legacy role values on every request — covers the case
+            # where migration 011 hasn't run for an old workspace yet.
+            # We do it here (not in /me) so the User stays attached to the
+            # session that owns it; a remote commit from a different
+            # endpoint session causes "detached instance" errors.
+            if user.role in (None, "", "member"):
+                user.role = "admin"
+
             await session.commit()
             # Refresh to get server-side timestamps after commit
             await session.refresh(tenant)

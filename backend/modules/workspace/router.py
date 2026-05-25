@@ -91,25 +91,17 @@ async def list_members(
 
 
 @router.get("/me")
-async def get_me(
-    user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> dict:
+async def get_me(user: CurrentUser) -> dict:
     """
-    Current user's role + identity. Auto-heals legacy 'member' role values
-    into 'admin' on read in case migration 011 hasn't run yet for this
-    workspace — that way the UI doesn't get stuck showing a preparer view
-    for the actual workspace owner.
+    Current user's role + identity. The middleware handles legacy-role
+    healing now — keeping this endpoint simple so it never errors out
+    and leaves the frontend stuck on a loading state.
     """
-    if user.role in (None, "", "member"):
-        user.role = "admin"
-        await db.commit()
-        await db.refresh(user)
     return {
         "id":            str(user.id),
         "clerk_user_id": user.clerk_user_id,
         "email":         user.email,
-        "role":          user.role,
+        "role":          user.role or "preparer",
     }
 
 
