@@ -122,7 +122,6 @@ async def create_trial_balance_from_qbo(
     Periods are interpreted as the LAST day of each comparison period. We pull
     two TrialBalance reports (one per period) and merge them by account.
     """
-    from datetime import date as _date
 
     import httpx
 
@@ -152,29 +151,18 @@ async def create_trial_balance_from_qbo(
     await db.commit()
     await db.refresh(tb)
 
-    # 3) Pull both TrialBalance reports from QBO. When START dates are provided
-    # we range-scope the report so P&L activity is included for the period
-    # (balance-sheet accounts are still as-of the end_date).
-    async def fetch_tb(period_start: _date | None, period_end: _date) -> dict:
-        token = await _get_valid_token(conn, db)
-        url = (
-            f"{settings.qbo_base_url}/v3/company/{conn.realm_id}/reports/TrialBalance"
-            f"?end_date={period_end.isoformat()}&accounting_method=Accrual"
-        )
-        if period_start:
-            url += f"&start_date={period_start.isoformat()}"
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(
-                url,
-                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            )
-        if resp.status_code != 200:
-            raise RuntimeError(f"QBO TrialBalance pull failed ({resp.status_code}): {resp.text[:300]}")
-        return resp.json()
-
+    # 3) Pull both TrialBalance reports from QBO via the canonical helper
+    # in core.qbo_tb. Reconciliations uses the same helper — that way the
+    # two modules can never drift on how QBO is queried, which used to
+    # cause the same account to show different balances in Flux vs Recons.
+    from core.qbo_tb import fetch_trial_balance
     try:
-        report_current = await fetch_tb(body.period_start_current, body.period_current)
-        report_prior   = await fetch_tb(body.period_start_prior,   body.period_prior)
+        report_current = await fetch_trial_balance(
+            conn, body.period_current, period_start=body.period_start_current,
+        )
+        report_prior = await fetch_trial_balance(
+            conn, body.period_prior, period_start=body.period_start_prior,
+        )
     except Exception as exc:
         tb.status = "error"
         tb.error_detail = str(exc)[:1000]

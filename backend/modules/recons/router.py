@@ -849,7 +849,7 @@ async def get_seed_preview(
     from modules.recons.overview import (
         ACCOUNT_TYPE_GROUPS,
     )
-    from modules.recons.service import _dec, _qbo_get
+    from modules.recons.service import _qbo_get
     seed_date = bs - _td(days=1)
 
     # Direct account list fetch (no swallowed exception)
@@ -882,63 +882,22 @@ async def get_seed_preview(
             "warning":     "QuickBooks returned zero active balance-sheet accounts for this company.",
         }
 
-    # Pull the TrialBalance report once for the seed date. This is the
-    # canonical source — QBO's TrialBalance report is what every QBO user
-    # reconciles against. We use the date_macro=Custom path with explicit
-    # start + end dates spanning the entire year-to-period so historical
-    # balance sheet accounts include all activity (some QBO files don't
-    # return BS account snapshots without a start_date).
+    # Pull + parse via the canonical core.qbo_tb helper so this endpoint
+    # uses IDENTICAL fetch parameters and parsing logic as the rest of the
+    # app (recons overview, flux analysis). Any future improvement to TB
+    # accuracy ripples to every consumer automatically.
+    from core.qbo_tb import fetch_trial_balance, parse_trial_balance
     try:
-        tb_report = await _qbo_get(
-            conn, db, "/reports/TrialBalance",
-            params={
-                "start_date":         f"{seed_date.year}-01-01",
-                "end_date":           seed_date.isoformat(),
-                "accounting_method":  "Accrual",
-                "summarize_column_by":"Total",
-                "minorversion":       "65",
-            },
-        )
+        tb_report = await fetch_trial_balance(conn, seed_date)
     except Exception as e:
         logger.exception("Seed-preview TrialBalance pull failed")
         raise HTTPException(
             status_code=502,
             detail=f"Could not fetch trial balance from QuickBooks ({e}).",
         )
-
-    # Walk the report — track BOTH the qbo id (canonical) and the display
-    # name in several variants, so we can debug name-mismatch issues by
-    # looking at the raw payload.
-    tb_by_id: dict[str, Decimal] = {}
-    tb_by_name: dict[str, Decimal] = {}
-
-    def walk(rows: list[dict]) -> None:
-        for r in rows:
-            cols = r.get("ColData") or []
-            sub  = r.get("Rows", {}).get("Row", []) or []
-            if cols and cols[0].get("value"):
-                name    = str(cols[0]["value"]).strip()
-                acct_id = cols[0].get("id") or ""
-                low     = name.lower()
-                if name and not low.startswith(("total", "subtotal", "net income", "net loss")):
-                    debit  = _dec(cols[1].get("value", "")) if len(cols) > 1 else Decimal("0")
-                    credit = _dec(cols[2].get("value", "")) if len(cols) > 2 else Decimal("0")
-                    bal = debit - credit
-                    if acct_id:
-                        tb_by_id[str(acct_id)] = bal
-                    tb_by_name[name] = bal
-                    tb_by_name[" ".join(name.split())] = bal
-                    if ":" in name:
-                        tb_by_name[name.split(":")[-1].strip()] = bal
-                    if " " in name:
-                        # First-token might be the account number
-                        first_tok = name.split(" ", 1)[0]
-                        if first_tok.replace("-", "").replace(".", "").isdigit():
-                            tb_by_name[first_tok] = bal
-            if sub:
-                walk(sub)
-
-    walk(tb_report.get("Rows", {}).get("Row", []) or [])
+    tb = parse_trial_balance(tb_report)
+    tb_by_id   = tb["by_id"]
+    tb_by_name = tb["by_name"]
 
     # Count P&L accounts we're skipping so the wizard can explain the
     # difference between QBO's TB account count (BS + PL) and our books-
