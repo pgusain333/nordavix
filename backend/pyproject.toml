@@ -2,6 +2,14 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Tell hatchling which top-level dirs make up the package. The backend is
+# laid out flat (core/, models/, modules/) rather than under a single
+# package directory, so hatchling can't auto-detect — without this it
+# errors with "Unable to determine which files to ship inside the wheel".
+[tool.hatch.build.targets.wheel]
+packages = ["core", "models", "modules"]
+include = ["main.py", "alembic.ini"]
+
 [project]
 name = "nordavix-backend"
 version = "0.1.0"
