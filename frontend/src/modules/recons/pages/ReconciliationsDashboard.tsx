@@ -1028,15 +1028,22 @@ function InlineSubledgerForm({
   const qc = useQueryClient()
 
   // Live list of attached evidence files for this account+period.
+  // staleTime keeps the query from refetching on every window-focus /
+  // re-render (default behavior was making the items panel flicker
+  // constantly while the user was filling out the form).
   const { data: evidence, refetch: refetchEvidence } = useQuery({
     queryKey: ["recon-evidence", account.qbo_id, periodEnd],
     queryFn:  () => reconsApi.listAccountEvidence(account.qbo_id, periodEnd),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   })
 
   // Prior period's closing subledger (if any) — roll-forward context.
   const { data: prior } = useQuery({
     queryKey: ["recon-prior-override", account.qbo_id, periodEnd],
     queryFn:  () => reconsApi.getPriorOverride(account.qbo_id, periodEnd),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   })
 
   // Transactions posted to this account in the closing period — these are
@@ -1044,6 +1051,8 @@ function InlineSubledgerForm({
   const { data: periodEntries, isLoading: entriesLoading } = useQuery({
     queryKey: ["recon-period-entries", account.qbo_id, periodEnd],
     queryFn:  () => reconsApi.getPeriodEntries(account.qbo_id, periodEnd),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   })
 
   // Pre-select any items the user previously saved on this override so the
