@@ -545,7 +545,7 @@ async def _block_if_closed(db: AsyncSession, period_end: date) -> None:
         )
 
 
-@router.get("/periods")
+@router.get("/admin/periods")
 async def list_periods_tracker(
     tenant_id: CurrentTenantId,
     db: AsyncSession = Depends(get_db),
@@ -640,7 +640,7 @@ async def list_periods_tracker(
     }
 
 
-@router.get("/closed-periods")
+@router.get("/admin/closed-periods")
 async def list_closed_periods(
     tenant_id: CurrentTenantId,
     db: AsyncSession = Depends(get_db),
@@ -662,7 +662,7 @@ async def list_closed_periods(
     }
 
 
-@router.post("/close-period", dependencies=[Depends(require_role("admin"))])
+@router.post("/admin/close-period", dependencies=[Depends(require_role("admin"))])
 async def close_period(
     body: dict,
     tenant_id: CurrentTenantId,
@@ -744,7 +744,7 @@ async def close_period(
     }
 
 
-@router.post("/reopen-period", dependencies=[Depends(require_role("admin"))])
+@router.post("/admin/reopen-period", dependencies=[Depends(require_role("admin"))])
 async def reopen_period(
     body: dict,
     tenant_id: CurrentTenantId,
@@ -783,7 +783,7 @@ async def reopen_period(
 
 # ── Books-start onboarding (one-time seed of opening balances) ───────────────
 
-@router.get("/books-status")
+@router.get("/setup/books-status")
 async def get_books_status(
     tenant_id: CurrentTenantId,
     db: AsyncSession = Depends(get_db),
@@ -806,7 +806,7 @@ async def get_books_status(
     }
 
 
-@router.get("/seed-preview")
+@router.get("/setup/seed-preview")
 async def get_seed_preview(
     tenant_id: CurrentTenantId,
     books_start: str = Query(..., description="Books start date YYYY-MM-DD (first period the company reconciles)"),
@@ -899,7 +899,7 @@ async def get_seed_preview(
     }
 
 
-@router.post("/seed", dependencies=[Depends(require_role("admin"))])
+@router.post("/setup/seed", dependencies=[Depends(require_role("admin"))])
 async def seed_books(
     body: dict,
     tenant_id: CurrentTenantId,
@@ -1405,7 +1405,7 @@ async def delete_account_evidence(
 
 # ── Reviewer dashboard: every manual override for the tenant ─────────────────
 
-@router.get("/overrides")
+@router.get("/admin/overrides")
 async def list_overrides(
     tenant_id: CurrentTenantId,
     period_end: str | None = Query(default=None, description="Filter by period end YYYY-MM-DD"),

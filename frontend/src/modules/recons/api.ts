@@ -454,13 +454,13 @@ export interface SeedPreview {
 }
 
 async function getBooksStatus(): Promise<BooksStatus> {
-  const { data } = await apiClient.get<BooksStatus>("/api/reconciliations/books-status")
+  const { data } = await apiClient.get<BooksStatus>("/api/reconciliations/setup/books-status")
   return data
 }
 
 async function getSeedPreview(booksStart: string): Promise<SeedPreview> {
   const { data } = await apiClient.get<SeedPreview>(
-    "/api/reconciliations/seed-preview",
+    "/api/reconciliations/setup/seed-preview",
     { params: { books_start: booksStart } },
   )
   return data
@@ -470,7 +470,7 @@ async function seedBooks(
   booksStart: string,
   accounts: { qbo_id: string; opening_balance: string; source_note?: string }[],
 ): Promise<{ books_start_date: string; seed_date: string; accounts_seeded: number }> {
-  const { data } = await apiClient.post("/api/reconciliations/seed", {
+  const { data } = await apiClient.post("/api/reconciliations/setup/seed", {
     books_start: booksStart,
     accounts,
   })
@@ -492,33 +492,33 @@ export interface PeriodTrackerEntry {
 
 async function listPeriodTracker(): Promise<{ books_start_date: string; periods: PeriodTrackerEntry[] }> {
   const { data } = await apiClient.get<{ books_start_date: string; periods: PeriodTrackerEntry[] }>(
-    "/api/reconciliations/periods",
+    "/api/reconciliations/admin/periods",
   )
   return data
 }
 
 async function closePeriod(periodEnd: string, notes?: string): Promise<{ period_end: string; closed_at: string; closed_by: string }> {
-  const { data } = await apiClient.post("/api/reconciliations/close-period", {
+  const { data } = await apiClient.post("/api/reconciliations/admin/close-period", {
     period_end: periodEnd, notes,
   })
   return data
 }
 
 async function reopenPeriod(periodEnd: string): Promise<{ period_end: string; status: string }> {
-  const { data } = await apiClient.post("/api/reconciliations/reopen-period", { period_end: periodEnd })
+  const { data } = await apiClient.post("/api/reconciliations/admin/reopen-period", { period_end: periodEnd })
   return data
 }
 
 async function listClosedPeriods(): Promise<{ period_end: string; closed_by: string; closed_at: string; notes: string | null }[]> {
   const { data } = await apiClient.get<{ periods: { period_end: string; closed_by: string; closed_at: string; notes: string | null }[] }>(
-    "/api/reconciliations/closed-periods",
+    "/api/reconciliations/admin/closed-periods",
   )
   return data.periods
 }
 
 async function listOverrides(periodEnd?: string): Promise<OverrideEntry[]> {
   const { data } = await apiClient.get<{ overrides: OverrideEntry[] }>(
-    "/api/reconciliations/overrides",
+    "/api/reconciliations/admin/overrides",
     { params: periodEnd ? { period_end: periodEnd } : undefined },
   )
   return data.overrides
