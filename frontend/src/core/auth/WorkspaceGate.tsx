@@ -21,8 +21,15 @@ interface Props {
   children: React.ReactNode
 }
 
-// Routes the gate lets through even when books aren't seeded yet.
-const SETUP_PASSTHROUGH = ["/app/setup/books", "/app/connections", "/app/companies"]
+// Only these routes are blocked when books aren't seeded — they're the
+// workhorse modules that need a books_start_date to work.
+// Everything else (dashboard, team, connections, companies, setup wizard
+// itself) stays reachable so an admin can invite teammates / wire up QBO /
+// browse the setup checklist before committing to a books-start date.
+const REQUIRES_SEEDED_BOOKS = [
+  "/app/reconciliations",
+  "/app/flux",
+]
 
 export function WorkspaceGate({ children }: Props) {
   const { organization, isLoaded } = useOrganization()
@@ -42,13 +49,10 @@ export function WorkspaceGate({ children }: Props) {
   // Signed in but no active company → force them through company setup
   if (!organization) return <CompaniesPanel />
 
-  // Org chosen but books not yet seeded → push to the wizard.
-  if (
-    !booksLoading
-    && books
-    && !books.seeded
-    && !SETUP_PASSTHROUGH.some((p) => location.pathname.startsWith(p))
-  ) {
+  // Books not seeded AND user is trying to reach a module that requires
+  // them → bounce to the wizard. Everything else renders normally.
+  const needsBooks = REQUIRES_SEEDED_BOOKS.some((p) => location.pathname.startsWith(p))
+  if (!booksLoading && books && !books.seeded && needsBooks) {
     return <Navigate to="/app/setup/books" replace />
   }
 
