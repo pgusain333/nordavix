@@ -1820,7 +1820,10 @@ function SubledgerBuildup({
   onUntickItem, onEditManual, onDeleteManual,
 }: {
   openingBalance:    number
-  prior:             { period_end: string; subledger_total: string; subledger_source: string | null; status: AccountReviewStatus; evidence_count: number } | null
+  // `prior` widened to also accept undefined so it matches what useQuery
+  // hands back before the request resolves. Renders the same "no prior"
+  // copy whether it's null or undefined.
+  prior:             { period_end: string; subledger_total: string; subledger_source: string | null; status: AccountReviewStatus; evidence_count: number } | null | undefined
   selectedItems:     ReconcilingItem[]
   selectedSum:       number
   computedSubledger: number
