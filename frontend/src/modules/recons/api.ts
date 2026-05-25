@@ -215,6 +215,27 @@ export interface OverviewGroup {
   variance:  string
 }
 
+export interface TbCheck {
+  // Both sides of the accounting equation, summed from the dashboard's
+  // own data (so any discrepancy points at QBO, not at us).
+  assets:               string
+  liab_equity:          string
+  // Net income IMPLIED by the balance sheet: assets − (liab + equity).
+  implied_net_income:   string
+  // Net income ACTUALLY reported by QBO's ProfitAndLoss YTD report.
+  // Null when the P&L call failed (UI then hides the comparison).
+  actual_net_income:    string | null
+  // implied − actual; null when actual_net_income is null. Tiny rounding
+  // diffs (< $1) are considered balanced.
+  difference:           string | null
+  // First day of the YTD window we asked QBO for (Jan 1 of period_end's year).
+  ytd_start:            string
+  // True iff actual_net_income is present AND |difference| < $1.
+  balanced:             boolean
+  // Set when QBO returned an error or the P&L row couldn't be parsed.
+  error:                string | null
+}
+
 export interface Overview {
   period_end:      string
   qbo_connected:   boolean
@@ -225,6 +246,10 @@ export interface Overview {
   closed_by?:      string | null
   closed_at?:      string | null
   closed_notes?:   string | null
+  // Trial-balance proof — computed server-side, surfaces on the
+  // dashboard so the user can verify the QBO sync is internally
+  // consistent before doing close work on top of it.
+  tb_check?:       TbCheck | null
 }
 
 export interface SubledgerRow {

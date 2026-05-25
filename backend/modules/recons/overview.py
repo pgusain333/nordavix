@@ -279,6 +279,13 @@ async def fetch_overview(
         for name, v in sorted(by_group_map.items())
     ]
 
+    # Trial-balance proof: assets − (liab+equity) should equal P&L net
+    # income for the YTD period. Pulled separately from QBO so we can
+    # surface the comparison on the dashboard ("did the sync land
+    # consistent data?"). If QBO is unreachable for any reason, leave
+    # the fields None and the UI skips the check gracefully.
+    tb_check = await _fetch_tb_check(conn, session, period_end, out_accounts)
+
     return {
         "period_end": period_end.isoformat(),
         "accounts":   out_accounts,
@@ -287,7 +294,8 @@ async def fetch_overview(
             "subledger": str(totals_sub.quantize(Decimal("0.01"))),
             "variance":  str(totals_var),
         },
-        "by_group": by_group,
+        "by_group":  by_group,
+        "tb_check":  tb_check,
     }
 
 
@@ -410,6 +418,136 @@ async def fetch_variance_detail(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+# Credit-natural account groups — liabilities + equity carry credit
+# balances and show negative-signed in our convention. Kept in sync
+# with the frontend list in ReconciliationsDashboard.tsx.
+_CREDIT_NATURAL_GROUPS = {
+    "Credit Card", "AP",
+    "Other Current Liabilities", "Long Term Liabilities", "Equity",
+}
+
+
+async def _fetch_tb_check(
+    conn: QboConnection,
+    session: AsyncSession,
+    period_end: date,
+    accounts: list[dict],
+) -> dict | None:
+    """
+    Trial-balance proof: a balanced GL implies
+       Assets − (Liabilities + Equity) = YTD Net Income (from P&L)
+
+    Computes the implied NI from the dashboard's own balance-sheet
+    figures, then pulls QBO's actual NI from the ProfitAndLoss report
+    for the YTD window (Jan 1 → period_end of the current calendar
+    year) and returns both plus their delta. Lets the frontend render
+    a one-glance "the sync is internally consistent" check.
+
+    Returns None when QBO's P&L call fails — UI falls back to hiding
+    the card gracefully rather than blocking the dashboard.
+    """
+    # Sum the dashboard's own asset / L+E sides. This mirrors the
+    # frontend math so any discrepancy points at QBO, not at us.
+    assets = Decimal("0")
+    liab_equity = Decimal("0")
+    for a in accounts:
+        gl = _dec(a.get("gl_balance", "0"))
+        if a.get("group_label") in _CREDIT_NATURAL_GROUPS:
+            liab_equity += abs(gl)
+        else:
+            assets += max(Decimal("0"), gl)
+    implied_ni = (assets - liab_equity).quantize(Decimal("0.01"))
+
+    # YTD window: Jan 1 of the period's calendar year through period_end.
+    # Most US small businesses use calendar fiscal year. If a tenant
+    # operates on a different fiscal year the check is still directionally
+    # correct — just compared against a different "YTD" span. We can
+    # parameterize this later when we surface fiscal-year settings.
+    ytd_start = period_end.replace(month=1, day=1)
+    try:
+        report = await _qbo_get(
+            conn,
+            session,
+            "/reports/ProfitAndLoss",
+            params={
+                "start_date":        ytd_start.isoformat(),
+                "end_date":          period_end.isoformat(),
+                "accounting_method": "Accrual",
+                "minorversion":      "65",
+            },
+        )
+    except Exception:
+        logger.exception("ProfitAndLoss pull failed for YTD check %s → %s", ytd_start, period_end)
+        return {
+            "assets":               str(assets.quantize(Decimal("0.01"))),
+            "liab_equity":          str(liab_equity.quantize(Decimal("0.01"))),
+            "implied_net_income":   str(implied_ni),
+            "actual_net_income":    None,
+            "difference":           None,
+            "ytd_start":            ytd_start.isoformat(),
+            "balanced":             False,
+            "error":                "Could not pull ProfitAndLoss report from QuickBooks.",
+        }
+
+    actual_ni = _extract_net_income(report)
+    if actual_ni is None:
+        return {
+            "assets":               str(assets.quantize(Decimal("0.01"))),
+            "liab_equity":          str(liab_equity.quantize(Decimal("0.01"))),
+            "implied_net_income":   str(implied_ni),
+            "actual_net_income":    None,
+            "difference":           None,
+            "ytd_start":            ytd_start.isoformat(),
+            "balanced":             False,
+            "error":                "Could not find Net Income row in P&L report.",
+        }
+    diff = (implied_ni - actual_ni).quantize(Decimal("0.01"))
+    # Tolerance of $1 covers rounding / sign-flip noise without
+    # missing real drift.
+    balanced = abs(diff) < Decimal("1.00")
+    return {
+        "assets":             str(assets.quantize(Decimal("0.01"))),
+        "liab_equity":        str(liab_equity.quantize(Decimal("0.01"))),
+        "implied_net_income": str(implied_ni),
+        "actual_net_income":  str(actual_ni.quantize(Decimal("0.01"))),
+        "difference":         str(diff),
+        "ytd_start":          ytd_start.isoformat(),
+        "balanced":           balanced,
+        "error":              None,
+    }
+
+
+def _extract_net_income(report: dict) -> Decimal | None:
+    """
+    QBO's ProfitAndLoss report ends with a NetIncome group row.
+    Walk the row tree looking for `group == "NetIncome"` and pull the
+    last numeric ColData value (the total column). Tolerant of report
+    shapes that vary by accounting method / column config.
+    """
+    def walk(rows: list[dict]) -> Decimal | None:
+        for r in rows:
+            if r.get("group") == "NetIncome":
+                summary = (r.get("Summary") or {}).get("ColData") or []
+                # The last non-empty numeric ColData cell is the total.
+                for cell in reversed(summary):
+                    v = (cell or {}).get("value")
+                    if v in (None, ""):
+                        continue
+                    try:
+                        return _dec(v)
+                    except Exception:
+                        continue
+                return None
+            sub = (r.get("Rows") or {}).get("Row") or []
+            if sub:
+                found = walk(sub)
+                if found is not None:
+                    return found
+        return None
+
+    return walk((report.get("Rows") or {}).get("Row") or [])
+
 
 async def _list_balance_sheet_accounts(
     conn: QboConnection,

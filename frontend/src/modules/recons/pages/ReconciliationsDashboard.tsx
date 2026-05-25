@@ -764,6 +764,17 @@ export function ReconciliationsDashboard() {
                 sub={`${overview?.accounts.length ?? 0} accounts total`} />
             </div>
 
+            {/* Trial-Balance Check — proves the QBO sync is internally
+                consistent. Assets − (L+E) MUST equal YTD Net Income from
+                the P&L. If those two match, the books are in balance and
+                you can trust everything else on this page. If they
+                don't, something's missing from the sync (unposted JE,
+                gap in the P&L pull, wrong fiscal year, …) and the
+                user should re-sync before doing reconciliation work. */}
+            {overview?.tb_check && (
+              <TrialBalanceCheckCard check={overview.tb_check} />
+            )}
+
             {/* Status buckets — clicking Approve on a row moves it from
                 Open to Approved, so the close-in-progress queue stays
                 clean. Default lands on Open so reviewers immediately see
@@ -2214,6 +2225,153 @@ function Kpi({ label, value, tone, sub }:
       <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
       <p className="text-xl sm:text-2xl font-bold tabular-nums mt-1" style={{ color: tone }}>{value}</p>
       {sub && <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{sub}</p>}
+    </div>
+  )
+}
+
+// ── Trial Balance Check card ─────────────────────────────────────────────────
+// Visual proof that the QBO sync produced a coherent balance sheet:
+//   Assets − (Liabilities + Equity) = YTD Net Income (from P&L)
+// If those two numbers match, the books are in balance. If they
+// don't, there's a sync gap and the CPA should re-sync or chase down
+// the missing entries before doing close work on top.
+
+function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api").TbCheck }) {
+  const hasActual = check.actual_net_income !== null
+  const balanced = check.balanced
+  const diff = check.difference !== null ? parseFloat(check.difference) : null
+  const actualNi = check.actual_net_income !== null ? parseFloat(check.actual_net_income) : null
+  const impliedNi = parseFloat(check.implied_net_income)
+  const assets = parseFloat(check.assets)
+  const liabEquity = parseFloat(check.liab_equity)
+
+  // Color the card per outcome: green when balanced, amber when QBO
+  // returned actual NI but it doesn't match (the actionable case), and
+  // grey when we couldn't even pull the P&L (informational, not a
+  // sync-quality signal).
+  const tone = !hasActual
+    ? { bg: "var(--surface)",       border: "var(--border)",       fg: "var(--text-muted)", icon: "❓" }
+    : balanced
+      ? { bg: "var(--green-subtle)",border: "var(--green)",        fg: "var(--green)",      icon: "✓" }
+      : { bg: "rgba(220, 38, 38, 0.06)", border: "rgba(220, 38, 38, 0.40)", fg: "#b91c1c",  icon: "⚠" }
+
+  let ytdStartLabel = check.ytd_start
+  try {
+    ytdStartLabel = new Date(check.ytd_start + "T00:00:00").toLocaleDateString(undefined, {
+      month: "short", day: "numeric", year: "numeric",
+    })
+  } catch { /* fallthrough */ }
+
+  return (
+    <div className="rounded-xl overflow-hidden"
+      style={{ background: tone.bg, border: `1px solid ${tone.border}`, boxShadow: "var(--card-shadow)" }}>
+      <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
+        style={{ borderBottom: `1px solid ${tone.border}` }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold"
+            style={{ background: tone.fg, color: "white" }}>
+            {tone.icon}
+          </span>
+          <h2 className="text-sm font-semibold text-theme">Trial balance check</h2>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
+            style={{ background: "var(--surface-2)", color: tone.fg, border: `1px solid ${tone.border}` }}>
+            {!hasActual ? "P&L unavailable" : balanced ? "Balanced" : "Out of balance"}
+          </span>
+        </div>
+        <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+          YTD {ytdStartLabel} → {check.ytd_start.slice(0, 4) === new Date().toISOString().slice(0, 4)
+            ? "period end"
+            : "period end"}
+        </span>
+      </div>
+
+      {/* Equation laid out vertically. Each row reads left-to-right as
+          "label … value". Operators between rows make the math
+          unmistakable. */}
+      <div className="px-4 py-3 text-sm space-y-1.5">
+        <EquationRow label="Total assets" value={fmtMoney(assets)} valueColor="var(--text)" />
+        <Operator op="−" />
+        <EquationRow label="Total liabilities + equity" value={fmtMoney(liabEquity)} valueColor="var(--text)" />
+        <Operator op="=" />
+        <EquationRow
+          label="Implied YTD net income (from the balance sheet)"
+          value={fmtMoney(impliedNi)}
+          valueColor={impliedNi < 0 ? "#dc2626" : "var(--text)"}
+          bold
+        />
+
+        {/* Separator before the QBO actual */}
+        <div style={{ borderTop: "1px dashed var(--border)" }} className="!my-3" />
+
+        {hasActual ? (
+          <>
+            <EquationRow
+              label="Actual YTD net income (from QuickBooks P&L)"
+              value={fmtMoney(actualNi!)}
+              valueColor={actualNi! < 0 ? "#dc2626" : "var(--text)"}
+              bold
+            />
+            <EquationRow
+              label="Difference (implied − actual)"
+              value={fmtMoney(diff!, true)}
+              valueColor={tone.fg}
+              bold
+            />
+          </>
+        ) : (
+          <p className="text-xs italic py-1" style={{ color: "var(--text-muted)" }}>
+            Couldn&apos;t pull the YTD ProfitAndLoss report from QuickBooks{check.error ? ` (${check.error})` : ""}.
+            The implied net income above is still meaningful — compare it to your own P&L manually.
+          </p>
+        )}
+      </div>
+
+      {/* Plain-English verdict line — the one-sentence "what does this
+          actually mean" so the user doesn't have to interpret the math. */}
+      <div className="px-4 py-2.5 text-[11px] flex items-start gap-2"
+        style={{ borderTop: `1px solid ${tone.border}`, background: "var(--surface-2)", color: "var(--text-2)" }}>
+        <span style={{ color: tone.fg }}>{tone.icon}</span>
+        <span className="flex-1">
+          {!hasActual ? (
+            <>
+              The P&L pull failed — we can&apos;t auto-verify against QuickBooks. Re-sync to retry,
+              or compare the implied NI against your own P&L for {ytdStartLabel} → period-end.
+            </>
+          ) : balanced ? (
+            <>
+              The synced data is internally consistent — the balance sheet&apos;s implied YTD net income
+              matches what QuickBooks reports on the P&L. Safe to start reconciling.
+            </>
+          ) : (
+            <>
+              The implied net income doesn&apos;t match what QuickBooks&apos; P&L says by
+              {" "}<span className="font-semibold">{fmtMoney(Math.abs(diff!))}</span>. Common causes:
+              an unposted journal entry, a mid-period sync gap, or a fiscal year that doesn&apos;t
+              start on Jan&nbsp;1. Re-sync first; if the drift persists, look for missing JEs in QBO.
+            </>
+          )}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function EquationRow({ label, value, valueColor, bold }:
+  { label: string; value: string; valueColor: string; bold?: boolean }
+) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-xs" style={{ color: "var(--text-2)" }}>{label}</span>
+      <span className={`tabular-nums ${bold ? "text-base font-bold" : "font-semibold"}`}
+        style={{ color: valueColor }}>{value}</span>
+    </div>
+  )
+}
+
+function Operator({ op }: { op: string }) {
+  return (
+    <div className="flex justify-center">
+      <span className="text-base font-bold leading-none" style={{ color: "var(--text-muted)" }}>{op}</span>
     </div>
   )
 }
