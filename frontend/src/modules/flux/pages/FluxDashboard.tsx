@@ -32,6 +32,7 @@ import {
   Sparkles,
   CheckCircle2,
   Upload,
+  ArrowLeft,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
@@ -453,6 +454,17 @@ export function FluxDashboard() {
         {/* Header */}
         <div className="flex items-center gap-2 px-4 sm:px-6 py-3.5 shrink-0"
           style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
+
+          {/* Back-to-dashboard — one click home so the user isn't trapped
+              deep inside an analysis without a clear exit. */}
+          <button
+            className="flex items-center justify-center h-7 w-7 rounded-md mr-1 transition-colors hover:bg-[var(--surface-2)]"
+            style={{ color: "var(--text-muted)" }}
+            title="Back to the workspace dashboard"
+            onClick={() => navigate("/app")}
+          >
+            <ArrowLeft size={16} strokeWidth={1.8} />
+          </button>
 
           {/* Mobile: history toggle button */}
           <button

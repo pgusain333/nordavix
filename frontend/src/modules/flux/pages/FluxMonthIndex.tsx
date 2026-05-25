@@ -32,6 +32,7 @@ import { motion } from "framer-motion"
 import {
   BarChart3,
   ArrowRight,
+  ArrowLeft,
   Search,
   CheckCircle2,
   Circle,
@@ -212,6 +213,15 @@ export function FluxMonthIndex() {
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
+            <button
+              onClick={() => navigate("/app")}
+              className="inline-flex items-center gap-1 text-[11px] font-medium mb-2 transition-opacity hover:opacity-70"
+              style={{ color: "var(--text-muted)" }}
+              title="Back to the workspace dashboard"
+            >
+              <ArrowLeft size={12} strokeWidth={2} />
+              Back to dashboard
+            </button>
             <h1 style={{
               fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 700, lineHeight: 1.2,
               letterSpacing: "-0.01em", color: "var(--text)", margin: 0,

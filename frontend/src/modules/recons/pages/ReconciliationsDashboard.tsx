@@ -42,6 +42,7 @@ import {
   ShieldCheck,
   Lock,
   Unlock,
+  ArrowLeft,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import {
@@ -413,6 +414,17 @@ export function ReconciliationsDashboard() {
       >
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
+            {/* Back-to-dashboard breadcrumb — one click home so the user
+                isn't trapped two levels deep without the sidebar. */}
+            <button
+              onClick={() => navigate("/app")}
+              className="inline-flex items-center gap-1 text-[11px] font-medium mb-2 transition-opacity hover:opacity-70"
+              style={{ color: "var(--text-muted)" }}
+              title="Back to the workspace dashboard"
+            >
+              <ArrowLeft size={12} strokeWidth={2} />
+              Back to dashboard
+            </button>
             <h1
               style={{
                 fontSize: "clamp(22px, 5vw, 28px)",
@@ -662,7 +674,7 @@ export function ReconciliationsDashboard() {
               style={{ background: "var(--surface-2)", border: "1px solid var(--border)", width: "fit-content" }}>
               {([
                 { key: "open",     label: "Open",     fg: "#b91c1c", bg: "#fef2f2" },
-                { key: "reviewed", label: "Reviewed", fg: "#1d4ed8", bg: "#dbeafe" },
+                { key: "reviewed", label: "Prepared", fg: "#1d4ed8", bg: "#dbeafe" },
                 { key: "approved", label: "Approved", fg: "var(--green)", bg: "var(--green-subtle)" },
                 { key: "all",      label: "All",      fg: "var(--text)", bg: "var(--surface)" },
               ] as const).map((b) => {
@@ -749,7 +761,7 @@ export function ReconciliationsDashboard() {
                     {overview?.accounts.length === 0
                       ? "Try a different period end, or sync again."
                       : statusBucket === "open" && bucketCounts.open === 0
-                        ? `${bucketCounts.approved} approved · ${bucketCounts.reviewed} reviewed.`
+                        ? `${bucketCounts.approved} approved · ${bucketCounts.reviewed} prepared.`
                         : "Try clearing the search or switching the status bucket."}
                   </p>
                 </div>
@@ -774,7 +786,7 @@ export function ReconciliationsDashboard() {
                             loading={bulkStatusMut.isPending}
                             onClick={() => bulkStatusMut.mutate("reviewed")}
                           >
-                            Mark reviewed
+                            Mark prepared
                           </Button>
                           <Button size="sm" variant="outline" icon={<AlertTriangle size={11} strokeWidth={1.8} />}
                             loading={bulkStatusMut.isPending}
@@ -1011,9 +1023,17 @@ export function ReconciliationsDashboard() {
                                       account={a}
                                       periodEnd={periodEnd}
                                       saving={subledgerMut.isPending}
-                                      onSave={(total, source, items) =>
+                                      onSave={(total, source, items) => {
+                                        // Persist the override...
                                         subledgerMut.mutate({ qboId: a.qbo_id, total, source, items })
-                                      }
+                                        // ...and bump the row to "Prepared" so the maker step
+                                        // is captured (= the "reviewed" enum on the API). Skip
+                                        // the bump for already-Approved rows so re-editing an
+                                        // approved recon doesn't silently downgrade it.
+                                        if (a.review_status !== "approved" && a.review_status !== "reviewed") {
+                                          setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })
+                                        }
+                                      }}
                                       onClear={() =>
                                         subledgerMut.mutate({ qboId: a.qbo_id, total: null, source: null, items: [] })
                                       }
@@ -1080,9 +1100,15 @@ export function ReconciliationsDashboard() {
 // Clickable dropdown-style chip. Click to cycle to the next status, or
 // shift-click to skip back. Inline flow — no modal, no page navigation.
 
+// Two-step maker/checker flow:
+//   Pending → Prepared (preparer ticked reconciling items + clicked
+//   "Reconcile") → Approved (reviewer/admin signed off). The underlying
+//   API status stays "reviewed" so existing rows + audit log keep their
+//   meaning; the UI just relabels it as "Prepared" to match how the
+//   maker/checker workflow reads in finance teams.
 const STATUS_META: Record<AccountReviewStatus, { label: string; bg: string; fg: string }> = {
   pending:  { label: "Pending",  bg: "var(--surface-2)",     fg: "var(--text-muted)" },
-  reviewed: { label: "Reviewed", bg: "#dbeafe",              fg: "#1d4ed8" },
+  reviewed: { label: "Prepared", bg: "#dbeafe",              fg: "#1d4ed8" },
   approved: { label: "Approved", bg: "var(--green-subtle)",  fg: "var(--green)" },
   flagged:  { label: "Flagged",  bg: "#fee2e2",              fg: "#b91c1c" },
 }
@@ -1465,11 +1491,28 @@ function InlineSubledgerForm({
         )
       })()}
 
-      {/* ── Reconciling items table (wide, just under variance) ─────
-          Pulled live from QBO via /period-entries. Selecting items
-          closes the variance gap. Persists on the override on save.
-          Plus a manual-add form for items not yet in QBO (outstanding
-          bank checks, deposits in transit, missing JEs). */}
+      {/* ── Subledger build-up (NOW the first thing under the variance
+          strip, by user request: "Sub ledger build should be above
+          reconciling items section"). Opening balance is the rolled-
+          forward prior-period close; each reconciling item the preparer
+          ticks below shows up here as a line so they can watch the
+          closing total tie out to GL in real time. */}
+      <SubledgerBuildup
+        openingBalance={openingBalance}
+        prior={prior}
+        selectedItems={selectedItems}
+        selectedSum={selectedSum}
+        computedSubledger={computedSubledger}
+        onUntickItem={(it) => toggleItem(it)}
+        onEditManual={(it) => startEditManualItem(it)}
+        onDeleteManual={(id) => deleteManualItem(id)}
+      />
+
+      {/* ── Reconciling items table (now BELOW the build-up so the
+          preparer's eye flows: see opening → tick items here → see
+          closing total update above). Pulled live from QBO via
+          /period-entries. Plus a manual-add form for items not yet
+          in QBO (outstanding bank checks, deposits in transit, JEs). */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
           <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
@@ -1596,160 +1639,16 @@ function InlineSubledgerForm({
         )}
       </div>
 
-      {/* ── Wide subledger build-up ────────────────────────────────
-          Opening (rolled forward or current dashboard value) ± each
-          selected reconciling item = closing subledger. List of items
-          included so user sees what makes up the balance; manual items
-          carry edit + delete affordances. Pure calculation — the closing
-          value flows into the variance strip and the save. */}
-      <div className="rounded-xl mb-4 overflow-hidden"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <div className="px-4 py-2 flex items-center justify-between"
-          style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
-          <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-            Subledger build-up
-          </span>
-          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-            Opening ± reconciling items = closing
-          </span>
-        </div>
-        <div className="px-4 py-3 space-y-1.5 text-sm">
-          {/* Opening line */}
-          <div className="flex items-center justify-between">
-            <span style={{ color: "var(--text-2)" }}>
-              Opening balance
-              <span className="ml-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                {prior
-                  ? `Rolled forward from ${prior.period_end}`
-                  : "From dashboard (set books-start in onboarding to anchor properly)"}
-              </span>
-            </span>
-            <span className="tabular-nums font-semibold text-theme">{fmtMoney(openingBalance)}</span>
-          </div>
-
-          {/* Per-item lines (collapsible if very long) */}
-          {selectedItems.length === 0 ? (
-            <p className="text-[11px] py-1.5 italic" style={{ color: "var(--text-muted)" }}>
-              No reconciling items selected. Tick QBO entries above or use “Add manual item”.
-            </p>
-          ) : (
-            <ul className="space-y-0.5 max-h-48 overflow-y-auto">
-              {selectedItems.map((it) => {
-                const isManual = it.txn_id.startsWith("manual-")
-                const amt = parseFloat(it.amount) || 0
-                return (
-                  <li key={it.txn_id}
-                    className="flex items-center gap-2 py-1 px-1 text-xs rounded"
-                    style={{ background: "transparent" }}>
-                    <span style={{ color: amt >= 0 ? "var(--green)" : "#ef4444" }}>
-                      {amt >= 0 ? "+" : "−"}
-                    </span>
-                    {isManual && (
-                      <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded"
-                        style={{ background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b" }}>
-                        Manual
-                      </span>
-                    )}
-                    <span className="flex-1 truncate text-theme">
-                      {it.memo || it.txn_type}
-                      <span className="ml-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                        {it.txn_type}{it.txn_number ? ` · #${it.txn_number}` : ""}
-                        {it.txn_date ? ` · ${it.txn_date}` : ""}
-                      </span>
-                    </span>
-                    <span className="tabular-nums font-semibold whitespace-nowrap"
-                      style={{ color: amt >= 0 ? "var(--green)" : "#ef4444" }}>
-                      {amt >= 0 ? "+" : ""}{fmtMoney(amt)}
-                    </span>
-                    {isManual ? (
-                      <>
-                        <button type="button"
-                          onClick={() => startEditManualItem(it)}
-                          className="h-5 w-5 inline-flex items-center justify-center rounded"
-                          title="Edit"
-                          style={{ color: "var(--text-muted)" }}>
-                          <Edit2 size={11} strokeWidth={1.8} />
-                        </button>
-                        <button type="button"
-                          onClick={() => deleteManualItem(it.txn_id)}
-                          className="h-5 w-5 inline-flex items-center justify-center rounded"
-                          title="Delete"
-                          style={{ color: "#ef4444" }}>
-                          <X size={12} strokeWidth={1.8} />
-                        </button>
-                      </>
-                    ) : (
-                      <button type="button"
-                        onClick={() => toggleItem(it)}
-                        className="h-5 w-5 inline-flex items-center justify-center rounded"
-                        title="Untick from selection"
-                        style={{ color: "var(--text-muted)" }}>
-                        <X size={12} strokeWidth={1.8} />
-                      </button>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-
-          {/* Items subtotal */}
-          {selectedItems.length > 0 && (
-            <div className="flex items-center justify-between pt-1"
-              style={{ borderTop: "1px dashed var(--border)" }}>
-              <span style={{ color: "var(--text-2)" }}>
-                Items subtotal ({selectedItems.length})
-              </span>
-              <span className="tabular-nums font-semibold"
-                style={{ color: selectedSum >= 0 ? "var(--green)" : "#ef4444" }}>
-                {selectedSum >= 0 ? "+" : ""}{fmtMoney(selectedSum)}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Closing line — the saved subledger total */}
-        <div className="px-4 py-2.5 flex items-center justify-between"
-          style={{ borderTop: "2px solid var(--border-strong)", background: "var(--green-subtle)" }}>
-          <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--green)" }}>
-            = Closing subledger
-          </span>
-          <span className="tabular-nums text-base font-bold" style={{ color: "var(--green)" }}>
-            {fmtMoney(computedSubledger)}
-          </span>
-        </div>
-      </div>
+      {/* The full subledger build-up rendering moved to the top of this
+          form (above the reconciling-items table) — see SubledgerBuildup
+          component near the top of the body. We dropped the redundant
+          blue "Rolled forward from prior period" card that used to live
+          here: that information is already on the Opening balance line
+          inside the build-up ("Rolled forward from <date>"). */}
 
       {/* ── Lower two-column area: entry fields | evidence ────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="space-y-3">
-            {/* Roll-forward card — prior period closing auto-flows in as the
-                subledger value. The user sees what was rolled forward and
-                the input is locked (admin-only to override). */}
-            {prior && (
-              <div className="rounded-lg p-3 space-y-2"
-                style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>
-                <div className="flex items-center gap-1.5">
-                  <ShieldCheck size={11} strokeWidth={1.8} style={{ color: "#1d4ed8" }} />
-                  <span className="text-[10px] font-bold uppercase tracking-wide"
-                    style={{ color: "#1d4ed8" }}>
-                    Rolled forward from prior period
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span style={{ color: "#1e3a8a" }}>Closing as of {prior.period_end}</span>
-                  <span className="font-bold tabular-nums" style={{ color: "#1e3a8a" }}>
-                    {fmtMoney(prior.subledger_total)}
-                  </span>
-                </div>
-                {prior.subledger_source && (
-                  <p className="text-[10px]" style={{ color: "#1e40af" }}>
-                    Source: {prior.subledger_source}
-                  </p>
-                )}
-              </div>
-            )}
-
             <label className="block">
               <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 Source / notes (optional)
@@ -1881,15 +1780,175 @@ function InlineSubledgerForm({
           </button>
         ) : <span />}
         <div className="flex items-center gap-2">
+          {/* Two-step maker/checker hint — only shown when the row will
+              actually promote (i.e. it's still Pending/Flagged). Once
+              Prepared, the button still re-saves but doesn't downgrade. */}
+          {(account.review_status === "pending" || account.review_status === "flagged") && (
+            <span className="text-[10px] hidden sm:inline" style={{ color: "var(--text-muted)" }}>
+              Saves + marks <span className="font-semibold" style={{ color: "#1d4ed8" }}>Prepared</span>
+              {" "}— a reviewer signs off after.
+            </span>
+          )}
           <Button size="sm" variant="ghost" type="button" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button size="sm" type="submit" loading={saving}>
-            Save subledger
+          {/* "Reconcile" replaces the old "Save subledger" copy — it now
+              both persists the override AND moves the row to Prepared
+              (the maker side of maker/checker). Reviewer/admin still
+              has to flip it to Approved separately. Bound at the
+              call-site so the status bump only happens for non-approved
+              rows (won't downgrade an already-approved one). */}
+          <Button size="sm" type="submit" loading={saving}
+            icon={<CheckCircle2 size={13} strokeWidth={2} />}>
+            Reconcile
           </Button>
         </div>
       </div>
     </form>
+  )
+}
+
+// ── Subledger build-up subcomponent ─────────────────────────────────────────
+// Extracted so the form body can swap its position without dragging 100+
+// lines of JSX along. Renders the opening balance (rolled forward, with
+// the date inline so the redundant blue card up top is no longer needed),
+// each selected reconciling item, the running subtotal, and the closing
+// total. Pure presentation — all state lives in the parent form.
+
+function SubledgerBuildup({
+  openingBalance, prior, selectedItems, selectedSum, computedSubledger,
+  onUntickItem, onEditManual, onDeleteManual,
+}: {
+  openingBalance:    number
+  prior:             { period_end: string; subledger_total: string; subledger_source: string | null; status: AccountReviewStatus; evidence_count: number } | null
+  selectedItems:     ReconcilingItem[]
+  selectedSum:       number
+  computedSubledger: number
+  onUntickItem:      (it: ReconcilingItem) => void
+  onEditManual:      (it: ReconcilingItem) => void
+  onDeleteManual:    (id: string) => void
+}) {
+  return (
+    <div className="rounded-xl mb-4 overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <div className="px-4 py-2 flex items-center justify-between"
+        style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+        <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+          Subledger build-up
+        </span>
+        <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+          Opening ± reconciling items = closing
+        </span>
+      </div>
+      <div className="px-4 py-3 space-y-1.5 text-sm">
+        {/* Opening line — this is the rolled-forward prior close. The
+            source label is shown inline so users no longer need the
+            separate blue "Rolled forward from prior period" card that
+            used to live below. */}
+        <div className="flex items-center justify-between">
+          <span style={{ color: "var(--text-2)" }}>
+            Opening balance
+            <span className="ml-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+              {prior
+                ? `Rolled forward from ${prior.period_end}${prior.subledger_source ? ` · ${prior.subledger_source}` : ""}`
+                : "From dashboard (set books-start in onboarding to anchor properly)"}
+            </span>
+          </span>
+          <span className="tabular-nums font-semibold text-theme">{fmtMoney(openingBalance)}</span>
+        </div>
+
+        {/* Per-item lines (collapsible if very long) */}
+        {selectedItems.length === 0 ? (
+          <p className="text-[11px] py-1.5 italic" style={{ color: "var(--text-muted)" }}>
+            No reconciling items selected. Tick QBO entries in the table below or use “Add manual item”.
+          </p>
+        ) : (
+          <ul className="space-y-0.5 max-h-48 overflow-y-auto">
+            {selectedItems.map((it) => {
+              const isManual = it.txn_id.startsWith("manual-")
+              const amt = parseFloat(it.amount) || 0
+              return (
+                <li key={it.txn_id}
+                  className="flex items-center gap-2 py-1 px-1 text-xs rounded"
+                  style={{ background: "transparent" }}>
+                  <span style={{ color: amt >= 0 ? "var(--green)" : "#ef4444" }}>
+                    {amt >= 0 ? "+" : "−"}
+                  </span>
+                  {isManual && (
+                    <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded"
+                      style={{ background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b" }}>
+                      Manual
+                    </span>
+                  )}
+                  <span className="flex-1 truncate text-theme">
+                    {it.memo || it.txn_type}
+                    <span className="ml-1 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      {it.txn_type}{it.txn_number ? ` · #${it.txn_number}` : ""}
+                      {it.txn_date ? ` · ${it.txn_date}` : ""}
+                    </span>
+                  </span>
+                  <span className="tabular-nums font-semibold whitespace-nowrap"
+                    style={{ color: amt >= 0 ? "var(--green)" : "#ef4444" }}>
+                    {amt >= 0 ? "+" : ""}{fmtMoney(amt)}
+                  </span>
+                  {isManual ? (
+                    <>
+                      <button type="button"
+                        onClick={() => onEditManual(it)}
+                        className="h-5 w-5 inline-flex items-center justify-center rounded"
+                        title="Edit"
+                        style={{ color: "var(--text-muted)" }}>
+                        <Edit2 size={11} strokeWidth={1.8} />
+                      </button>
+                      <button type="button"
+                        onClick={() => onDeleteManual(it.txn_id)}
+                        className="h-5 w-5 inline-flex items-center justify-center rounded"
+                        title="Delete"
+                        style={{ color: "#ef4444" }}>
+                        <X size={12} strokeWidth={1.8} />
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button"
+                      onClick={() => onUntickItem(it)}
+                      className="h-5 w-5 inline-flex items-center justify-center rounded"
+                      title="Untick from selection"
+                      style={{ color: "var(--text-muted)" }}>
+                      <X size={12} strokeWidth={1.8} />
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+
+        {/* Items subtotal */}
+        {selectedItems.length > 0 && (
+          <div className="flex items-center justify-between pt-1"
+            style={{ borderTop: "1px dashed var(--border)" }}>
+            <span style={{ color: "var(--text-2)" }}>
+              Items subtotal ({selectedItems.length})
+            </span>
+            <span className="tabular-nums font-semibold"
+              style={{ color: selectedSum >= 0 ? "var(--green)" : "#ef4444" }}>
+              {selectedSum >= 0 ? "+" : ""}{fmtMoney(selectedSum)}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Closing line — the computed subledger total */}
+      <div className="px-4 py-2.5 flex items-center justify-between"
+        style={{ borderTop: "2px solid var(--border-strong)", background: "var(--green-subtle)" }}>
+        <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--green)" }}>
+          = Closing subledger
+        </span>
+        <span className="tabular-nums text-base font-bold" style={{ color: "var(--green)" }}>
+          {fmtMoney(computedSubledger)}
+        </span>
+      </div>
+    </div>
   )
 }
 

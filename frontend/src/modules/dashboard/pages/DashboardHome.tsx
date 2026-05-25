@@ -439,7 +439,7 @@ export function DashboardHome() {
             {/* Buckets summary */}
             <div className="grid grid-cols-3 divide-x" style={{ borderBottom: "1px solid var(--border)" }}>
               <BucketTile label="Open" count={buckets.open} fg="#b91c1c" bg="#fef2f2" />
-              <BucketTile label="Reviewed" count={buckets.reviewed} fg="#1d4ed8" bg="#dbeafe" />
+              <BucketTile label="Prepared" count={buckets.reviewed} fg="#1d4ed8" bg="#dbeafe" />
               <BucketTile label="Approved" count={buckets.approved} fg="var(--green)" bg="var(--green-subtle)" />
             </div>
             {/* Top 3 open accounts */}
@@ -637,11 +637,11 @@ function FooterPill({ icon, label, onClick }: { icon: React.ReactNode; label: st
 function humanizeAction(action: string): string {
   const m: Record<string, string> = {
     "recon.account_approved":      "approved an account",
-    "recon.account_reviewed":      "marked an account reviewed",
+    "recon.account_reviewed":      "marked an account prepared",
     "recon.account_flagged":       "flagged an account",
     "recon.account_pending":       "reset an account to pending",
     "recon.bulk_approved":         "bulk-approved accounts",
-    "recon.bulk_reviewed":         "bulk-marked accounts reviewed",
+    "recon.bulk_reviewed":         "bulk-marked accounts prepared",
     "recon.bulk_flagged":          "bulk-flagged accounts",
     "recon.evidence_uploaded":     "uploaded supporting evidence",
     "recon.evidence_deleted":      "deleted an evidence file",
