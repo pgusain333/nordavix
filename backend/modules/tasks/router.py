@@ -75,12 +75,19 @@ class TaskOut(BaseModel):
     prepared_at:   str | None
     approved_by:   str | None            # also serves as "reviewer"
     approved_at:   str | None            # = "completed_at" for derived recon
-    due_date:      str | None
+
+    # Effective due date — the admin-set override if present, else
+    # the auto-computed default (period_end + 15 days).
+    due_date:           str | None
+    due_date_overridden:bool             # True when admin set a custom date
+
+    # Admin-set assignments
+    assigned_preparer_id: str | None
+    assigned_reviewer_id: str | None
 
     # Overlay fields (null on fresh derived tasks the user hasn't touched)
     action_id:     str | None
-    assignee_id:   str | None
-    snooze_until:  str | None
+    assignee_id:   str | None            # legacy single-assignee; deprecated
     notes:         str | None
     completed_at:  str | None            # manual completion stamp
     dismissed_at:  str | None
@@ -98,27 +105,54 @@ class TaskActionUpsert(BaseModel):
     source_type:   str
     source_id:     str | None = None
     period_end:    str | None = None
-    assignee_id:   str | None = None
-    snooze_until:  str | None = None
+    # Admin-only fields (server checks the role before honoring them)
+    assigned_preparer_id: str | None = None
+    assigned_reviewer_id: str | None = None
+    due_date:             str | None = None
+    # Anyone-can-edit fields
     notes:         str | None = None
     dismissed:     bool | None = None
+
+
+class TaskBulkAction(BaseModel):
+    """Apply one action to many tasks at once."""
+    # List of (source_type, source_id, period_end) triples — manual tasks
+    # use source_type='manual' and source_id=<action_id> (period_end None).
+    targets: list["TaskTarget"]
+    # Action types are mutually exclusive — pass exactly one field.
+    assigned_preparer_id: str | None = None
+    assigned_reviewer_id: str | None = None
+    due_date:             str | None = None
+    dismissed:            bool | None = None
+    completed:            bool | None = None
+
+
+class TaskTarget(BaseModel):
+    source_type: str
+    source_id:   str | None = None
+    period_end:  str | None = None
 
 
 class ManualTaskCreate(BaseModel):
     subject:      str = Field(..., min_length=1, max_length=200)
     description:  str | None = None
     priority:     str | None = "normal"
-    assignee_id:  str | None = None
     period_end:   str | None = None
+    # Admin-set (silently ignored when caller isn't admin).
+    assigned_preparer_id: str | None = None
+    assigned_reviewer_id: str | None = None
+    due_date:             str | None = None
 
 
 class ManualTaskUpdate(BaseModel):
     subject:      str | None = None
     description:  str | None = None
     priority:     str | None = None
-    assignee_id:  str | None = None
-    snooze_until: str | None = None
     notes:        str | None = None
+    # Admin-set
+    assigned_preparer_id: str | None = None
+    assigned_reviewer_id: str | None = None
+    due_date:             str | None = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -298,11 +332,13 @@ async def _derive_recon_tasks(
             subject = f"Reconciliation — {subject_acct} · {period_label}"
             description = None
 
-            severity = _severity_for_recon(effective_status, due)
-            deep_link = f"/app/reconciliations/period/{pe.isoformat()}"
-
             key = _recon_key(qid, pe)
             overlay = overlays_by_key.get(key)
+            # Effective due date: admin override on the overlay wins,
+            # otherwise the auto-computed default.
+            effective_due = overlay.due_date if (overlay and overlay.due_date) else due
+            severity = _severity_for_recon(effective_status, effective_due)
+            deep_link = f"/app/reconciliations/period/{pe.isoformat()}"
 
             out.append(TaskOut(
                 key=key,
@@ -318,10 +354,12 @@ async def _derive_recon_tasks(
                 prepared_at = row.prepared_at.isoformat() if row and row.prepared_at else None,
                 approved_by = str(row.approved_by) if row and row.approved_by else None,
                 approved_at = row.approved_at.isoformat() if row and row.approved_at else None,
-                due_date    = due.isoformat(),
+                due_date    = effective_due.isoformat(),
+                due_date_overridden = bool(overlay and overlay.due_date),
+                assigned_preparer_id = str(overlay.assigned_preparer_id) if overlay and overlay.assigned_preparer_id else None,
+                assigned_reviewer_id = str(overlay.assigned_reviewer_id) if overlay and overlay.assigned_reviewer_id else None,
                 action_id   = str(overlay.id) if overlay else None,
                 assignee_id = str(overlay.assignee_id) if overlay and overlay.assignee_id else None,
-                snooze_until= overlay.snooze_until.isoformat() if overlay and overlay.snooze_until else None,
                 notes       = (overlay.notes if overlay else None) or (row.notes if row else None),
                 completed_at= overlay.completed_at.isoformat() if overlay and overlay.completed_at else None,
                 dismissed_at= overlay.dismissed_at.isoformat() if overlay and overlay.dismissed_at else None,
@@ -390,6 +428,9 @@ async def _derive_flux_tasks(
 
         subject = f"Flux analysis — {action_verb} {tb.name or 'analysis'} · {period_label}"
 
+        default_due = _due_date_for(tb.period_current) if tb.period_current else None
+        effective_due = (overlay.due_date if (overlay and overlay.due_date) else default_due)
+
         out.append(TaskOut(
             key=key,
             source_type="flux",
@@ -404,10 +445,12 @@ async def _derive_flux_tasks(
             prepared_at=None,
             approved_by=str(tb.approved_by) if tb.approved_by else None,
             approved_at=tb.approved_at.isoformat() if tb.approved_at else None,
-            due_date=_due_date_for(tb.period_current).isoformat() if tb.period_current else None,
+            due_date=effective_due.isoformat() if effective_due else None,
+            due_date_overridden = bool(overlay and overlay.due_date),
+            assigned_preparer_id = str(overlay.assigned_preparer_id) if overlay and overlay.assigned_preparer_id else None,
+            assigned_reviewer_id = str(overlay.assigned_reviewer_id) if overlay and overlay.assigned_reviewer_id else None,
             action_id   = str(overlay.id) if overlay else None,
             assignee_id = str(overlay.assignee_id) if overlay and overlay.assignee_id else None,
-            snooze_until= overlay.snooze_until.isoformat() if overlay and overlay.snooze_until else None,
             notes       = overlay.notes if overlay else None,
             completed_at= overlay.completed_at.isoformat() if overlay and overlay.completed_at else None,
             dismissed_at= overlay.dismissed_at.isoformat() if overlay and overlay.dismissed_at else None,
@@ -450,6 +493,9 @@ async def list_tasks(
 
     manual_tasks: list[TaskOut] = []
     for m in manual_rows:
+        # Manual tasks: due_date column wins, then period_end as a
+        # convenient fallback so it surfaces in the period filter.
+        manual_due = m.due_date or m.period_end
         manual_tasks.append(TaskOut(
             key          = _manual_key(m.id),
             source_type  = "manual",
@@ -468,10 +514,12 @@ async def list_tasks(
             prepared_at  = None,
             approved_by  = None,
             approved_at  = None,
-            due_date     = m.period_end.isoformat() if m.period_end else None,
+            due_date     = manual_due.isoformat() if manual_due else None,
+            due_date_overridden = bool(m.due_date),
+            assigned_preparer_id = str(m.assigned_preparer_id) if m.assigned_preparer_id else None,
+            assigned_reviewer_id = str(m.assigned_reviewer_id) if m.assigned_reviewer_id else None,
             action_id    = str(m.id),
             assignee_id  = str(m.assignee_id) if m.assignee_id else None,
-            snooze_until = m.snooze_until.isoformat() if m.snooze_until else None,
             notes        = m.notes,
             completed_at = m.completed_at.isoformat() if m.completed_at else None,
             dismissed_at = m.dismissed_at.isoformat() if m.dismissed_at else None,
@@ -542,19 +590,45 @@ async def upsert_action(
         except ValueError:
             raise HTTPException(400, "period_end must be YYYY-MM-DD.")
 
-    snooze: date | None = None
-    if body.snooze_until:
-        try:
-            snooze = date.fromisoformat(body.snooze_until)
-        except ValueError:
-            raise HTTPException(400, "snooze_until must be YYYY-MM-DD.")
+    # Admin-only fields — silently ignored if a non-admin tries to set
+    # them (rather than 403'd, which would be confusing because a row
+    # might mix admin + non-admin fields). Returns the actually-applied
+    # set so the frontend can render a hint when needed.
+    is_admin = user.role == "admin"
+    apply_admin_fields = is_admin and any(
+        v is not None for v in (
+            body.assigned_preparer_id, body.assigned_reviewer_id, body.due_date,
+        )
+    )
+    if not is_admin and any(
+        v is not None for v in (
+            body.assigned_preparer_id, body.assigned_reviewer_id, body.due_date,
+        )
+    ):
+        raise HTTPException(
+            403,
+            "Only admins can assign preparer/reviewer or set custom due dates.",
+        )
 
-    assignee: uuid.UUID | None = None
-    if body.assignee_id:
-        try:
-            assignee = uuid.UUID(body.assignee_id)
-        except ValueError:
-            raise HTTPException(400, "assignee_id must be a UUID.")
+    assigned_preparer: uuid.UUID | None = None
+    assigned_reviewer: uuid.UUID | None = None
+    due_override:    date  | None = None
+    if apply_admin_fields:
+        if body.assigned_preparer_id:
+            try:
+                assigned_preparer = uuid.UUID(body.assigned_preparer_id)
+            except ValueError:
+                raise HTTPException(400, "assigned_preparer_id must be a UUID.")
+        if body.assigned_reviewer_id:
+            try:
+                assigned_reviewer = uuid.UUID(body.assigned_reviewer_id)
+            except ValueError:
+                raise HTTPException(400, "assigned_reviewer_id must be a UUID.")
+        if body.due_date:
+            try:
+                due_override = date.fromisoformat(body.due_date)
+            except ValueError:
+                raise HTTPException(400, "due_date must be YYYY-MM-DD.")
 
     existing = (await db.execute(
         select(TaskAction).where(
@@ -573,10 +647,14 @@ async def upsert_action(
         )
         db.add(existing)
 
-    if body.assignee_id is not None:
-        existing.assignee_id = assignee
-    if body.snooze_until is not None:
-        existing.snooze_until = snooze
+    # Admin assignments — explicit empty string clears the field.
+    if apply_admin_fields and body.assigned_preparer_id is not None:
+        existing.assigned_preparer_id = assigned_preparer
+    if apply_admin_fields and body.assigned_reviewer_id is not None:
+        existing.assigned_reviewer_id = assigned_reviewer
+    if apply_admin_fields and body.due_date is not None:
+        existing.due_date = due_override
+
     if body.notes is not None:
         existing.notes = body.notes or None
     if body.dismissed is True:
@@ -586,6 +664,108 @@ async def upsert_action(
 
     await db.commit()
     return {"ok": True, "action_id": str(existing.id)}
+
+
+@router.post("/bulk-action")
+async def bulk_action(
+    body: TaskBulkAction,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Apply ONE action to many tasks at once. Mutually-exclusive fields:
+    pass exactly one of assigned_preparer_id, assigned_reviewer_id,
+    due_date, dismissed, completed.
+
+    Admin-only when the action is an assignment or due-date set.
+    """
+    is_admin = user.role == "admin"
+    is_admin_action = any(
+        v is not None for v in (
+            body.assigned_preparer_id, body.assigned_reviewer_id, body.due_date,
+        )
+    )
+    if is_admin_action and not is_admin:
+        raise HTTPException(
+            403,
+            "Only admins can bulk-assign preparer/reviewer or set custom due dates.",
+        )
+
+    # Parse + validate the single action.
+    assigned_preparer: uuid.UUID | None = None
+    assigned_reviewer: uuid.UUID | None = None
+    due_override:    date  | None = None
+    if body.assigned_preparer_id:
+        try: assigned_preparer = uuid.UUID(body.assigned_preparer_id)
+        except ValueError: raise HTTPException(400, "assigned_preparer_id must be a UUID.")
+    if body.assigned_reviewer_id:
+        try: assigned_reviewer = uuid.UUID(body.assigned_reviewer_id)
+        except ValueError: raise HTTPException(400, "assigned_reviewer_id must be a UUID.")
+    if body.due_date:
+        try: due_override = date.fromisoformat(body.due_date)
+        except ValueError: raise HTTPException(400, "due_date must be YYYY-MM-DD.")
+
+    now = datetime.now(UTC)
+    applied = 0
+    for t in body.targets:
+        # Parse period
+        pe: date | None = None
+        if t.period_end:
+            try: pe = date.fromisoformat(t.period_end)
+            except ValueError: continue
+
+        # Manual tasks: source_id is the action_id itself; find by id.
+        if t.source_type == "manual":
+            if not t.source_id:
+                continue
+            try:
+                row = (await db.execute(
+                    select(TaskAction).where(TaskAction.id == uuid.UUID(t.source_id),
+                                              TaskAction.source_type == "manual")
+                )).scalar_one_or_none()
+            except ValueError:
+                continue
+            if row is None:
+                continue
+        else:
+            if t.source_type not in ("recon_account", "flux"):
+                continue
+            row = (await db.execute(
+                select(TaskAction).where(
+                    TaskAction.source_type == t.source_type,
+                    TaskAction.source_id   == t.source_id,
+                    TaskAction.period_end  == pe,
+                )
+            )).scalar_one_or_none()
+            if row is None:
+                row = TaskAction(
+                    source_type=t.source_type,
+                    source_id  =t.source_id,
+                    period_end =pe,
+                    created_by =user.id,
+                )
+                db.add(row)
+
+        # Apply the action.
+        if body.assigned_preparer_id is not None:
+            row.assigned_preparer_id = assigned_preparer
+        if body.assigned_reviewer_id is not None:
+            row.assigned_reviewer_id = assigned_reviewer
+        if body.due_date is not None:
+            row.due_date = due_override
+        if body.dismissed is True:
+            row.dismissed_at = now
+        elif body.dismissed is False:
+            row.dismissed_at = None
+        if body.completed is True:
+            row.completed_at = now
+        elif body.completed is False:
+            row.completed_at = None
+        applied += 1
+
+    await db.commit()
+    return {"applied": applied}
 
 
 @router.post("/manual", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
@@ -602,12 +782,10 @@ async def create_manual_task(
         except ValueError:
             raise HTTPException(400, "period_end must be YYYY-MM-DD.")
 
-    assignee: uuid.UUID | None = None
-    if body.assignee_id:
-        try:
-            assignee = uuid.UUID(body.assignee_id)
-        except ValueError:
-            raise HTTPException(400, "assignee_id must be a UUID.")
+    is_admin = user.role == "admin"
+    assigned_preparer = _parse_uuid_if_admin(body.assigned_preparer_id, is_admin, "assigned_preparer_id")
+    assigned_reviewer = _parse_uuid_if_admin(body.assigned_reviewer_id, is_admin, "assigned_reviewer_id")
+    due_override = _parse_date_if_admin(body.due_date, is_admin, "due_date")
 
     row = TaskAction(
         source_type="manual",
@@ -616,13 +794,47 @@ async def create_manual_task(
         subject=body.subject,
         description=body.description,
         priority=body.priority or "normal",
-        assignee_id=assignee,
         created_by=user.id,
+        assigned_preparer_id=assigned_preparer,
+        assigned_reviewer_id=assigned_reviewer,
+        due_date=due_override,
     )
     db.add(row)
     await db.commit()
     await db.refresh(row)
 
+    return _serialize_manual_task(row)
+
+
+def _parse_uuid_if_admin(val: str | None, is_admin: bool, field: str) -> uuid.UUID | None:
+    if val is None:
+        return None
+    if not is_admin:
+        raise HTTPException(403, f"Only admins can set {field}.")
+    if val == "":
+        return None
+    try:
+        return uuid.UUID(val)
+    except ValueError:
+        raise HTTPException(400, f"{field} must be a UUID.")
+
+
+def _parse_date_if_admin(val: str | None, is_admin: bool, field: str) -> date | None:
+    if val is None:
+        return None
+    if not is_admin:
+        raise HTTPException(403, f"Only admins can set {field}.")
+    if val == "":
+        return None
+    try:
+        return date.fromisoformat(val)
+    except ValueError:
+        raise HTTPException(400, f"{field} must be YYYY-MM-DD.")
+
+
+def _serialize_manual_task(row: TaskAction) -> TaskOut:
+    """Single serializer used by create + update endpoints."""
+    manual_due = row.due_date or row.period_end
     return TaskOut(
         key=_manual_key(row.id),
         source_type="manual",
@@ -639,12 +851,15 @@ async def create_manual_task(
         status="manual",
         prepared_by=None, prepared_at=None,
         approved_by=None, approved_at=None,
-        due_date=row.period_end.isoformat() if row.period_end else None,
+        due_date=manual_due.isoformat() if manual_due else None,
+        due_date_overridden=bool(row.due_date),
+        assigned_preparer_id=str(row.assigned_preparer_id) if row.assigned_preparer_id else None,
+        assigned_reviewer_id=str(row.assigned_reviewer_id) if row.assigned_reviewer_id else None,
         action_id=str(row.id),
         assignee_id=str(row.assignee_id) if row.assignee_id else None,
-        snooze_until=row.snooze_until.isoformat() if row.snooze_until else None,
         notes=row.notes,
-        completed_at=None, dismissed_at=None,
+        completed_at=row.completed_at.isoformat() if row.completed_at else None,
+        dismissed_at=row.dismissed_at.isoformat() if row.dismissed_at else None,
         priority=row.priority,
         created_by=str(row.created_by),
         created_at=row.created_at.isoformat() if row.created_at else None,
@@ -656,6 +871,7 @@ async def update_manual_task(
     task_id: uuid.UUID,
     body: ManualTaskUpdate,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> TaskOut:
     row = (await db.execute(
@@ -663,53 +879,24 @@ async def update_manual_task(
     )).scalar_one_or_none()
     if row is None:
         raise HTTPException(404, "Manual task not found.")
+    is_admin = user.role == "admin"
     if body.subject is not None:
         row.subject = body.subject
     if body.description is not None:
         row.description = body.description or None
     if body.priority is not None:
         row.priority = body.priority
-    if body.assignee_id is not None:
-        try:
-            row.assignee_id = uuid.UUID(body.assignee_id) if body.assignee_id else None
-        except ValueError:
-            raise HTTPException(400, "assignee_id must be a UUID.")
-    if body.snooze_until is not None:
-        try:
-            row.snooze_until = date.fromisoformat(body.snooze_until) if body.snooze_until else None
-        except ValueError:
-            raise HTTPException(400, "snooze_until must be YYYY-MM-DD.")
     if body.notes is not None:
         row.notes = body.notes or None
+    if body.assigned_preparer_id is not None:
+        row.assigned_preparer_id = _parse_uuid_if_admin(body.assigned_preparer_id, is_admin, "assigned_preparer_id")
+    if body.assigned_reviewer_id is not None:
+        row.assigned_reviewer_id = _parse_uuid_if_admin(body.assigned_reviewer_id, is_admin, "assigned_reviewer_id")
+    if body.due_date is not None:
+        row.due_date = _parse_date_if_admin(body.due_date, is_admin, "due_date")
     await db.commit()
     await db.refresh(row)
-    return TaskOut(
-        key=_manual_key(row.id),
-        source_type="manual",
-        source_id=None,
-        period_end=row.period_end.isoformat() if row.period_end else None,
-        subject=row.subject or "",
-        description=row.description,
-        severity=(
-            "critical" if row.priority == "critical"
-            else "warn" if row.priority == "high"
-            else "info"
-        ),
-        deep_link=None,
-        status="manual",
-        prepared_by=None, prepared_at=None,
-        approved_by=None, approved_at=None,
-        due_date=row.period_end.isoformat() if row.period_end else None,
-        action_id=str(row.id),
-        assignee_id=str(row.assignee_id) if row.assignee_id else None,
-        snooze_until=row.snooze_until.isoformat() if row.snooze_until else None,
-        notes=row.notes,
-        completed_at=row.completed_at.isoformat() if row.completed_at else None,
-        dismissed_at=row.dismissed_at.isoformat() if row.dismissed_at else None,
-        priority=row.priority,
-        created_by=str(row.created_by),
-        created_at=row.created_at.isoformat() if row.created_at else None,
-    )
+    return _serialize_manual_task(row)
 
 
 @router.post("/{action_id}/complete")

@@ -22,12 +22,16 @@ export interface Task {
   prepared_at:   string | null
   approved_by:   string | null
   approved_at:   string | null
-  due_date:      string | null
+  due_date:           string | null
+  due_date_overridden:boolean
+
+  // Admin-set assignments
+  assigned_preparer_id: string | null
+  assigned_reviewer_id: string | null
 
   // Overlay
   action_id:     string | null
-  assignee_id:   string | null
-  snooze_until:  string | null
+  assignee_id:   string | null      // legacy single-assignee
   notes:         string | null
   completed_at:  string | null
   dismissed_at:  string | null
@@ -60,13 +64,16 @@ async function getCount(): Promise<TasksCount> {
 }
 
 interface ActionUpsert {
-  source_type:  TaskSourceType
-  source_id:    string | null
-  period_end:   string | null
-  assignee_id?: string | null
-  snooze_until?:string | null
-  notes?:       string | null
-  dismissed?:   boolean
+  source_type:           TaskSourceType
+  source_id:             string | null
+  period_end:            string | null
+  // Admin-only
+  assigned_preparer_id?: string | null
+  assigned_reviewer_id?: string | null
+  due_date?:             string | null
+  // Anyone-can-edit
+  notes?:                string | null
+  dismissed?:            boolean
 }
 
 async function upsertAction(body: ActionUpsert): Promise<{ ok: true; action_id: string }> {
@@ -74,12 +81,35 @@ async function upsertAction(body: ActionUpsert): Promise<{ ok: true; action_id: 
   return data
 }
 
+export interface TaskTarget {
+  source_type: TaskSourceType
+  source_id:   string | null
+  period_end:  string | null
+}
+
+interface BulkAction {
+  targets:               TaskTarget[]
+  // Pass exactly one of these per call
+  assigned_preparer_id?: string | null
+  assigned_reviewer_id?: string | null
+  due_date?:             string | null
+  dismissed?:            boolean
+  completed?:            boolean
+}
+
+async function bulkAction(body: BulkAction): Promise<{ applied: number }> {
+  const { data } = await apiClient.post<{ applied: number }>("/api/tasks/bulk-action", body)
+  return data
+}
+
 interface ManualTaskCreate {
-  subject:      string
-  description?: string | null
-  priority?:    string | null
-  assignee_id?: string | null
-  period_end?:  string | null
+  subject:               string
+  description?:          string | null
+  priority?:             string | null
+  period_end?:           string | null
+  assigned_preparer_id?: string | null
+  assigned_reviewer_id?: string | null
+  due_date?:             string | null
 }
 
 async function createManual(body: ManualTaskCreate): Promise<Task> {
@@ -88,12 +118,13 @@ async function createManual(body: ManualTaskCreate): Promise<Task> {
 }
 
 interface ManualTaskUpdate {
-  subject?:     string
-  description?: string | null
-  priority?:    string | null
-  assignee_id?: string | null
-  snooze_until?:string | null
-  notes?:       string | null
+  subject?:              string
+  description?:          string | null
+  priority?:             string | null
+  notes?:                string | null
+  assigned_preparer_id?: string | null
+  assigned_reviewer_id?: string | null
+  due_date?:             string | null
 }
 
 async function updateManual(taskId: string, body: ManualTaskUpdate): Promise<Task> {
@@ -109,6 +140,7 @@ export const tasksApi = {
   list,
   getCount,
   upsertAction,
+  bulkAction,
   createManual,
   updateManual,
   complete,

@@ -1,26 +1,18 @@
 /**
- * TasksPage — month-end close worklist (v2).
+ * TasksPage v3 — month-end close worklist with admin assignments + bulk ops.
  *
- * One row per balance-sheet account synced from QBO, per open period
- * (so users see every account that needs reconciliation, not just
- * the ones they've touched). Plus one row per flux analysis. Plus
- * any manual tasks the user added.
- *
- * Columns: Task name · Period · Status · Preparer · Reviewer · Due ·
- * Completed · Actions. User names resolved via the workspace lookup
- * hook (audit-feed-style "Jane (3d ago)" labels).
- *
- * Top toolbar:
- *   - Status tabs: Open / Snoozed / Completed / All
- *   - Period filter dropdown
- *   - Source filter (recon / flux / manual)
- *   - Search box (subject contains)
- *   - "New task" CTA
- *
- * Per-row actions live in a dropdown caret on the right: snooze
- * presets, dismiss, manually complete, deep-link out.
+ * Major features over v2:
+ *   • Cascading Year → Period filters (year defaults to current).
+ *   • Bulk-select checkboxes per row + sticky header checkbox.
+ *   • Bulk action toolbar (admin assign preparer/reviewer, set due,
+ *     mark done, dismiss) — appears only when rows are selected.
+ *   • Excel-style column header popovers: Status / Source / Preparer /
+ *     Reviewer columns can be filtered down via checkboxes.
+ *   • Inline admin editors: click a Preparer / Reviewer / Due cell as
+ *     an admin to assign or override the auto-default.
+ *   • Snooze removed — was unused workflow noise.
  */
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -28,23 +20,24 @@ import {
   CheckSquare,
   AlertTriangle,
   AlertCircle,
-  ArrowRight,
   ArrowLeft,
   ChevronDown,
-  Clock,
   X,
   CheckCircle2,
   Plus,
   Search,
   ExternalLink,
   StickyNote,
+  Filter,
+  Pencil,
+  Calendar,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { tasksApi, type Task, type TaskSeverity, type TaskSourceType } from "@/modules/tasks/api"
 import { useUserNames } from "@/modules/workspace/hooks"
+import { workspaceApi } from "@/modules/workspace/api"
 
-type FilterTab    = "open" | "snoozed" | "completed" | "all"
-type SourceFilter = "all" | TaskSourceType
+type FilterTab    = "open" | "completed" | "all"
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -75,15 +68,11 @@ function sourceMeta(s: TaskSourceType) {
   return     { label: "Manual",fg: "#a855f7", bg: "rgba(168, 85, 247, 0.15)" }
 }
 
-function isSnoozed(t: Task): boolean {
-  if (!t.snooze_until) return false
-  try { return new Date(t.snooze_until + "T00:00:00") > new Date() } catch { return false }
-}
 function isCompleted(t: Task): boolean {
   return !!t.completed_at || t.status === "approved"
 }
 function isOpen(t: Task): boolean {
-  return !isCompleted(t) && !t.dismissed_at && !isSnoozed(t)
+  return !isCompleted(t) && !t.dismissed_at
 }
 
 function fmtDate(iso: string | null | undefined): string {
@@ -101,7 +90,6 @@ function fmtRelDate(iso: string | null | undefined): string {
     if (Math.abs(s) < 60) return "now"
     if (s < 0) {
       const a = Math.abs(s)
-      if (a < 3600) return `in ${Math.floor(a / 60)}m`
       if (a < 86400) return `in ${Math.floor(a / 3600)}h`
       return `in ${Math.floor(a / 86400)}d`
     }
@@ -116,12 +104,16 @@ function fmtRelDate(iso: string | null | undefined): string {
 export function TasksPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+
   const [tab,         setTab]         = useState<FilterTab>("open")
-  const [sourceFilter,setSourceFilter]= useState<SourceFilter>("all")
+  const [yearFilter,  setYearFilter]  = useState<string>(String(new Date().getFullYear()))
   const [periodFilter,setPeriodFilter]= useState<string>("all")
   const [search,      setSearch]      = useState("")
   const [showManualForm, setShowManualForm] = useState(false)
-  const [expandedKey, setExpandedKey] = useState<string | null>(null)
+  // Column-header popover filters (multi-select per column)
+  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({})
+  // Bulk selection — task keys
+  const [selected, setSelected] = useState<Set<string>>(new Set())
 
   const { data: tasks = [], isLoading } = useQuery({
     queryKey: ["tasks", "all"],
@@ -129,51 +121,138 @@ export function TasksPage() {
     staleTime: 30_000,
   })
 
+  // Workspace members (for assign dropdowns) + current user (for admin gate)
+  const { data: members = [] } = useQuery({
+    queryKey: ["workspace-members"],
+    queryFn:  workspaceApi.listMembers,
+    staleTime: 5 * 60_000,
+  })
+  const { data: me } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 5 * 60_000,
+  })
+  const isAdmin = me?.role === "admin"
+
   // Resolve every preparer / reviewer / assignee UUID to display names.
   const userIds = useMemo(() => {
     const s = new Set<string>()
     for (const t of tasks) {
       if (t.prepared_by) s.add(t.prepared_by)
       if (t.approved_by) s.add(t.approved_by)
-      if (t.assignee_id) s.add(t.assignee_id)
-      if (t.created_by)  s.add(t.created_by)
+      if (t.assigned_preparer_id) s.add(t.assigned_preparer_id)
+      if (t.assigned_reviewer_id) s.add(t.assigned_reviewer_id)
     }
     return Array.from(s)
   }, [tasks])
   const userNames = useUserNames(userIds)
 
-  // Distinct periods present (for the period dropdown)
-  const periodOptions = useMemo(() => {
-    const set = new Set<string>()
-    for (const t of tasks) if (t.period_end) set.add(t.period_end)
-    return Array.from(set).sort().reverse()
+  // All distinct years + periods present (drives the cascading filters)
+  const yearOptions = useMemo(() => {
+    const s = new Set<string>()
+    for (const t of tasks) if (t.period_end) s.add(t.period_end.slice(0, 4))
+    const arr = Array.from(s).sort().reverse()
+    // Ensure the current year is always pickable, even if no tasks for it yet.
+    const cur = String(new Date().getFullYear())
+    if (!arr.includes(cur)) arr.unshift(cur)
+    return arr
   }, [tasks])
+  const periodOptions = useMemo(() => {
+    const s = new Set<string>()
+    for (const t of tasks) {
+      if (!t.period_end) continue
+      if (yearFilter !== "all" && t.period_end.slice(0, 4) !== yearFilter) continue
+      s.add(t.period_end)
+    }
+    return Array.from(s).sort().reverse()
+  }, [tasks, yearFilter])
+
+  // If the current period filter falls outside the new year, reset it
+  useEffect(() => {
+    if (periodFilter === "all") return
+    if (periodFilter.slice(0, 4) !== yearFilter && yearFilter !== "all") {
+      setPeriodFilter("all")
+    }
+  }, [yearFilter, periodFilter])
 
   // Tab counts
   const counts = useMemo(() => {
-    let open = 0, snoozed = 0, completed = 0
+    let open = 0, completed = 0
     for (const t of tasks) {
       if (isCompleted(t)) completed++
-      else if (isSnoozed(t)) snoozed++
       else if (!t.dismissed_at) open++
     }
-    return { open, snoozed, completed, all: tasks.length }
+    return { open, completed, all: tasks.length }
   }, [tasks])
 
-  // Applied filters
+  // Apply all filters
   const filtered = useMemo(() => {
     let list = tasks
     if (tab === "open")        list = list.filter(isOpen)
-    else if (tab === "snoozed")   list = list.filter((t) => isSnoozed(t) && !isCompleted(t) && !t.dismissed_at)
     else if (tab === "completed") list = list.filter(isCompleted)
-    // 'all' = no tab filter
 
-    if (sourceFilter !== "all") list = list.filter((t) => t.source_type === sourceFilter)
-    if (periodFilter !== "all") list = list.filter((t) => t.period_end === periodFilter)
+    if (yearFilter !== "all")  list = list.filter((t) => t.period_end?.slice(0, 4) === yearFilter)
+    if (periodFilter !== "all")list = list.filter((t) => t.period_end === periodFilter)
+
     const q = search.trim().toLowerCase()
     if (q) list = list.filter((t) => t.subject.toLowerCase().includes(q))
+
+    // Column header filters
+    for (const [col, vals] of Object.entries(colFilters)) {
+      if (!vals.size) continue
+      list = list.filter((t) => {
+        if (col === "status")    return vals.has(t.status)
+        if (col === "source")    return vals.has(t.source_type)
+        if (col === "preparer")  return vals.has(t.prepared_by ?? "")
+            || (vals.has("(assigned)") && t.assigned_preparer_id)
+        if (col === "reviewer")  return vals.has(t.approved_by ?? "")
+            || (vals.has("(assigned)") && t.assigned_reviewer_id)
+        return true
+      })
+    }
     return list
-  }, [tasks, tab, sourceFilter, periodFilter, search])
+  }, [tasks, tab, yearFilter, periodFilter, search, colFilters])
+
+  // Selection helpers
+  const allFilteredKeys = useMemo(() => filtered.map((t) => t.key), [filtered])
+  const isAllSelected = allFilteredKeys.length > 0
+    && allFilteredKeys.every((k) => selected.has(k))
+  const isSomeSelected = allFilteredKeys.some((k) => selected.has(k))
+  function toggleAll() {
+    if (isAllSelected) setSelected(new Set())
+    else setSelected(new Set(allFilteredKeys))
+  }
+  function toggleOne(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }
+
+  const bulkMut = useMutation({
+    mutationFn: (body: Parameters<typeof tasksApi.bulkAction>[0]) => tasksApi.bulkAction(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tasks"] })
+      setSelected(new Set())
+    },
+  })
+
+  // Build the bulk targets payload from current selection
+  function selectedTargets() {
+    const byKey = new Map(tasks.map((t) => [t.key, t]))
+    const out: { source_type: TaskSourceType; source_id: string | null; period_end: string | null }[] = []
+    for (const k of selected) {
+      const t = byKey.get(k); if (!t) continue
+      out.push({
+        source_type: t.source_type,
+        // For manual, the backend expects source_id = action_id.
+        source_id:   t.source_type === "manual" ? t.action_id : t.source_id,
+        period_end:  t.period_end,
+      })
+    }
+    return out
+  }
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
@@ -199,8 +278,8 @@ export function TasksPage() {
               Tasks
             </h1>
             <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              One task per synced GL account + per flux analysis. Status, preparer,
-              and reviewer reflect the underlying workflow in real time.
+              One row per synced GL account + per flux analysis.
+              {isAdmin && " Click a Preparer / Reviewer / Due cell to assign or override the default."}
             </p>
           </div>
           <Button size="sm" icon={<Plus size={12} strokeWidth={1.8} />}
@@ -210,16 +289,15 @@ export function TasksPage() {
         </div>
       </motion.div>
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-[1400px] w-full mx-auto space-y-4">
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-[1500px] w-full mx-auto space-y-4">
 
-        {/* Toolbar: tabs + filters */}
+        {/* Toolbar */}
         <div className="flex items-center gap-3 flex-wrap">
           {/* Status tabs */}
           <div className="flex items-center gap-1 flex-wrap rounded-lg p-1"
             style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
             {([
               { key: "open",      label: "Open",      count: counts.open      },
-              { key: "snoozed",   label: "Snoozed",   count: counts.snoozed   },
               { key: "completed", label: "Completed", count: counts.completed },
               { key: "all",       label: "All",       count: counts.all       },
             ] as const).map((b) => {
@@ -239,27 +317,24 @@ export function TasksPage() {
             })}
           </div>
 
-          {/* Source filter */}
-          <select
-            value={sourceFilter}
-            onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}
+          {/* Year filter (cascades to Period) */}
+          <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)}
             className="rounded-lg px-3 py-1.5 text-sm outline-none"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
-            <option value="all">All sources</option>
-            <option value="recon_account">Reconciliations</option>
-            <option value="flux">Flux analyses</option>
-            <option value="manual">Manual</option>
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+            title="Filter by year — period choices below cascade from this">
+            <option value="all">All years</option>
+            {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
 
           {/* Period filter */}
-          <select
-            value={periodFilter}
-            onChange={(e) => setPeriodFilter(e.target.value)}
+          <select value={periodFilter} onChange={(e) => setPeriodFilter(e.target.value)}
             className="rounded-lg px-3 py-1.5 text-sm outline-none"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
-            <option value="all">All periods</option>
+            <option value="all">{yearFilter === "all" ? "All periods" : `All of ${yearFilter}`}</option>
             {periodOptions.map((p) => (
-              <option key={p} value={p}>{fmtDate(p)}</option>
+              <option key={p} value={p}>
+                {new Date(p + "T00:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })}
+              </option>
             ))}
           </select>
 
@@ -286,10 +361,76 @@ export function TasksPage() {
               transition={{ duration: 0.18 }}
               style={{ overflow: "hidden" }}
             >
-              <ManualTaskForm onClose={() => setShowManualForm(false)} onCreated={() => {
-                setShowManualForm(false)
-                qc.invalidateQueries({ queryKey: ["tasks"] })
-              }} />
+              <ManualTaskForm
+                isAdmin={isAdmin}
+                members={members}
+                onClose={() => setShowManualForm(false)}
+                onCreated={() => {
+                  setShowManualForm(false)
+                  qc.invalidateQueries({ queryKey: ["tasks"] })
+                }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Bulk action toolbar */}
+        <AnimatePresence>
+          {selected.size > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.15 }}
+              className="rounded-xl p-3 flex items-center gap-2 flex-wrap"
+              style={{ background: "var(--green-subtle)", border: "1px solid var(--green)" }}>
+              <span className="text-[11px] font-semibold" style={{ color: "var(--green)" }}>
+                {selected.size} selected
+              </span>
+              {isAdmin && (
+                <>
+                  <AssignDropdown
+                    label="Assign preparer"
+                    members={members}
+                    onPick={(uid) => bulkMut.mutate({
+                      targets: selectedTargets(),
+                      assigned_preparer_id: uid,
+                    })}
+                  />
+                  <AssignDropdown
+                    label="Assign reviewer"
+                    members={members}
+                    onPick={(uid) => bulkMut.mutate({
+                      targets: selectedTargets(),
+                      assigned_reviewer_id: uid,
+                    })}
+                  />
+                  <DueDatePopover
+                    label="Set due date"
+                    onPick={(iso) => bulkMut.mutate({
+                      targets: selectedTargets(),
+                      due_date: iso,
+                    })}
+                  />
+                </>
+              )}
+              <Button size="sm" variant="outline"
+                icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
+                loading={bulkMut.isPending}
+                onClick={() => bulkMut.mutate({ targets: selectedTargets(), completed: true })}
+                style={{ borderColor: "var(--green)", color: "var(--green)" }}>
+                Mark done
+              </Button>
+              <Button size="sm" variant="ghost"
+                loading={bulkMut.isPending}
+                onClick={() => bulkMut.mutate({ targets: selectedTargets(), dismissed: true })}>
+                <X size={11} strokeWidth={1.8} /> Dismiss
+              </Button>
+              <button onClick={() => setSelected(new Set())}
+                className="ml-auto text-[11px] font-medium hover:underline"
+                style={{ color: "var(--text-muted)" }}>
+                Clear selection
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -303,33 +444,73 @@ export function TasksPage() {
           <div className="rounded-xl overflow-hidden"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[1000px]">
+              <table className="w-full text-sm min-w-[1100px]">
                 <thead>
                   <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
-                    {[
-                      { label: "Task",     w: "auto" },
-                      { label: "Period",   w: "100px" },
-                      { label: "Status",   w: "110px" },
-                      { label: "Preparer", w: "150px" },
-                      { label: "Reviewer", w: "150px" },
-                      { label: "Due",      w: "110px" },
-                      { label: "Completed",w: "120px" },
-                      { label: "",         w: "100px" },
-                    ].map((h) => (
-                      <th key={h.label}
-                        className="text-left text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5"
-                        style={{ color: "var(--text-muted)", width: h.w }}>
-                        {h.label}
-                      </th>
-                    ))}
+                    <th className="px-3 py-2.5 text-center" style={{ width: 32 }}>
+                      <input type="checkbox"
+                        checked={isAllSelected}
+                        ref={(el) => { if (el) el.indeterminate = isSomeSelected && !isAllSelected }}
+                        onChange={toggleAll}
+                        aria-label="Select all visible" />
+                    </th>
+                    <Th label="Task" />
+                    <Th label="Period" />
+                    <Th label="Source"
+                      filter={
+                        <ColumnHeaderFilter
+                          values={["recon_account", "flux", "manual"]}
+                          labels={{ recon_account: "Reconciliation", flux: "Flux analysis", manual: "Manual" }}
+                          selected={colFilters.source ?? new Set()}
+                          onChange={(s) => setColFilters({ ...colFilters, source: s })}
+                        />
+                      } />
+                    <Th label="Status"
+                      filter={
+                        <ColumnHeaderFilter
+                          values={["pending", "reviewed", "approved", "flagged", "manual"]}
+                          labels={{ pending: "Pending", reviewed: "Prepared", approved: "Approved", flagged: "Flagged", manual: "Manual" }}
+                          selected={colFilters.status ?? new Set()}
+                          onChange={(s) => setColFilters({ ...colFilters, status: s })}
+                        />
+                      } />
+                    <Th label="Preparer"
+                      filter={
+                        <UserColumnFilter
+                          allowAssigned
+                          tasksField="prepared_by"
+                          tasks={tasks}
+                          userNames={userNames}
+                          selected={colFilters.preparer ?? new Set()}
+                          onChange={(s) => setColFilters({ ...colFilters, preparer: s })}
+                        />
+                      } />
+                    <Th label="Reviewer"
+                      filter={
+                        <UserColumnFilter
+                          allowAssigned
+                          tasksField="approved_by"
+                          tasks={tasks}
+                          userNames={userNames}
+                          selected={colFilters.reviewer ?? new Set()}
+                          onChange={(s) => setColFilters({ ...colFilters, reviewer: s })}
+                        />
+                      } />
+                    <Th label="Due" />
+                    <Th label="Completed" />
+                    <Th label="" />
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((t) => (
-                    <TaskRow key={t.key} task={t}
+                    <TaskRow
+                      key={t.key}
+                      task={t}
                       userNames={userNames}
-                      expanded={expandedKey === t.key}
-                      onToggleExpand={() => setExpandedKey(expandedKey === t.key ? null : t.key)}
+                      members={members}
+                      isAdmin={isAdmin}
+                      checked={selected.has(t.key)}
+                      onToggleCheck={() => toggleOne(t.key)}
                     />
                   ))}
                 </tbody>
@@ -339,8 +520,7 @@ export function TasksPage() {
               style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
               <span>{filtered.length} of {tasks.length} task{tasks.length === 1 ? "" : "s"}</span>
               <span>
-                Due dates default to 15 days after period-end. Tasks auto-update as
-                underlying work progresses.
+                Due defaults to 15 days after period-end. Admins can override per-task or in bulk.
               </span>
             </div>
           </div>
@@ -350,13 +530,207 @@ export function TasksPage() {
   )
 }
 
+// ── Th — column header cell with optional inline filter popover ───────────
+
+function Th({ label, filter }: { label: string; filter?: React.ReactNode }) {
+  return (
+    <th className="text-left text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5 whitespace-nowrap"
+      style={{ color: "var(--text-muted)" }}>
+      <span className="inline-flex items-center gap-1.5">
+        {label}
+        {filter}
+      </span>
+    </th>
+  )
+}
+
+// ── ColumnHeaderFilter — static checkbox list (Status, Source) ─────────────
+
+function ColumnHeaderFilter({ values, labels, selected, onChange }:
+  { values: string[]; labels: Record<string, string>; selected: Set<string>; onChange: (s: Set<string>) => void }
+) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", onClick)
+    return () => document.removeEventListener("mousedown", onClick)
+  }, [open])
+
+  const active = selected.size > 0
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      <button onClick={(e) => { e.stopPropagation(); setOpen(!open) }}
+        className="h-4 w-4 inline-flex items-center justify-center rounded transition-colors hover:bg-[var(--border)]"
+        style={{ color: active ? "var(--green)" : "var(--text-muted)" }}
+        title={active ? `${selected.size} active filter${selected.size === 1 ? "" : "s"}` : "Filter"}>
+        <Filter size={11} strokeWidth={active ? 2.5 : 1.8} />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-10 rounded-md p-2 min-w-[140px] shadow-lg"
+          style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
+          {values.map((v) => (
+            <label key={v} className="flex items-center gap-2 px-1 py-1 text-xs cursor-pointer rounded hover:bg-[var(--surface-2)]"
+              style={{ color: "var(--text)" }}>
+              <input type="checkbox" checked={selected.has(v)}
+                onChange={() => {
+                  const next = new Set(selected)
+                  if (next.has(v)) next.delete(v); else next.add(v)
+                  onChange(next)
+                }} />
+              <span className="normal-case">{labels[v] ?? v}</span>
+            </label>
+          ))}
+          {active && (
+            <button onClick={() => onChange(new Set())}
+              className="mt-1 w-full text-[10px] text-left px-1 py-1 rounded hover:bg-[var(--surface-2)]"
+              style={{ color: "var(--text-muted)" }}>
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── UserColumnFilter — dynamic list of users present in the data ───────────
+
+function UserColumnFilter({ tasks, tasksField, userNames, selected, onChange, allowAssigned }:
+  { tasks: Task[]; tasksField: "prepared_by" | "approved_by"; userNames: Record<string, string>;
+    selected: Set<string>; onChange: (s: Set<string>) => void; allowAssigned?: boolean }
+) {
+  const values = useMemo(() => {
+    const s = new Set<string>()
+    for (const t of tasks) {
+      const v = t[tasksField] as string | null
+      if (v) s.add(v)
+    }
+    return Array.from(s)
+  }, [tasks, tasksField])
+  const labels: Record<string, string> = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const v of values) m[v] = userNames[v] ?? "Someone"
+    if (allowAssigned) m["(assigned)"] = "— Assigned, not yet acted"
+    return m
+  }, [values, userNames, allowAssigned])
+  const allValues = allowAssigned ? ["(assigned)", ...values] : values
+  return (
+    <ColumnHeaderFilter
+      values={allValues}
+      labels={labels}
+      selected={selected}
+      onChange={onChange}
+    />
+  )
+}
+
+// ── AssignDropdown ─────────────────────────────────────────────────────────
+
+function AssignDropdown({ label, members, onPick, current }:
+  { label: string; members: { id: string | null; display_name: string; role: string }[];
+    onPick: (uid: string | null) => void; current?: string | null }
+) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    function h(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener("mousedown", h)
+    return () => document.removeEventListener("mousedown", h)
+  }, [open])
+  return (
+    <div ref={ref} className="relative inline-block">
+      <Button size="sm" variant="outline" onClick={() => setOpen(!open)}>
+        {label}
+        <ChevronDown size={11} strokeWidth={1.8} />
+      </Button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-20 rounded-md p-1 min-w-[200px] shadow-lg max-h-[300px] overflow-y-auto"
+          style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
+          {members.length === 0 ? (
+            <p className="px-3 py-2 text-xs italic" style={{ color: "var(--text-muted)" }}>No members</p>
+          ) : (
+            <>
+              {members.filter((m) => m.id).map((m) => (
+                <button key={m.id!} onClick={() => { onPick(m.id); setOpen(false) }}
+                  className="w-full text-left px-3 py-1.5 text-xs rounded transition-colors hover:bg-[var(--surface-2)]"
+                  style={{ color: "var(--text)", background: current === m.id ? "var(--surface-2)" : undefined }}>
+                  {m.display_name} <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>· {m.role}</span>
+                </button>
+              ))}
+              {current && (
+                <button onClick={() => { onPick(null); setOpen(false) }}
+                  className="w-full text-left px-3 py-1.5 text-xs rounded transition-colors hover:bg-[var(--surface-2)] mt-1 border-t"
+                  style={{ color: "#b91c1c", borderColor: "var(--border)" }}>
+                  Clear assignment
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── DueDatePopover ─────────────────────────────────────────────────────────
+
+function DueDatePopover({ label, onPick, current }:
+  { label: string; onPick: (iso: string | null) => void; current?: string | null }
+) {
+  const [open, setOpen] = useState(false)
+  const [val, setVal] = useState(current ?? "")
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    function h(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener("mousedown", h)
+    return () => document.removeEventListener("mousedown", h)
+  }, [open])
+  return (
+    <div ref={ref} className="relative inline-block">
+      <Button size="sm" variant="outline" onClick={() => setOpen(!open)}
+        icon={<Calendar size={11} strokeWidth={1.8} />}>
+        {label}
+      </Button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-20 rounded-md p-3 shadow-lg"
+          style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
+          <input type="date" value={val} onChange={(e) => setVal(e.target.value)}
+            className="rounded px-2 py-1 text-sm outline-none"
+            style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+          />
+          <div className="flex items-center gap-2 mt-2">
+            <Button size="sm" onClick={() => { onPick(val || null); setOpen(false) }} disabled={!val}>
+              Apply
+            </Button>
+            {current && (
+              <Button size="sm" variant="ghost" onClick={() => { onPick(null); setOpen(false) }}>
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── TaskRow ────────────────────────────────────────────────────────────────
 
-function TaskRow({ task, userNames, expanded, onToggleExpand }: {
+function TaskRow({ task, userNames, members, isAdmin, checked, onToggleCheck }: {
   task: Task
   userNames: Record<string, string>
-  expanded: boolean
-  onToggleExpand: () => void
+  members: { id: string | null; display_name: string; role: string }[]
+  isAdmin: boolean
+  checked: boolean
+  onToggleCheck: () => void
 }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -365,7 +739,6 @@ function TaskRow({ task, userNames, expanded, onToggleExpand }: {
   const src = sourceMeta(task.source_type)
   const SeverityIcon = sev.Icon
   const overdue = task.due_date && !isCompleted(task) && new Date(task.due_date) < new Date(new Date().toDateString())
-  const snoozed = isSnoozed(task)
   const completed = isCompleted(task)
   const dismissed = !!task.dismissed_at
 
@@ -373,253 +746,239 @@ function TaskRow({ task, userNames, expanded, onToggleExpand }: {
     mutationFn: (patch: Parameters<typeof tasksApi.upsertAction>[0]) => tasksApi.upsertAction(patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   })
-  const completeMut = useMutation({
-    mutationFn: () => tasksApi.complete(task.action_id!),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
-  })
 
-  function setSnooze(days: number) {
-    const d = new Date()
-    d.setDate(d.getDate() + days)
+  function assignPreparer(uid: string | null) {
     actionMut.mutate({
-      source_type:  task.source_type,
-      source_id:    task.source_id,
-      period_end:   task.period_end,
-      snooze_until: d.toISOString().slice(0, 10),
+      source_type: task.source_type, source_id: task.source_id, period_end: task.period_end,
+      assigned_preparer_id: uid ?? "",
     })
   }
-  function clearSnooze() {
+  function assignReviewer(uid: string | null) {
     actionMut.mutate({
-      source_type:  task.source_type,
-      source_id:    task.source_id,
-      period_end:   task.period_end,
-      snooze_until: null,
+      source_type: task.source_type, source_id: task.source_id, period_end: task.period_end,
+      assigned_reviewer_id: uid ?? "",
     })
   }
-  function dismiss() {
+  function setDue(iso: string | null) {
     actionMut.mutate({
-      source_type:  task.source_type,
-      source_id:    task.source_id,
-      period_end:   task.period_end,
-      dismissed:    true,
+      source_type: task.source_type, source_id: task.source_id, period_end: task.period_end,
+      due_date: iso ?? "",
     })
   }
 
-  const preparerName = task.prepared_by ? (userNames[task.prepared_by] ?? "Someone") : null
-  const reviewerName = task.approved_by ? (userNames[task.approved_by] ?? "Someone") : null
-
-  // Pick the most relevant "completed" timestamp: the manual complete
-  // overrides everything; otherwise approved_at (the reviewer's stamp).
-  const completedAt = task.completed_at ?? task.approved_at
+  // Preparer cell logic: show actor when present, else assignment, else admin can assign
+  const preparerActor    = task.prepared_by ? (userNames[task.prepared_by] ?? "Someone") : null
+  const preparerAssigned = task.assigned_preparer_id ? (userNames[task.assigned_preparer_id] ?? "Someone") : null
+  const reviewerActor    = task.approved_by ? (userNames[task.approved_by] ?? "Someone") : null
+  const reviewerAssigned = task.assigned_reviewer_id ? (userNames[task.assigned_reviewer_id] ?? "Someone") : null
+  const completedAt      = task.completed_at ?? task.approved_at
 
   const rowBg = completed
     ? "rgba(16, 185, 129, 0.04)"
-    : dismissed
-      ? "var(--surface-2)"
-      : undefined
+    : dismissed ? "var(--surface-2)" : undefined
 
   return (
-    <>
-      <tr style={{ borderBottom: "1px solid var(--border)", background: rowBg,
-                   opacity: dismissed ? 0.5 : 1 }}>
-        {/* Task */}
-        <td className="px-3 py-3">
-          <div className="flex items-start gap-2">
-            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full shrink-0 mt-0.5"
-              style={{ background: sev.bg, color: sev.fg }}>
-              <SeverityIcon size={11} strokeWidth={2} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-medium text-theme"
-                  style={{ textDecoration: completed ? "line-through" : "none" }}>
-                  {task.subject}
-                </span>
-                <span className="text-[9px] font-bold uppercase tracking-wide rounded px-1 py-0.5"
-                  style={{ background: src.bg, color: src.fg }}>
-                  {src.label}
-                </span>
-                {snoozed && (
-                  <span className="text-[9px] inline-flex items-center gap-0.5"
-                    style={{ color: "var(--text-muted)" }}>
-                    <Clock size={9} strokeWidth={2} /> snoozed
-                  </span>
-                )}
-              </div>
-              {task.notes && (
-                <p className="text-[11px] mt-1 italic inline-flex items-center gap-1"
-                  style={{ color: "var(--text-2)" }}>
-                  <StickyNote size={9} strokeWidth={1.8} />
-                  {task.notes}
-                </p>
-              )}
-            </div>
-          </div>
-        </td>
+    <tr style={{
+      borderBottom: "1px solid var(--border)",
+      background: checked ? "var(--green-subtle)" : rowBg,
+      opacity: dismissed ? 0.5 : 1,
+    }}>
+      <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+        <input type="checkbox" checked={checked} onChange={onToggleCheck} aria-label="Select task" />
+      </td>
 
-        {/* Period */}
-        <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
-          {task.period_end
-            ? new Date(task.period_end + "T00:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })
-            : "—"}
-        </td>
-
-        {/* Status */}
-        <td className="px-3 py-3">
-          <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
-            style={{ background: stat.bg, color: stat.fg }}>
-            <span className="h-1.5 w-1.5 rounded-full" style={{ background: stat.fg }} />
-            {stat.label}
+      {/* Task */}
+      <td className="px-3 py-3">
+        <div className="flex items-start gap-2">
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full shrink-0 mt-0.5"
+            style={{ background: sev.bg, color: sev.fg }}>
+            <SeverityIcon size={11} strokeWidth={2} />
           </span>
-        </td>
-
-        {/* Preparer */}
-        <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
-          {preparerName ? (
-            <>
-              <p className="text-theme truncate">{preparerName}</p>
-              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                {fmtRelDate(task.prepared_at)}
+          <div className="min-w-0 flex-1">
+            <span className="text-sm font-medium text-theme"
+              style={{ textDecoration: completed ? "line-through" : "none" }}>
+              {task.subject}
+            </span>
+            {task.notes && (
+              <p className="text-[11px] mt-1 italic inline-flex items-center gap-1"
+                style={{ color: "var(--text-2)" }}>
+                <StickyNote size={9} strokeWidth={1.8} />
+                {task.notes}
               </p>
-            </>
-          ) : "—"}
-        </td>
-
-        {/* Reviewer */}
-        <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
-          {reviewerName ? (
-            <>
-              <p className="text-theme truncate">{reviewerName}</p>
-              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                {fmtRelDate(task.approved_at)}
-              </p>
-            </>
-          ) : "—"}
-        </td>
-
-        {/* Due */}
-        <td className="px-3 py-3 text-xs">
-          {task.due_date ? (
-            <>
-              <p style={{ color: overdue ? "#dc2626" : "var(--text-2)" }}>
-                {fmtDate(task.due_date)}
-              </p>
-              {overdue && (
-                <p className="text-[10px] font-semibold" style={{ color: "#dc2626" }}>
-                  overdue
-                </p>
-              )}
-            </>
-          ) : "—"}
-        </td>
-
-        {/* Completed */}
-        <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
-          {completedAt ? (
-            <>
-              <p className="text-theme">{fmtDate(completedAt)}</p>
-              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                {fmtRelDate(completedAt)}
-              </p>
-            </>
-          ) : "—"}
-        </td>
-
-        {/* Actions */}
-        <td className="px-3 py-3">
-          <div className="flex items-center justify-end gap-1">
-            {task.deep_link && !completed && !dismissed && (
-              <Button size="sm" variant="outline"
-                icon={<ExternalLink size={11} strokeWidth={1.8} />}
-                onClick={() => navigate(task.deep_link!)}>
-                <span className="hidden md:inline">Open</span>
-              </Button>
             )}
-            <button onClick={onToggleExpand}
-              className="h-7 w-7 rounded-md flex items-center justify-center transition-colors hover:bg-[var(--surface-2)]"
-              style={{ color: "var(--text-muted)" }}
-              title={expanded ? "Hide actions" : "More actions"}>
-              <ChevronDown size={14} strokeWidth={2}
-                className="transition-transform"
-                style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }} />
-            </button>
           </div>
-        </td>
-      </tr>
+        </div>
+      </td>
 
-      {/* Expanded row: per-task action drawer */}
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <tr>
-            <td colSpan={8} className="p-0">
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.18 }}
-                style={{ overflow: "hidden" }}>
-                <div className="px-4 py-3 flex items-center gap-2 flex-wrap"
-                  style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
-                  <span className="text-[10px] font-semibold uppercase tracking-wide"
-                    style={{ color: "var(--text-muted)" }}>
-                    Actions:
-                  </span>
-                  {!completed && !dismissed && (
-                    <>
-                      {snoozed ? (
-                        <Button size="sm" variant="outline" onClick={clearSnooze}
-                          loading={actionMut.isPending}>Wake now</Button>
-                      ) : (
-                        <>
-                          <Button size="sm" variant="outline" onClick={() => setSnooze(1)}
-                            loading={actionMut.isPending}>
-                            <Clock size={11} strokeWidth={1.8} className="inline mr-1" />
-                            Snooze 1d
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => setSnooze(3)}
-                            loading={actionMut.isPending}>3d</Button>
-                          <Button size="sm" variant="outline" onClick={() => setSnooze(7)}
-                            loading={actionMut.isPending}>1w</Button>
-                        </>
-                      )}
-                      <div className="mx-1 h-4 w-px" style={{ background: "var(--border)" }} />
-                      {task.action_id && (
-                        <Button size="sm" variant="outline"
-                          icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
-                          loading={completeMut.isPending}
-                          onClick={() => completeMut.mutate()}
-                          style={{ borderColor: "var(--green)", color: "var(--green)" }}>
-                          Mark done
-                        </Button>
-                      )}
-                      <Button size="sm" variant="ghost" onClick={dismiss}
-                        loading={actionMut.isPending}>
-                        <X size={11} strokeWidth={1.8} /> Dismiss
-                      </Button>
-                    </>
-                  )}
-                  {(completed || dismissed) && (
-                    <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                      {completed ? "Task is completed." : "Task is dismissed."}
-                      {" "}Re-open by syncing the underlying source.
-                    </span>
-                  )}
-                </div>
-              </motion.div>
-            </td>
-          </tr>
-        )}
-      </AnimatePresence>
-    </>
+      <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+        {task.period_end
+          ? new Date(task.period_end + "T00:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })
+          : "—"}
+      </td>
+
+      <td className="px-3 py-3">
+        <span className="text-[9px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5"
+          style={{ background: src.bg, color: src.fg }}>
+          {src.label}
+        </span>
+      </td>
+
+      <td className="px-3 py-3">
+        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+          style={{ background: stat.bg, color: stat.fg }}>
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: stat.fg }} />
+          {stat.label}
+        </span>
+      </td>
+
+      {/* Preparer */}
+      <td className="px-3 py-3 text-xs">
+        <PersonCell
+          actorName={preparerActor}
+          actorAt={task.prepared_at}
+          assignedName={preparerAssigned}
+          isAdmin={isAdmin}
+          members={members}
+          onAssign={assignPreparer}
+          dropdownLabel="Set preparer"
+          currentAssignedId={task.assigned_preparer_id}
+        />
+      </td>
+
+      {/* Reviewer */}
+      <td className="px-3 py-3 text-xs">
+        <PersonCell
+          actorName={reviewerActor}
+          actorAt={task.approved_at}
+          assignedName={reviewerAssigned}
+          isAdmin={isAdmin}
+          members={members}
+          onAssign={assignReviewer}
+          dropdownLabel="Set reviewer"
+          currentAssignedId={task.assigned_reviewer_id}
+        />
+      </td>
+
+      {/* Due */}
+      <td className="px-3 py-3 text-xs">
+        <DueCell
+          dueDate={task.due_date}
+          overridden={task.due_date_overridden}
+          overdue={!!overdue}
+          isAdmin={isAdmin}
+          onSet={setDue}
+        />
+      </td>
+
+      {/* Completed */}
+      <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+        {completedAt ? (
+          <>
+            <p className="text-theme">{fmtDate(completedAt)}</p>
+            <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>{fmtRelDate(completedAt)}</p>
+          </>
+        ) : "—"}
+      </td>
+
+      {/* Actions */}
+      <td className="px-3 py-3">
+        <div className="flex items-center justify-end gap-1">
+          {task.deep_link && !completed && !dismissed && (
+            <Button size="sm" variant="outline"
+              icon={<ExternalLink size={11} strokeWidth={1.8} />}
+              onClick={() => navigate(task.deep_link!)}>
+              <span className="hidden md:inline">Open</span>
+            </Button>
+          )}
+        </div>
+      </td>
+    </tr>
   )
 }
 
-// ── Empty state ────────────────────────────────────────────────────────────
+// ── PersonCell — renders preparer or reviewer with optional admin assign ──
+
+function PersonCell({ actorName, actorAt, assignedName, isAdmin, members, onAssign, dropdownLabel, currentAssignedId }:
+  { actorName: string | null; actorAt: string | null; assignedName: string | null;
+    isAdmin: boolean; members: { id: string | null; display_name: string; role: string }[];
+    onAssign: (uid: string | null) => void;
+    dropdownLabel: string; currentAssignedId: string | null }
+) {
+  if (actorName) {
+    // Someone already did this step — show them. Even admins don't
+    // override actor stamps (those reflect history, not intent).
+    return (
+      <div style={{ color: "var(--text-2)" }}>
+        <p className="text-theme truncate">{actorName}</p>
+        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>{fmtRelDate(actorAt)}</p>
+      </div>
+    )
+  }
+  if (assignedName) {
+    return (
+      <div style={{ color: "var(--text-2)" }}>
+        <p className="text-theme truncate inline-flex items-center gap-1">
+          {assignedName}
+          {isAdmin && (
+            <AssignDropdown
+              label="Edit"
+              members={members}
+              onPick={onAssign}
+              current={currentAssignedId}
+            />
+          )}
+        </p>
+        <p className="text-[10px] italic" style={{ color: "var(--text-muted)" }}>assigned</p>
+      </div>
+    )
+  }
+  if (isAdmin) {
+    return (
+      <AssignDropdown
+        label={dropdownLabel}
+        members={members}
+        onPick={onAssign}
+        current={currentAssignedId}
+      />
+    )
+  }
+  return <span style={{ color: "var(--text-muted)" }}>—</span>
+}
+
+// ── DueCell ────────────────────────────────────────────────────────────────
+
+function DueCell({ dueDate, overridden, overdue, isAdmin, onSet }:
+  { dueDate: string | null; overridden: boolean; overdue: boolean;
+    isAdmin: boolean; onSet: (iso: string | null) => void }
+) {
+  if (!dueDate) {
+    return isAdmin
+      ? <DueDatePopover label="Set due" onPick={onSet} />
+      : <span style={{ color: "var(--text-muted)" }}>—</span>
+  }
+  return (
+    <div>
+      <p className="inline-flex items-center gap-1"
+        style={{ color: overdue ? "#dc2626" : "var(--text-2)" }}>
+        {fmtDate(dueDate)}
+        {overridden && (
+          <Pencil size={9} strokeWidth={2} style={{ color: "var(--text-muted)" }}
+            aria-label="Custom due date" />
+        )}
+      </p>
+      {overdue && <p className="text-[10px] font-semibold" style={{ color: "#dc2626" }}>overdue</p>}
+      {isAdmin && (
+        <DueDatePopover label="Edit" onPick={onSet} current={dueDate} />
+      )}
+    </div>
+  )
+}
+
+// ── Empty + manual form ───────────────────────────────────────────────────
 
 function EmptyState({ tab }: { tab: FilterTab }) {
   const copy: Record<FilterTab, { title: string; body: string }> = {
     open:      { title: "Nothing to do",     body: "No open tasks for the current filters. Try widening the filters or check the Completed tab." },
-    snoozed:   { title: "No snoozed tasks",  body: "Tasks you've snoozed will appear here until their wake date." },
     completed: { title: "Nothing completed", body: "Tasks finish here as a record of work done." },
     all:       { title: "No tasks",          body: "Sync QuickBooks accounts and they'll show up as reconciliation tasks." },
   }
@@ -627,21 +986,25 @@ function EmptyState({ tab }: { tab: FilterTab }) {
   return (
     <div className="rounded-xl p-10 text-center"
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-      <CheckSquare size={28} strokeWidth={1.6}
-        className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
+      <CheckSquare size={28} strokeWidth={1.6} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
       <p className="text-sm font-semibold text-theme mb-1">{c.title}</p>
       <p className="text-xs" style={{ color: "var(--text-muted)" }}>{c.body}</p>
     </div>
   )
 }
 
-// ── Manual task form ──────────────────────────────────────────────────────
-
-function ManualTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
+  onClose: () => void; onCreated: () => void
+  members: { id: string | null; display_name: string; role: string }[]
+  isAdmin: boolean
+}) {
   const [subject, setSubject] = useState("")
   const [description, setDescription] = useState("")
   const [priority, setPriority] = useState("normal")
   const [periodEnd, setPeriodEnd] = useState("")
+  const [dueDate, setDueDate] = useState("")
+  const [preparerId, setPreparerId] = useState("")
+  const [reviewerId, setReviewerId] = useState("")
 
   const createMut = useMutation({
     mutationFn: () => tasksApi.createManual({
@@ -649,6 +1012,10 @@ function ManualTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated
       description: description.trim() || null,
       priority,
       period_end:  periodEnd || null,
+      // Admin-only — send blank otherwise
+      due_date:             isAdmin ? (dueDate || null) : null,
+      assigned_preparer_id: isAdmin ? (preparerId || null) : null,
+      assigned_reviewer_id: isAdmin ? (reviewerId || null) : null,
     }),
     onSuccess: onCreated,
   })
@@ -663,50 +1030,61 @@ function ManualTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated
           <X size={14} strokeWidth={1.8} />
         </button>
       </div>
-      <label className="block">
-        <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-          Subject
-        </span>
+      <Label text="Subject">
         <input type="text" value={subject} onChange={(e) => setSubject(e.target.value)}
           placeholder="e.g. Email client for September bank statement"
           className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-        />
-      </label>
-      <label className="block">
-        <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-          Description (optional)
-        </span>
-        <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-          rows={2}
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
+      </Label>
+      <Label text="Description (optional)">
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
           className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none resize-none"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-        />
-      </label>
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
+      </Label>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label className="block">
-          <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-            Priority
-          </span>
+        <Label text="Priority">
           <select value={priority} onChange={(e) => setPriority(e.target.value)}
             className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
             style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}>
-            <option value="low">Low</option>
-            <option value="normal">Normal</option>
-            <option value="high">High</option>
-            <option value="critical">Critical</option>
+            <option value="low">Low</option><option value="normal">Normal</option>
+            <option value="high">High</option><option value="critical">Critical</option>
           </select>
-        </label>
-        <label className="block">
-          <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-            Period (optional)
-          </span>
+        </Label>
+        <Label text="Period (optional)">
           <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)}
             className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
-            style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-          />
-        </label>
+            style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
+        </Label>
       </div>
+      {isAdmin && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Label text="Preparer (optional)">
+            <select value={preparerId} onChange={(e) => setPreparerId(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}>
+              <option value="">— None</option>
+              {members.filter((m) => m.id).map((m) => (
+                <option key={m.id!} value={m.id!}>{m.display_name}</option>
+              ))}
+            </select>
+          </Label>
+          <Label text="Reviewer (optional)">
+            <select value={reviewerId} onChange={(e) => setReviewerId(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}>
+              <option value="">— None</option>
+              {members.filter((m) => m.id).map((m) => (
+                <option key={m.id!} value={m.id!}>{m.display_name}</option>
+              ))}
+            </select>
+          </Label>
+          <Label text="Due date (optional)">
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
+          </Label>
+        </div>
+      )}
       {createMut.error ? (
         <p className="text-xs" style={{ color: "#b91c1c" }}>
           {((createMut.error as { message?: string })?.message) ?? "Couldn't create the task."}
@@ -721,5 +1099,13 @@ function ManualTaskForm({ onClose, onCreated }: { onClose: () => void; onCreated
   )
 }
 
-// Unused import shim — we may add an ArrowRight icon on a future row hover state.
-void ArrowRight
+function Label({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+        {text}
+      </span>
+      {children}
+    </label>
+  )
+}

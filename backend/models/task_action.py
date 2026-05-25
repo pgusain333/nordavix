@@ -39,11 +39,22 @@ class TaskAction(TenantBase):
     period_end:  Mapped[date | None] = mapped_column(Date)
 
     # Action overlay fields — all nullable.
+    # Legacy single-assignee column; superseded by the split preparer/
+    # reviewer fields below but kept for backward compat with rows
+    # created before migration 015.
     assignee_id:  Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     snooze_until: Mapped[date | None] = mapped_column(Date)
     notes:        Mapped[str | None] = mapped_column(Text)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Admin-set assignments (migration 015). Intent fields — "this user
+    # SHOULD prepare/review this task" — distinct from the actor stamps
+    # on account_review_status which record who actually DID the work.
+    assigned_preparer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    assigned_reviewer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # Custom due date override (migration 015). When set, takes precedence
+    # over the default `period_end + 15 days`.
+    due_date:    Mapped[date | None] = mapped_column(Date)
 
     # Manual-task fields (NULL on overlay rows).
     subject:     Mapped[str | None] = mapped_column(String(200))
