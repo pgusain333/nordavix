@@ -419,13 +419,33 @@ async def fetch_variance_detail(
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-# Credit-natural account groups — liabilities + equity carry credit
-# balances and show negative-signed in our convention. Kept in sync
-# with the frontend list in ReconciliationsDashboard.tsx.
-_CREDIT_NATURAL_GROUPS = {
-    "Credit Card", "AP",
-    "Other Current Liabilities", "Long Term Liabilities", "Equity",
+# Asset-side groups (debit-natural).
+_ASSET_GROUPS = {
+    "Bank", "AR", "Fixed Assets",
+    "Other Current Assets", "Other Assets",
 }
+
+# Liability-side groups (credit-natural).
+_LIABILITY_GROUPS = {
+    "AP", "Credit Card",
+    "Other Current Liabilities", "Long Term Liabilities",
+}
+
+# Equity group (credit-natural — Retained Earnings, Common Stock, etc.
+# along with contra-equity like Owner's Draw that runs the other way).
+_EQUITY_GROUPS = {"Equity"}
+
+# Combined credit-natural set — kept for the sign-flip rules elsewhere
+# in the codebase (frontend reconciling-items also imports this list).
+_CREDIT_NATURAL_GROUPS = _LIABILITY_GROUPS | _EQUITY_GROUPS
+
+
+def _classify(group_label: str) -> str | None:
+    """Map a group_label to 'asset' / 'liability' / 'equity' / None."""
+    if group_label in _ASSET_GROUPS:     return "asset"
+    if group_label in _LIABILITY_GROUPS: return "liability"
+    if group_label in _EQUITY_GROUPS:    return "equity"
+    return None
 
 
 async def _fetch_tb_check(
@@ -435,73 +455,54 @@ async def _fetch_tb_check(
     accounts: list[dict],
 ) -> dict | None:
     """
-    Source-vs-sync verification — proves the QBO sync pulled the right
-    figures and the math ties out.
+    Sync verification via the accounting equation.
 
-    Two independent QBO reports are pulled and laid alongside our
-    sync's own totals:
+    A balanced GL holds:
 
-      • BalanceSheet  → QBO's own "Total Assets" + "Total Liab + Equity"
-                        (these are always equal by definition — that's
-                        what makes a balance sheet balanced).
-      • ProfitAndLoss → YTD Net Income (Jan 1 → period_end). On a mid-
-                        year BS, QBO inserts this NI as a calculated
-                        line inside the Equity section so the BS still
-                        balances — but our sync of explicit equity
-                        accounts misses it.
+        Assets − Liabilities − Equity = Net Income (YTD)
 
-    Two checks the UI surfaces:
+    We sum the three sides FROM THE SYNCED PER-ACCOUNT BALANCES (using
+    each account's QBO group_label to classify it), then pull YTD
+    Net Income from QBO's ProfitAndLoss report as an INDEPENDENT
+    source of truth, and compare. If the implied NI matches QBO's
+    reported NI, the sync pulled correct figures.
 
-      1. "Our Total Assets == QBO Total Assets"
-         → confirms we parsed the asset side correctly.
-      2. "Our (L + E) + YTD NI == QBO Total L+E"
-         → confirms we parsed the credit side correctly AND that the
-         P&L pull aligns to the same period — basically the full
-         "did the sync round-trip" check.
+    Sign handling (the bug that crashed the earlier version):
+      - GL balances are signed: assets debit-positive, liabilities
+        and equity credit-negative.
+      - Naively summing absolute values flips contra-account signs:
+        Owner's Draw (a +debit balance on an Equity-typed account)
+        would ADD to equity instead of SUBTRACT. Same for Accumulated
+        Depreciation on the asset side.
+      - Fix: sum the SIGNED values per side, then negate the credit
+        sides at the end. Contra-accounts net correctly in both
+        directions.
 
-    Returns the raw figures + a per-side match flag. UI does the
-    presentation; backend only does the math + source-of-truth pull.
+    Returns enough numbers for the UI to lay out the three-line equation
+    + the source-of-truth comparison. Returns None-fields gracefully
+    when the P&L pull fails so the dashboard doesn't block.
     """
-    # --- 1. Sum our own sync's totals ----------------------------------
-    sync_assets = Decimal("0")
-    sync_liab_equity = Decimal("0")
+    # --- 1. Sum the three sides with proper sign handling --------------
+    # Sum signed balances per side. Asset side stays as-is (debit-positive).
+    # Credit sides are flipped at the end to read positive in the UI.
+    sum_assets_signed     = Decimal("0")   # debit-natural, sum as-is
+    sum_liab_signed       = Decimal("0")   # credit-natural, will negate
+    sum_equity_signed     = Decimal("0")   # credit-natural, will negate
     for a in accounts:
         gl = _dec(a.get("gl_balance", "0"))
-        if a.get("group_label") in _CREDIT_NATURAL_GROUPS:
-            sync_liab_equity += abs(gl)
-        else:
-            sync_assets += max(Decimal("0"), gl)
-    sync_assets = sync_assets.quantize(Decimal("0.01"))
-    sync_liab_equity = sync_liab_equity.quantize(Decimal("0.01"))
+        cls = _classify(a.get("group_label", ""))
+        if cls == "asset":      sum_assets_signed += gl
+        elif cls == "liability": sum_liab_signed   += gl
+        elif cls == "equity":    sum_equity_signed += gl
 
-    # --- 2. Pull QBO's own BalanceSheet report -------------------------
-    # The cleanest source of truth: QBO computes its own Total Assets
-    # and Total Liab+Equity (which always match because the BS balances).
-    # We compare our parsed totals against these to verify the sync.
-    qbo_assets: Decimal | None = None
-    qbo_liab_equity: Decimal | None = None
-    bs_error: str | None = None
-    try:
-        bs_report = await _qbo_get(
-            conn,
-            session,
-            "/reports/BalanceSheet",
-            params={
-                "end_date":          period_end.isoformat(),
-                "accounting_method": "Accrual",
-                "minorversion":      "65",
-            },
-        )
-        qbo_assets, qbo_liab_equity = _extract_bs_totals(bs_report)
-    except Exception:
-        logger.exception("BalanceSheet pull failed for TB check %s", period_end)
-        bs_error = "Could not pull Balance Sheet report from QuickBooks."
+    total_assets      = sum_assets_signed.quantize(Decimal("0.01"))
+    total_liabilities = (-sum_liab_signed).quantize(Decimal("0.01"))   # flip to positive
+    total_equity      = (-sum_equity_signed).quantize(Decimal("0.01")) # flip to positive
+    implied_ni = (total_assets - total_liabilities - total_equity).quantize(Decimal("0.01"))
 
-    # --- 3. Pull QBO's YTD Net Income from the P&L ----------------------
-    # On QBO's BS report, current-year Net Income shows up as a separate
-    # line inside Equity. Our per-account sync DOESN'T pick that up
-    # (there's no Account record for it — it's calculated), so we need
-    # the P&L pull to add it to our credit-side total for the compare.
+    # --- 2. Pull QBO's YTD Net Income from the P&L (cross-check) -------
+    # The independent source of truth: if our implied NI matches QBO's
+    # reported NI on the P&L, the sync round-tripped correctly.
     ytd_start = period_end.replace(month=1, day=1)
     actual_ni: Decimal | None = None
     pl_error: str | None = None
@@ -524,92 +525,28 @@ async def _fetch_tb_check(
         logger.exception("ProfitAndLoss pull failed for TB check %s → %s", ytd_start, period_end)
         pl_error = "Could not pull ProfitAndLoss report from QuickBooks."
 
-    # --- 4. Compute the two checks --------------------------------------
-    # Side A: parsed asset side vs QBO's asset side
-    assets_match: bool | None = None
-    assets_diff: Decimal | None = None
-    if qbo_assets is not None:
-        assets_diff = (sync_assets - qbo_assets).quantize(Decimal("0.01"))
-        assets_match = abs(assets_diff) < Decimal("1.00")
-
-    # Side B: parsed L+E side + YTD NI vs QBO's L+E side
-    liab_equity_match: bool | None = None
-    liab_equity_diff: Decimal | None = None
-    sync_liab_equity_plus_ni: Decimal | None = None
-    if qbo_liab_equity is not None and actual_ni is not None:
-        sync_liab_equity_plus_ni = (sync_liab_equity + actual_ni).quantize(Decimal("0.01"))
-        liab_equity_diff = (sync_liab_equity_plus_ni - qbo_liab_equity).quantize(Decimal("0.01"))
-        liab_equity_match = abs(liab_equity_diff) < Decimal("1.00")
-
-    # Overall verdict — green only when BOTH sides match.
-    overall_match = bool(assets_match) and bool(liab_equity_match)
+    # --- 3. Match check --------------------------------------------------
+    difference: Decimal | None = None
+    balanced: bool | None = None
+    if actual_ni is not None:
+        difference = (implied_ni - actual_ni).quantize(Decimal("0.01"))
+        balanced = abs(difference) < Decimal("1.00")  # $1 tolerance for rounding
 
     return {
-        "period_end":             period_end.isoformat(),
-        "ytd_start":              ytd_start.isoformat(),
-        # Our sync
-        "sync_assets":            str(sync_assets),
-        "sync_liab_equity":       str(sync_liab_equity),
-        "sync_liab_equity_plus_ni": str(sync_liab_equity_plus_ni) if sync_liab_equity_plus_ni is not None else None,
-        # QBO source of truth
-        "qbo_assets":             str(qbo_assets.quantize(Decimal("0.01"))) if qbo_assets is not None else None,
-        "qbo_liab_equity":        str(qbo_liab_equity.quantize(Decimal("0.01"))) if qbo_liab_equity is not None else None,
-        "qbo_net_income":         str(actual_ni.quantize(Decimal("0.01"))) if actual_ni is not None else None,
-        # Per-side matches
-        "assets_match":           assets_match,
-        "assets_diff":            str(assets_diff) if assets_diff is not None else None,
-        "liab_equity_match":      liab_equity_match,
-        "liab_equity_diff":       str(liab_equity_diff) if liab_equity_diff is not None else None,
-        # Overall
-        "balanced":               overall_match,
-        "bs_error":               bs_error,
-        "pl_error":               pl_error,
+        "period_end":         period_end.isoformat(),
+        "ytd_start":          ytd_start.isoformat(),
+        # Three sides of the balance sheet — what our sync says.
+        "total_assets":       str(total_assets),
+        "total_liabilities":  str(total_liabilities),
+        "total_equity":       str(total_equity),
+        # Math result.
+        "implied_net_income": str(implied_ni),
+        # Cross-check against QBO P&L.
+        "actual_net_income":  str(actual_ni.quantize(Decimal("0.01"))) if actual_ni is not None else None,
+        "difference":         str(difference) if difference is not None else None,
+        "balanced":           balanced,
+        "pl_error":           pl_error,
     }
-
-
-def _extract_bs_totals(report: dict) -> tuple[Decimal | None, Decimal | None]:
-    """
-    Pull "Total Assets" and "Total Liabilities and Equity" off QBO's
-    BalanceSheet report. Both are summary rows at the top level — the
-    BalanceSheet report ALWAYS has these (they're definitional), so a
-    miss here means the report shape changed and we should re-check the
-    parser.
-
-    QBO BS structure:
-      Rows:
-        Section "ASSETS" → ends with Summary "TOTAL ASSETS"
-        Section "LIABILITIES AND EQUITY" → ends with Summary "TOTAL ..."
-    """
-    def find_summary(rows: list[dict], match_keywords: tuple[str, ...]) -> Decimal | None:
-        for r in rows:
-            # Look at the row's own Summary cell first (group rows).
-            summary = (r.get("Summary") or {}).get("ColData") or []
-            if summary:
-                label = (summary[0].get("value", "") or "").strip().lower()
-                if any(k in label for k in match_keywords):
-                    for cell in reversed(summary):
-                        v = (cell or {}).get("value")
-                        if v in (None, ""):
-                            continue
-                        try:
-                            return _dec(v)
-                        except Exception:
-                            continue
-            # Recurse into nested rows.
-            sub = (r.get("Rows") or {}).get("Row") or []
-            if sub:
-                found = find_summary(sub, match_keywords)
-                if found is not None:
-                    return found
-        return None
-
-    rows = (report.get("Rows") or {}).get("Row") or []
-    # "total assets" → e.g. "Total ASSETS" / "TOTAL ASSETS"
-    assets = find_summary(rows, ("total assets",))
-    # QBO uses "Total Liabilities and Equity" (sometimes with & instead
-    # of "and"). Be tolerant of both.
-    liab_equity = find_summary(rows, ("total liabilities and equity", "total liabilities & equity"))
-    return assets, liab_equity
 
 
 def _extract_net_income(report: dict) -> Decimal | None:

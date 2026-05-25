@@ -452,29 +452,37 @@ export function ReconciliationsDashboard() {
     return overview?.accounts.filter((a) => Math.abs(parseFloat(a.variance)) >= 0.5).length ?? 0
   }, [overview])
 
-  // Split the GL into balance-sheet sides so the KPI strip shows
-  // something meaningful. The old "Total GL / Total Subledger" cards
-  // were just summing every signed balance — which always nets to
-  // roughly zero on a balanced book (assets = liabilities + equity)
-  // and gave the user no signal. Split totals show the SCALE of the
-  // balance sheet at a glance + double as a sanity check (the two
-  // sides should be within retained-earnings of each other).
-  const sideTotals = useMemo(() => {
-    let assets = 0
-    let liabEquity = 0
+  // Split GL into three sides — Assets, Liabilities, Equity — using
+  // signed sums then flipping the credit-natural sides at the end.
+  //
+  // The earlier version used Math.abs() per row, which broke for
+  // contra-accounts: Owner's Draw (a +debit on an Equity-typed account)
+  // got added to equity instead of subtracted, and the same logic
+  // dropped contra-assets (Accumulated Depreciation, a credit balance
+  // on Fixed Assets) entirely via Math.max(0, gl). Both bugs combined
+  // to produce visible drift in the trial-balance check.
+  //
+  // Signed-sum-then-negate gets every contra-account right in both
+  // directions.
+  const breakdown = useMemo(() => {
+    let assetsSigned = 0   // debit-natural side; sum as-is
+    let liabSigned   = 0   // credit-natural side; negate at the end
+    let equitySigned = 0   // credit-natural side; negate at the end
     for (const a of overview?.accounts ?? []) {
       const gl = parseFloat(a.gl_balance) || 0
-      if (isCreditNatural(a.group_label)) {
-        // Credit-natural balances are stored signed-negative; take
-        // absolute value so the card reads as a positive total.
-        liabEquity += Math.abs(gl)
+      if (a.group_label === "Equity") {
+        equitySigned += gl
+      } else if (isCreditNatural(a.group_label)) {
+        liabSigned += gl
       } else {
-        // Debit-natural side — accumulate positive balances directly,
-        // ignore the rare contra-asset showing negative.
-        assets += Math.max(0, gl)
+        assetsSigned += gl
       }
     }
-    return { assets, liabEquity }
+    return {
+      assets:      assetsSigned,
+      liabilities: -liabSigned,
+      equity:      -equitySigned,
+    }
   }, [overview])
 
   function openSubledger(a: OverviewAccount) {
@@ -737,8 +745,9 @@ export function ReconciliationsDashboard() {
               <CheckCircle2 size={12} strokeWidth={2} style={{ color: "var(--green)" }} />
               <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                 {overview.accounts.length} account{overview.accounts.length === 1 ? "" : "s"} reconciled
-                · Total assets {fmtMoney(sideTotals.assets)}
-                · L+E {fmtMoney(sideTotals.liabEquity)}
+                · Assets {fmtMoney(breakdown.assets)}
+                · Liab {fmtMoney(breakdown.liabilities)}
+                · Equity {fmtMoney(breakdown.equity)}
                 · Variance {fmtMoney(overview.totals.variance)}
               </span>
             </div>
@@ -747,21 +756,23 @@ export function ReconciliationsDashboard() {
 
         {qbo && (overview || isFetching) && (
           <>
-            {/* KPI strip — split totals replace the old net-of-signs
-                "Total GL" + "Total Subledger" cards. A CPA closing books
-                wants to see the scale of each side of the balance sheet
-                (assets vs liab+equity) plus how much variance work is
-                still on the table. */}
+            {/* KPI strip — three balance-sheet sides plus reconciliation
+                status. The three top-level totals come straight from the
+                synced GL grouped by account type (assets / liabilities /
+                equity), so the user can eyeball the scale of each side
+                + spot a wildly-wrong number at a glance. */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <Kpi label="Total assets"              value={fmtMoney(sideTotals.assets)}     tone="var(--text)"
-                sub="debit-natural side of the GL" />
-              <Kpi label="Total liabilities + equity" value={fmtMoney(sideTotals.liabEquity)} tone="var(--text)"
-                sub="credit-natural side of the GL" />
-              <Kpi label="Net variance"               value={fmtMoney(overview?.totals.variance ?? 0)}
+              <Kpi label="Total assets"       value={fmtMoney(breakdown.assets)}      tone="var(--text)"
+                sub="Bank, AR, Fixed Assets, Other" />
+              <Kpi label="Total liabilities"  value={fmtMoney(breakdown.liabilities)} tone="var(--text)"
+                sub="AP, Credit Card, Liabilities" />
+              <Kpi label="Total equity"       value={fmtMoney(breakdown.equity)}      tone="var(--text)"
+                sub="excl. current-year P&L" />
+              <Kpi label="Net variance"       value={fmtMoney(overview?.totals.variance ?? 0)}
                 tone={Math.abs(parseFloat(overview?.totals.variance ?? "0")) > 0.5 ? "#dc2626" : "var(--green)"}
-                sub={varianceCount > 0 ? `${varianceCount} account${varianceCount === 1 ? "" : "s"} off` : "all reconciled"} />
-              <Kpi label="Accounts with variance"     value={String(varianceCount)} tone="var(--text)"
-                sub={`${overview?.accounts.length ?? 0} accounts total`} />
+                sub={varianceCount > 0
+                  ? `${varianceCount} account${varianceCount === 1 ? "" : "s"} off`
+                  : `${overview?.accounts.length ?? 0} accounts · all reconciled`} />
             </div>
 
             {/* Trial-Balance Check — proves the QBO sync is internally
@@ -2230,39 +2241,32 @@ function Kpi({ label, value, tone, sub }:
 }
 
 // ── Sync verification card ────────────────────────────────────────────────────
-// Direct source-vs-sync compare: pull QBO's own BalanceSheet report and
-// put it next to what our sync parsed. Per-side match indicator so the
-// user can see EXACTLY which side of the balance sheet has a gap.
+// A balanced GL must hold:
 //
-// Two checks:
-//   1. Our Total Assets == QBO's Total Assets (verifies the debit side)
-//   2. Our (L+E) + YTD Net Income == QBO's Total Liab+Equity (verifies
-//      the credit side; we add YTD NI because QBO inserts it as a
-//      calculated line in the equity section on the BS — our per-
-//      account sync misses it because there's no Account record for it)
+//   Assets − Liabilities − Equity = Net Income (YTD)
 //
-// If both ✓, the sync round-tripped correctly. If one fails, the user
-// knows which side to investigate.
+// We sum the three sides from the synced per-account balances (using
+// each account's QBO type to classify it), then pull YTD Net Income
+// from QBO's own ProfitAndLoss report. If our implied NI matches QBO's
+// reported NI, the math ties out and the sync is good. If not, the
+// gap tells you the size of the sync problem.
 
 function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api").TbCheck }) {
-  const hasBs = check.qbo_assets !== null && check.qbo_liab_equity !== null
-  const hasNi = check.qbo_net_income !== null
-  const balanced = check.balanced
+  const hasActual = check.actual_net_income !== null
+  const balanced = check.balanced === true
 
-  const syncAssets   = parseFloat(check.sync_assets)
-  const syncLE       = parseFloat(check.sync_liab_equity)
-  const syncLEPlusNI = check.sync_liab_equity_plus_ni !== null ? parseFloat(check.sync_liab_equity_plus_ni) : null
-  const qboAssets    = check.qbo_assets       !== null ? parseFloat(check.qbo_assets)       : null
-  const qboLE        = check.qbo_liab_equity  !== null ? parseFloat(check.qbo_liab_equity)  : null
-  const qboNI        = check.qbo_net_income   !== null ? parseFloat(check.qbo_net_income)   : null
-  const assetsDiff   = check.assets_diff      !== null ? parseFloat(check.assets_diff)      : null
-  const leDiff       = check.liab_equity_diff !== null ? parseFloat(check.liab_equity_diff) : null
+  const assets    = parseFloat(check.total_assets)
+  const liab      = parseFloat(check.total_liabilities)
+  const equity    = parseFloat(check.total_equity)
+  const impliedNi = parseFloat(check.implied_net_income)
+  const actualNi  = check.actual_net_income !== null ? parseFloat(check.actual_net_income) : null
+  const diff      = check.difference !== null ? parseFloat(check.difference) : null
 
-  const tone = !hasBs
-    ? { bg: "var(--surface)",            border: "var(--border)",            fg: "var(--text-muted)", icon: "?" }
+  const tone = !hasActual
+    ? { bg: "var(--surface)",            border: "var(--border)",           fg: "var(--text-muted)", icon: "?" }
     : balanced
-      ? { bg: "var(--green-subtle)",     border: "var(--green)",             fg: "var(--green)",      icon: "✓" }
-      : { bg: "rgba(220, 38, 38, 0.06)", border: "rgba(220, 38, 38, 0.40)",  fg: "#b91c1c",           icon: "!" }
+      ? { bg: "var(--green-subtle)",     border: "var(--green)",            fg: "var(--green)",      icon: "✓" }
+      : { bg: "rgba(220, 38, 38, 0.06)", border: "rgba(220, 38, 38, 0.40)", fg: "#b91c1c",           icon: "!" }
 
   let ytdStartLabel = check.ytd_start
   let periodEndLabel = check.period_end
@@ -2290,7 +2294,7 @@ function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api"
           <h2 className="text-sm font-semibold text-theme">Sync verification</h2>
           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
             style={{ background: "var(--surface-2)", color: tone.fg, border: `1px solid ${tone.border}` }}>
-            {!hasBs ? "BS report unavailable" : balanced ? "Verified — sync matches QuickBooks" : "Sync doesn't tie out"}
+            {!hasActual ? "P&L unavailable" : balanced ? "Math ties out" : "Math doesn't match"}
           </span>
         </div>
         <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
@@ -2300,39 +2304,66 @@ function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api"
 
       {/* Intro */}
       <div className="px-4 pt-3 text-xs" style={{ color: "var(--text-muted)" }}>
-        Compares what our sync parsed against QuickBooks&apos; own Balance Sheet + P&L reports.
-        Both sides should tie out — if they do, the sync pulled correct figures.
+        A balanced GL means: <span className="font-mono font-semibold text-theme">Assets − Liabilities − Equity = Net Income</span>.
+        If the implied NI from the synced balance sheet matches QuickBooks&apos; reported NI on the P&L,
+        the math ties out and the sync pulled correct figures.
       </div>
 
-      {/* Side-by-side: SYNCED vs QBO */}
-      <div className="px-4 py-3 space-y-3">
-        {/* Side A — Assets */}
-        <SideCheck
+      {/* Three-side equation */}
+      <div className="px-4 py-3 text-sm space-y-1.5">
+        <EquationRow
           label="Total Assets"
-          syncLabel="From our per-account sync"
-          syncValue={fmtMoney(syncAssets)}
-          qboLabel="From QuickBooks Balance Sheet"
-          qboValue={qboAssets !== null ? fmtMoney(qboAssets) : null}
-          diff={assetsDiff}
-          matched={check.assets_match}
-          missingNote={check.bs_error}
+          sub="Bank, AR, Fixed Assets, Other"
+          value={fmtMoney(assets)}
+          valueColor="var(--text)"
+        />
+        <Operator op="−" />
+        <EquationRow
+          label="Total Liabilities"
+          sub="AP, Credit Card, Liabilities"
+          value={fmtMoney(liab)}
+          valueColor="var(--text)"
+        />
+        <Operator op="−" />
+        <EquationRow
+          label="Total Equity"
+          sub="excludes current-year P&L net income"
+          value={fmtMoney(equity)}
+          valueColor="var(--text)"
+        />
+        <Operator op="=" />
+        <EquationRow
+          label="Implied Net Income (from sync)"
+          value={fmtMoney(impliedNi)}
+          valueColor={impliedNi < 0 ? "#dc2626" : "var(--text)"}
+          bold
         />
 
-        {/* Side B — Liabilities + Equity */}
-        <SideCheck
-          label="Total Liabilities + Equity"
-          syncLabel={
-            qboNI !== null
-              ? `Our L+E sync ${fmtMoney(syncLE)} + YTD Net Income ${fmtMoney(qboNI)}`
-              : "From our per-account sync (P&L net income missing)"
-          }
-          syncValue={syncLEPlusNI !== null ? fmtMoney(syncLEPlusNI) : fmtMoney(syncLE)}
-          qboLabel="From QuickBooks Balance Sheet"
-          qboValue={qboLE !== null ? fmtMoney(qboLE) : null}
-          diff={leDiff}
-          matched={check.liab_equity_match}
-          missingNote={check.bs_error ?? check.pl_error}
-        />
+        {/* Separator */}
+        <div style={{ borderTop: "1px dashed var(--border)" }} className="!my-3" />
+
+        {hasActual ? (
+          <>
+            <EquationRow
+              label="Actual Net Income (from QuickBooks P&L)"
+              sub={`YTD ${ytdStartLabel} → ${periodEndLabel}`}
+              value={fmtMoney(actualNi!)}
+              valueColor={actualNi! < 0 ? "#dc2626" : "var(--text)"}
+              bold
+            />
+            <EquationRow
+              label="Difference (implied − actual)"
+              value={fmtMoney(diff!, true)}
+              valueColor={tone.fg}
+              bold
+            />
+          </>
+        ) : (
+          <p className="text-xs italic py-1" style={{ color: "var(--text-muted)" }}>
+            Couldn&apos;t pull the YTD ProfitAndLoss report from QuickBooks{check.pl_error ? ` (${check.pl_error})` : ""}.
+            Compare the implied NI above to your own P&L for {ytdStartLabel} → {periodEndLabel}.
+          </p>
+        )}
       </div>
 
       {/* Plain-English verdict */}
@@ -2340,106 +2371,54 @@ function TrialBalanceCheckCard({ check }: { check: import("@/modules/recons/api"
         style={{ borderTop: `1px solid ${tone.border}`, background: "var(--surface-2)", color: "var(--text-2)" }}>
         <span style={{ color: tone.fg, fontWeight: 700 }}>{tone.icon}</span>
         <span className="flex-1">
-          {!hasBs ? (
+          {!hasActual ? (
             <>
-              Couldn&apos;t pull QuickBooks&apos; Balance Sheet report{check.bs_error ? ` (${check.bs_error})` : ""}.
-              Without QBO&apos;s own totals we can&apos;t verify the sync automatically.
-              Re-sync to retry.
+              The P&L pull failed — we can&apos;t auto-verify against QuickBooks. Re-sync to retry,
+              or compare the implied NI manually against your own P&L for the YTD window.
             </>
           ) : balanced ? (
             <>
-              Both sides of the balance sheet match QuickBooks&apos; reported totals exactly.
-              The synced figures are correct — safe to start reconciling.
+              The implied Net Income from the synced balance sheet matches QuickBooks&apos; P&L
+              exactly. The sync is correct and the math is consistent — safe to start reconciling.
             </>
-          ) : (() => {
-            // Surface the specific failing side(s) so the user knows where
-            // to dig. Most common cause: a missing/miscategorized account.
-            const failures: string[] = []
-            if (check.assets_match === false && assetsDiff !== null) {
-              failures.push(`assets off by ${fmtMoney(Math.abs(assetsDiff))}`)
-            }
-            if (check.liab_equity_match === false && leDiff !== null) {
-              failures.push(`L+E off by ${fmtMoney(Math.abs(leDiff))}`)
-            }
-            return (
-              <>
-                Sync doesn&apos;t tie out to QuickBooks ({failures.join("; ") || "see diffs above"}).
-                {" "}Most common causes: an account was renamed/recategorized in QBO since the last sync,
-                a non-Jan-1 fiscal year (the P&L pull spans Jan 1 → period-end), or there&apos;s
-                a calculated equity line (like Owner&apos;s Draw) that our category map doesn&apos;t handle.
-                Click <b>Sync</b> to pull fresh data; if the gap persists, open the failing side in QBO
-                to find the missing account.
-                {hasNi ? "" : " (Note: P&L pull also failed — credit-side check is incomplete.)"}
-              </>
-            )
-          })()}
+          ) : (
+            <>
+              The implied Net Income doesn&apos;t match QuickBooks&apos; P&L by
+              {" "}<span className="font-semibold">{fmtMoney(Math.abs(diff!))}</span>.
+              Most common causes: an account was renamed/recategorized in QBO,
+              a non-Jan-1 fiscal year (the P&L pull spans Jan 1 → period-end),
+              or an unposted journal entry. Click <b>Sync</b> to pull fresh data; if the gap
+              persists, look for an account that&apos;s missing or sitting under the wrong
+              category in QuickBooks.
+            </>
+          )}
         </span>
       </div>
     </div>
   )
 }
 
-// One side (Assets OR L+E). Renders the SYNCED total, the QBO source-of-
-// truth total, and a green tick / red flag with the dollar gap.
-function SideCheck({
-  label, syncLabel, syncValue, qboLabel, qboValue, diff, matched, missingNote,
-}: {
-  label:        string
-  syncLabel:    string
-  syncValue:    string
-  qboLabel:     string
-  qboValue:     string | null
-  diff:         number | null
-  matched:      boolean | null
-  missingNote:  string | null
-}) {
-  const matchFg = matched === true ? "var(--green)" : matched === false ? "#b91c1c" : "var(--text-muted)"
+function EquationRow({ label, sub, value, valueColor, bold }:
+  { label: string; sub?: string; value: string; valueColor: string; bold?: boolean }
+) {
   return (
-    <div className="rounded-lg overflow-hidden"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-      <div className="px-3 py-2 flex items-center justify-between"
-        style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
-        <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-          {label}
-        </span>
-        {matched !== null && (
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide"
-            style={{ color: matchFg }}>
-            {matched ? "✓ Matches" : "✗ Mismatch"}
-            {diff !== null && !matched && (
-              <span className="font-mono normal-case ml-1">
-                ({diff >= 0 ? "+" : ""}{fmtMoney(diff)})
-              </span>
-            )}
-          </span>
+    <div className="flex items-baseline justify-between gap-3">
+      <div className="min-w-0">
+        <span className="text-xs" style={{ color: "var(--text-2)" }}>{label}</span>
+        {sub && (
+          <span className="text-[10px] ml-2" style={{ color: "var(--text-muted)" }}>{sub}</span>
         )}
       </div>
-      <div className="px-3 py-2.5 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-        {/* Synced side */}
-        <div className="flex items-baseline justify-between sm:block">
-          <span className="text-[10px] block mb-0.5" style={{ color: "var(--text-muted)" }}>
-            {syncLabel}
-          </span>
-          <span className="text-base font-bold tabular-nums" style={{ color: "var(--text)" }}>
-            {syncValue}
-          </span>
-        </div>
-        {/* QBO side */}
-        <div className="flex items-baseline justify-between sm:block sm:text-right">
-          <span className="text-[10px] block mb-0.5" style={{ color: "var(--text-muted)" }}>
-            {qboLabel}
-          </span>
-          <span className="text-base font-bold tabular-nums" style={{ color: matchFg }}>
-            {qboValue !== null ? qboValue : "—"}
-          </span>
-        </div>
-      </div>
-      {qboValue === null && missingNote && (
-        <div className="px-3 py-2 text-[10px] italic"
-          style={{ borderTop: "1px solid var(--border)", color: "var(--text-muted)" }}>
-          {missingNote}
-        </div>
-      )}
+      <span className={`tabular-nums ${bold ? "text-base font-bold" : "font-semibold"}`}
+        style={{ color: valueColor }}>{value}</span>
+    </div>
+  )
+}
+
+function Operator({ op }: { op: string }) {
+  return (
+    <div className="flex justify-center">
+      <span className="text-base font-bold leading-none" style={{ color: "var(--text-muted)" }}>{op}</span>
     </div>
   )
 }
