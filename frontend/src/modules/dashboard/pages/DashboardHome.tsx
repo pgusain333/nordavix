@@ -248,23 +248,52 @@ export function DashboardHome() {
           </div>
         )}
 
-        {/* ── Month-end close tracker — one tile per month ───────── */}
-        {(tracker?.periods.length ?? 0) > 0 && (
-          <div className="rounded-xl overflow-hidden"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-            <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
-              style={{ borderBottom: "1px solid var(--border)" }}>
-              <div className="flex items-center gap-2">
-                <CalendarCheck size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-                <h2 className="text-sm font-semibold text-theme">Month-end close tracker</h2>
-              </div>
-              <div className="flex items-center gap-3 text-[10px]" style={{ color: "var(--text-muted)" }}>
+        {/* ── Month-end close tracker — always shown ─────────────────
+            When books haven't been set up, the section explains why no
+            timeline can be drawn and links to the wizard. When set up,
+            shows one color-coded tile per month from books_start through
+            the current month. */}
+        <div className="rounded-xl overflow-hidden"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+          <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
+            style={{ borderBottom: "1px solid var(--border)" }}>
+            <div className="flex items-center gap-2">
+              <CalendarCheck size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+              <h2 className="text-sm font-semibold text-theme">Month-end close tracker</h2>
+            </div>
+            {books?.seeded && (
+              <div className="flex items-center gap-3 text-[10px] flex-wrap" style={{ color: "var(--text-muted)" }}>
                 <span className="inline-flex items-center gap-1"><Lock size={9} strokeWidth={2} style={{ color: "#b45309" }} /> Closed</span>
                 <span className="inline-flex items-center gap-1"><CheckCircle2 size={9} strokeWidth={2} style={{ color: "var(--green)" }} /> Complete</span>
                 <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "#1d4ed8" }} /> In progress</span>
                 <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "var(--text-muted)" }} /> Open</span>
               </div>
+            )}
+          </div>
+
+          {!books?.seeded ? (
+            <div className="px-6 py-10 text-center">
+              <div className="h-12 w-12 mx-auto rounded-full flex items-center justify-center mb-3"
+                style={{ background: "rgba(245, 158, 11, 0.15)", border: "2px dashed #f59e0b" }}>
+                <CalendarCheck size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />
+              </div>
+              <p className="text-sm font-semibold text-theme mb-1">Set up books to enable the tracker</p>
+              <p className="text-xs mb-4 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+                The month-end tracker draws one tile per month from your books start date. Pick a start date and seed your opening balances — then every month rolls forward automatically.
+              </p>
+              <Button size="sm" icon={<ArrowRight size={12} strokeWidth={1.8} />}
+                onClick={() => navigate("/app/setup/books")}>
+                Set books start date
+              </Button>
             </div>
+          ) : (tracker?.periods.length ?? 0) === 0 ? (
+            <div className="px-6 py-10 text-center">
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                Books start date is set but no monthly periods yet. They'll appear here once you reconcile your first month.
+              </p>
+            </div>
+          ) : (
+            <>
             <div className="overflow-x-auto">
               <div className="flex gap-2 px-4 py-3" style={{ minWidth: "min-content" }}>
                 {tracker!.periods.map((p) => {
@@ -323,8 +352,9 @@ export function DashboardHome() {
               Books started {tracker!.books_start_date} · {tracker!.periods.length} period{tracker!.periods.length === 1 ? "" : "s"} ·
               {" "}{tracker!.periods.filter((p) => p.status === "closed").length} closed · click a month to drill in
             </div>
-          </div>
-        )}
+            </>
+          )}
+        </div>
 
         {/* ── KPI strip ────────────────────────────────────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
