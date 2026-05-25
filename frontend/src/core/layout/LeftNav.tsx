@@ -9,9 +9,11 @@ import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, Users, X, Pencil, Check, type LucideIcon,
 } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
 import { cn } from "@/core/ui/utils"
 import { Badge } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
+import { workspaceApi } from "@/modules/workspace/api"
 
 interface NavItem {
   label:     string
@@ -38,6 +40,21 @@ export function LeftNav({ onClose }: Props) {
   const { organization } = useOrganization()
   const { user } = useUser()
   const navigate = useNavigate()
+
+  // Resolve the current user's role so we can show a small chip next to
+  // the account email at the bottom of the nav. Long staleTime — role
+  // changes rarely.
+  const { data: me } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 10 * 60_000,
+    enabled:  !!organization,
+  })
+  const roleMeta = me ? ({
+    admin:    { label: "Admin",    bg: "rgba(245, 158, 11, 0.15)", fg: "#f59e0b" },
+    reviewer: { label: "Reviewer", bg: "#dbeafe",                  fg: "#1d4ed8" },
+    preparer: { label: "Preparer", bg: "var(--surface-2)",         fg: "var(--text-muted)" },
+  } as const)[me.role as "admin" | "reviewer" | "preparer"] : null
 
   return (
     <aside
@@ -131,11 +148,23 @@ export function LeftNav({ onClose }: Props) {
           <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Theme</span>
           <ThemeToggle />
         </div>
-        <div className="flex items-center gap-3 px-1">
+        <div className="flex items-center gap-2 px-1">
           <UserButton appearance={{ elements: { avatarBox: "h-7 w-7" } }} />
-          <span className="text-xs truncate" style={{ color: "var(--nav-text)" }}>
-            {user?.primaryEmailAddress?.emailAddress ?? "Account"}
-          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs truncate" style={{ color: "var(--nav-text)" }}>
+              {user?.primaryEmailAddress?.emailAddress ?? "Account"}
+            </p>
+            {roleMeta && (
+              <span
+                onClick={() => { navigate("/app/team"); onClose?.() }}
+                className="mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide cursor-pointer transition-opacity hover:opacity-80"
+                style={{ background: roleMeta.bg, color: roleMeta.fg }}
+                title="Click to open the Team page"
+              >
+                {roleMeta.label}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </aside>
