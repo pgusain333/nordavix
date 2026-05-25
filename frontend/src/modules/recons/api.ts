@@ -427,6 +427,51 @@ async function getPriorOverride(qboAccountId: string, periodEnd: string): Promis
   return data.prior
 }
 
+export interface BooksStatus {
+  books_start_date: string | null
+  seeded:           boolean
+  seeded_at:        string | null
+}
+
+export interface SeedPreviewAccount {
+  qbo_id:           string
+  account_number:   string
+  account_name:     string
+  account_type:     string
+  group_label:      string
+  proposed_opening: string
+}
+
+export interface SeedPreview {
+  books_start: string
+  seed_date:   string
+  accounts:    SeedPreviewAccount[]
+}
+
+async function getBooksStatus(): Promise<BooksStatus> {
+  const { data } = await apiClient.get<BooksStatus>("/api/reconciliations/books-status")
+  return data
+}
+
+async function getSeedPreview(booksStart: string): Promise<SeedPreview> {
+  const { data } = await apiClient.get<SeedPreview>(
+    "/api/reconciliations/seed-preview",
+    { params: { books_start: booksStart } },
+  )
+  return data
+}
+
+async function seedBooks(
+  booksStart: string,
+  accounts: { qbo_id: string; opening_balance: string; source_note?: string }[],
+): Promise<{ books_start_date: string; seed_date: string; accounts_seeded: number }> {
+  const { data } = await apiClient.post("/api/reconciliations/seed", {
+    books_start: booksStart,
+    accounts,
+  })
+  return data
+}
+
 async function listOverrides(periodEnd?: string): Promise<OverrideEntry[]> {
   const { data } = await apiClient.get<{ overrides: OverrideEntry[] }>(
     "/api/reconciliations/overrides",
@@ -538,6 +583,9 @@ export const reconsApi = {
   verifyEvidence,
   getPriorOverride,
   getPeriodEntries,
+  getBooksStatus,
+  getSeedPreview,
+  seedBooks,
   listOverrides,
   getReconciliation,
   createReconciliation,

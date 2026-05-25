@@ -11,6 +11,7 @@ import { ARReconciliations } from "@/modules/recons/pages/ARReconciliations"
 import { APReconciliations } from "@/modules/recons/pages/APReconciliations"
 import { ReconciliationDetail } from "@/modules/recons/pages/ReconciliationDetail"
 import { OverridesDashboard } from "@/modules/recons/pages/OverridesDashboard"
+import { BooksSetupWizard } from "@/modules/onboarding/pages/BooksSetupWizard"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
 import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
 
@@ -40,6 +41,7 @@ function AppRoutes() {
       >
         <Routes location={location}>
           <Route index element={<DashboardHome />} />
+          <Route path="setup/books"  element={<BooksSetupWizard />} />
           <Route path="connections"  element={<ConnectionsPage />} />
           <Route path="flux"         element={<FluxDashboard />} />
           <Route path="flux/:tbId"   element={<FluxDashboard />} />

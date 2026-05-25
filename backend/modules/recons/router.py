@@ -18,7 +18,7 @@ import asyncio
 import io
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -43,6 +43,7 @@ from models.reconciliation import (
     ReconTransaction,
 )
 from models.subledger_evidence import SubledgerEvidence
+from models.tenant import Tenant
 from modules.recons.schemas import (
     ActivityFeedEntry,
     AssignBody,
@@ -127,11 +128,11 @@ async def get_overview(
     no AI cost, always fresh. The frontend calls this on dashboard mount and
     again every time the user changes the period.
     """
-    from datetime import date
     try:
         pe = date.fromisoformat(period_end)
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    await _enforce_books_floor(db, tenant_id, pe)
 
     conn = (await db.execute(
         select(QboConnection).where(QboConnection.tenant_id == tenant_id),
@@ -473,6 +474,216 @@ async def set_account_subledger_override(
         "subledger_source": source if total is not None else None,
         "is_manual":      total is not None,
     }
+
+
+# ── Books-start onboarding (one-time seed of opening balances) ───────────────
+
+@router.get("/books-status")
+async def get_books_status(
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Has this tenant completed the books-start onboarding step? Returns
+    `books_start_date` (or null) and a `seeded` flag the frontend gate
+    uses to decide whether to redirect to the wizard.
+    """
+    t = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    return {
+        "books_start_date": t.books_start_date.isoformat() if t.books_start_date else None,
+        "seeded":           t.books_seeded_at is not None,
+        "seeded_at":        t.books_seeded_at.isoformat() if t.books_seeded_at else None,
+    }
+
+
+@router.get("/seed-preview")
+async def get_seed_preview(
+    tenant_id: CurrentTenantId,
+    books_start: str = Query(..., description="Books start date YYYY-MM-DD (first period the company reconciles)"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Pull the QBO trial balance as of (books_start - 1 day) and return one
+    row per balance-sheet account with the GL balance as the proposed
+    opening subledger. The frontend wizard lets the user edit each row
+    before committing via POST /seed.
+    """
+    from datetime import date as _date, timedelta as _td
+    try:
+        bs = _date.fromisoformat(books_start)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="books_start must be YYYY-MM-DD.")
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    # Use the existing overview machinery to enumerate balance-sheet accounts.
+    from modules.recons.overview import (
+        _list_balance_sheet_accounts,
+        _qbo_trial_balance_by_account,
+        _tb_lookup,
+        ACCOUNT_TYPE_GROUPS,
+    )
+    seed_date = bs - _td(days=1)
+    accounts_meta = await _list_balance_sheet_accounts(conn, db)
+    tb = await _qbo_trial_balance_by_account(conn, db, seed_date)
+
+    rows = []
+    for a in accounts_meta:
+        acct_type = a.get("AccountType", "")
+        if acct_type not in ACCOUNT_TYPE_GROUPS:
+            continue
+        gl = _tb_lookup(tb, a)
+        rows.append({
+            "qbo_id":           str(a.get("Id")),
+            "account_number":   a.get("AcctNum") or "",
+            "account_name":     a.get("Name") or "",
+            "account_type":     acct_type,
+            "group_label":      ACCOUNT_TYPE_GROUPS[acct_type],
+            "proposed_opening": str(gl.quantize(Decimal("0.01"))),
+        })
+    rows.sort(key=lambda r: (r["group_label"], r["account_number"]))
+    return {
+        "books_start": bs.isoformat(),
+        "seed_date":   seed_date.isoformat(),
+        "accounts":    rows,
+    }
+
+
+@router.post("/seed")
+async def seed_books(
+    body: dict,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Commit the books-start setup. Writes `books_start_date` on the tenant
+    and creates one AccountReviewStatus row per account with
+    period_end = books_start - 1 day and the entered opening as the
+    subledger_total. Once set, the wizard won't run again (admin re-seed
+    is a roadmap item).
+
+    Body shape:
+      { "books_start": "2026-04-01",
+        "accounts": [
+          { "qbo_id": "12", "opening_balance": "10000.00",
+            "source_note": "GL on 3/31" }, ... ] }
+    """
+    from datetime import date as _date, timedelta as _td
+
+    try:
+        bs = _date.fromisoformat(str(body.get("books_start", "")))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="books_start must be YYYY-MM-DD.")
+    accounts = body.get("accounts") or []
+    if not isinstance(accounts, list) or not accounts:
+        raise HTTPException(status_code=400, detail="At least one account opening is required.")
+
+    t = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    if t.books_seeded_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Books already seeded on "
+                f"{t.books_seeded_at.date().isoformat()} with start date "
+                f"{t.books_start_date.isoformat() if t.books_start_date else 'unknown'}. "
+                "Re-seeding requires admin reset (roadmap)."
+            ),
+        )
+
+    seed_date = bs - _td(days=1)
+    now = datetime.now(timezone.utc)
+
+    # Replace any pre-existing review rows at this seed_date for safety —
+    # tenant-scoped delete then bulk insert. (Pre-seed values shouldn't
+    # exist, but be defensive in case someone manually wrote one.)
+    await db.execute(
+        delete(AccountReviewStatus).where(AccountReviewStatus.period_end == seed_date)
+    )
+
+    count = 0
+    for entry in accounts:
+        qid = str(entry.get("qbo_id", "")).strip()
+        raw = entry.get("opening_balance")
+        if not qid or raw is None:
+            continue
+        try:
+            total = Decimal(str(raw))
+        except (ValueError, ArithmeticError):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Opening balance for account {qid} is not numeric.",
+            )
+        note = (entry.get("source_note") or f"Seeded opening on {seed_date}")[:255]
+        db.add(AccountReviewStatus(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            qbo_account_id=qid,
+            period_end=seed_date,
+            status="approved",  # opening balances are committed, not pending
+            subledger_total=total,
+            subledger_source=note,
+            subledger_entered_by=user.id,
+            subledger_entered_at=now,
+            reviewed_by=user.id,
+            reviewed_at=now,
+        ))
+        count += 1
+
+    t.books_start_date = bs
+    t.books_seeded_at = now
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.books_seeded",
+        entity_type="tenant", entity_id=tenant_id,
+        metadata={
+            "summary":     f"Seeded books with start={bs} across {count} accounts",
+            "books_start": bs.isoformat(),
+            "count":       count,
+        },
+    )
+    await db.commit()
+    return {
+        "books_start_date": bs.isoformat(),
+        "seed_date":        seed_date.isoformat(),
+        "accounts_seeded":  count,
+    }
+
+
+# Helper used by every period-scoped endpoint below to enforce the floor.
+async def _enforce_books_floor(db: AsyncSession, tenant_id: uuid.UUID, period_end: 'date | None') -> None:
+    """Raise 400 if period_end is earlier than the tenant's books_start_date."""
+    if period_end is None:
+        return
+    t = (await db.execute(
+        select(Tenant.books_start_date).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if t and period_end < t:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"period_end {period_end} is before the books start date {t}. "
+                "Reconciliations cannot reference periods before books were set up."
+            ),
+        )
 
 
 @router.get("/account/{qbo_account_id}/prior-override")
