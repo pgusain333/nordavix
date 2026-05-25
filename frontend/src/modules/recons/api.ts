@@ -447,10 +447,11 @@ export interface SeedPreviewAccount {
 }
 
 export interface SeedPreview {
-  books_start: string
-  seed_date:   string
-  accounts:    SeedPreviewAccount[]
-  warning?:    string | null
+  books_start:       string
+  seed_date:         string
+  accounts:          SeedPreviewAccount[]
+  warning?:          string | null
+  skipped_pl_count?: number   // Income/Expense/COGS accounts that always open at $0
 }
 
 async function getBooksStatus(): Promise<BooksStatus> {

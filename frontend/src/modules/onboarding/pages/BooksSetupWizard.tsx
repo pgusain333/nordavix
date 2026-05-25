@@ -282,6 +282,19 @@ export function BooksSetupWizard() {
                 GL trial balance as of {preview?.seed_date || "(loading…)"}. Edit any account where the real
                 subledger (bank statement, FA register, prepaid schedule, etc.) doesn't match QBO on day 1.
               </p>
+              {(preview?.skipped_pl_count ?? 0) > 0 && (
+                <p className="text-[11px] mt-2 px-2 py-1.5 rounded inline-block"
+                  style={{
+                    background: "rgba(59, 130, 246, 0.10)",
+                    color: "#1d4ed8",
+                    border: "1px solid rgba(59, 130, 246, 0.30)",
+                  }}>
+                  Showing {preview?.accounts.length ?? 0} balance-sheet accounts.
+                  {" "}{preview!.skipped_pl_count} income / expense / COGS account{preview!.skipped_pl_count === 1 ? "" : "s"}
+                  {" "}aren't shown — P&amp;L accounts always start at $0 at the beginning of each fiscal year
+                  and don't need an opening balance.
+                </p>
+              )}
             </div>
 
             {previewLoading ? (

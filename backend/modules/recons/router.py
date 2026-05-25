@@ -940,6 +940,12 @@ async def get_seed_preview(
 
     walk(tb_report.get("Rows", {}).get("Row", []) or [])
 
+    # Count P&L accounts we're skipping so the wizard can explain the
+    # difference between QBO's TB account count (BS + PL) and our books-
+    # setup count (BS only — P&L accounts always open at $0 each year).
+    _PL_TYPES = {"Income", "Other Income", "Expense", "Other Expense", "Cost of Goods Sold"}
+    pl_count = sum(1 for a in accounts_meta if a.get("AccountType") in _PL_TYPES)
+
     rows = []
     misses: list[str] = []
     for a in accounts_meta:
@@ -993,10 +999,15 @@ async def get_seed_preview(
         )
 
     return {
-        "books_start": bs.isoformat(),
-        "seed_date":   seed_date.isoformat(),
-        "accounts":    rows,
-        "warning":     warning_msg,
+        "books_start":     bs.isoformat(),
+        "seed_date":       seed_date.isoformat(),
+        "accounts":        rows,
+        "warning":         warning_msg,
+        # P&L accounts in QBO (Income / Expense / COGS) always open at $0
+        # at the start of a fiscal year, so we don't seed them. Surface
+        # the count so the wizard can explain "you saw N more accounts
+        # in your QBO TB" without it looking like a bug.
+        "skipped_pl_count": pl_count,
         "diagnostics": {
             "tb_rows":   len(tb_by_id),
             "tb_names":  list(tb_by_name.keys())[:30],
