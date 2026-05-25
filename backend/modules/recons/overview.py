@@ -396,7 +396,15 @@ async def _qbo_trial_balance_by_account(
     session: AsyncSession,
     period_end: date,
 ) -> dict[str, Decimal]:
-    """Period-end balance per account name, from the TrialBalance report."""
+    """
+    Period-end balance per account, from QBO's TrialBalance report.
+    Returns a dict keyed by BOTH:
+      - The QBO Account.Id (string, prefixed "id:")  ← preferred lookup
+      - The displayed account name (multiple normalizations)
+    Using the Id avoids the sub-account / duplicate-name collisions that
+    plagued earlier name-only matching (a Bank account with a sub-account
+    called "Checking" under another parent could pick up the wrong total).
+    """
     try:
         report = await _qbo_get(
             conn, session, "/reports/TrialBalance",
@@ -413,13 +421,25 @@ async def _qbo_trial_balance_by_account(
             sub = r.get("Rows", {}).get("Row", []) or []
             if cols and cols[0].get("value"):
                 name = str(cols[0]["value"]).strip()
+                acct_id = cols[0].get("id") or ""
                 low = name.lower()
                 if name and not low.startswith(("total", "subtotal", "net income", "net loss")):
                     debit  = _dec(cols[1].get("value", "")) if len(cols) > 1 else Decimal("0")
                     credit = _dec(cols[2].get("value", "")) if len(cols) > 2 else Decimal("0")
-                    out[name] = debit - credit
-                    # Also try with normalized whitespace
-                    out[" ".join(name.split())] = debit - credit
+                    bal = debit - credit
+                    # Primary key: QBO Account.Id (canonical, never ambiguous)
+                    if acct_id:
+                        out[f"id:{acct_id}"] = bal
+                    # Secondary keys: name in several forms, for the
+                    # accounts where QBO didn't include an Id in the row
+                    # (rare — happens on heavily-customized templates).
+                    out[name] = bal
+                    out[" ".join(name.split())] = bal
+                    # Also strip parent prefix "Parent:Sub" → "Sub" so the
+                    # bare-name lookup hits when QBO returned the qualified
+                    # form here but the bare form on the Account query.
+                    if ":" in name:
+                        out[name.split(":")[-1].strip()] = bal
             if sub:
                 walk(sub)
 
@@ -428,20 +448,46 @@ async def _qbo_trial_balance_by_account(
 
 
 def _tb_lookup(tb_balances: dict[str, Decimal], acct: dict) -> Decimal:
-    """Look up a QBO account's period-end balance by trying several name forms."""
-    name = acct.get("Name", "") or ""
-    acct_num = acct.get("AcctNum", "") or ""
-    # QBO TrialBalance keys are usually "<acctnum> <name>" or just "<name>"
+    """
+    Look up a QBO account's period-end balance. Tries ID match first
+    (canonical), then a series of name variants. Returns 0 if nothing
+    matches — we DO NOT fall back to CurrentBalance because that's a
+    today-value, not a period-end value, and silently lying about the
+    balance erodes trust. Misses are surfaced via the logs so we can
+    add a name variant to the lookup if a real account is dropping.
+    """
+    acct_id = str(acct.get("Id") or "")
+    name    = str(acct.get("Name") or "").strip()
+    acct_num = str(acct.get("AcctNum") or "").strip()
+
+    # 1) ID-keyed match — the safe path. Works whenever QBO's TB report
+    #    included an Id in the row (every modern QBO instance does).
+    if acct_id:
+        k = f"id:{acct_id}"
+        if k in tb_balances:
+            return tb_balances[k]
+
+    # 2) Name variants — defensive fallback for instances where the TB
+    #    row didn't carry an Id. Order matters: most specific first.
     candidates = [
         f"{acct_num} {name}".strip(),
         name,
         f"{name} ({acct_num})".strip() if acct_num else "",
+        name.split(":")[-1].strip() if ":" in name else "",
     ]
     for c in candidates:
         if c and c in tb_balances:
             return tb_balances[c]
-    # Last-ditch: fall back to CurrentBalance (which is as-of-now, not period_end)
-    return _dec(acct.get("CurrentBalance", "0"))
+
+    # No match. Log loudly so we know which account the lookup is
+    # missing. Return 0 instead of CurrentBalance — a 0 with a
+    # variance is fixable; a wrong-looking-correct number isn't.
+    logger.warning(
+        "TB lookup miss for account id=%s name=%r acctnum=%r — returning 0 "
+        "instead of CurrentBalance (which would be today's balance, not period-end)",
+        acct_id, name, acct_num,
+    )
+    return Decimal("0")
 
 
 async def _aging_total(

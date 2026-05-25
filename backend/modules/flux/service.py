@@ -451,7 +451,13 @@ def parse_qbo_trial_balance_report(
             return Decimal(0)
 
     def extract(report: dict) -> dict[str, Decimal]:
-        """Return {account_key: net_balance_decimal} for the report."""
+        """
+        Return {account_key: net_balance_decimal} for the report.
+        Keys are the QBO Account.Id when available (canonical, no collisions),
+        falling back to the displayed name. This is critical when two accounts
+        share a name across different parents — keying by name alone would
+        cause one to clobber the other and silently mis-report balances.
+        """
         flat: list[dict] = []
         rows = report.get("Rows", {}).get("Row", []) or []
         walk(rows, flat)
@@ -463,22 +469,30 @@ def parse_qbo_trial_balance_report(
             debit  = to_decimal(cols[1].get("value", "")) if len(cols) > 1 else Decimal(0)
             credit = to_decimal(cols[2].get("value", "")) if len(cols) > 2 else Decimal(0)
             net = debit - credit
-            out[row["name_raw"]] = net
+            qbo_id = row.get("qbo_id")
+            key = f"id:{qbo_id}" if qbo_id else row["name_raw"]
+            out[key] = net
         return out
 
     current = extract(report_current)
     prior   = extract(report_prior)
 
-    # Map account display name → QBO Id. Current period takes precedence; prior
-    # fills gaps for accounts that disappeared (closed mid-year etc.).
-    def _extract_ids(report: dict) -> dict[str, str]:
+    # Build {key → (display_name, qbo_id)} so we can resolve the qbo_acct_lookup
+    # record after merging the period dicts. Keys here match what extract()
+    # produced (id-prefixed when QBO gave us an id).
+    def _extract_meta(report: dict) -> dict[str, tuple[str, str | None]]:
         flat: list[dict] = []
         walk(report.get("Rows", {}).get("Row", []) or [], flat)
-        return {row["name_raw"]: row["qbo_id"] for row in flat if row.get("qbo_id")}
+        out: dict[str, tuple[str, str | None]] = {}
+        for row in flat:
+            qbo_id = row.get("qbo_id")
+            key = f"id:{qbo_id}" if qbo_id else row["name_raw"]
+            out[key] = (row["name_raw"], qbo_id)
+        return out
 
-    id_map: dict[str, str] = {}
-    id_map.update(_extract_ids(report_prior))
-    id_map.update(_extract_ids(report_current))  # current overrides prior
+    meta: dict[str, tuple[str, str | None]] = {}
+    meta.update(_extract_meta(report_prior))
+    meta.update(_extract_meta(report_current))  # current overrides prior
 
     accounts: list[dict] = []
     for key in set(current) | set(prior):
@@ -487,23 +501,26 @@ def parse_qbo_trial_balance_report(
         if cur_bal == 0 and pri_bal == 0:
             continue
 
-        qbo_id = id_map.get(key)
+        display_name, qbo_id = meta.get(key, (key, None))
         qbo_record = qbo_acct_lookup.get(str(qbo_id)) if qbo_id else None
 
         qbo_acct_type = (qbo_record or {}).get("AccountType") if qbo_record else None
         if qbo_record:
             # Trust the canonical QBO record — it has the proper AcctNum + Name.
             acct_num  = str(qbo_record.get("AcctNum") or "").strip()
-            acct_name = str(qbo_record.get("Name") or "").strip() or key.strip()
+            acct_name = str(qbo_record.get("Name") or "").strip() or display_name
         else:
-            # No QBO record available — fall back to splitting the row label.
-            parts = key.split(None, 1)
+            # No QBO record available — fall back to splitting the display name.
+            # Use display_name (the human-readable label) instead of key — key
+            # now starts with "id:..." when QBO provided an Id, which would
+            # confuse the number-vs-name split below.
+            parts = display_name.split(None, 1)
             if parts and parts[0].replace(".", "").replace("-", "").isdigit():
                 acct_num  = parts[0].strip()
                 acct_name = parts[1].strip() if len(parts) > 1 else acct_num
             else:
                 acct_num  = ""           # genuinely no account number
-                acct_name = key.strip()
+                acct_name = display_name
 
         # account_number is NOT NULL in the schema — fall back to the qbo id
         # so rows stay unique even when AcctNum is blank for this account.
