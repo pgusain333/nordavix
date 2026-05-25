@@ -238,6 +238,36 @@ export function ReconciliationsDashboard() {
     return () => clearTimeout(t)
   }, [syncMsg])
 
+  // Auto-sync flow — when the user clicks "Start month-end close" on the
+  // main dashboard tracker for a not-yet-started month, that link tags
+  // the URL with ?autosync=1. On arrival here we kick off the sync once
+  // (per period), then strip the param so a refresh doesn't re-fire.
+  // Guard on qbo + !overview so we don't pile on a sync if data's
+  // already cached locally.
+  const didAutoSyncRef = useRef<string | null>(null)
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    if (sp.get("autosync") !== "1") return
+    if (!qbo) return
+    if (didAutoSyncRef.current === periodEnd) return
+    if (overview) {
+      // Already have data — just strip the param, no need to refetch.
+      sp.delete("autosync")
+      const qs = sp.toString()
+      navigate(`/app/reconciliations/period/${periodEnd}${qs ? "?" + qs : ""}`, { replace: true })
+      didAutoSyncRef.current = periodEnd
+      return
+    }
+    didAutoSyncRef.current = periodEnd
+    handleSync().finally(() => {
+      const sp2 = new URLSearchParams(window.location.search)
+      sp2.delete("autosync")
+      const qs = sp2.toString()
+      navigate(`/app/reconciliations/period/${periodEnd}${qs ? "?" + qs : ""}`, { replace: true })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qbo, periodEnd, overview])
+
   // Clear bulk selection when the period changes — those rows belong to a
   // different period now.
   useEffect(() => { setSelected(new Set()) }, [periodEnd])
@@ -422,6 +452,31 @@ export function ReconciliationsDashboard() {
     return overview?.accounts.filter((a) => Math.abs(parseFloat(a.variance)) >= 0.5).length ?? 0
   }, [overview])
 
+  // Split the GL into balance-sheet sides so the KPI strip shows
+  // something meaningful. The old "Total GL / Total Subledger" cards
+  // were just summing every signed balance — which always nets to
+  // roughly zero on a balanced book (assets = liabilities + equity)
+  // and gave the user no signal. Split totals show the SCALE of the
+  // balance sheet at a glance + double as a sanity check (the two
+  // sides should be within retained-earnings of each other).
+  const sideTotals = useMemo(() => {
+    let assets = 0
+    let liabEquity = 0
+    for (const a of overview?.accounts ?? []) {
+      const gl = parseFloat(a.gl_balance) || 0
+      if (isCreditNatural(a.group_label)) {
+        // Credit-natural balances are stored signed-negative; take
+        // absolute value so the card reads as a positive total.
+        liabEquity += Math.abs(gl)
+      } else {
+        // Debit-natural side — accumulate positive balances directly,
+        // ignore the rare contra-asset showing negative.
+        assets += Math.max(0, gl)
+      }
+    }
+    return { assets, liabEquity }
+  }, [overview])
+
   function openSubledger(a: OverviewAccount) {
     setDrawerAccount(a)
     setDrawerMode("subledger")
@@ -440,16 +495,17 @@ export function ReconciliationsDashboard() {
       >
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            {/* Back-to-dashboard breadcrumb — one click home so the user
-                isn't trapped two levels deep without the sidebar. */}
+            {/* Back to the recons month-index (one step up — not all the
+                way to the app dashboard). Users were getting yanked out
+                of context; now the up-arrow obeys the URL hierarchy. */}
             <button
-              onClick={() => navigate("/app")}
+              onClick={() => navigate("/app/reconciliations")}
               className="inline-flex items-center gap-1 text-[11px] font-medium mb-2 transition-opacity hover:opacity-70"
               style={{ color: "var(--text-muted)" }}
-              title="Back to the workspace dashboard"
+              title="Back to the month list"
             >
               <ArrowLeft size={12} strokeWidth={2} />
-              Back to dashboard
+              Back to reconciliations
             </button>
             <h1
               style={{
@@ -607,10 +663,17 @@ export function ReconciliationsDashboard() {
               style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
               <RefreshCw size={26} strokeWidth={1.6} />
             </div>
-            <p className="text-base font-semibold text-theme mb-1">Ready to sync</p>
+            <p className="text-base font-semibold text-theme mb-1">
+              Start reconciliations for{" "}
+              {(() => {
+                try { return new Date(periodEnd + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }) }
+                catch { return periodEnd }
+              })()}
+            </p>
             <p className="text-sm max-w-md mx-auto mb-5" style={{ color: "var(--text-muted)" }}>
-              Pick a period end above and click Sync to pull every balance sheet account from QuickBooks.
-              Nordavix never auto-syncs — you stay in control of when data is fetched.
+              Sync pulls every balance-sheet account from QuickBooks at <span className="font-mono">{periodEnd}</span> —
+              the GL balances, subledger composition, and prior-period roll-forward — so you can start ticking
+              off accounts. You stay in control: Nordavix never auto-syncs unless you ask.
             </p>
             <Button size="sm" icon={<RefreshCw size={14} strokeWidth={1.8} />} onClick={handleSync}>
               Sync from QuickBooks
@@ -673,8 +736,9 @@ export function ReconciliationsDashboard() {
               style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
               <CheckCircle2 size={12} strokeWidth={2} style={{ color: "var(--green)" }} />
               <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                {overview.accounts.length} account{overview.accounts.length === 1 ? "" : "s"} approved
-                · Total GL {fmtMoney(overview.totals.gl)}
+                {overview.accounts.length} account{overview.accounts.length === 1 ? "" : "s"} reconciled
+                · Total assets {fmtMoney(sideTotals.assets)}
+                · L+E {fmtMoney(sideTotals.liabEquity)}
                 · Variance {fmtMoney(overview.totals.variance)}
               </span>
             </div>
@@ -683,13 +747,21 @@ export function ReconciliationsDashboard() {
 
         {qbo && (overview || isFetching) && (
           <>
-            {/* KPI strip */}
+            {/* KPI strip — split totals replace the old net-of-signs
+                "Total GL" + "Total Subledger" cards. A CPA closing books
+                wants to see the scale of each side of the balance sheet
+                (assets vs liab+equity) plus how much variance work is
+                still on the table. */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <Kpi label="Total GL"               value={fmtMoney(overview?.totals.gl ?? 0)}        tone="var(--text)" />
-              <Kpi label="Total subledger"        value={fmtMoney(overview?.totals.subledger ?? 0)} tone="var(--text)" />
-              <Kpi label="Net variance"           value={fmtMoney(overview?.totals.variance ?? 0)}
-                tone={Math.abs(parseFloat(overview?.totals.variance ?? "0")) > 0.5 ? "#dc2626" : "var(--green)"} />
-              <Kpi label="Accounts with variance" value={String(varianceCount)} tone="var(--text)" />
+              <Kpi label="Total assets"              value={fmtMoney(sideTotals.assets)}     tone="var(--text)"
+                sub="debit-natural side of the GL" />
+              <Kpi label="Total liabilities + equity" value={fmtMoney(sideTotals.liabEquity)} tone="var(--text)"
+                sub="credit-natural side of the GL" />
+              <Kpi label="Net variance"               value={fmtMoney(overview?.totals.variance ?? 0)}
+                tone={Math.abs(parseFloat(overview?.totals.variance ?? "0")) > 0.5 ? "#dc2626" : "var(--green)"}
+                sub={varianceCount > 0 ? `${varianceCount} account${varianceCount === 1 ? "" : "s"} off` : "all reconciled"} />
+              <Kpi label="Accounts with variance"     value={String(varianceCount)} tone="var(--text)"
+                sub={`${overview?.accounts.length ?? 0} accounts total`} />
             </div>
 
             {/* Status buckets — clicking Approve on a row moves it from
@@ -912,10 +984,10 @@ export function ReconciliationsDashboard() {
                         return (
                           <Fragment key={a.qbo_id}>
                           <tr
-                            onClick={() => !isClosed && setExpandedAccountId(isExpanded ? null : a.qbo_id)}
+                            onClick={() => setExpandedAccountId(isExpanded ? null : a.qbo_id)}
                             style={{
                               borderBottom: isExpanded ? "none" : "1px solid var(--border)",
-                              cursor: isClosed ? "default" : "pointer",
+                              cursor: "pointer",
                               background: isSelected
                                 ? "var(--green-subtle)"
                                 : isExpanded
@@ -1049,6 +1121,7 @@ export function ReconciliationsDashboard() {
                                       account={a}
                                       periodEnd={periodEnd}
                                       saving={subledgerMut.isPending}
+                                      readOnly={isClosed}
                                       onSave={(total, source, items) => {
                                         // Persist the override...
                                         subledgerMut.mutate({ qboId: a.qbo_id, total, source, items })
@@ -1255,11 +1328,17 @@ function VerificationBadge({
 // roll-forward, variance preview, reconciling items, evidence + verify.
 
 function InlineSubledgerForm({
-  account, periodEnd, saving, onSave, onClear, onClose,
+  account, periodEnd, saving, readOnly = false, onSave, onClear, onClose,
 }: {
   account: OverviewAccount
   periodEnd: string
   saving: boolean
+  // True when the period is closed — the form renders the same shape
+  // (so users can see what was reconciled) but every mutation surface
+  // is disabled: no ticking QBO items, no manual-item form, no upload,
+  // no Save/Clear/Reconcile button. A small banner at the top makes
+  // the read-only state explicit.
+  readOnly?: boolean
   onSave: (total: number, source: string | null, items: ReconcilingItem[]) => void
   onClear: () => void
   onClose: () => void
@@ -1472,11 +1551,12 @@ function InlineSubledgerForm({
 
   return (
     <form onSubmit={submit} className="px-4 sm:px-6 py-4 border-l-4"
-      style={{ borderLeftColor: "var(--green)" }}>
+      style={{ borderLeftColor: readOnly ? "#f59e0b" : "var(--green)" }}>
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--green)" }}>
-            Manual subledger · {periodEnd}
+          <p className="text-[10px] font-semibold uppercase tracking-wide"
+            style={{ color: readOnly ? "#b45309" : "var(--green)" }}>
+            {readOnly ? "Locked period · view only" : "Manual subledger"} · {periodEnd}
           </p>
           <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
             GL balance {fmtMoney(account.gl_balance)} · {account.group_label}
@@ -1489,6 +1569,20 @@ function InlineSubledgerForm({
           <X size={15} strokeWidth={1.8} />
         </button>
       </div>
+
+      {/* Read-only banner — the period is closed, so the form is just a
+          window into what was reconciled. All controls below are
+          disabled; the banner is the explicit "why nothing's clickable". */}
+      {readOnly && (
+        <div className="rounded-md px-3 py-2 mb-3 flex items-center gap-2 text-[11px]"
+          style={{ background: "rgba(245, 158, 11, 0.10)", border: "1px solid rgba(245, 158, 11, 0.40)", color: "#92400e" }}>
+          <Lock size={11} strokeWidth={2} />
+          <span>
+            The books for {periodEnd} are closed. You can review every reconciling item and
+            attachment, but editing is locked until an admin reopens the period.
+          </span>
+        </div>
+      )}
 
       {/* ── Compact variance strip ───────────────────────────────────
           Subledger is now a CALCULATED value: opening (rolled forward)
@@ -1543,6 +1637,7 @@ function InlineSubledgerForm({
         selectedSum={selectedSum}
         computedSubledger={computedSubledger}
         flipSign={flipSign}
+        readOnly={readOnly}
         onUntickItem={(it) => toggleItem(it)}
         onEditManual={(it) => startEditManualItem(it)}
         onDeleteManual={(id) => deleteManualItem(id)}
@@ -1559,20 +1654,22 @@ function InlineSubledgerForm({
             Reconciling items — current-period activity from QuickBooks
             {(periodEntries?.rows.length ?? 0) > 0 && ` · ${periodEntries!.rows.length}`}
           </span>
-          <button
-            type="button"
-            onClick={() => showManualForm ? resetManualForm() : setShowManualForm(true)}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
-            style={{
-              background: showManualForm ? "var(--surface-2)" : "var(--green-subtle)",
-              color: "var(--green)",
-              border: "1px solid var(--green)",
-            }}>
-            <Plus size={11} strokeWidth={2} />
-            {showManualForm
-              ? "Cancel"
-              : "Add manual item"}
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => showManualForm ? resetManualForm() : setShowManualForm(true)}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+              style={{
+                background: showManualForm ? "var(--surface-2)" : "var(--green-subtle)",
+                color: "var(--green)",
+                border: "1px solid var(--green)",
+              }}>
+              <Plus size={11} strokeWidth={2} />
+              {showManualForm
+                ? "Cancel"
+                : "Add manual item"}
+            </button>
+          )}
         </div>
 
         {/* Manual add form — appears as an inline row above the table.
@@ -1652,15 +1749,17 @@ function InlineSubledgerForm({
                     const checked = !!selectedItemMap[r.txn_id]
                     return (
                       <tr key={r.txn_id}
-                        onClick={() => toggleItem(r)}
-                        className="cursor-pointer transition-colors"
+                        onClick={() => !readOnly && toggleItem(r)}
+                        className={readOnly ? "transition-colors" : "cursor-pointer transition-colors"}
                         style={{
                           borderTop: "1px solid var(--border)",
                           background: checked ? "var(--green-subtle)" : "transparent",
+                          cursor: readOnly ? "default" : "pointer",
                         }}>
                         <td className="px-2 py-2 text-center">
                           <input type="checkbox" checked={checked}
-                            onChange={() => toggleItem(r)}
+                            disabled={readOnly}
+                            onChange={() => !readOnly && toggleItem(r)}
                             onClick={(e) => e.stopPropagation()} />
                         </td>
                         <td className="px-2 py-2 text-theme">{r.txn_type}</td>
@@ -1698,11 +1797,14 @@ function InlineSubledgerForm({
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
                 placeholder="e.g. Bank of America statement 4/30/26"
+                disabled={readOnly}
                 className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
                 style={{
                   background: "var(--surface-2)",
                   border: "1px solid var(--border-strong)",
                   color: "var(--text)",
+                  opacity: readOnly ? 0.6 : 1,
+                  cursor: readOnly ? "not-allowed" : "text",
                 }}
               />
             </label>
@@ -1783,22 +1885,28 @@ function InlineSubledgerForm({
                 </ul>
               )}
 
-              {/* Upload trigger */}
-              <label className="inline-flex items-center gap-1.5 cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors"
-                style={{
-                  background: hasEvidence ? "var(--surface)" : "var(--green-subtle)",
-                  color:      hasEvidence ? "var(--text-2)" : "var(--green)",
-                  border:     `1px dashed ${hasEvidence ? "var(--border-strong)" : "var(--green)"}`,
-                }}>
-                <Upload size={12} strokeWidth={1.8} />
-                {uploadMut.isPending ? "Uploading…" : hasEvidence ? "Attach another file" : "Attach bank statement / register / schedule"}
-                <input type="file" className="hidden" onChange={handleFile}
-                  accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
-                  disabled={uploadMut.isPending} />
-              </label>
-              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                PDF, Excel, CSV or image. Max 15 MB per file.
-              </p>
+              {/* Upload trigger — hidden when the period is locked. The
+                  list of already-attached files above stays visible
+                  (read-only access to source documents). */}
+              {!readOnly && (
+                <>
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors"
+                    style={{
+                      background: hasEvidence ? "var(--surface)" : "var(--green-subtle)",
+                      color:      hasEvidence ? "var(--text-2)" : "var(--green)",
+                      border:     `1px dashed ${hasEvidence ? "var(--border-strong)" : "var(--green)"}`,
+                    }}>
+                    <Upload size={12} strokeWidth={1.8} />
+                    {uploadMut.isPending ? "Uploading…" : hasEvidence ? "Attach another file" : "Attach bank statement / register / schedule"}
+                    <input type="file" className="hidden" onChange={handleFile}
+                      accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
+                      disabled={uploadMut.isPending} />
+                  </label>
+                  <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                    PDF, Excel, CSV or image. Max 15 MB per file.
+                  </p>
+                </>
+              )}
               {uploadError && (
                 <p className="text-[11px]" style={{ color: "#b91c1c" }}>{uploadError}</p>
               )}
@@ -1806,44 +1914,49 @@ function InlineSubledgerForm({
           </div>{/* end RIGHT column (evidence + AI verify) */}
         </div>{/* end grid */}
 
-      <div className="flex items-center justify-between gap-2 mt-4 pt-3"
-        style={{ borderTop: "1px solid var(--border)" }}>
-        {account.subledger_is_manual ? (
-          <button
-            type="button"
-            onClick={onClear}
-            disabled={saving}
-            className="text-[11px] font-medium underline-offset-2 hover:underline"
-            style={{ color: "#b91c1c" }}
-          >
-            Clear override
-          </button>
-        ) : <span />}
-        <div className="flex items-center gap-2">
-          {/* Two-step maker/checker hint — only shown when the row will
-              actually promote (i.e. it's still Pending/Flagged). Once
-              Prepared, the button still re-saves but doesn't downgrade. */}
-          {(account.review_status === "pending" || account.review_status === "flagged") && (
-            <span className="text-[10px] hidden sm:inline" style={{ color: "var(--text-muted)" }}>
-              Saves + marks <span className="font-semibold" style={{ color: "#1d4ed8" }}>Prepared</span>
-              {" "}— a reviewer signs off after.
-            </span>
-          )}
-          <Button size="sm" variant="ghost" type="button" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          {/* "Reconcile" replaces the old "Save subledger" copy — it now
-              both persists the override AND moves the row to Prepared
-              (the maker side of maker/checker). Reviewer/admin still
-              has to flip it to Approved separately. Bound at the
-              call-site so the status bump only happens for non-approved
-              rows (won't downgrade an already-approved one). */}
-          <Button size="sm" type="submit" loading={saving}
-            icon={<CheckCircle2 size={13} strokeWidth={2} />}>
-            Reconcile
-          </Button>
+      {/* Footer action bar — entirely suppressed on locked periods.
+          The Close button at the top is the only way out in read-only
+          mode (and that one's safe — it just collapses the accordion). */}
+      {!readOnly && (
+        <div className="flex items-center justify-between gap-2 mt-4 pt-3"
+          style={{ borderTop: "1px solid var(--border)" }}>
+          {account.subledger_is_manual ? (
+            <button
+              type="button"
+              onClick={onClear}
+              disabled={saving}
+              className="text-[11px] font-medium underline-offset-2 hover:underline"
+              style={{ color: "#b91c1c" }}
+            >
+              Clear override
+            </button>
+          ) : <span />}
+          <div className="flex items-center gap-2">
+            {/* Two-step maker/checker hint — only shown when the row will
+                actually promote (i.e. it's still Pending/Flagged). Once
+                Prepared, the button still re-saves but doesn't downgrade. */}
+            {(account.review_status === "pending" || account.review_status === "flagged") && (
+              <span className="text-[10px] hidden sm:inline" style={{ color: "var(--text-muted)" }}>
+                Saves + marks <span className="font-semibold" style={{ color: "#1d4ed8" }}>Prepared</span>
+                {" "}— a reviewer signs off after.
+              </span>
+            )}
+            <Button size="sm" variant="ghost" type="button" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            {/* "Reconcile" replaces the old "Save subledger" copy — it now
+                both persists the override AND moves the row to Prepared
+                (the maker side of maker/checker). Reviewer/admin still
+                has to flip it to Approved separately. Bound at the
+                call-site so the status bump only happens for non-approved
+                rows (won't downgrade an already-approved one). */}
+            <Button size="sm" type="submit" loading={saving}
+              icon={<CheckCircle2 size={13} strokeWidth={2} />}>
+              Reconcile
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </form>
   )
 }
@@ -1857,7 +1970,7 @@ function InlineSubledgerForm({
 
 function SubledgerBuildup({
   openingBalance, prior, selectedItems, selectedSum, computedSubledger, flipSign,
-  onUntickItem, onEditManual, onDeleteManual,
+  readOnly = false, onUntickItem, onEditManual, onDeleteManual,
 }: {
   openingBalance:    number
   // `prior` widened to also accept undefined so it matches what useQuery
@@ -1873,6 +1986,9 @@ function SubledgerBuildup({
   // negative to match the signed GL balance). Manual items are NOT
   // flipped — they're entered by the user in signed convention.
   flipSign:          number
+  // When true the build-up renders without untick / edit / delete
+  // affordances on each line — pure view for locked periods.
+  readOnly?:         boolean
   onUntickItem:      (it: ReconcilingItem) => void
   onEditManual:      (it: ReconcilingItem) => void
   onDeleteManual:    (id: string) => void
@@ -1946,7 +2062,7 @@ function SubledgerBuildup({
                     style={{ color: amt >= 0 ? "var(--green)" : "#ef4444" }}>
                     {amt >= 0 ? "+" : ""}{fmtMoney(amt)}
                   </span>
-                  {isManual ? (
+                  {readOnly ? null : isManual ? (
                     <>
                       <button type="button"
                         onClick={() => onEditManual(it)}
@@ -2089,12 +2205,15 @@ function AttachmentsCell({ files }: { files: import("@/modules/recons/api").Over
 
 // ── KPI tile ────────────────────────────────────────────────────────────────
 
-function Kpi({ label, value, tone }: { label: string; value: string; tone: string }) {
+function Kpi({ label, value, tone, sub }:
+  { label: string; value: string; tone: string; sub?: string }
+) {
   return (
     <div className="rounded-xl p-4"
       style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
       <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
       <p className="text-xl sm:text-2xl font-bold tabular-nums mt-1" style={{ color: tone }}>{value}</p>
+      {sub && <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{sub}</p>}
     </div>
   )
 }

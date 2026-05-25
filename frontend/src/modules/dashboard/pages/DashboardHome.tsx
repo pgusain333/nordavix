@@ -386,9 +386,32 @@ export function DashboardHome() {
                           </div>
                         </>
                       ) : (
-                        <span className="text-[10px] italic" style={{ color: meta.fg, opacity: 0.7 }}>
-                          Not started
-                        </span>
+                        <>
+                          <span className="text-[10px] italic block mb-1.5" style={{ color: meta.fg, opacity: 0.7 }}>
+                            Not started
+                          </span>
+                          {/* "Start month-end close" CTA — surfaces the
+                              one-click path: navigate to the recons
+                              dashboard for this period with ?autosync=1
+                              so QBO data pulls automatically on arrival.
+                              stopPropagation prevents the wrapping tile
+                              click from also firing setPeriod, which
+                              would feel like a double-action. */}
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              navigate(`/app/reconciliations/period/${p.period_end}?autosync=1`)
+                            }}
+                            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide cursor-pointer transition-colors hover:opacity-80"
+                            style={{
+                              background: "var(--green)",
+                              color: "white",
+                            }}
+                            title={`Start month-end close for ${p.label} — auto-syncs QuickBooks for ${p.period_end}`}
+                          >
+                            Start <ArrowRight size={9} strokeWidth={2.4} />
+                          </span>
+                        </>
                       )}
                     </button>
                   )
