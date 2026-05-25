@@ -40,6 +40,8 @@ import {
   FileText,
   Download,
   ShieldCheck,
+  Lock,
+  Unlock,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import {
@@ -53,6 +55,7 @@ import {
   type EvidenceVerification,
 } from "@/modules/recons/api"
 import { workspaceApi } from "@/modules/workspace/api"
+import { useUserNames } from "@/modules/workspace/hooks"
 import { api as fluxApi } from "@/modules/flux/api"
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
@@ -124,6 +127,7 @@ export function ReconciliationsDashboard() {
     staleTime: 60_000,
   })
   const canReview = me?.role === "admin" || me?.role === "reviewer"
+  const isAdmin = me?.role === "admin"
 
   // Manual-fetch only. We never auto-pull from QBO on mount or period change —
   // every sync is an explicit user action. `enabled: false` keeps the query
@@ -133,6 +137,40 @@ export function ReconciliationsDashboard() {
     queryFn:  () => reconsApi.getOverview(periodEnd),
     enabled:  false,
     staleTime: Infinity,
+  })
+
+  // Closed-period flag flows through from /overview. When true, the entire
+  // dashboard goes read-only — bulk actions hidden, status chips frozen,
+  // inline forms collapsed, banner shown.
+  const isClosed = overview?.is_closed === true
+  const closedByName = useUserNames([overview?.closed_by])[overview?.closed_by ?? ""]
+  const allApproved = !!overview && overview.accounts.length > 0
+    && overview.accounts.every((a) => a.review_status === "approved")
+
+  const closeMut = useMutation({
+    mutationFn: () => reconsApi.closePeriod(periodEnd),
+    onSuccess: () => {
+      setSyncMsg(`Period ${periodEnd} closed. Books are now locked.`)
+      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+      qc.invalidateQueries({ queryKey: ["closed-periods"] })
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Could not close period"}`)
+    },
+  })
+
+  const reopenMut = useMutation({
+    mutationFn: () => reconsApi.reopenPeriod(periodEnd),
+    onSuccess: () => {
+      setSyncMsg(`Period ${periodEnd} reopened.`)
+      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+      qc.invalidateQueries({ queryKey: ["closed-periods"] })
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Could not reopen period"}`)
+    },
   })
 
   async function handleSync() {
@@ -157,6 +195,15 @@ export function ReconciliationsDashboard() {
   // Clear bulk selection when the period changes — those rows belong to a
   // different period now.
   useEffect(() => { setSelected(new Set()) }, [periodEnd])
+
+  // Auto-collapse any expanded inline form when the period goes from
+  // unlocked → locked. Avoids showing an editable form on a frozen period.
+  useEffect(() => {
+    if (isClosed) {
+      setExpandedAccountId(null)
+      setSelected(new Set())
+    }
+  }, [isClosed])
 
   // Human-readable "last synced" indicator
   const lastSynced = useMemo(() => {
@@ -392,6 +439,39 @@ export function ReconciliationsDashboard() {
             >
               <span className="hidden sm:inline">{isFetching ? "Syncing…" : "Sync"}</span>
             </Button>
+            {isAdmin && (
+              isClosed ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Unlock size={14} strokeWidth={1.8} />}
+                  loading={reopenMut.isPending}
+                  onClick={() => reopenMut.mutate()}
+                  style={{ borderColor: "#f59e0b", color: "#b45309" }}
+                  title="Reopen the books for this period — admins can edit again"
+                >
+                  <span className="hidden sm:inline">Reopen books</span>
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Lock size={14} strokeWidth={1.8} />}
+                  loading={closeMut.isPending}
+                  disabled={!allApproved}
+                  onClick={() => {
+                    if (confirm(`Close the books for ${periodEnd}? Once locked, reviewers and preparers can't edit anything for this period.`)) {
+                      closeMut.mutate()
+                    }
+                  }}
+                  title={allApproved
+                    ? "Lock the period so nobody can edit it anymore"
+                    : "All accounts must be approved before you can close the period"}
+                >
+                  <span className="hidden sm:inline">Close period</span>
+                </Button>
+              )
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -478,6 +558,69 @@ export function ReconciliationsDashboard() {
             <Button size="sm" icon={<RefreshCw size={14} strokeWidth={1.8} />} onClick={handleSync}>
               Sync from QuickBooks
             </Button>
+          </div>
+        )}
+
+        {/* ── Books-closed banner — prominent, locks the dashboard ── */}
+        {isClosed && overview && (
+          <div className="rounded-xl overflow-hidden"
+            style={{
+              background: "linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)",
+              border: "1px solid var(--border-strong)",
+              boxShadow: "var(--card-shadow)",
+            }}>
+            <div className="flex items-center gap-4 p-5">
+              <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
+                style={{
+                  background: "rgba(245, 158, 11, 0.15)",
+                  border: "2px solid #f59e0b",
+                }}>
+                <Lock size={20} strokeWidth={2} style={{ color: "#b45309" }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5"
+                  style={{ color: "#b45309" }}>
+                  Books closed
+                </p>
+                <h3 className="text-lg sm:text-xl font-bold text-theme leading-tight">
+                  Period {overview.period_end} is locked
+                </h3>
+                <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
+                  Closed by <span className="font-semibold text-theme">{closedByName || "an admin"}</span>
+                  {overview.closed_at && (
+                    <> on {new Date(overview.closed_at).toLocaleDateString(undefined, {
+                      year: "numeric", month: "long", day: "numeric",
+                    })}</>
+                  )}.
+                  All reconciliations are frozen — reviewers and preparers can view but not edit.
+                </p>
+                {overview.closed_notes && (
+                  <p className="text-xs mt-1.5 italic" style={{ color: "var(--text-muted)" }}>
+                    "{overview.closed_notes}"
+                  </p>
+                )}
+              </div>
+              {isAdmin && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Unlock size={12} strokeWidth={1.8} />}
+                  loading={reopenMut.isPending}
+                  onClick={() => reopenMut.mutate()}
+                  style={{ borderColor: "#f59e0b", color: "#b45309" }}>
+                  Reopen
+                </Button>
+              )}
+            </div>
+            <div className="px-5 py-2 flex items-center gap-2 flex-wrap"
+              style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              <CheckCircle2 size={12} strokeWidth={2} style={{ color: "var(--green)" }} />
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                {overview.accounts.length} account{overview.accounts.length === 1 ? "" : "s"} approved
+                · Total GL {fmtMoney(overview.totals.gl)}
+                · Variance {fmtMoney(overview.totals.variance)}
+              </span>
+            </div>
           </div>
         )}
 
@@ -712,10 +855,10 @@ export function ReconciliationsDashboard() {
                         return (
                           <Fragment key={a.qbo_id}>
                           <tr
-                            onClick={() => setExpandedAccountId(isExpanded ? null : a.qbo_id)}
+                            onClick={() => !isClosed && setExpandedAccountId(isExpanded ? null : a.qbo_id)}
                             style={{
                               borderBottom: isExpanded ? "none" : "1px solid var(--border)",
-                              cursor: "pointer",
+                              cursor: isClosed ? "default" : "pointer",
                               background: isSelected
                                 ? "var(--green-subtle)"
                                 : isExpanded
@@ -779,6 +922,7 @@ export function ReconciliationsDashboard() {
                             <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                               <StatusChip
                                 status={status}
+                                disabled={isClosed}
                                 onChange={(next) => setStatusMut.mutate({ id: a.qbo_id, status: next })}
                               />
                             </td>
@@ -918,17 +1062,22 @@ const STATUS_META: Record<AccountReviewStatus, { label: string; bg: string; fg: 
 }
 const STATUS_CYCLE: AccountReviewStatus[] = ["pending", "reviewed", "approved", "flagged"]
 
-function StatusChip({ status, onChange }:
-  { status: AccountReviewStatus; onChange: (next: AccountReviewStatus) => void }
+function StatusChip({ status, onChange, disabled }:
+  { status: AccountReviewStatus; onChange: (next: AccountReviewStatus) => void; disabled?: boolean }
 ) {
   const m = STATUS_META[status] ?? STATUS_META.pending
   const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(status) + 1) % STATUS_CYCLE.length]
   return (
     <button
-      onClick={() => onChange(next)}
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-all hover:opacity-80"
-      style={{ background: m.bg, color: m.fg }}
-      title={`Click to set → ${STATUS_META[next].label}`}
+      onClick={() => !disabled && onChange(next)}
+      disabled={disabled}
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-all"
+      style={{
+        background: m.bg, color: m.fg,
+        opacity: disabled ? 0.6 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
+      title={disabled ? "Period is locked — admin must reopen to change status" : `Click to set → ${STATUS_META[next].label}`}
     >
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: m.fg }} />
       {m.label}

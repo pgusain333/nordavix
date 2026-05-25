@@ -214,11 +214,15 @@ export interface OverviewGroup {
 }
 
 export interface Overview {
-  period_end:     string
-  qbo_connected:  boolean
-  accounts:       OverviewAccount[]
-  totals:         { gl: string; subledger: string; variance: string }
-  by_group:       OverviewGroup[]
+  period_end:      string
+  qbo_connected:   boolean
+  accounts:        OverviewAccount[]
+  totals:          { gl: string; subledger: string; variance: string }
+  by_group:        OverviewGroup[]
+  is_closed?:      boolean
+  closed_by?:      string | null
+  closed_at?:      string | null
+  closed_notes?:   string | null
 }
 
 export interface SubledgerRow {
@@ -472,6 +476,25 @@ async function seedBooks(
   return data
 }
 
+async function closePeriod(periodEnd: string, notes?: string): Promise<{ period_end: string; closed_at: string; closed_by: string }> {
+  const { data } = await apiClient.post("/api/reconciliations/close-period", {
+    period_end: periodEnd, notes,
+  })
+  return data
+}
+
+async function reopenPeriod(periodEnd: string): Promise<{ period_end: string; status: string }> {
+  const { data } = await apiClient.post("/api/reconciliations/reopen-period", { period_end: periodEnd })
+  return data
+}
+
+async function listClosedPeriods(): Promise<{ period_end: string; closed_by: string; closed_at: string; notes: string | null }[]> {
+  const { data } = await apiClient.get<{ periods: { period_end: string; closed_by: string; closed_at: string; notes: string | null }[] }>(
+    "/api/reconciliations/closed-periods",
+  )
+  return data.periods
+}
+
 async function listOverrides(periodEnd?: string): Promise<OverrideEntry[]> {
   const { data } = await apiClient.get<{ overrides: OverrideEntry[] }>(
     "/api/reconciliations/overrides",
@@ -586,6 +609,9 @@ export const reconsApi = {
   getBooksStatus,
   getSeedPreview,
   seedBooks,
+  closePeriod,
+  reopenPeriod,
+  listClosedPeriods,
   listOverrides,
   getReconciliation,
   createReconciliation,

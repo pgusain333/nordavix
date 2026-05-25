@@ -42,6 +42,7 @@ from models.reconciliation import (
     ReconNote,
     ReconTransaction,
 )
+from models.closed_period import ClosedPeriod
 from models.subledger_evidence import SubledgerEvidence
 from models.tenant import Tenant
 from modules.recons.schemas import (
@@ -149,6 +150,15 @@ async def get_overview(
 
     overview = await fetch_overview(conn, db, pe)
     overview["qbo_connected"] = True
+
+    # Surface lock status so the UI can render the closed-books banner +
+    # disable mutations. Resolves the closer's name client-side via the
+    # workspace lookup hook.
+    cp = await _is_period_closed(db, pe)
+    overview["is_closed"] = cp is not None
+    overview["closed_by"] = str(cp.closed_by) if cp else None
+    overview["closed_at"] = cp.closed_at.isoformat() if cp and cp.closed_at else None
+    overview["closed_notes"] = cp.notes if cp else None
     return overview
 
 
@@ -222,6 +232,7 @@ async def update_account_review_status(
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
     if status_value not in ("pending", "reviewed", "approved", "flagged"):
         raise HTTPException(status_code=400, detail="Invalid status value.")
+    await _block_if_closed(db, pe)
 
     # Role gate: only reviewer+ can flip to reviewed/approved/flagged.
     # Preparers can only reset to pending (un-do their own work).
@@ -324,6 +335,7 @@ async def bulk_update_account_review_status(
     ids: list[str] = list(body.get("qbo_account_ids") or [])
     if not ids:
         raise HTTPException(status_code=400, detail="qbo_account_ids required.")
+    await _block_if_closed(db, pe)
 
     # Role gate — same rules as the per-row endpoint.
     if status_value in ("reviewed", "approved", "flagged"):
@@ -425,6 +437,8 @@ async def set_account_subledger_override(
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
 
+    await _block_if_closed(db, pe)
+
     total_raw = body.get("total")
     source = body.get("source")
     # Optional reconciling items — list of {txn_id, txn_type, txn_number,
@@ -497,6 +511,173 @@ async def set_account_subledger_override(
         "subledger_source": source if total is not None else None,
         "is_manual":      total is not None,
     }
+
+
+# ── Close / re-open period (lock the books) ─────────────────────────────────
+
+async def _is_period_closed(db: AsyncSession, period_end: date) -> ClosedPeriod | None:
+    """Return the ClosedPeriod row if this period is currently locked."""
+    return (await db.execute(
+        select(ClosedPeriod).where(ClosedPeriod.period_end == period_end)
+    )).scalar_one_or_none()
+
+
+async def _block_if_closed(db: AsyncSession, period_end: date) -> None:
+    """
+    Raise 423 (Locked) if the given period is closed. Used by every
+    mutation endpoint so reviewers/preparers can't edit a closed period.
+    Admins also hit this — they must reopen first if they want to edit.
+    """
+    cp = await _is_period_closed(db, period_end)
+    if cp is not None:
+        raise HTTPException(
+            status_code=423,  # Locked
+            detail=(
+                f"Books are closed for period {period_end}. "
+                "An admin must reopen the period before edits are allowed."
+            ),
+        )
+
+
+@router.get("/closed-periods")
+async def list_closed_periods(
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return every currently-closed period for this workspace."""
+    rows = list((await db.execute(
+        select(ClosedPeriod).order_by(desc(ClosedPeriod.period_end))
+    )).scalars().all())
+    return {
+        "periods": [
+            {
+                "period_end": r.period_end.isoformat(),
+                "closed_by":  str(r.closed_by),
+                "closed_at":  r.closed_at.isoformat() if r.closed_at else None,
+                "notes":      r.notes,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post("/close-period", dependencies=[Depends(require_role("admin"))])
+async def close_period(
+    body: dict,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Admin-only: lock a reconciliation period. Requires every visible
+    balance-sheet account to be approved first — anything still pending,
+    reviewed, or flagged blocks the close (the response lists the offenders).
+
+    Body: { period_end: "YYYY-MM-DD", notes?: string }
+    """
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(str(body.get("period_end", "")))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    # Idempotency — already closed
+    existing = await _is_period_closed(db, pe)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Period {pe} is already closed by another admin.",
+        )
+
+    # Pull every review row for the period; require ALL to be approved.
+    status_rows = list((await db.execute(
+        select(AccountReviewStatus).where(AccountReviewStatus.period_end == pe)
+    )).scalars().all())
+    unapproved = [r for r in status_rows if r.status != "approved"]
+    if unapproved:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot close — {len(unapproved)} account(s) are not approved: "
+                + ", ".join(r.qbo_account_id for r in unapproved[:10])
+                + (" …" if len(unapproved) > 10 else "")
+            ),
+        )
+
+    # We also require that at least one approved row exists — closing a
+    # period with zero reviewed accounts is almost always a mistake.
+    if not status_rows:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"No accounts have been reviewed for {pe}. "
+                "Reconcile and approve every account before closing the books."
+            ),
+        )
+
+    row = ClosedPeriod(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        period_end=pe,
+        closed_by=user.id,
+        notes=(body.get("notes") or None),
+    )
+    db.add(row)
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.period_closed",
+        entity_type="closed_period", entity_id=row.id,
+        metadata={
+            "summary":    f"Closed period {pe} ({len(status_rows)} accounts)",
+            "period_end": pe.isoformat(),
+            "count":      len(status_rows),
+        },
+    )
+    await db.commit()
+    return {
+        "period_end": pe.isoformat(),
+        "closed_at":  row.closed_at.isoformat() if row.closed_at else None,
+        "closed_by":  str(row.closed_by),
+    }
+
+
+@router.post("/reopen-period", dependencies=[Depends(require_role("admin"))])
+async def reopen_period(
+    body: dict,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Admin-only: unlock a previously closed period so admins/reviewers can
+    edit again. Audit-logged so the reopen is visible in the activity feed.
+    """
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(str(body.get("period_end", "")))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    row = await _is_period_closed(db, pe)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Period {pe} is not closed.")
+
+    await db.delete(row)
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.period_reopened",
+        entity_type="closed_period", entity_id=row.id,
+        metadata={
+            "summary":    f"Reopened period {pe}",
+            "period_end": pe.isoformat(),
+        },
+    )
+    await db.commit()
+    return {"period_end": pe.isoformat(), "status": "reopened"}
 
 
 # ── Books-start onboarding (one-time seed of opening balances) ───────────────
@@ -894,6 +1075,8 @@ async def upload_account_evidence(
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
 
+    await _block_if_closed(db, pe)
+
     name = file.filename or "evidence"
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if ext not in _ALLOWED_EVIDENCE_EXTS:
@@ -1066,6 +1249,7 @@ async def delete_account_evidence(
     )).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Evidence not found.")
+    await _block_if_closed(db, row.period_end)
     r2_storage.delete_file(row.r2_key)
 
     from core.audit.log import write_audit_event

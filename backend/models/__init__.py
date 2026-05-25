@@ -4,6 +4,7 @@ from models.account import Account
 from models.account_review_status import AccountReviewStatus
 from models.ai_usage import AIUsage
 from models.audit_log import AuditLog
+from models.closed_period import ClosedPeriod
 from models.narrative import Narrative
 from models.qbo_connection import QboConnection
 from models.subledger_evidence import SubledgerEvidence
@@ -17,6 +18,7 @@ __all__ = [
     "AccountReviewStatus",
     "AIUsage",
     "AuditLog",
+    "ClosedPeriod",
     "Narrative",
     "QboConnection",
     "SubledgerEvidence",

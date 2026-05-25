@@ -91,8 +91,20 @@ async def list_members(
 
 
 @router.get("/me")
-async def get_me(user: CurrentUser) -> dict:
-    """The current user's role + identity. Used by the frontend to gate UI."""
+async def get_me(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Current user's role + identity. Auto-heals legacy 'member' role values
+    into 'admin' on read in case migration 011 hasn't run yet for this
+    workspace — that way the UI doesn't get stuck showing a preparer view
+    for the actual workspace owner.
+    """
+    if user.role in (None, "", "member"):
+        user.role = "admin"
+        await db.commit()
+        await db.refresh(user)
     return {
         "id":            str(user.id),
         "clerk_user_id": user.clerk_user_id,

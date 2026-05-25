@@ -174,10 +174,17 @@ export function TeamPage() {
         ) : me ? (
           <div className="rounded-xl p-3 text-xs"
             style={{ background: "var(--surface-2)", border: "1px dashed var(--border)", color: "var(--text-muted)" }}>
-            You're signed in as <span className="font-semibold text-theme">{ROLE_LABELS[me.role].label}</span>.
+            You're signed in as <span className="font-semibold text-theme">
+              {(ROLE_LABELS[me.role] ?? ROLE_LABELS.preparer).label}
+            </span>.
             Only admins can invite members or change roles. Ask your workspace admin for changes.
           </div>
-        ) : null}
+        ) : (
+          <div className="rounded-xl p-3 text-xs"
+            style={{ background: "var(--surface-2)", border: "1px dashed var(--border)", color: "var(--text-muted)" }}>
+            Loading your workspace role…
+          </div>
+        )}
 
         {/* ── Members table ────────────────────────────────────── */}
         <div className="rounded-xl overflow-hidden"
@@ -210,7 +217,9 @@ export function TeamPage() {
               </thead>
               <tbody>
                 {sortedMembers.map((m) => {
-                  const meta = ROLE_LABELS[m.role]
+                  // Fallback to preparer if the DB still has a legacy role
+                  // value (e.g. "member" from before migration 011 ran).
+                  const meta = ROLE_LABELS[m.role] ?? ROLE_LABELS.preparer
                   const isMe = me?.clerk_user_id === m.clerk_user_id
                   return (
                     <tr key={m.clerk_user_id} style={{ borderTop: "1px solid var(--border)" }}>
@@ -260,7 +269,7 @@ export function TeamPage() {
             </div>
             <ul>
               {invitations!.map((inv) => {
-                const meta = ROLE_LABELS[inv.nordavix_role]
+                const meta = ROLE_LABELS[inv.nordavix_role] ?? ROLE_LABELS.preparer
                 return (
                   <li key={inv.id}
                     className="px-4 py-2 flex items-center gap-2 text-sm"
