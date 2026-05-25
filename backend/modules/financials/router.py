@@ -25,7 +25,6 @@ Design:
     Equivalents", "Total Assets") via the GAAP_LABEL_MAP. Keeps the
     statements reading like an audited package.
 """
-import asyncio
 import io
 import logging
 from calendar import monthrange
@@ -330,28 +329,38 @@ async def _company_name(db: AsyncSession, tenant_id, conn: QboConnection | None 
     """
     Resolve the entity name that appears on every statement masthead.
 
-    Source priority:
-      1. QboConnection.company_name — cached on connect; refreshed
-         lazily here from QBO's /companyinfo endpoint when stale.
-      2. Tenant.name — the workspace name the user set in our app.
-      3. Hard fallback "Your Company" — only when neither is available.
+    Source priority (per CPA feedback — workspace name wins):
+      1. Tenant.name — the workspace name the user set when creating
+         the company in our app (Companies panel). This is the
+         user's authoritative name and overrides QBO. Skipped only
+         when it's a Clerk-id fallback ("user_…" / "org_…").
+      2. QboConnection.company_name — cached on connect; used when
+         the workspace doesn't have a real name yet.
+      3. Live QBO /companyinfo fetch (cached back to the conn row).
+      4. Hard fallback "Your Company".
 
-    QBO's CompanyInfo.CompanyName is the entity's official legal /
-    DBA name as set up in QuickBooks, which is the right value for a
-    financial-statement masthead. The Clerk-org-ID fallback we used
-    previously (e.g. "org_2abc…") obviously doesn't belong there.
+    Why workspace first: QBO sandboxes have generic names like
+    "Sandbox Company US 1a65". The user set up the workspace
+    intentionally — that's the name they want on their statements.
     """
+    # 1. Workspace name
+    t = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if t and t.name and t.name.strip() and not t.name.startswith(("user_", "org_")):
+        return t.name.strip()
+
+    # 2. Cached on the connection
     if conn is None:
         conn = (await db.execute(
             select(QboConnection).where(QboConnection.tenant_id == tenant_id),
             execution_options={"skip_tenant_filter": True},
         )).scalar_one_or_none()
-
-    # 1. Cached on the connection
     if conn and conn.company_name and conn.company_name.strip():
         return conn.company_name.strip()
 
-    # 2. Live fetch from QBO if connected
+    # 3. Live fetch from QBO
     if conn:
         try:
             data = await _qbo_get(
@@ -367,14 +376,6 @@ async def _company_name(db: AsyncSession, tenant_id, conn: QboConnection | None 
                 return name
         except Exception:
             logger.exception("CompanyInfo fetch failed")
-
-    # 3. Workspace name from our DB (often the user's company name)
-    t = (await db.execute(
-        select(Tenant).where(Tenant.id == tenant_id),
-        execution_options={"skip_tenant_filter": True},
-    )).scalar_one_or_none()
-    if t and t.name and not t.name.startswith(("user_", "org_")):
-        return t.name.strip()
 
     return "Your Company"
 
@@ -430,7 +431,16 @@ async def _build_statement(
     tenant_id, db, pe: date, statement_kind: str, comparative: bool,
 ) -> StatementOut:
     conn = await _qbo_connection(db, tenant_id)
-    company = await _company_name(db, tenant_id)
+    # Pre-refresh the OAuth token BEFORE any QBO calls. Subsequent
+    # calls inside this function (and parallel calls elsewhere)
+    # share the same SQLAlchemy session — concurrent commits inside
+    # the auto-refresh path were causing intermittent "Network
+    # Error" failures on PDF export. Refreshing once upfront means
+    # downstream _qbo_get calls all hit the fast-path early-return
+    # in _refresh_token_if_needed (no DB writes).
+    from modules.recons.service import _refresh_token_if_needed
+    await _refresh_token_if_needed(conn, db)
+    company = await _company_name(db, tenant_id, conn)
 
     if statement_kind == "income_statement":
         title = "Income Statement"
@@ -450,33 +460,27 @@ async def _build_statement(
     else:
         raise HTTPException(400, f"Unknown statement: {statement_kind}")
 
-    # Parallelize current + prior fetches — QBO reports are independent
-    # network calls, so blocking sequentially doubles the latency. With
-    # gather() the PDF endpoint comfortably finishes inside Fly's request
-    # window even when exporting the full 3-statement package (6 calls
-    # total, all concurrent).
+    # Sequential cur + prior fetches. Tried parallelizing with
+    # asyncio.gather but multiple httpx calls sharing one SQLAlchemy
+    # AsyncSession through the token-refresh path triggered intermittent
+    # session errors that surfaced as "Network Error" on the client.
+    # The QBO calls themselves are ~2-3s each, so going sequential is
+    # an acceptable ~5s round trip vs. flakiness of parallel.
     notes: list[str] = []
     cur_rows: list[_ParsedRow] = []
     prior_rows: list[_ParsedRow] = []
+    try:
+        cur_rows = await fetch_fn(conn, db, pe)
+    except Exception as e:
+        logger.exception("Current fetch failed for %s @ %s", statement_kind, pe)
+        raise HTTPException(502, "Could not pull statement data from QuickBooks. Try again.") from e
     if comparative:
-        cur_task   = fetch_fn(conn, db, pe)
-        prior_task = fetch_fn(conn, db, prior_pe)
-        cur_result, prior_result = await asyncio.gather(cur_task, prior_task, return_exceptions=True)
-        if isinstance(cur_result, Exception):
-            logger.exception("Current fetch failed for %s @ %s", statement_kind, pe)
-            raise HTTPException(502, "Could not pull statement data from QuickBooks. Try again.") from cur_result
-        cur_rows = cur_result
-        if isinstance(prior_result, Exception):
-            logger.warning("Comparative fetch failed for %s @ %s — continuing without it", statement_kind, prior_pe)
-            notes.append("Prior-year comparative could not be loaded.")
-        else:
-            prior_rows = prior_result
-    else:
         try:
-            cur_rows = await fetch_fn(conn, db, pe)
-        except Exception as e:
-            logger.exception("Current fetch failed for %s @ %s", statement_kind, pe)
-            raise HTTPException(502, "Could not pull statement data from QuickBooks. Try again.") from e
+            prior_rows = await fetch_fn(conn, db, prior_pe)
+        except Exception:
+            logger.warning("Comparative fetch failed for %s @ %s — continuing without it",
+                            statement_kind, prior_pe)
+            notes.append("Prior-year comparative could not be loaded.")
 
     merged = _merge_periods(cur_rows, prior_rows)
     closed = await _is_period_closed(db, pe)
@@ -559,10 +563,6 @@ async def export_pdf(
         )
 
     statement = statement.lower()
-    # Run all three statement builds concurrently when exporting the
-    # full package. Each call internally already runs cur+prior in
-    # parallel — so a "full" PDF is 6 QBO calls all in flight at once
-    # instead of 6 sequential calls.
     if statement in ("is", "income_statement"):
         kinds = ["income_statement"]
     elif statement in ("bs", "balance_sheet"):
@@ -573,9 +573,12 @@ async def export_pdf(
         kinds = ["income_statement", "balance_sheet", "cash_flow"]
     else:
         raise HTTPException(400, "statement must be is | bs | cf | full.")
-    statements = list(await asyncio.gather(
-        *[_build_statement(tenant_id, db, pe, k, comparative) for k in kinds],
-    ))
+    # Sequential builds — see note in _build_statement about the
+    # SQLAlchemy session race that asyncio.gather triggers. Full
+    # package ends up at ~12-15s which is well inside the timeout.
+    statements: list[StatementOut] = []
+    for k in kinds:
+        statements.append(await _build_statement(tenant_id, db, pe, k, comparative))
 
     from modules.financials.pdf import build_pdf
     buf = io.BytesIO()
