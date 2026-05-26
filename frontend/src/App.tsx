@@ -16,6 +16,7 @@ import { FluxMonthIndex } from "@/modules/flux/pages/FluxMonthIndex"
 import { TasksPage } from "@/modules/tasks/pages/TasksPage"
 import { IntercompanyPage } from "@/modules/intercompany/pages/IntercompanyPage"
 import { FinancialsPage } from "@/modules/financials/pages/FinancialsPage"
+import { InsightsPage } from "@/modules/insights/pages/InsightsPage"
 import { BooksSetupWizard } from "@/modules/onboarding/pages/BooksSetupWizard"
 import { TeamPage } from "@/modules/workspace/pages/TeamPage"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
@@ -57,6 +58,7 @@ function AppRoutes() {
           <Route path="tasks"        element={<TasksPage />} />
           <Route path="intercompany" element={<IntercompanyPage />} />
           <Route path="financials"   element={<FinancialsPage />} />
+          <Route path="insights"     element={<InsightsPage />} />
           {/* Flux: index = month-row list, /analyses = full workspace,
               /:tbId = deep link into a specific analysis. */}
           <Route path="flux"                  element={<FluxMonthIndex />} />

@@ -8,7 +8,7 @@ import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
-  MessageSquare, Settings, type LucideIcon,
+  MessageSquare, Settings, Lightbulb, type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { cn } from "@/core/ui/utils"
@@ -33,6 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Reconciliations",    path: "/app/reconciliations", icon: Scale,           available: true  },
   { label: "Intercompany",       path: "/app/intercompany",    icon: ArrowLeftRight,  available: true  },
   { label: "Financial Package",  path: "/app/financials",      icon: BookOpen,        available: true  },
+  { label: "Insights",           path: "/app/insights",        icon: Lightbulb,       available: true  },
   { label: "Team",               path: "/app/team",            icon: Users,           available: true  },
   { label: "Workpapers",         path: "/app/workpapers",      icon: FileText,        available: false },
 ]

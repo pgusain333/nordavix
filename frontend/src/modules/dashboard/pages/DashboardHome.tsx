@@ -31,6 +31,7 @@ import {
   Lock,
   Circle,
   CalendarCheck,
+  Lightbulb,
 } from "lucide-react"
 import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
@@ -749,6 +750,39 @@ export function DashboardHome() {
           </button>
         </div>
 
+        {/* ── Insights tile (full width) ─────────────────────────── */}
+        <button
+          onClick={() => navigate(`/app/insights?period=${period}`)}
+          className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5 w-full"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+          <div className="px-4 py-3 flex items-center justify-between"
+            style={{ borderBottom: "1px solid var(--border)" }}>
+            <div className="flex items-center gap-2">
+              <Lightbulb size={18} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+              <h2 className="text-base font-semibold text-theme">Insights</h2>
+            </div>
+            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              {monthLabel}
+            </span>
+          </div>
+          <div className="px-4 py-3.5 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <InsightHint label="Liquidity"        sub="Cash · Burn · Runway · OCF" />
+            <InsightHint label="Profitability"    sub="Revenue · GP · Net margin" />
+            <InsightHint label="AR / AP"          sub="DSO · DPO · Aging · Top dues" />
+            <InsightHint label="Expense monitor"  sub="Top categories · MoM movers" />
+          </div>
+          <div className="px-4 py-2.5 flex items-center justify-between"
+            style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              AI-generated risks &amp; recommendations for {monthLabel}
+            </span>
+            <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "var(--green)" }}>
+              Open Insights <ArrowRight size={12} strokeWidth={2} />
+            </span>
+          </div>
+        </button>
+
         {/* ── Recent activity feed (slim, full-width below) ──────── */}
         <div className="rounded-xl overflow-hidden"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
@@ -1005,6 +1039,16 @@ function Kpi({ label, value, tone, sub }: { label: string; value: string; tone: 
       <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
       <p className="text-xl sm:text-2xl font-bold tabular-nums mt-1" style={{ color: tone }}>{value}</p>
       {sub && <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{sub}</p>}
+    </div>
+  )
+}
+
+function InsightHint({ label, sub }: { label: string; sub: string }) {
+  return (
+    <div className="rounded-lg px-3 py-2.5"
+      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <p className="text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--green)" }}>{label}</p>
+      <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{sub}</p>
     </div>
   )
 }

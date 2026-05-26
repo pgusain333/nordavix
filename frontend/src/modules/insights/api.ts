@@ -1,0 +1,131 @@
+import { apiClient } from "@/core/api/client"
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export type RiskLevel = "green" | "amber" | "red" | "neutral"
+
+export interface KpiRow {
+  kpi:     string
+  value:   string
+  risk:    RiskLevel
+  insight: string
+}
+
+export interface HistoryPoint {
+  period: string  // ISO date
+  label:  string  // short label like "Apr"
+  cash?:  number
+  ocf?:   number
+  revenue?: number
+  gp?:    number
+  ni?:    number
+}
+
+export interface AgingBucket {
+  bucket: string  // "Current" | "1–30" | "31–60" | "61–90" | "Over 90"
+  amount: number
+  pct:    number
+}
+
+export interface EntityRow {
+  name:    string
+  current: number
+  "1_30":  number
+  "31_60": number
+  "61_90": number
+  over_90: number
+  total:   number
+}
+
+export interface Liquidity {
+  cash_balance:        number
+  cash_balance_prior:  number
+  cash_change_str:     string | null
+  monthly_burn:        number
+  runway_months:       number | null
+  operating_cash_flow: number
+  history:             HistoryPoint[]
+  kpis:                KpiRow[]
+}
+
+export interface Profitability {
+  revenue:              number
+  revenue_prior:        number
+  revenue_change_str:   string | null
+  cogs:                 number
+  gross_profit:         number
+  gross_margin_pct:     number | null
+  gross_margin_pct_prior: number | null
+  operating_expenses:   number
+  operating_income:     number
+  operating_margin_pct: number | null
+  net_income:           number
+  net_margin_pct:       number | null
+  history:              HistoryPoint[]
+  kpis:                 KpiRow[]
+}
+
+export interface Receivables {
+  ar_balance:        number
+  dso_days:          number | null
+  aging:             AgingBucket[]
+  aging_over_60_pct: number | null
+  top_customers:     EntityRow[]
+  qbo_error:         string | null
+  kpis:              KpiRow[]
+}
+
+export interface Payables {
+  ap_balance:        number
+  dpo_days:          number | null
+  aging:             AgingBucket[]
+  aging_over_60_pct: number | null
+  top_vendors:       EntityRow[]
+  payment_lag_days:  number | null
+  qbo_error:         string | null
+  kpis:              KpiRow[]
+}
+
+export interface ExpenseRow {
+  category:     string
+  amount:       number
+  prior_amount: number
+  change_pct:   number | null
+}
+
+export interface Expenses {
+  total_expenses:    number
+  top_categories:    ExpenseRow[]
+  top_movers:        ExpenseRow[]
+  biggest_mom_mover: { category: string; from: number; to: number; change_pct: number } | null
+  kpis:              KpiRow[]
+}
+
+export interface Recommendation {
+  priority: "high" | "medium" | "low"
+  title:    string
+  detail:   string
+}
+
+export interface InsightsOverview {
+  period_end:      string
+  period_label:    string
+  qbo_connected:   boolean
+  liquidity:       Liquidity
+  profitability:   Profitability
+  receivables:     Receivables
+  payables:        Payables
+  expenses:        Expenses
+  recommendations: Recommendation[]
+}
+
+// ── API ──────────────────────────────────────────────────────────────────────
+
+async function getOverview(periodEnd: string): Promise<InsightsOverview> {
+  const { data } = await apiClient.get<InsightsOverview>(
+    "/api/insights/overview", { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
+export const insightsApi = { getOverview }
