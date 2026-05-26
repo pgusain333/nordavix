@@ -43,6 +43,7 @@ from modules.flux.schemas import (
     TrialBalanceResponse,
     UploadPreview,
     VarianceResponse,
+    VarianceStatusUpdate,
 )
 from modules.flux.service import (
     create_accounts_and_variances,
@@ -546,6 +547,67 @@ async def approve_variance(
         "status": "approved",
         "approved_by": str(user.id),
         "approved_at": var.approved_at.isoformat(),
+    }
+
+
+# Status values the /status endpoint accepts. We intentionally exclude
+# "approved" from this list — Approve has its own endpoint that also
+# stamps approved_by + approved_at and writes a distinct audit event.
+# Likewise "generating" is set by the AI runner, not by humans.
+_ALLOWED_STATUS_FLIPS = {"pending", "generated", "edited", "flagged"}
+
+
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/status")
+async def set_variance_status(
+    tb_id: uuid.UUID,
+    var_id: uuid.UUID,
+    body: VarianceStatusUpdate,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Flip a variance's review status — backs the Mark prepared / Flag /
+    Reset to pending buttons in the bulk-action toolbar.
+
+    Returning a row to "pending" clears approved_by + approved_at so the
+    audit trail stays honest (the variance is no longer signed off).
+    Other flips leave the approval stamps alone.
+    """
+    if body.status not in _ALLOWED_STATUS_FLIPS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {sorted(_ALLOWED_STATUS_FLIPS)}",
+        )
+
+    var_result = await db.execute(select(Variance).where(Variance.id == var_id))
+    var = var_result.scalar_one_or_none()
+    if var is None:
+        raise HTTPException(status_code=404, detail="Variance not found")
+
+    previous = var.status
+    var.status = body.status
+    # Resetting back to pending = the variance is no longer signed off.
+    # Wipe approval stamps so dashboards / exports don't show a stale
+    # approver on a re-opened line.
+    if body.status == "pending":
+        var.approved_by = None
+        var.approved_at = None
+
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action=f"flux.variance_status_{body.status}",
+        entity_type="variance", entity_id=var_id,
+        metadata={
+            "summary": f"Variance status: {previous} → {body.status}",
+            "trial_balance_id": str(tb_id),
+            "previous_status": previous,
+        },
+    )
+    await db.commit()
+    return {
+        "id":     str(var_id),
+        "status": body.status,
     }
 
 

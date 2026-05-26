@@ -95,6 +95,18 @@ class NarrativeUpdate(BaseModel):
     content: str
 
 
+class VarianceStatusUpdate(BaseModel):
+    """
+    Body for POST /variances/{id}/status — used by the bulk action bar
+    (Mark prepared / Flag / Reset to pending) on the Flux variance table.
+
+    Allowed values mirror the Variance.status enum: pending | generating |
+    generated | edited | approved | flagged. The endpoint will refuse
+    other strings to keep audit trails clean.
+    """
+    status: str
+
+
 class FluxRunResponse(BaseModel):
     trial_balance_id: uuid.UUID
     task_id: str

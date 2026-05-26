@@ -168,6 +168,25 @@ async function approveVariance(tbId: string, varId: string): Promise<VarianceRow
   return data
 }
 
+/**
+ * Flip a variance's review status to pending / generated / edited / flagged.
+ * Backs the Mark prepared / Flag / Reset to pending buttons in the
+ * variance table's bulk-action bar. "approved" is handled by its own
+ * endpoint (approveVariance above) because it also stamps approver
+ * metadata + writes a distinct audit event.
+ */
+async function setVarianceStatus(
+  tbId: string,
+  varId: string,
+  status: "pending" | "generated" | "edited" | "flagged",
+): Promise<{ id: string; status: string }> {
+  const { data } = await apiClient.post<{ id: string; status: string }>(
+    `/api/flux/trial-balances/${tbId}/variances/${varId}/status`,
+    { status },
+  )
+  return data
+}
+
 async function updateNarrative(tbId: string, varId: string, content: string): Promise<VarianceRow> {
   const { data } = await apiClient.put<VarianceRow>(
     `/api/flux/trial-balances/${tbId}/variances/${varId}/narrative`,
@@ -327,6 +346,7 @@ export const api = {
   // Variances
   listVariances,
   approveVariance,
+  setVarianceStatus,
   updateNarrative,
   regenerateNarrative,
   // Agentic

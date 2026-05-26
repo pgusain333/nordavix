@@ -32,6 +32,7 @@ import {
   Sparkles,
   Filter,
   Download,
+  Eye,
   ListOrdered,
   RotateCcw,
   X,
@@ -104,6 +105,25 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       for (const id of ids) {
         await api.approveVariance(tbId, id).catch((err) => {
           console.warn("Bulk approve: variance failed", id, err)
+        })
+      }
+    },
+    onSuccess: () => {
+      setSelected(new Set())
+      qc.invalidateQueries({ queryKey: ["variances", tbId] })
+    },
+  })
+
+  // Bulk status flip — backs the Mark prepared / Flag / Reset to
+  // pending buttons in the bulk action bar. Loops per-id to the
+  // /variances/{id}/status endpoint (same pattern as bulkApprove).
+  // Backend audit-logs each flip with the previous status so the trail
+  // shows exactly what changed.
+  const bulkSetStatus = useMutation({
+    mutationFn: async (vars: { ids: string[]; status: "pending" | "edited" | "flagged" }) => {
+      for (const id of vars.ids) {
+        await api.setVarianceStatus(tbId, id, vars.status).catch((err) => {
+          console.warn("Bulk status: variance failed", id, vars.status, err)
         })
       }
     },
@@ -436,12 +456,14 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
           </div>
         ) : (
           <>
-            {/* Bulk-action toolbar — appears INSIDE the table card,
-                directly above the thead, the moment one or more
-                variance rows are checked. Matches the exact chrome
-                used by the Reconciliations accounts table: green
-                subtle background, 1px border below, 11px label,
-                Approve primary + Clear selection on the right. */}
+            {/* Bulk-action toolbar — matches the Reconciliations
+                accounts table button-for-button:
+                  [N selected]  Approve  Mark prepared  Flag  Reset to pending  …  Clear selection
+                Same chrome (green-subtle bg, 1px border below, 11px
+                label), same icon set, same colour treatment on Flag
+                (red outline). Click any action and the loading state
+                covers every button in the row so the user can't
+                double-fire. */}
             {selected.size > 0 && (
               <div className="px-4 py-2 flex items-center gap-2 flex-wrap"
                 style={{ background: "var(--green-subtle)", borderBottom: "1px solid var(--border)" }}>
@@ -452,15 +474,52 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                   size="sm"
                   icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
                   loading={bulkApprove.isPending}
-                  disabled={selectedApprovable.length === 0}
+                  disabled={bulkSetStatus.isPending || selectedApprovable.length === 0}
                   onClick={() => bulkApprove.mutate(selectedApprovable)}
                   title={selectedApprovable.length === 0
                     ? "Every selected variance is already approved"
                     : `Approve ${selectedApprovable.length} variance${selectedApprovable.length === 1 ? "" : "s"}`}
                 >
-                  Approve{selectedApprovable.length > 0 && selectedApprovable.length !== selected.size
-                    ? ` (${selectedApprovable.length})`
-                    : ""}
+                  Approve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Eye size={11} strokeWidth={1.8} />}
+                  loading={bulkSetStatus.isPending && bulkSetStatus.variables?.status === "edited"}
+                  disabled={bulkApprove.isPending || bulkSetStatus.isPending}
+                  onClick={() => bulkSetStatus.mutate({
+                    ids: Array.from(selected), status: "edited",
+                  })}
+                  title="Mark selected variances as prepared (human-reviewed, ready for sign-off)"
+                >
+                  Mark prepared
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<AlertTriangle size={11} strokeWidth={1.8} />}
+                  loading={bulkSetStatus.isPending && bulkSetStatus.variables?.status === "flagged"}
+                  disabled={bulkApprove.isPending || bulkSetStatus.isPending}
+                  onClick={() => bulkSetStatus.mutate({
+                    ids: Array.from(selected), status: "flagged",
+                  })}
+                  style={{ borderColor: "#fecaca", color: "#b91c1c" }}
+                  title="Flag selected variances for follow-up"
+                >
+                  Flag
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  loading={bulkSetStatus.isPending && bulkSetStatus.variables?.status === "pending"}
+                  disabled={bulkApprove.isPending || bulkSetStatus.isPending}
+                  onClick={() => bulkSetStatus.mutate({
+                    ids: Array.from(selected), status: "pending",
+                  })}
+                  title="Reset selected variances back to pending — clears any approval stamps"
+                >
+                  Reset to pending
                 </Button>
                 <button
                   onClick={() => setSelected(new Set())}
