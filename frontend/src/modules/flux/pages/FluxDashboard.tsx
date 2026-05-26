@@ -317,10 +317,12 @@ export function FluxDashboard() {
         className="flex flex-1 flex-col overflow-hidden min-w-0"
         style={{ background: "var(--bg)" }}
       >
-        {/* Header — compact (py-2 to match recon for visual parity); gap
-            shrinks on mobile so the icon-only action cluster still fits
-            next to the back/title on a 360px viewport. */}
-        <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2 shrink-0"
+        {/* Header — outer padding matches the Reconciliations dashboard
+            (px-4 sm:px-8 pt-3 sm:pt-4 pb-3) so the two close-workflow
+            pages share the exact same header chrome. Gap shrinks on
+            mobile so the icon-only action cluster still fits next to
+            the back/title on a 360px viewport. */}
+        <div className="flex items-center gap-1.5 sm:gap-2 px-4 sm:px-8 pt-3 sm:pt-4 pb-3 shrink-0"
           style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
 
           {/* Back to the flux month-index (one step up — obeys URL
@@ -334,21 +336,45 @@ export function FluxDashboard() {
             <ArrowLeft size={16} strokeWidth={1.8} />
           </button>
 
+          {/* Title block — typography matches the Reconciliations
+              header exactly (clamp 16-20 h1, 11px sub) so the two
+              workflow pages read as one product. */}
           <div className="flex-1 min-w-0">
             {selectedTb ? (
               <>
-                <h1 className="text-sm font-semibold text-theme truncate">{selectedTb.name}</h1>
-                <p className="text-xs mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
+                <h1 style={{
+                    fontSize: "clamp(16px, 3vw, 20px)",
+                    fontWeight: 700,
+                    lineHeight: 1.15,
+                    letterSpacing: "-0.01em",
+                    color: "var(--text)",
+                    margin: 0,
+                  }}
+                  className="truncate">
+                  {selectedTb.name}
+                </h1>
+                <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
                   {new Date(selectedTb.period_prior).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                   {" → "}
                   {new Date(selectedTb.period_current).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
-                  {" · $"}{parseFloat(selectedTb.materiality_threshold).toLocaleString()}
+                  {" · materiality $"}{parseFloat(selectedTb.materiality_threshold).toLocaleString()}
                 </p>
               </>
             ) : (
               <>
-                <h1 className="text-sm font-semibold text-theme">Flux Analysis</h1>
-                <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>AI-powered variance commentary</p>
+                <h1 style={{
+                    fontSize: "clamp(16px, 3vw, 20px)",
+                    fontWeight: 700,
+                    lineHeight: 1.15,
+                    letterSpacing: "-0.01em",
+                    color: "var(--text)",
+                    margin: 0,
+                  }}>
+                  Flux Analysis
+                </h1>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  AI-powered variance commentary on every material movement.
+                </p>
               </>
             )}
           </div>
