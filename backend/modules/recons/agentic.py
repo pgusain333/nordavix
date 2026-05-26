@@ -375,16 +375,39 @@ async def _process_account(
         # there's nothing for the AI to explain. Skip the commentary
         # build + the Claude call in that case (no value, just cost).
         if items:
-            commentary = await build_ai_commentary(
-                db=db, conn=conn,
-                qid=qid, period_end=period_end,
-                account_name=name, account_number=number, account_type=snap.account_type,
-                is_credit_natural=is_credit_natural,
-                opening=opening, gl_balance=gl_balance, computed=computed,
-                items=items, prior=prior, prior_snap=prior_snap,
-                opening_source_label=opening_source,
+            logger.info(
+                "Agentic: building commentary for %s (%s) — %d item(s)",
+                qid, name, len(items),
             )
+            try:
+                commentary = await build_ai_commentary(
+                    db=db, conn=conn,
+                    qid=qid, period_end=period_end,
+                    account_name=name, account_number=number, account_type=snap.account_type,
+                    is_credit_natural=is_credit_natural,
+                    opening=opening, gl_balance=gl_balance, computed=computed,
+                    items=items, prior=prior, prior_snap=prior_snap,
+                    opening_source_label=opening_source,
+                )
+                logger.info(
+                    "Agentic: commentary built for %s (%s) — confidence=%s recommendation=%s",
+                    qid, name,
+                    commentary.get("confidence") if commentary else "(none)",
+                    commentary.get("recommendation") if commentary else "(none)",
+                )
+            except Exception:
+                # Don't let a commentary failure block the prep — the
+                # account still gets tied out + saved; just no card.
+                logger.exception(
+                    "Agentic: commentary BUILD FAILED for %s (%s) — preparing without commentary",
+                    qid, name,
+                )
+                commentary = None
         else:
+            logger.info(
+                "Agentic: skipping commentary for %s (%s) — zero items (trivial tie-out)",
+                qid, name,
+            )
             commentary = None
         await _save_prepared(
             db=db, tenant_id=tenant_id, user=user,
