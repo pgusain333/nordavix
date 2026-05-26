@@ -7,12 +7,14 @@ import { NavLink, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
-  Plug, Users, X, Pencil, Check, CheckSquare, BookOpen, type LucideIcon,
+  Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
+  MessageSquare, type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { cn } from "@/core/ui/utils"
 import { Badge } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
+import { FeedbackDialog } from "@/core/ui/FeedbackDialog"
 import { workspaceApi } from "@/modules/workspace/api"
 import { tasksApi } from "@/modules/tasks/api"
 
@@ -43,6 +45,7 @@ export function LeftNav({ onClose }: Props) {
   const { organization } = useOrganization()
   const { user } = useUser()
   const navigate = useNavigate()
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   // Resolve the current user's role so we can show a small chip next to
   // the account email at the bottom of the nav. Long staleTime — role
@@ -184,6 +187,39 @@ export function LeftNav({ onClose }: Props) {
           )
         })}
       </nav>
+
+      {/* Feedback — sits above the Theme/User section so it's easy to
+          spot but doesn't fight the nav items for attention. Subtle
+          ghost button by default, lights up on hover. */}
+      <div className="px-3 pt-2 pb-1" style={{ borderTop: "1px solid var(--nav-border)" }}>
+        <button
+          type="button"
+          onClick={() => setFeedbackOpen(true)}
+          className="w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-all"
+          style={{
+            color: "var(--nav-text)",
+            background: "transparent",
+            border: "1px dashed var(--border-strong)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--green-subtle)"
+            e.currentTarget.style.color = "var(--green)"
+            e.currentTarget.style.borderColor = "var(--green)"
+            e.currentTarget.style.borderStyle = "solid"
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent"
+            e.currentTarget.style.color = "var(--nav-text)"
+            e.currentTarget.style.borderColor = "var(--border-strong)"
+            e.currentTarget.style.borderStyle = "dashed"
+          }}
+          title="Share a bug, idea, or comment with the Nordavix team"
+        >
+          <MessageSquare size={16} strokeWidth={1.8} className="shrink-0" />
+          <span className="flex-1 text-left">Send feedback</span>
+        </button>
+      </div>
+      <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
 
       {/* Bottom: theme + user */}
       <div className="px-3 py-3 space-y-3" style={{ borderTop: "1px solid var(--nav-border)" }}>

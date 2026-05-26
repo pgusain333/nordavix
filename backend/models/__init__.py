@@ -5,6 +5,7 @@ from models.account_review_status import AccountReviewStatus
 from models.ai_usage import AIUsage
 from models.audit_log import AuditLog
 from models.closed_period import ClosedPeriod
+from models.feedback import Feedback
 from models.narrative import Narrative
 from models.period_sync import PeriodSync
 from models.qbo_connection import QboConnection
@@ -20,6 +21,7 @@ __all__ = [
     "AIUsage",
     "AuditLog",
     "ClosedPeriod",
+    "Feedback",
     "Narrative",
     "PeriodSync",
     "QboConnection",
