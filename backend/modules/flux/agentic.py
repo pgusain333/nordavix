@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.account import Account
 from models.trial_balance import TrialBalance
 from models.user import User
 from models.variance import Variance
@@ -109,20 +110,27 @@ async def run_agentic_flux(
         result.finished_at = datetime.now(UTC).isoformat()
         return result
 
-    # Load every material variance still awaiting commentary. Order by
-    # absolute variance descending so the most-impactful rows get
-    # commentary first — if the user cancels mid-run they at least got
-    # the biggest movers explained.
-    candidates = list((await db.execute(
-        select(Variance).where(
-            Variance.trial_balance_id == tb_id,
+    # Load every material variance still awaiting commentary. Variance
+    # doesn't carry trial_balance_id directly — it's on Account — so we
+    # JOIN and filter through Account.trial_balance_id. Fetching Account
+    # in the same query also gives us account_name / account_number for
+    # the per-variance result entries (those fields live on Account,
+    # not Variance). Order by absolute variance descending so the
+    # most-impactful rows get commentary first — if the user cancels
+    # mid-run they at least got the biggest movers explained.
+    rows = (await db.execute(
+        select(Variance, Account)
+        .join(Account, Variance.account_id == Account.id)
+        .where(
+            Account.trial_balance_id == tb_id,
             Variance.is_material.is_(True),
             Variance.status.in_(("pending", "generating", "flagged")),
         )
-    )).scalars().all())
+    )).all()
+    candidates: list[tuple[Variance, Account]] = list(rows)
 
     # Sort by |dollar_variance| descending in Python (Decimal-friendly).
-    candidates.sort(key=lambda v: abs(v.dollar_variance or 0), reverse=True)
+    candidates.sort(key=lambda pair: abs(pair[0].dollar_variance or 0), reverse=True)
 
     if not candidates:
         result.skipped = 1
@@ -142,7 +150,7 @@ async def run_agentic_flux(
 
     # Inline generation — sequential so each one commits cleanly before
     # we check the cancel flag again.
-    for v in candidates:
+    for v, acct in candidates:
         if _is_cancelled(tenant_id, tb_id):
             _clear_cancel(tenant_id, tb_id)
             result.variances.append(VarianceResult(
@@ -165,8 +173,8 @@ async def run_agentic_flux(
                 result.processed += 1
                 result.variances.append(VarianceResult(
                     variance_id=str(v.id),
-                    account_name=v.account_name or "",
-                    account_number=v.account_number or "",
+                    account_name=acct.account_name or "",
+                    account_number=acct.account_number or "",
                     action="generated",
                     reason="Narrative drafted from transaction evidence.",
                 ))
@@ -174,21 +182,21 @@ async def run_agentic_flux(
                 result.failed += 1
                 result.variances.append(VarianceResult(
                     variance_id=str(v.id),
-                    account_name=v.account_name or "",
-                    account_number=v.account_number or "",
+                    account_name=acct.account_name or "",
+                    account_number=acct.account_number or "",
                     action="failed",
                     reason=str(outcome.get("error") or "Anthropic call failed."),
                 ))
         except Exception as exc:
             logger.exception(
                 "Agentic flux failed on variance %s (%s)",
-                v.id, v.account_name,
+                v.id, acct.account_name,
             )
             result.failed += 1
             result.variances.append(VarianceResult(
                 variance_id=str(v.id),
-                account_name=v.account_name or "",
-                account_number=v.account_number or "",
+                account_name=acct.account_name or "",
+                account_number=acct.account_number or "",
                 action="failed",
                 reason=f"Internal error: {type(exc).__name__}: {str(exc)[:120]}",
             ))

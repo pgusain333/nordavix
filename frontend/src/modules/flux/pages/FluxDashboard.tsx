@@ -455,8 +455,8 @@ export function FluxDashboard() {
               const label = isPending
                 ? "Running…"
                 : pendingMat > 0
-                  ? `Agentic (${pendingMat})`
-                  : "Agentic"
+                  ? `Agentic Mode (${pendingMat})`
+                  : "Agentic Mode"
               return (
                 <Button
                   size="sm"
