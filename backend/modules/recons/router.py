@@ -405,6 +405,11 @@ async def export_account_pdf(
             .order_by(AccountReviewStatus.period_end.desc())
             .limit(1)
         )).scalar_one_or_none()
+        # Always look up prior_snap unconditionally so the picker can
+        # compare it against prior_review. (Earlier short-circuit
+        # skipped this lookup when prior_review existed, which made
+        # an old seeded subledger always win over a much-closer GL
+        # snapshot — exactly the "rolled from Jan 30 not Mar 31" bug.)
         prior_snap = (await db.execute(
             select(GlBalanceSnapshot)
             .where(
@@ -414,19 +419,23 @@ async def export_account_pdf(
             )
             .order_by(GlBalanceSnapshot.period_end.desc())
             .limit(1)
-        )).scalar_one_or_none() if prior is None else None
-        if prior is not None and prior.subledger_total is not None:
-            opening_balance = Decimal(prior.subledger_total)
-            opening_source = f"Rolled forward from {prior.period_end.isoformat()} closing subledger"
-        elif prior_snap is not None:
-            opening_balance = Decimal(prior_snap.balance)
-            opening_source = (
-                f"Rolled forward from {prior_snap.period_end.isoformat()} GL balance "
-                "(no reconciled subledger on file for the prior period)"
-            )
-        else:
+        )).scalar_one_or_none()
+        # Use the shared picker so dashboard / agentic / PDF all use the
+        # same chronologically-closest-prior-wins rule.
+        from modules.recons.overview import _pick_rollforward_source
+        chosen = _pick_rollforward_source(prior, prior_snap)
+        if chosen is None:
             opening_balance = Decimal("0")
             opening_source = "No prior-period closing on file — opening assumed $0"
+        elif chosen[0] == "subledger":
+            opening_balance = chosen[2]
+            opening_source = f"Rolled forward from {chosen[1].isoformat()} closing subledger"
+        else:
+            opening_balance = chosen[2]
+            opening_source = (
+                f"Rolled forward from {chosen[1].isoformat()} GL balance "
+                "(no reconciled subledger on file for the prior period)"
+            )
 
         # Evidence files (one query per period+account)
         ev_rows = list((await db.execute(

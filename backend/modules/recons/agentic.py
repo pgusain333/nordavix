@@ -304,27 +304,27 @@ async def _process_account(
         # through to the normal flow, which overwrites with fresh data.
 
     # ── Compute opening balance ─────────────────────────────────────────
-    # Priority chain (matches the dashboard's display logic):
-    #   1. Prior period's reconciled subledger (rolled forward)
-    #   2. Prior period's GL balance snapshot (audit-ready fallback so
-    #      first-time reconciliations have a sensible starting point —
-    #      GL @ Mar 31 is deterministic and auditable; assuming $0 would
-    #      bake the entire historical balance into "current activity"
-    #      and make the AI's math impossible to tie out)
-    #   3. Zero (truly no history)
+    # Uses the shared picker so dashboard / agentic / PDF agree. The
+    # picker selects CHRONOLOGICALLY CLOSEST prior (reconciled subledger
+    # or GL snapshot, whichever is more recent — same-date ties favor
+    # subledger). Without this, AI would compute opening from an old
+    # seeded subledger and the math wouldn't tie when the immediately-
+    # prior month has fresher GL data.
+    from modules.recons.overview import _pick_rollforward_source
+    chosen = _pick_rollforward_source(prior, prior_snap)
     opening_source: str
-    if prior is not None and prior.subledger_total is not None:
-        opening = Decimal(prior.subledger_total)
-        opening_source = f"reconciled prior-period subledger ({prior.period_end.isoformat()})"
-    elif prior_snap is not None:
-        opening = Decimal(prior_snap.balance)
-        opening_source = (
-            f"GL balance at the prior period end ({prior_snap.period_end.isoformat()}) — "
-            "no reconciled subledger on file for the prior period"
-        )
-    else:
+    if chosen is None:
         opening = Decimal("0")
         opening_source = "no prior period on file (assumed $0 opening)"
+    elif chosen[0] == "subledger":
+        opening = chosen[2]
+        opening_source = f"reconciled prior-period subledger ({chosen[1].isoformat()})"
+    else:
+        opening = chosen[2]
+        opening_source = (
+            f"GL balance at the prior period end ({chosen[1].isoformat()}) — "
+            "no reconciled subledger on file for that prior period"
+        )
 
     gl_balance = Decimal(snap.balance)
     is_credit_natural = snap.account_type in _CREDIT_NATURAL_TYPES

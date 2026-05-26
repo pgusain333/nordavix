@@ -113,6 +113,34 @@ async def sync_overview(
     except Exception:
         logger.exception("GL snapshot capture failed for %s — continuing", period_end)
 
+    # Backfill the IMMEDIATELY PRIOR month's GL snapshot if missing.
+    # This makes the roll-forward chain work for first-time recons:
+    # when the user syncs April but never synced March, the next time
+    # the dashboard / agentic preparer needs an opening balance for
+    # April, it'll find Mar 31 GL in snapshots rather than skipping
+    # all the way back to whatever older period happened to have a
+    # reconciled subledger (e.g. a Jan 30 seeded opening). One extra
+    # TB pull per sync (~1-2s) but the UX win is huge — without it,
+    # an April recon looks like it's rolling from January.
+    from datetime import timedelta as _td
+    from models.gl_balance_snapshot import GlBalanceSnapshot as _GlSnap
+    prior_month_end = period_end.replace(day=1) - _td(days=1)
+    prior_exists = (await session.execute(
+        _select(_GlSnap).where(
+            _GlSnap.tenant_id == tid,
+            _GlSnap.period_end == prior_month_end,
+        ).limit(1)
+    )).scalar_one_or_none() is not None
+    if not prior_exists:
+        try:
+            logger.info("Backfilling prior-month snapshot for %s", prior_month_end)
+            await capture_snapshot(session, tid, prior_month_end, conn=conn)
+        except Exception:
+            logger.exception(
+                "Prior-month snapshot backfill failed for %s — continuing",
+                prior_month_end,
+            )
+
     tb_balances = await _qbo_trial_balance_by_account(conn, session, period_end)
 
     # Pull AR / AP aging totals + persist for instant subsequent reads.
@@ -384,33 +412,35 @@ async def _build_overview_from_qbo_data(
         is_manual = review is not None and review.subledger_total is not None
         prior_review = prior_by_acct.get(qbo_id)
         prior_snap = prior_snap_by_acct.get(qbo_id)
-        is_rollforward_from_subledger = False
-        is_rollforward_from_gl = False
-        # Rolled-forward opening — the SAME chain in every code path so
-        # the dashboard, inline form, agentic preparer, and PDF agree on
-        # what the period's opening is. Always the prior period's closing
-        # (never the current period's saved value) so AI can never
-        # appear to "override" the opening — opening is a derived,
-        # read-only-display value tied to the chronologically prior row.
+        # Roll-forward source picker — CHRONOLOGICALLY CLOSEST PRIOR WINS.
+        # Accountants want opening = the period immediately before the
+        # current one. The old logic picked the most-recent reconciled
+        # subledger AS-A-FIRST-PRIORITY, which made April reconciliations
+        # show "Rolled forward from Jan 30" if Jan was the only month
+        # with a seeded subledger and Feb/Mar had no reconciliation work.
+        # Within the same date, reconciled subledger beats GL snapshot.
+        chosen = _pick_rollforward_source(prior_review, prior_snap)
+        is_rollforward_from_subledger = chosen is not None and chosen[0] == "subledger"
+        is_rollforward_from_gl       = chosen is not None and chosen[0] == "gl"
+
         rollforward_opening = Decimal("0")
-        if prior_review is not None and prior_review.subledger_total is not None:
-            rollforward_opening = prior_review.subledger_total
-        elif prior_snap is not None:
-            rollforward_opening = prior_snap.balance
+        if chosen is not None:
+            rollforward_opening = chosen[2]
 
         if is_manual:
             subledger_balance = review.subledger_total
             source = review.subledger_source or "Manually entered"
             has_detail = True
-        elif prior_review is not None and prior_review.subledger_total is not None:
+        elif is_rollforward_from_subledger:
+            assert prior_review is not None and prior_review.subledger_total is not None
             subledger_balance = prior_review.subledger_total
             source = (
                 f"Rolled forward from {prior_review.period_end} closing — "
                 "open the row to add reconciling items and adjust to current period."
             )
             has_detail = True
-            is_rollforward_from_subledger = True
-        elif prior_snap is not None:
+        elif is_rollforward_from_gl:
+            assert prior_snap is not None
             subledger_balance = prior_snap.balance
             source = (
                 f"Rolled forward from {prior_snap.period_end} GL balance "
@@ -418,7 +448,6 @@ async def _build_overview_from_qbo_data(
                 "Open the row to add this period's reconciling items."
             )
             has_detail = True
-            is_rollforward_from_gl = True
         else:
             subledger_balance, source, has_detail = _subledger_for_account(
                 acct_type=acct_type,
@@ -942,6 +971,55 @@ def _subledger_for_account(
         return gl_balance, "Matches GL — no separate subledger in QuickBooks.", True
 
     return gl_balance, "Matches GL — this account type has no separate subledger.", True
+
+
+def _pick_rollforward_source(
+    prior_review: Any | None,
+    prior_snap: Any | None,
+) -> tuple[str, date, Decimal] | None:
+    """Pick the best roll-forward opening for the current period.
+
+    Returns (source_type, period_end, balance) or None when nothing's
+    available. Source type is one of:
+      "subledger" — prior period's reconciled subledger total
+      "gl"        — prior period's GL balance snapshot
+
+    Selection rule: chronologically closest prior wins. Within the same
+    period_end (rare), reconciled subledger beats GL snapshot — the
+    subledger represents a human/AI-validated value, the snapshot is
+    just raw GL. The OLD logic always preferred subledger over snapshot
+    REGARDLESS of date, which made April reconciliations show "Rolled
+    forward from Jan 30" when Jan had a seeded subledger and Feb/Mar
+    had nothing (instead of using the much closer Mar 31 GL snapshot
+    backfilled by sync).
+
+    Shared by overview.py (display), agentic.py (AI prep opening),
+    and router.py /pdf (PDF subledger build-up) so all three views
+    agree on what the opening is for any period.
+    """
+    candidates: list[tuple[str, date, Decimal]] = []
+    if prior_review is not None and prior_review.subledger_total is not None:
+        candidates.append((
+            "subledger",
+            prior_review.period_end,
+            Decimal(prior_review.subledger_total),
+        ))
+    if prior_snap is not None:
+        candidates.append((
+            "gl",
+            prior_snap.period_end,
+            Decimal(prior_snap.balance),
+        ))
+    if not candidates:
+        return None
+    # Sort by (period_end DESC, prefer subledger on date tie). Two-pass
+    # sort exploits Python's stable sort: secondary key first (subledger
+    # before gl), then primary key (newer date first) preserves the
+    # secondary order on ties. A single reverse=True sort would flip
+    # the type-priority order too — putting gl before subledger on ties.
+    candidates.sort(key=lambda c: 0 if c[0] == "subledger" else 1)
+    candidates.sort(key=lambda c: c[1], reverse=True)
+    return candidates[0]
 
 
 def _empty_overview(period_end: date, *, synced: bool = False) -> dict:
