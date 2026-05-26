@@ -429,11 +429,51 @@ export function FluxDashboard() {
                 </span>
               </Button>
             )}
+            {/* Agentic Mode — AI writes commentary on every material
+                variance in one shot. Mirrors the Reconciliations
+                dashboard's AgenticModeToggle: lives in the header,
+                disabled when there's nothing pending, shows the
+                overlay while running. */}
+            {showVarianceTable && (() => {
+              const matVars = variances.filter((r) => r.is_material)
+              const pendingMat = matVars.filter((r) =>
+                !["generated", "edited", "approved"].includes(r.status),
+              ).length
+              const isPending = runAgenticFluxMut.isPending
+              const label = isPending
+                ? "Running…"
+                : pendingMat > 0
+                  ? `Agentic (${pendingMat})`
+                  : "Agentic"
+              return (
+                <Button
+                  size="sm"
+                  loading={isPending}
+                  disabled={isPending || pendingMat === 0}
+                  icon={<Sparkles size={14} strokeWidth={1.8} />}
+                  onClick={() => runAgenticFluxMut.mutate()}
+                  title={
+                    pendingMat === 0
+                      ? "Every material variance already has AI commentary"
+                      : `Run AI on ${pendingMat} material variance${pendingMat === 1 ? "" : "s"} without commentary — biggest movers first`
+                  }
+                  style={{
+                    background: "var(--green)",
+                    color: "white",
+                    borderColor: "var(--green)",
+                  }}
+                >
+                  <span className="hidden sm:inline">{label}</span>
+                </Button>
+              )
+            })()}
+
             {/* Find reasons: kicks off the AI variance-explanation pass.
                 Only meaningful when we have variances to explain. */}
             {showVarianceTable && (
               <Button
                 size="sm"
+                variant="outline"
                 icon={<Sparkles size={14} strokeWidth={1.8} />}
                 loading={runFluxMut.isPending}
                 onClick={() => tbId && runFluxMut.mutate(tbId)}
@@ -575,11 +615,7 @@ export function FluxDashboard() {
 
               {showVarianceTable && (
                 <div className="px-4 sm:px-6 pt-3">
-                  <FluxKpiStrip
-                    rows={variances}
-                    onRunAgentic={() => runAgenticFluxMut.mutate()}
-                    isRunning={runAgenticFluxMut.isPending}
-                  />
+                  <FluxKpiStrip rows={variances} />
                 </div>
               )}
 
@@ -1062,9 +1098,7 @@ function FieldLabel({ label, children }: { label: string; children: React.ReactN
 // commentary coverage. Plus a Run-AI button that fires the agentic
 // flux runner (handler comes from the parent).
 
-function FluxKpiStrip({
-  rows, onRunAgentic, isRunning,
-}: { rows: VarianceRow[]; onRunAgentic: () => void; isRunning: boolean }) {
+function FluxKpiStrip({ rows }: { rows: VarianceRow[] }) {
   const total = rows.length
   const material = rows.filter((r) => r.is_material)
   const approved = material.filter((r) => r.status === "approved")
@@ -1078,72 +1112,34 @@ function FluxKpiStrip({
   const coveragePct = material.length > 0
     ? Math.round((withNarrative.length / material.length) * 100)
     : 0
-  const pendingMaterial = material.length - withNarrative.length
 
-  const runLabel = isRunning
-    ? "Running…"
-    : pendingMaterial > 0
-      ? `Run AI on ${pendingMaterial} pending`
-      : "All material commented"
-
+  // KPI grid — same chrome as the Reconciliations dashboard: each tile
+  // is its own rounded-xl card with the standard card shadow so the
+  // two pages read as one product. (Agentic Mode lives in the header
+  // action cluster now — no separate wide card.)
   return (
-    <>
-      {/* KPI grid — same chrome as the Reconciliations dashboard: each
-          tile is its own rounded-xl card with the standard card shadow
-          so the two pages read as one product. */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <FluxKpi
-          label="Material variances"
-          value={String(material.length)}
-          sub={total > 0 ? `of ${total} total` : "no variances"}
-          tone={material.length > 0 ? "var(--text)" : "var(--text-muted)"} />
-        <FluxKpi
-          label="Total |variance|"
-          value={fmtMoneyShort(totalAbsVar)}
-          sub="sum of absolute movements"
-          tone="var(--text)" />
-        <FluxKpi
-          label="Approval"
-          value={`${approved.length} / ${material.length}`}
-          sub={material.length > 0 ? `${approvalPct}% of material` : "—"}
-          tone={approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
-        <FluxKpi
-          label="AI coverage"
-          value={`${withNarrative.length} / ${material.length}`}
-          sub={material.length > 0 ? `${coveragePct}% commentary written` : "—"}
-          tone={coveragePct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
-      </div>
-
-      {/* Agentic Mode — its own slim card below the KPIs, mirroring the
-          way the recon dashboard separates the AgenticModeToggle from
-          its KPI strip. */}
-      <div className="rounded-xl mt-3 px-4 py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-        <div className="flex items-center gap-2">
-          <span className="h-7 w-7 rounded-md flex items-center justify-center shrink-0"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-            <Sparkles size={14} strokeWidth={1.8} />
-          </span>
-          <div className="min-w-0">
-            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text)" }}>
-              Agentic Mode
-            </p>
-            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              AI writes commentary for every material variance — biggest movers first.
-            </p>
-          </div>
-        </div>
-        <Button
-          size="sm"
-          loading={isRunning}
-          disabled={isRunning || pendingMaterial === 0}
-          icon={<Sparkles size={12} strokeWidth={1.8} />}
-          onClick={onRunAgentic}
-        >
-          {runLabel}
-        </Button>
-      </div>
-    </>
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <FluxKpi
+        label="Material variances"
+        value={String(material.length)}
+        sub={total > 0 ? `of ${total} total` : "no variances"}
+        tone={material.length > 0 ? "var(--text)" : "var(--text-muted)"} />
+      <FluxKpi
+        label="Total |variance|"
+        value={fmtMoneyShort(totalAbsVar)}
+        sub="sum of absolute movements"
+        tone="var(--text)" />
+      <FluxKpi
+        label="Approval"
+        value={`${approved.length} / ${material.length}`}
+        sub={material.length > 0 ? `${approvalPct}% of material` : "—"}
+        tone={approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+      <FluxKpi
+        label="AI coverage"
+        value={`${withNarrative.length} / ${material.length}`}
+        sub={material.length > 0 ? `${coveragePct}% commentary written` : "—"}
+        tone={coveragePct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+    </div>
   )
 }
 
