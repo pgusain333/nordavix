@@ -1251,28 +1251,16 @@ export function ReconciliationsDashboard() {
                                   style={{ background: "var(--green)" }}
                                   title="Subledger saved for this period" />
                               )}
-                              {!a.subledger_is_manual && a.subledger_is_rollforward && (() => {
-                                const fromGl = a.rollforward_source === "gl"
-                                return (
-                                  <span className="ml-1.5 inline-flex items-center text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded align-middle"
-                                    style={{
-                                      // Blue when the roll-forward came from a reconciled prior
-                                      // subledger (most reliable); amber when it came from the
-                                      // prior GL snapshot (audit-ready fallback — flagging it
-                                      // visually so the reviewer knows to double-check the
-                                      // prior period's GL was accurate before approving).
-                                      background: fromGl ? "rgba(245, 158, 11, 0.15)" : "rgba(59, 130, 246, 0.15)",
-                                      color:      fromGl ? "#b45309" : "#1d4ed8",
-                                    }}
-                                    title={
-                                      fromGl
-                                        ? `Rolled forward from prior GL balance (${a.rollforward_from}) — no reconciled subledger on file for the prior period. Open the row to tick reconciling items.`
-                                        : `Rolled forward from prior close subledger (${a.rollforward_from}). Open the row to tick reconciling items.`
-                                    }>
-                                    {fromGl ? "Roll fwd (GL)" : "Roll fwd"}
-                                  </span>
-                                )
-                              })()}
+                              {!a.subledger_is_manual && a.subledger_is_rollforward && (
+                                <span className="ml-1.5 inline-flex items-center text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded align-middle"
+                                  style={{
+                                    background: "rgba(59, 130, 246, 0.15)",
+                                    color: "#1d4ed8",
+                                  }}
+                                  title={`Rolled forward from prior close subledger (${a.rollforward_from}). Open the row to tick reconciling items.`}>
+                                  Roll fwd
+                                </span>
+                              )}
                             </td>
                             <td className="px-3 py-2.5 text-right tabular-nums text-sm font-medium"
                               style={{ color: hasVariance ? "#dc2626" : "var(--green)" }}>
