@@ -101,7 +101,7 @@ export function BooksSetupWizard() {
   })
 
   useEffect(() => {
-    if (status?.seeded) navigate("/app/reconciliations", { replace: true })
+    if (status?.seeded) navigate("/app", { replace: true })
   }, [status?.seeded, navigate])
 
   const {
@@ -127,7 +127,7 @@ export function BooksSetupWizard() {
     },
     onSuccess: () => {
       // Force the gate query to refetch; redirect happens via useEffect.
-      navigate("/app/reconciliations", { replace: true })
+      navigate("/app", { replace: true })
     },
   })
 

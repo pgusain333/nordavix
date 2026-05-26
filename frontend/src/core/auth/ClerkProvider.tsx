@@ -49,6 +49,13 @@ export function ClerkApiWirer(): null {
       // observers re-fetch with the new tenant scope on the next render.
       queryClient.removeQueries()
       previousOrgId.current = currentOrgId
+      // Also wipe any localStorage caches we hydrate from — they're
+      // not React Query state so removeQueries doesn't touch them.
+      // Without this, the previous workspace's "QBO connected" can
+      // leak into the new workspace's empty-state for one render.
+      try {
+        localStorage.removeItem("nordavix:qbo-connection-cache")
+      } catch { /* private mode — ignore */ }
       // Force a fresh token so the new org_id reaches the backend on
       // the very next request. Fire-and-forget; failures are harmless
       // (the next request will fall through to a fresh getToken anyway).

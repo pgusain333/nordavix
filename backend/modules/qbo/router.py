@@ -93,15 +93,15 @@ async def qbo_callback(
     frontend_url = settings.cors_origins_list[0] if settings.cors_origins_list else "http://localhost:5173"
 
     if error:
-        return RedirectResponse(url=f"{frontend_url}/app/flux?qbo=error&reason={error}")
+        return RedirectResponse(url=f"{frontend_url}/app?qbo=error&reason={error}")
 
     if not settings.qbo_enabled:
-        return RedirectResponse(url=f"{frontend_url}/app/flux?qbo=error&reason=not_configured")
+        return RedirectResponse(url=f"{frontend_url}/app?qbo=error&reason=not_configured")
 
     # Decode tenant_id from state
     tenant_id = _decode_state(state)
     if tenant_id is None:
-        return RedirectResponse(url=f"{frontend_url}/app/flux?qbo=error&reason=invalid_state")
+        return RedirectResponse(url=f"{frontend_url}/app?qbo=error&reason=invalid_state")
 
     # Exchange code for tokens
     credentials = base64.b64encode(
@@ -124,7 +124,7 @@ async def qbo_callback(
         )
 
     if token_resp.status_code != 200:
-        return RedirectResponse(url=f"{frontend_url}/app/flux?qbo=error&reason=token_exchange")
+        return RedirectResponse(url=f"{frontend_url}/app?qbo=error&reason=token_exchange")
 
     token_data     = token_resp.json()
     access_token   = token_data["access_token"]
@@ -186,7 +186,7 @@ async def qbo_callback(
 
         await session.commit()
 
-    return RedirectResponse(url=f"{frontend_url}/app/flux?qbo=connected")
+    return RedirectResponse(url=f"{frontend_url}/app?qbo=connected")
 
 
 # ── QBO API endpoints (auth required) ─────────────────────────────────────────
