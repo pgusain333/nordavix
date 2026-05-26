@@ -369,19 +369,23 @@ async def _process_account(
 
     if tied_out:
         # ── Auto-prepare: save override + mark reviewed + AI commentary ─
-        # Build the structured commentary the reviewer sees in the
-        # expanded row + on the PDF. Mix of deterministic heuristic
-        # checks (auditable, no AI cost) and one Claude call for the
-        # plain-English narrative.
-        commentary = await build_ai_commentary(
-            db=db, conn=conn,
-            qid=qid, period_end=period_end,
-            account_name=name, account_number=number, account_type=snap.account_type,
-            is_credit_natural=is_credit_natural,
-            opening=opening, gl_balance=gl_balance, computed=computed,
-            items=items, prior=prior, prior_snap=prior_snap,
-            opening_source_label=opening_source,
-        )
+        # Commentary is only useful when AI actually DID something — i.e.,
+        # ticked one or more reconciling items. Accounts with zero period
+        # activity tie out trivially (opening rolled forward = GL), so
+        # there's nothing for the AI to explain. Skip the commentary
+        # build + the Claude call in that case (no value, just cost).
+        if items:
+            commentary = await build_ai_commentary(
+                db=db, conn=conn,
+                qid=qid, period_end=period_end,
+                account_name=name, account_number=number, account_type=snap.account_type,
+                is_credit_natural=is_credit_natural,
+                opening=opening, gl_balance=gl_balance, computed=computed,
+                items=items, prior=prior, prior_snap=prior_snap,
+                opening_source_label=opening_source,
+            )
+        else:
+            commentary = None
         await _save_prepared(
             db=db, tenant_id=tenant_id, user=user,
             qid=qid, period_end=period_end, review=review,
