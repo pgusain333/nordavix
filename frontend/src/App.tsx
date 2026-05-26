@@ -22,6 +22,7 @@ import { TeamPage } from "@/modules/workspace/pages/TeamPage"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
 import { CreateCompanyPage } from "@/modules/onboarding/pages/CreateCompanyPage"
 import { AuthPage } from "@/modules/auth/pages/AuthPage"
+import { SolutionsPage } from "@/marketing/SolutionsPage"
 import { SettingsPage } from "@/modules/settings/pages/SettingsPage"
 import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
 import { TopProgressBar } from "@/core/ui/TopProgressBar"
@@ -88,6 +89,7 @@ export default function App() {
     <Routes>
       {/* Public marketing pages */}
       <Route path="/" element={<HomePage />} />
+      <Route path="/solutions" element={<SolutionsPage />} />
 
       {/* Custom-branded auth surface — replaces Clerk's hosted page.
           The trailing /* lets Clerk handle its own sub-routes

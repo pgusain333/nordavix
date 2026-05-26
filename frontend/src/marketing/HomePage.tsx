@@ -209,10 +209,16 @@ function HeroFlow() {
 }
 
 // ── Navbar ────────────────────────────────────────────────────────────────────
-const NAV_LINKS = [
-  { label: "Features",     href: "#features" },
-  { label: "How it works", href: "#how-it-works" },
-  { label: "Pricing",      href: "#pricing" },
+// `kind: "route"` items render as react-router <Link>s (different page),
+// `kind: "anchor"` items render as <a href="#…"> in-page scroll links.
+const NAV_LINKS: Array<
+  | { label: string; href: string;  kind: "anchor" }
+  | { label: string; to:   string;  kind: "route"  }
+> = [
+  { label: "Features",     href: "#features",      kind: "anchor" },
+  { label: "Solutions",    to:   "/solutions",     kind: "route"  },
+  { label: "How it works", href: "#how-it-works",  kind: "anchor" },
+  { label: "Pricing",      href: "#pricing",       kind: "anchor" },
 ]
 
 function Navbar() {
@@ -255,7 +261,16 @@ function Navbar() {
 
           {/* Desktop links */}
           <div className="hidden md:flex items-center gap-8">
-            {NAV_LINKS.map((item) => (
+            {NAV_LINKS.map((item) => item.kind === "route" ? (
+              <Link key={item.label} to={item.to}
+                className="text-sm transition-colors"
+                style={{ color: "var(--text-2)" }}
+                onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+                onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
+              >
+                {item.label}
+              </Link>
+            ) : (
               <a key={item.label} href={item.href}
                 className="text-sm transition-colors"
                 style={{ color: "var(--text-2)" }}
@@ -357,18 +372,33 @@ function Navbar() {
           <ul className="space-y-1">
             {NAV_LINKS.map((item) => (
               <li key={item.label}>
-                <a
-                  href={item.href}
-                  onClick={closeDrawer}
-                  className="block rounded-lg px-3 py-3 text-base font-medium transition-colors"
-                  style={{ color: "var(--text)" }}
-                  onTouchStart={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                  onTouchEnd={(e) => (e.currentTarget.style.background = "")}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-                >
-                  {item.label}
-                </a>
+                {item.kind === "route" ? (
+                  <Link
+                    to={item.to}
+                    onClick={closeDrawer}
+                    className="block rounded-lg px-3 py-3 text-base font-medium transition-colors"
+                    style={{ color: "var(--text)" }}
+                    onTouchStart={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                    onTouchEnd={(e) => (e.currentTarget.style.background = "")}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+                  >
+                    {item.label}
+                  </Link>
+                ) : (
+                  <a
+                    href={item.href}
+                    onClick={closeDrawer}
+                    className="block rounded-lg px-3 py-3 text-base font-medium transition-colors"
+                    style={{ color: "var(--text)" }}
+                    onTouchStart={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                    onTouchEnd={(e) => (e.currentTarget.style.background = "")}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+                  >
+                    {item.label}
+                  </a>
+                )}
               </li>
             ))}
           </ul>
