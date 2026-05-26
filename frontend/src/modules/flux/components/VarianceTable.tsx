@@ -49,6 +49,13 @@ interface Props {
   /** Period end dates for column headers — displayed as "MMM DD YYYY (CY/PY)" */
   periodCurrent?: string  // ISO date
   periodPrior?:   string
+  /**
+   * Surfaces success/error messages from bulk actions to the parent
+   * page banner. Lets the user see "Reset 3 variances to pending" or
+   * "Bulk reset failed: …" without us having to render a duplicate
+   * banner inside the table card.
+   */
+  onMessage?:   (msg: { kind: "ok" | "info" | "err"; text: string }) => void
 }
 
 function _formatHeaderDate(iso?: string, suffix?: string): string {
@@ -73,7 +80,7 @@ const STATUS_ORDER: Record<string, number> = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, periodPrior }: Props) {
+export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, periodPrior, onMessage }: Props) {
   const qc = useQueryClient()
   const [sorting,    setSorting]   = useState<SortingState>([
     { id: "is_material", desc: true },
@@ -97,39 +104,134 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     onSuccess: () => qc.invalidateQueries({ queryKey: ["variances", tbId] }),
   })
 
-  // Bulk approve — fires the per-row approve in a loop and invalidates
-  // once at the end. Backend doesn't expose a bulk endpoint for flux yet;
-  // this keeps the UX consistent without a schema change.
+  // Map a target status → the tab the affected rows now belong to,
+  // so we can auto-switch after a bulk action and the user actually
+  // sees where their rows went. "flagged" stays in the Open bucket
+  // (open = pending | generating | flagged).
+  function bucketForStatus(s: "approved" | "pending" | "edited" | "flagged"): typeof filter {
+    if (s === "approved") return "approved"
+    if (s === "edited")   return "prepared"
+    return "open"
+  }
+
+  // Bulk approve — fires the per-row approve in a loop, patches the
+  // cache optimistically so the UI updates the instant the user clicks,
+  // and rolls back on error. Backend doesn't expose a bulk endpoint
+  // for flux yet; looping keeps the UX consistent without a schema
+  // change.
   const bulkApprove = useMutation({
     mutationFn: async (ids: string[]) => {
+      // Track per-id success so we can report partial failures.
+      const failures: string[] = []
       for (const id of ids) {
-        await api.approveVariance(tbId, id).catch((err) => {
+        try {
+          await api.approveVariance(tbId, id)
+        } catch (err) {
           console.warn("Bulk approve: variance failed", id, err)
-        })
+          failures.push(id)
+        }
       }
+      return { total: ids.length, failed: failures.length }
     },
-    onSuccess: () => {
+    onMutate: async (ids) => {
+      await qc.cancelQueries({ queryKey: ["variances", tbId] })
+      const prev = qc.getQueryData<VarianceRow[]>(["variances", tbId])
+      if (prev) {
+        const idSet = new Set(ids)
+        const nowIso = new Date().toISOString()
+        qc.setQueryData<VarianceRow[]>(["variances", tbId],
+          prev.map((r) => idSet.has(r.id)
+            ? { ...r, status: "approved", approved_at: nowIso }
+            : r,
+          ),
+        )
+      }
+      return { prev }
+    },
+    onSuccess: ({ total, failed }) => {
+      const moved = total - failed
+      if (moved > 0) {
+        onMessage?.({
+          kind: failed > 0 ? "info" : "ok",
+          text: failed > 0
+            ? `Approved ${moved} of ${total} — ${failed} failed`
+            : `Approved ${moved} variance${moved === 1 ? "" : "s"}`,
+        })
+        setFilter(bucketForStatus("approved"))
+      }
       setSelected(new Set())
       qc.invalidateQueries({ queryKey: ["variances", tbId] })
+    },
+    onError: (err: unknown, _ids, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["variances", tbId], ctx.prev)
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      onMessage?.({ kind: "err", text: detail ?? "Bulk approve failed. Try again." })
     },
   })
 
   // Bulk status flip — backs the Mark prepared / Flag / Reset to
-  // pending buttons in the bulk action bar. Loops per-id to the
-  // /variances/{id}/status endpoint (same pattern as bulkApprove).
-  // Backend audit-logs each flip with the previous status so the trail
-  // shows exactly what changed.
+  // pending buttons. Same optimistic-then-confirm pattern as bulkApprove
+  // so the UI doesn't sit lying about the new status while the network
+  // request is in flight. Auto-switches the active filter tab to the
+  // bucket the affected rows now belong to, so the user immediately
+  // SEES where their rows landed instead of staring at a tab that
+  // looks empty.
   const bulkSetStatus = useMutation({
     mutationFn: async (vars: { ids: string[]; status: "pending" | "edited" | "flagged" }) => {
+      const failures: string[] = []
       for (const id of vars.ids) {
-        await api.setVarianceStatus(tbId, id, vars.status).catch((err) => {
+        try {
+          await api.setVarianceStatus(tbId, id, vars.status)
+        } catch (err) {
           console.warn("Bulk status: variance failed", id, vars.status, err)
-        })
+          failures.push(id)
+        }
       }
+      return { total: vars.ids.length, failed: failures.length, status: vars.status }
     },
-    onSuccess: () => {
+    onMutate: async (vars) => {
+      await qc.cancelQueries({ queryKey: ["variances", tbId] })
+      const prev = qc.getQueryData<VarianceRow[]>(["variances", tbId])
+      if (prev) {
+        const idSet = new Set(vars.ids)
+        qc.setQueryData<VarianceRow[]>(["variances", tbId],
+          prev.map((r) => {
+            if (!idSet.has(r.id)) return r
+            // Reset to pending also clears approval stamps — mirror
+            // the backend behaviour so the optimistic state matches
+            // what the next refetch returns.
+            if (vars.status === "pending") {
+              return { ...r, status: "pending", approved_by: null, approved_at: null }
+            }
+            return { ...r, status: vars.status }
+          }),
+        )
+      }
+      return { prev }
+    },
+    onSuccess: ({ total, failed, status }) => {
+      const moved = total - failed
+      const labelMap: Record<typeof status, string> = {
+        pending: "reset to pending",
+        edited:  "marked prepared",
+        flagged: "flagged",
+      }
+      if (moved > 0) {
+        onMessage?.({
+          kind: failed > 0 ? "info" : "ok",
+          text: failed > 0
+            ? `${labelMap[status]} ${moved} of ${total} — ${failed} failed`
+            : `Successfully ${labelMap[status]} ${moved} variance${moved === 1 ? "" : "s"}`,
+        })
+        setFilter(bucketForStatus(status))
+      }
       setSelected(new Set())
       qc.invalidateQueries({ queryKey: ["variances", tbId] })
+    },
+    onError: (err: unknown, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["variances", tbId], ctx.prev)
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      onMessage?.({ kind: "err", text: detail ?? "Bulk update failed. Try again." })
     },
   })
 

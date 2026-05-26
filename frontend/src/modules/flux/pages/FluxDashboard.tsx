@@ -588,6 +588,7 @@ export function FluxDashboard() {
                 onExport={handleExport}
                 periodCurrent={selectedTb?.period_current}
                 periodPrior={selectedTb?.period_prior}
+                onMessage={setRunMsg}
               />
             </div>
           ) : (
