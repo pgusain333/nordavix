@@ -120,6 +120,25 @@ function isCreditNatural(groupLabel: string): boolean {
   return CREDIT_NATURAL_GROUPS.has(groupLabel)
 }
 
+/**
+ * Recompute KPI totals from the patched accounts array. Matches the
+ * backend formula exactly: signed sums + variance = gl − subledger.
+ * Lets the top KPI cards stay live after any optimistic per-account
+ * patch (subledger save, bulk status flip) without waiting for a
+ * server refetch.
+ */
+function recomputeTotals(
+  accounts: OverviewAccount[],
+): { gl: string; subledger: string; variance: string } {
+  const gl  = accounts.reduce((s, a) => s + (parseFloat(a.gl_balance)        || 0), 0)
+  const sub = accounts.reduce((s, a) => s + (parseFloat(a.subledger_balance) || 0), 0)
+  return {
+    gl:        gl.toFixed(2),
+    subledger: sub.toFixed(2),
+    variance:  (gl - sub).toFixed(2),
+  }
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export function ReconciliationsDashboard() {
@@ -477,30 +496,40 @@ export function ReconciliationsDashboard() {
       total: number | null
       source: string | null
       items?: ReconcilingItem[]
+      /** When true, do NOT collapse the inline form — used by the
+          tick-driven auto-save so the user can keep checking items
+          and watching the cards update without losing their place. */
+      autoSave?: boolean
     }) =>
       reconsApi.setSubledgerOverride(v.qboId, periodEnd, v.total, v.source, v.items),
     onSuccess: (_data, v) => {
-      setExpandedAccountId(null)
+      // Explicit saves (Save button, Clear override) close the form.
+      // Auto-saves leave it open so the user can keep ticking.
+      if (!v.autoSave) setExpandedAccountId(null)
       // Optimistic patch so the manual badge / value flips immediately.
       const prev = qc.getQueryData<Overview>(["recons-overview", periodEnd])
       if (prev) {
+        const patched = prev.accounts.map((a) =>
+          a.qbo_id === v.qboId
+            ? {
+                ...a,
+                subledger_is_manual: v.total !== null,
+                subledger_balance:   v.total !== null ? String(v.total) : a.gl_balance,
+                subledger_source:    v.total !== null ? (v.source ?? a.subledger_source) : a.subledger_source,
+                reconciling_items:   v.items ?? [],
+                variance:            v.total !== null
+                                      ? String((parseFloat(a.gl_balance) - v.total).toFixed(2))
+                                      : "0.00",
+                subledger_entered_at: v.total !== null ? new Date().toISOString() : null,
+              }
+            : a,
+        )
         qc.setQueryData<Overview>(["recons-overview", periodEnd], {
           ...prev,
-          accounts: prev.accounts.map((a) =>
-            a.qbo_id === v.qboId
-              ? {
-                  ...a,
-                  subledger_is_manual: v.total !== null,
-                  subledger_balance:   v.total !== null ? String(v.total) : a.gl_balance,
-                  subledger_source:    v.total !== null ? (v.source ?? a.subledger_source) : a.subledger_source,
-                  reconciling_items:   v.items ?? [],
-                  variance:            v.total !== null
-                                        ? String((parseFloat(a.gl_balance) - v.total).toFixed(2))
-                                        : "0.00",
-                  subledger_entered_at: v.total !== null ? new Date().toISOString() : null,
-                }
-              : a,
-          ),
+          accounts: patched,
+          // Recompute KPI totals so the top cards reflect the new state
+          // immediately — no waiting for a refetch.
+          totals: recomputeTotals(patched),
         })
       }
     },
@@ -516,17 +545,29 @@ export function ReconciliationsDashboard() {
       if (prev) {
         const ids = selected
         const nowIso = new Date().toISOString()
+        const patched = prev.accounts.map((a) => {
+          if (!ids.has(a.qbo_id)) return a
+          if (status === "pending") {
+            // Reset wipes the work so the next preparer starts clean.
+            // Matches the backend bulk-status endpoint behaviour.
+            return {
+              ...a,
+              review_status:        status,
+              reviewed_at:          null,
+              subledger_is_manual:  false,
+              subledger_balance:    a.gl_balance,  // reverts display to GL until next pull
+              subledger_source:     "",
+              reconciling_items:    [],
+              variance:             "0.00",
+              subledger_entered_at: null,
+            }
+          }
+          return { ...a, review_status: status, reviewed_at: nowIso }
+        })
         qc.setQueryData<Overview>(["recons-overview", periodEnd], {
           ...prev,
-          accounts: prev.accounts.map((a) =>
-            ids.has(a.qbo_id)
-              ? {
-                  ...a,
-                  review_status: status,
-                  reviewed_at: status === "pending" ? null : nowIso,
-                }
-              : a,
-          ),
+          accounts: patched,
+          totals: recomputeTotals(patched),
         })
       }
       return { prev }
@@ -1439,6 +1480,14 @@ export function ReconciliationsDashboard() {
                                           setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })
                                         }
                                       }}
+                                      onAutoSave={(total, source, items) => {
+                                        // Tick-driven save: no status bump, keep form open.
+                                        // The KPI cards refresh via subledgerMut.onSuccess's
+                                        // optimistic totals recompute.
+                                        subledgerMut.mutate({
+                                          qboId: a.qbo_id, total, source, items, autoSave: true,
+                                        })
+                                      }}
                                       onClear={() =>
                                         subledgerMut.mutate({ qboId: a.qbo_id, total: null, source: null, items: [] })
                                       }
@@ -1634,7 +1683,7 @@ function VerificationBadge({
 // roll-forward, variance preview, reconciling items, evidence + verify.
 
 function InlineSubledgerForm({
-  account, periodEnd, saving, readOnly = false, onSave, onClear, onClose,
+  account, periodEnd, saving, readOnly = false, onSave, onClear, onClose, onAutoSave,
 }: {
   account: OverviewAccount
   periodEnd: string
@@ -1648,6 +1697,11 @@ function InlineSubledgerForm({
   onSave: (total: number, source: string | null, items: ReconcilingItem[]) => void
   onClear: () => void
   onClose: () => void
+  /** Auto-save fires (debounced) whenever the user ticks/unticks a
+      reconciling item or adds/edits/removes a manual one — so the
+      top KPI cards reflect the new state without an explicit save.
+      Does NOT bump status to "reviewed" (only the Save button does). */
+  onAutoSave?: (total: number, source: string | null, items: ReconcilingItem[]) => void
 }) {
   // Source label travels with the override row. When rolling forward, we
   // auto-populate with "Rolled forward from <date>" so the reviewer knows
@@ -1745,6 +1799,31 @@ function InlineSubledgerForm({
     ?? "0"
   )
   const computedSubledger = openingBalance + selectedSum
+
+  // Auto-save: every time the user ticks an item (or edits the manual
+  // list), debounce 500ms and push to the backend so the top KPI
+  // cards (which read from the overview snapshot) refresh immediately.
+  // Skips the very first run so opening the form doesn't fire a write.
+  const skipFirstAutoSave = useRef(true)
+  useEffect(() => {
+    if (skipFirstAutoSave.current) {
+      skipFirstAutoSave.current = false
+      return
+    }
+    if (readOnly || !onAutoSave) return
+    const handle = setTimeout(() => {
+      const itemsList = Object.values(selectedItemsRef.current)
+      const source = itemsList.length === 0
+        ? "Auto-saved (no reconciling items)"
+        : `Auto-saved ${itemsList.length} reconciling item${itemsList.length === 1 ? "" : "s"}`
+      onAutoSave(computedSubledger, source, itemsList)
+    }, 500)
+    return () => clearTimeout(handle)
+    // Deliberately react to selectedItemMap changes only — manual-form
+    // typing doesn't update selectedItemMap until the user clicks Add,
+    // so we won't spam saves while they're filling in a memo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItemMap])
 
   // Manual reconciling item form — for items that don't exist in QBO yet
   // (outstanding bank checks, deposits in transit, journal entries not

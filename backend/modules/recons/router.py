@@ -734,8 +734,9 @@ async def update_account_review_status(
             row.notes = notes
 
     # Stamp preparer / reviewer separately so the Tasks UI can show
-    # both actors. We DON'T clear them on a downstream status flip —
-    # historical "who did what" is more useful than "current actor".
+    # both actors. Reset-to-pending IS a clearing action though —
+    # it should clear all the work (subledger override, ticked items,
+    # actor stamps) so the next preparer starts fresh.
     now = datetime.now(UTC)
     if status_value == "reviewed":
         row.prepared_by = user.id
@@ -749,6 +750,18 @@ async def update_account_review_status(
             row.prepared_at = now
         row.approved_by = user.id
         row.approved_at = now
+    elif status_value == "pending":
+        # Reset = start over. Drop subledger override + ticked items
+        # and wipe actor stamps. Matches the bulk endpoint.
+        row.subledger_total = None
+        row.subledger_source = None
+        row.subledger_entered_by = None
+        row.subledger_entered_at = None
+        row.reconciling_items = []
+        row.prepared_by = None
+        row.prepared_at = None
+        row.approved_by = None
+        row.approved_at = None
         # Freeze the displayed subledger value if one isn't already
         # saved. Without this, an account can be approved with the
         # dashboard's defaulted display value (rolled-forward or
@@ -870,6 +883,19 @@ async def bulk_update_account_review_status(
                 r.approved_by = user.id
                 r.approved_at = now
                 rows_for_freeze.append((qid, r))
+            elif status_value == "pending":
+                # Reset to pending = start over. Untick reconciling items,
+                # drop any saved subledger override, and wipe maker/checker
+                # stamps so the next preparer starts from a clean slate.
+                r.subledger_total = None
+                r.subledger_source = None
+                r.subledger_entered_by = None
+                r.subledger_entered_at = None
+                r.reconciling_items = []
+                r.prepared_by = None
+                r.prepared_at = None
+                r.approved_by = None
+                r.approved_at = None
         else:
             r = AccountReviewStatus(
                 id=uuid.uuid4(),
