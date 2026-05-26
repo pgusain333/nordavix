@@ -386,6 +386,18 @@ async def _build_overview_from_qbo_data(
         prior_snap = prior_snap_by_acct.get(qbo_id)
         is_rollforward_from_subledger = False
         is_rollforward_from_gl = False
+        # Rolled-forward opening — the SAME chain in every code path so
+        # the dashboard, inline form, agentic preparer, and PDF agree on
+        # what the period's opening is. Always the prior period's closing
+        # (never the current period's saved value) so AI can never
+        # appear to "override" the opening — opening is a derived,
+        # read-only-display value tied to the chronologically prior row.
+        rollforward_opening = Decimal("0")
+        if prior_review is not None and prior_review.subledger_total is not None:
+            rollforward_opening = prior_review.subledger_total
+        elif prior_snap is not None:
+            rollforward_opening = prior_snap.balance
+
         if is_manual:
             subledger_balance = review.subledger_total
             source = review.subledger_source or "Manually entered"
@@ -450,6 +462,12 @@ async def _build_overview_from_qbo_data(
                 else prior_snap.period_end.isoformat() if is_rollforward_from_gl
                 else None
             ),
+            # The canonical opening balance for this period. The inline
+            # form uses this DIRECTLY for its build-up math instead of
+            # re-deriving from prior data (which used to fall back to
+            # the current saved subledger and visibly "double" AI's
+            # closing when prior wasn't reconciled).
+            "rollforward_opening_balance": str(rollforward_opening.quantize(Decimal("0.01"))),
             "subledger_entered_by": str(review.subledger_entered_by)
                                     if (review and review.subledger_entered_by) else None,
             "subledger_entered_at": review.subledger_entered_at.isoformat()

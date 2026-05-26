@@ -169,6 +169,13 @@ export interface OverviewAccount {
   //   null        — no roll-forward; subledger came from a different default
   rollforward_source?:    "subledger" | "gl" | null
   rollforward_from?:      string | null  // ISO date of the prior period we rolled from
+  // Canonical opening balance for this period. The inline subledger
+  // form's build-up uses this DIRECTLY so opening = prior period
+  // close (never the current period's saved subledger). Without this
+  // the form was falling back to subledger_balance when no prior
+  // reconciled period existed, which made AI-prepared accounts look
+  // like AI was overriding the opening.
+  rollforward_opening_balance?: string
   subledger_entered_by:   string | null
   subledger_entered_at:   string | null
   evidence_count:         number

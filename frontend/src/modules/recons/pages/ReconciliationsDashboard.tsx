@@ -1686,9 +1686,18 @@ function InlineSubledgerForm({
   // sees in the row, so the two views agree from the start. Eventually
   // the seed comes from an onboarding step (books starting date +
   // initial subledger balances) — see the setup-wizard roadmap.
-  const openingBalance = prior
-    ? parseFloat(prior.subledger_total)
-    : parseFloat(account.subledger_balance || "0")
+  // Opening = the canonical rolled-forward value the backend computes
+  // (prior period's reconciled subledger → prior period's GL snapshot →
+  // $0). We use that field directly so the form ALWAYS shows opening =
+  // prior close, never the current saved subledger. The old client-side
+  // fallback to `account.subledger_balance` was visibly wrong for AI-
+  // prepared rows: AI saves the closing as subledger_balance, then the
+  // form treated that closing as the opening + re-added items on top.
+  const openingBalance = parseFloat(
+    account.rollforward_opening_balance
+    ?? prior?.subledger_total
+    ?? "0"
+  )
   const computedSubledger = openingBalance + selectedSum
 
   // Manual reconciling item form — for items that don't exist in QBO yet
