@@ -444,35 +444,44 @@ export function FluxDashboard() {
             {/* Agentic Mode — AI writes commentary on every material
                 variance in one shot. Mirrors the Reconciliations
                 dashboard's AgenticModeToggle: lives in the header,
-                disabled when there's nothing pending, shows the
-                overlay while running. */}
+                stays clickable even when there's nothing pending
+                (clicking when 100%-covered surfaces the "already done"
+                message via the run banner — same behaviour as recon's
+                agentic toggle), only disabled while a run is
+                in-flight. */}
             {showVarianceTable && (() => {
               const matVars = variances.filter((r) => r.is_material)
               const pendingMat = matVars.filter((r) =>
                 !["generated", "edited", "approved"].includes(r.status),
               ).length
               const isPending = runAgenticFluxMut.isPending
+              const nothingPending = pendingMat === 0
               const label = isPending
                 ? "Running…"
-                : pendingMat > 0
-                  ? `Agentic Mode (${pendingMat})`
-                  : "Agentic Mode"
+                : nothingPending
+                  ? "Agentic Mode"
+                  : `Agentic Mode (${pendingMat})`
               return (
                 <Button
                   size="sm"
                   loading={isPending}
-                  disabled={isPending || pendingMat === 0}
+                  disabled={isPending}
                   icon={<Sparkles size={14} strokeWidth={1.8} />}
                   onClick={() => runAgenticFluxMut.mutate()}
                   title={
-                    pendingMat === 0
-                      ? "Every material variance already has AI commentary"
+                    nothingPending
+                      ? "Every material variance already has AI commentary — click to re-check (use per-row Regenerate to refresh a specific one)"
                       : `Run AI on ${pendingMat} material variance${pendingMat === 1 ? "" : "s"} without commentary — biggest movers first`
                   }
+                  // Dimmed when there's nothing pending so the
+                  // visual hierarchy still tells the user "this is
+                  // idle right now", but the button itself remains
+                  // clickable so they're never stuck wondering why
+                  // it's frozen.
                   style={{
-                    background: "var(--green)",
-                    color: "white",
-                    borderColor: "var(--green)",
+                    background: nothingPending ? "var(--surface-2)" : "var(--green)",
+                    color:      nothingPending ? "var(--text-2)"   : "white",
+                    borderColor: nothingPending ? "var(--border-strong)" : "var(--green)",
                   }}
                 >
                   <span className="hidden sm:inline">{label}</span>
