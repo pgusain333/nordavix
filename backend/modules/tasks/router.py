@@ -204,9 +204,7 @@ def _is_open(t: TaskOut) -> bool:
         return False
     # Approved recons + flux are "done" from a workflow perspective even
     # without an overlay completed_at — they don't belong in the open list.
-    if t.status == "approved":
-        return False
-    return True
+    return t.status != "approved"
 
 
 async def _list_qbo_accounts(
@@ -309,7 +307,7 @@ async def _derive_recon_tasks(
         # fall back to whatever review rows we DO have, so the user
         # still sees their historical work.
         ids_to_render: set[str] = set(accounts.keys())
-        for (period, qid) in by_key.keys():
+        for (period, qid) in by_key:
             if period == pe:
                 ids_to_render.add(qid)
 

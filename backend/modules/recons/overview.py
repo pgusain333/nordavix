@@ -90,10 +90,11 @@ async def sync_overview(
     """
     import uuid as _uuid
 
+    from sqlalchemy import select as _select
+
     from core.db.base import current_tenant_id
     from core.gl_snapshot import capture_snapshot
     from models.period_sync import PeriodSync
-    from sqlalchemy import select as _select
 
     tid = current_tenant_id.get()
     if tid is None:
@@ -207,10 +208,11 @@ async def read_overview_from_snapshots(
     never been synced (no period_sync row), returns `synced: false`
     with empty accounts so the UI can show the "Click Sync" CTA.
     """
+    from sqlalchemy import select as _select
+
     from core.db.base import current_tenant_id
     from models.gl_balance_snapshot import GlBalanceSnapshot
     from models.period_sync import PeriodSync
-    from sqlalchemy import select as _select
 
     tid = current_tenant_id.get()
     if tid is None:

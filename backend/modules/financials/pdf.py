@@ -171,7 +171,7 @@ def _cover_page(story: list, styles: dict, *, company: str, period_end: date,
     story.append(Spacer(1, 1.4 * inch))
     if is_draft:
         story.append(Paragraph(
-            f'<font color="#b91c1c"><b>— DRAFT —</b></font>', styles["cover_meta"],
+            '<font color="#b91c1c"><b>— DRAFT —</b></font>', styles["cover_meta"],
         ))
         story.append(Spacer(1, 0.15 * inch))
     story.append(Paragraph(company, styles["cover_company"]))
@@ -305,7 +305,7 @@ def build_pdf(buffer: BinaryIO, *, company: str, period_end: date,
                 statements=statements, prepared_by=prepared_by, is_draft=is_draft)
 
     # Body pages (use body template) — one statement per page break
-    for i, s in enumerate(statements):
+    for _i, s in enumerate(statements):
         story.append(PageBreak())
         _statement_masthead(story, styles, s)
         story.append(_statement_table(s))

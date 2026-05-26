@@ -592,7 +592,6 @@ async def _save_analyzed_row(
     The ai_commentary field gets the structured analysis (rendered
     as the AI Commentary card in the expanded row + on the PDF).
     """
-    now = datetime.now(UTC)
     if review is None:
         review = AccountReviewStatus(
             id=uuid.uuid4(),
@@ -763,10 +762,7 @@ async def build_variance_commentary(
     if match_quality == "full" and not has_warn:
         confidence = "high"
         recommendation = "review"   # user reviews + ticks; AI never auto-prepares
-    elif match_quality == "full":
-        confidence = "medium"
-        recommendation = "review"
-    elif match_quality == "partial":
+    elif match_quality == "full" or match_quality == "partial":
         confidence = "medium"
         recommendation = "review"
     else:
@@ -970,7 +966,7 @@ async def build_ai_commentary(
         t = (it.get("txn_type") or "").strip()
         if t:
             type_counts[t] = type_counts.get(t, 0) + 1
-        if "journal" in t.lower() or "je" == t.lower():
+        if "journal" in t.lower() or t.lower() == "je":
             je_count += 1
     composition = ", ".join(
         f"{c} {t.lower()}{'s' if c != 1 else ''}"

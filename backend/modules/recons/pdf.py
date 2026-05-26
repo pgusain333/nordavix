@@ -325,7 +325,7 @@ def _reconciliation_table(data: dict) -> Table:
     opening_subnote = data.get("opening_source") or ""
     rows.append([
         "", "", "",
-        f"Opening Subledger Balance" + (
+        "Opening Subledger Balance" + (
             f"  ({opening_subnote})" if opening_subnote and len(opening_subnote) < 60 else ""
         ),
         _fmt_money(opening),

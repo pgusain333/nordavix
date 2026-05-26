@@ -30,7 +30,6 @@ import logging
 from calendar import monthrange
 from datetime import date
 from decimal import Decimal
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -477,6 +476,8 @@ async def _build_statement(
     if source == "nordavix" and statement_kind in ("balance_sheet", "income_statement"):
         from modules.financials.internal import (
             build_balance_sheet as _bs_internal,
+        )
+        from modules.financials.internal import (
             build_income_statement as _is_internal,
         )
         builder = _bs_internal if statement_kind == "balance_sheet" else _is_internal

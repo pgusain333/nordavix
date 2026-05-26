@@ -8,12 +8,12 @@ from core.config import settings
 from core.tenancy.middleware import TenantMiddleware
 from modules.audit.router import router as audit_router
 from modules.feedback.router import router as feedback_router
-from modules.flux.router import router as flux_router
-from modules.qbo.router import oauth_router as qbo_oauth_router
-from modules.qbo.router import qbo_router
 from modules.financials.router import router as financials_router
+from modules.flux.router import router as flux_router
 from modules.insights.router import router as insights_router
 from modules.intercompany.router import router as intercompany_router
+from modules.qbo.router import oauth_router as qbo_oauth_router
+from modules.qbo.router import qbo_router
 from modules.recons.router import router as recons_router
 from modules.tasks.router import router as tasks_router
 from modules.workspace.router import router as workspace_router

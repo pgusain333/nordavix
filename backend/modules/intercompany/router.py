@@ -137,8 +137,8 @@ async def get_overview(
     mark_by_qbo: dict[str, IntercompanyAccount] = {m.qbo_account_id: m for m in marks}
 
     # 2. Pull QBO accounts + current and prior trial balances (for change)
-    from modules.recons.overview import _list_balance_sheet_accounts
     from core.qbo_tb import fetch_trial_balance, lookup_balance, parse_trial_balance
+    from modules.recons.overview import _list_balance_sheet_accounts
 
     accts_raw = await _list_balance_sheet_accounts(conn, db)
     accts_by_id = {str(a.get("Id")): a for a in accts_raw}
