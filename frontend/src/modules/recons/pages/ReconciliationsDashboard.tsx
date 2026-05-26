@@ -177,6 +177,20 @@ export function ReconciliationsDashboard() {
   const [confirmClear, setConfirmClear] = useState(false)
   /** qbo_account_id of the row currently expanded inline (null = all collapsed). */
   const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null)
+
+  // KPI sticky-on-scroll: tracks the page's scroll position so the top
+  // KPI cards collapse to a compact horizontal bar once the user has
+  // scrolled past ~140px. Keeps the numbers visible while reviewing
+  // the long account list without eating real estate.
+  const pageScrollRef = useRef<HTMLDivElement>(null)
+  const [isKpiCompact, setIsKpiCompact] = useState(false)
+  useEffect(() => {
+    const el = pageScrollRef.current
+    if (!el) return
+    const handler = () => setIsKpiCompact(el.scrollTop > 140)
+    el.addEventListener("scroll", handler, { passive: true })
+    return () => el.removeEventListener("scroll", handler)
+  }, [])
   /** Set of qbo_account_ids the user has checked for bulk actions */
   const [selected, setSelected] = useState<Set<string>>(new Set())
   /** "Synced N accounts at HH:MM" — banner that fades out after a few seconds */
@@ -465,17 +479,28 @@ export function ReconciliationsDashboard() {
       const prev = qc.getQueryData<Overview>(["recons-overview", periodEnd])
       if (prev) {
         const nowIso = new Date().toISOString()
+        const patched = prev.accounts.map((a) => {
+          if (a.qbo_id !== v.id) return a
+          if (v.status === "pending") {
+            // Mirror the bulk reset + backend clear: start the row over.
+            return {
+              ...a,
+              review_status:        v.status,
+              reviewed_at:          null,
+              subledger_is_manual:  false,
+              subledger_balance:    a.gl_balance,
+              subledger_source:     "",
+              reconciling_items:    [],
+              variance:             "0.00",
+              subledger_entered_at: null,
+            }
+          }
+          return { ...a, review_status: v.status, reviewed_at: nowIso }
+        })
         qc.setQueryData<Overview>(["recons-overview", periodEnd], {
           ...prev,
-          accounts: prev.accounts.map((a) =>
-            a.qbo_id === v.id
-              ? {
-                  ...a,
-                  review_status: v.status,
-                  reviewed_at: v.status === "pending" ? null : nowIso,
-                }
-              : a,
-          ),
+          accounts: patched,
+          totals: recomputeTotals(patched),
         })
       }
       return { prev }
@@ -666,7 +691,7 @@ export function ReconciliationsDashboard() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
+    <div ref={pageScrollRef} className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div
         className="px-4 sm:px-8 pt-5 sm:pt-7 pb-4"
@@ -1042,21 +1067,71 @@ export function ReconciliationsDashboard() {
               const approvedCount = overview?.accounts.filter((a) => a.review_status === "approved").length ?? 0
               const totalCount    = overview?.accounts.length ?? 0
               const progressPct   = totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 0
+              const varianceVal   = parseFloat(overview?.totals.variance ?? "0")
+              const varianceTone  = Math.abs(varianceVal) > 0.5 ? "#dc2626" : "var(--green)"
               return (
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <Kpi label="GL balance"        value={fmtMoney(overview?.totals.gl ?? 0)}        tone="var(--text)"
-                    sub="signed sum across synced accounts" />
-                  <Kpi label="Subledger balance" value={fmtMoney(overview?.totals.subledger ?? 0)} tone="var(--text)"
-                    sub="signed sum across subledgers" />
-                  <Kpi label="Variance"          value={fmtMoney(overview?.totals.variance ?? 0)}
-                    tone={Math.abs(parseFloat(overview?.totals.variance ?? "0")) > 0.5 ? "#dc2626" : "var(--green)"}
-                    sub={varianceCount > 0
-                      ? `${varianceCount} account${varianceCount === 1 ? "" : "s"} off`
-                      : `${totalCount} account${totalCount === 1 ? "" : "s"} · all reconciled`} />
-                  <Kpi label="Reconciliation progress"
-                    value={`${approvedCount} / ${totalCount}`}
-                    tone={progressPct === 100 ? "var(--green)" : "var(--text)"}
-                    sub={`${progressPct}% approved`} />
+                <div className="sticky top-0 z-20 -mx-4 sm:-mx-5 px-4 sm:px-5 pt-1 pb-2"
+                  style={{ background: "var(--bg)" }}>
+                  <AnimatePresence mode="wait" initial={false}>
+                    {isKpiCompact ? (
+                      <motion.div
+                        key="kpi-compact"
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.16, ease: "easeOut" }}
+                        className="rounded-lg flex items-center gap-3 sm:gap-5 px-4 py-2.5 overflow-x-auto"
+                        style={{
+                          background: "var(--surface)",
+                          border: "1px solid var(--border)",
+                          boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
+                        }}>
+                        <KpiInline label="GL"  value={fmtMoney(overview?.totals.gl ?? 0)} tone="var(--text)" />
+                        <KpiInline label="SL"  value={fmtMoney(overview?.totals.subledger ?? 0)} tone="var(--text)" />
+                        <KpiInline label="Var" value={fmtMoney(overview?.totals.variance ?? 0)} tone={varianceTone}
+                          badge={Math.abs(varianceVal) > 0.5
+                            ? `${varianceCount} off`
+                            : "Reconciled"} />
+                        <div className="ml-auto flex items-center gap-2 shrink-0">
+                          <span className="text-[11px] font-semibold tabular-nums" style={{ color: progressPct === 100 ? "var(--green)" : "var(--text)" }}>
+                            {approvedCount}/{totalCount}
+                          </span>
+                          <div className="h-1.5 w-20 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
+                            <motion.div className="h-full"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${progressPct}%` }}
+                              transition={{ duration: 0.4, ease: "easeOut" }}
+                              style={{ background: progressPct === 100 ? "var(--green)" : "var(--text-muted)" }} />
+                          </div>
+                          <span className="text-[10px] hidden sm:inline" style={{ color: "var(--text-muted)" }}>
+                            {progressPct}%
+                          </span>
+                        </div>
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="kpi-full"
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.16, ease: "easeOut" }}
+                        className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <Kpi label="GL balance"        value={fmtMoney(overview?.totals.gl ?? 0)}        tone="var(--text)"
+                          sub="signed sum across synced accounts" />
+                        <Kpi label="Subledger balance" value={fmtMoney(overview?.totals.subledger ?? 0)} tone="var(--text)"
+                          sub="signed sum across subledgers" />
+                        <Kpi label="Variance"          value={fmtMoney(overview?.totals.variance ?? 0)}
+                          tone={varianceTone}
+                          sub={varianceCount > 0
+                            ? `${varianceCount} account${varianceCount === 1 ? "" : "s"} off`
+                            : `${totalCount} account${totalCount === 1 ? "" : "s"} · all reconciled`} />
+                        <Kpi label="Reconciliation progress"
+                          value={`${approvedCount} / ${totalCount}`}
+                          tone={progressPct === 100 ? "var(--green)" : "var(--text)"}
+                          sub={`${progressPct}% approved`} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               )
             })()}
@@ -1750,6 +1825,27 @@ function InlineSubledgerForm({
   const selectedItemsRef = useRef(selectedItemMap)
   selectedItemsRef.current = selectedItemMap
 
+  // Shared with the debounced auto-save below: when true, the next
+  // selectedItemMap-driven effect skips writing to the backend. Used
+  // for (a) the very first effect run after mount, and (b) external
+  // resyncs (e.g. Reset to pending) so we don't echo back the clear.
+  const skipFirstAutoSave = useRef(true)
+
+  // External resync: when something outside the form changes the row's
+  // review_status (most commonly: Reset to pending, which clears the
+  // backend's reconciling_items array via the optimistic patch), reset
+  // the form's local selectedItemMap to match the new account state so
+  // the ticks disappear immediately without requiring close + reopen.
+  useEffect(() => {
+    const m: Record<string, ReconcilingItem> = {}
+    for (const it of account.reconciling_items ?? []) m[it.txn_id] = it
+    setSelectedItemMap(m)
+    skipFirstAutoSave.current = true
+    // Only resync on status change — re-running every render would
+    // clobber the user's in-flight ticks before the debounced save fires.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account.review_status])
+
   function toggleItem(item: ReconcilingItem) {
     setSelectedItemMap((prev) => {
       const next = { ...prev }
@@ -1804,7 +1900,6 @@ function InlineSubledgerForm({
   // list), debounce 500ms and push to the backend so the top KPI
   // cards (which read from the overview snapshot) refresh immediately.
   // Skips the very first run so opening the form doesn't fire a write.
-  const skipFirstAutoSave = useRef(true)
   useEffect(() => {
     if (skipFirstAutoSave.current) {
       skipFirstAutoSave.current = false
@@ -2938,6 +3033,29 @@ function Kpi({ label, value, tone, sub }:
       <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
       <p className="text-xl sm:text-2xl font-bold tabular-nums mt-1" style={{ color: tone }}>{value}</p>
       {sub && <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{sub}</p>}
+    </div>
+  )
+}
+
+/**
+ * Compact inline KPI used by the sticky condensed KPI bar. Single row,
+ * tight typography — pairs a label, value, and an optional pill badge.
+ */
+function KpiInline({
+  label, value, tone, badge,
+}: { label: string; value: string; tone: string; badge?: string }) {
+  return (
+    <div className="flex items-baseline gap-1.5 shrink-0">
+      <span className="text-[10px] font-bold uppercase tracking-wider"
+        style={{ color: "var(--text-muted)" }}>{label}</span>
+      <span className="text-sm font-bold tabular-nums" style={{ color: tone }}>{value}</span>
+      {badge && (
+        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+          style={{ background: tone === "#dc2626" ? "#fef2f2" : "var(--green-subtle)",
+                   color: tone === "#dc2626" ? "#dc2626" : "var(--green)" }}>
+          {badge}
+        </span>
+      )}
     </div>
   )
 }
