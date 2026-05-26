@@ -270,14 +270,38 @@ async def _process_account(
             reason="Already approved — AI does not touch signed-off reconciliations.",
         ))
         return
+    # Detect whether a populated subledger_total was set by AI vs by a
+    # human. AI defers to humans but should refresh its OWN prior work
+    # (especially after logic improvements like the prior-GL roll-forward
+    # fallback). Three signals identify an AI-set subledger:
+    #   1. ai_commentary is not null (new column from the commentary
+    #      feature — present on every AI-prepared row going forward)
+    #   2. subledger_source string starts with "AI-prepared" (legacy
+    #      AI runs from before the commentary feature shipped)
+    #   3. The user clicking Agentic Mode now is the same one who last
+    #      saved the subledger AND it has an AI-shaped source — they're
+    #      re-running their own automation, allow it.
     if review and review.subledger_total is not None:
-        result.skipped += 1
-        result.accounts.append(AccountResult(
-            qbo_account_id=qid, account_name=name, account_number=number,
-            action="skipped",
-            reason="A preparer already entered a manual subledger value — AI defers to human input.",
-        ))
-        return
+        src = (review.subledger_source or "").lower()
+        was_ai = (
+            review.ai_commentary is not None
+            or src.startswith("ai-prepared")
+            or "ai-prepared" in src
+        )
+        if not was_ai:
+            result.skipped += 1
+            result.accounts.append(AccountResult(
+                qbo_account_id=qid, account_name=name, account_number=number,
+                action="skipped",
+                reason=(
+                    "A human preparer already entered a manual subledger value — "
+                    "AI defers to human input. Clear the override on the row if "
+                    "you want AI to re-prepare it."
+                ),
+            ))
+            return
+        # Otherwise: AI set this previously. Re-prep is allowed — fall
+        # through to the normal flow, which overwrites with fresh data.
 
     # ── Compute opening balance ─────────────────────────────────────────
     # Priority chain (matches the dashboard's display logic):
