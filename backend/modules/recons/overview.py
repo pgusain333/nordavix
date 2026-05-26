@@ -427,6 +427,10 @@ async def _build_overview_from_qbo_data(
             "reviewed_by":         str(review.reviewed_by) if review and review.reviewed_by else None,
             "reviewed_at":         review.reviewed_at.isoformat() if review and review.reviewed_at else None,
             "review_notes":        review.notes if review else None,
+            # AI commentary attached by the agentic preparer when it tied
+            # this row out. Null on human-prepared rows. Dashboard renders
+            # it as the AI Commentary card in the expanded form.
+            "ai_commentary":       review.ai_commentary if review else None,
         })
 
     # Sort: by group, then by account number

@@ -56,6 +56,11 @@ class AccountReviewStatus(TenantBase):
     reconciling_items: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb"), default=list,
     )
+    # Structured commentary written by the agentic preparer when it ties
+    # out a reconciliation. NULL on human-prepared rows or when AI couldn't
+    # tie out. See modules/recons/agentic.build_ai_commentary() for shape:
+    # { generated_at, confidence, checks[], recommendation, narrative }.
+    ai_commentary: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

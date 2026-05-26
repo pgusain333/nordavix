@@ -364,6 +364,87 @@ def _reconciliation_table(data: dict) -> Table:
     return tbl
 
 
+# ── AI Commentary ──────────────────────────────────────────────────────────
+
+
+def _ai_commentary_table(commentary: dict, styles: dict) -> list[Any]:
+    """Render the AI commentary as a 3-row block: confidence pill / checks
+    table / recommendation banner. Returns a list of flowables so it slots
+    into `story` directly."""
+    out: list[Any] = []
+    conf = (commentary.get("confidence") or "").lower()
+    rec = (commentary.get("recommendation") or "").lower()
+    narrative = (commentary.get("narrative") or "").strip()
+    checks = commentary.get("checks") or []
+
+    # Confidence + recommendation pill row
+    conf_color = {"high": GREEN, "medium": colors.HexColor("#b45309"), "low": RED}.get(conf, GREY_DARK)
+    rec_label = {"approve": "Approve as-is", "review": "Review flagged items",
+                  "investigate": "Investigate before approving"}.get(rec, rec.title())
+    pill_row = [[
+        Paragraph(
+            f'<font color="{conf_color.hexval()}"><b>Confidence: {conf.title() or "—"}</b></font>',
+            styles["note_body"],
+        ),
+        Paragraph(
+            f'<font color="{conf_color.hexval()}"><b>AI Recommendation: {rec_label}</b></font>',
+            styles["note_body"],
+        ),
+    ]]
+    pill_tbl = Table(pill_row, colWidths=[3.55 * inch, 3.55 * inch])
+    pill_tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1),
+            colors.Color(*[c / 255 for c in (62, 143, 102)], alpha=0.10) if conf == "high"
+            else colors.Color(0.85, 0.55, 0.10, alpha=0.10) if conf == "medium"
+            else colors.Color(0.725, 0.114, 0.114, alpha=0.10)),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    out.append(pill_tbl)
+
+    # Narrative
+    if narrative:
+        out.append(Paragraph(narrative, styles["note_body"]))
+
+    # Checks table
+    if checks:
+        header = ["Check", "Status", "Detail"]
+        rows: list[list[Any]] = [header]
+        for c in checks:
+            status_raw = (c.get("status") or "pass").lower()
+            status_label = {"pass": "✓ Pass", "warn": "⚠ Warn", "fail": "✕ Fail"}.get(status_raw, status_raw.title())
+            rows.append([
+                c.get("name") or "—",
+                status_label,
+                Paragraph(c.get("detail") or "—", styles["note_body"]),
+            ])
+        tbl = Table(rows, colWidths=[1.8 * inch, 0.85 * inch, 4.45 * inch], repeatRows=1)
+        style: list[tuple] = [
+            ("FONT",          (0, 0), (-1, 0), "Helvetica-Bold", 9),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), NAVY),
+            ("LINEBELOW",     (0, 0), (-1, 0), 0.75, NAVY),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
+            ("FONT",          (0, 1), (-1, -1), "Helvetica", 9),
+            ("TEXTCOLOR",     (0, 1), (-1, -1), GREY_DARK),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING",    (0, 1), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        ]
+        # Color the status cell per check
+        for idx, c in enumerate(checks, start=1):
+            s = (c.get("status") or "pass").lower()
+            color = GREEN if s == "pass" else colors.HexColor("#b45309") if s == "warn" else RED
+            style.append(("TEXTCOLOR", (1, idx), (1, idx), color))
+            style.append(("FONT", (1, idx), (1, idx), "Helvetica-Bold", 9))
+        tbl.setStyle(TableStyle(style))
+        out.append(tbl)
+    return out
+
+
 # ── Attachments list ───────────────────────────────────────────────────────
 
 def _attachments(data: dict, styles: dict) -> list[Any]:
@@ -457,7 +538,15 @@ def build_account_pdf(buffer: BinaryIO, *, data: dict) -> None:
     ))
     story.append(_reconciliation_table(data))
 
-    # 3. Notes (only if preparer or reviewer left one)
+    # 3. AI commentary (only if this row was AI-prepared — null otherwise).
+    #    Sits before Notes so the reviewer reads the AI's confidence + checks
+    #    + recommendation in flow, then any human notes after.
+    commentary = data.get("ai_commentary")
+    if commentary and isinstance(commentary, dict):
+        story.append(Paragraph("AI Commentary", styles["section"]))
+        story.extend(_ai_commentary_table(commentary, styles))
+
+    # 4. Notes (only if preparer or reviewer left one)
     notes = (data.get("notes") or "").strip()
     if notes:
         story.append(Paragraph("Notes", styles["section"]))

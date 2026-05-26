@@ -133,6 +133,24 @@ export interface OverviewEvidenceFile {
   uploaded_at: string | null
 }
 
+export type AiCommentaryConfidence    = "high" | "medium" | "low"
+export type AiCommentaryRecommendation = "approve" | "review" | "investigate"
+export type AiCommentaryCheckStatus    = "pass" | "warn" | "fail"
+
+export interface AiCommentaryCheck {
+  name:   string
+  status: AiCommentaryCheckStatus
+  detail: string
+}
+
+export interface AiCommentary {
+  generated_at:   string
+  confidence:     AiCommentaryConfidence
+  checks:         AiCommentaryCheck[]
+  recommendation: AiCommentaryRecommendation
+  narrative:      string
+}
+
 export interface OverviewAccount {
   qbo_id:                 string
   account_number:         string
@@ -156,6 +174,10 @@ export interface OverviewAccount {
   reviewed_by:            string | null
   reviewed_at:            string | null
   review_notes:           string | null
+  // Set when the agentic preparer tied this row out. Null on human-
+  // prepared rows. The expanded form renders an AI Commentary card
+  // off this field; a sparkle badge appears on the row in the table.
+  ai_commentary:          AiCommentary | null
 }
 
 export interface PeriodEntries {

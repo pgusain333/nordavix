@@ -495,6 +495,10 @@ async def export_account_pdf(
             ],
             "is_draft":           is_draft,
             "prepared_by":        user.email or "",
+            # AI commentary if this row was AI-prepared. The PDF renderer
+            # surfaces it as a section before Notes so the reviewer reads
+            # AI's checks and recommendation when reviewing the document.
+            "ai_commentary":      (review.ai_commentary if review else None),
         }
 
         logger.info(

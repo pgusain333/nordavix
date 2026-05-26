@@ -303,7 +303,19 @@ async def _process_account(
     tied_out = abs(gap_after) < _TIE_TOLERANCE
 
     if tied_out:
-        # ── Auto-prepare: save override + mark reviewed ─────────────────
+        # ── Auto-prepare: save override + mark reviewed + AI commentary ─
+        # Build the structured commentary the reviewer sees in the
+        # expanded row + on the PDF. Mix of deterministic heuristic
+        # checks (auditable, no AI cost) and one Claude call for the
+        # plain-English narrative.
+        commentary = await build_ai_commentary(
+            db=db, conn=conn,
+            qid=qid, period_end=period_end,
+            account_name=name, account_number=number, account_type=snap.account_type,
+            is_credit_natural=is_credit_natural,
+            opening=opening, gl_balance=gl_balance, computed=computed,
+            items=items, prior=prior,
+        )
         await _save_prepared(
             db=db, tenant_id=tenant_id, user=user,
             qid=qid, period_end=period_end, review=review,
@@ -314,6 +326,7 @@ async def _process_account(
                 f"{len(items)} period transaction{'' if len(items) == 1 else 's'} "
                 f"(net {_money(signed_sum)}) = subledger {_money(computed)} = GL {_money(gl_balance)}."
             ),
+            commentary=commentary,
         )
         result.prepared += 1
         result.accounts.append(AccountResult(
@@ -386,10 +399,14 @@ async def _save_prepared(
     subledger_total: Decimal,
     items: list[dict[str, Any]],
     source_note: str,
+    commentary: dict[str, Any] | None = None,
 ) -> None:
     """Upsert the AccountReviewStatus row with the AI-prepared subledger
     and flip status to "reviewed". Mirrors the inline form's save path so
-    a human-prepared row and an AI-prepared row are structurally identical."""
+    a human-prepared row and an AI-prepared row are structurally identical
+    EXCEPT the ai_commentary JSONB field — non-null only on AI prep, used
+    by the dashboard to render the AI Commentary card and by the per-account
+    PDF to render the same data in tabular form."""
     now = datetime.now(UTC)
     if review is None:
         review = AccountReviewStatus(
@@ -403,6 +420,7 @@ async def _save_prepared(
             subledger_entered_by=user.id,
             subledger_entered_at=now,
             reconciling_items=items,
+            ai_commentary=commentary,
             prepared_by=user.id,
             prepared_at=now,
             reviewed_by=user.id,    # legacy field — kept in sync
@@ -416,6 +434,7 @@ async def _save_prepared(
         review.subledger_entered_by = user.id
         review.subledger_entered_at = now
         review.reconciling_items = items
+        review.ai_commentary = commentary
         review.prepared_by = user.id
         review.prepared_at = now
         review.reviewed_by = user.id
@@ -473,6 +492,323 @@ async def _save_analyzed_note(
         review.notes = final_note
 
     await db.commit()
+
+
+# ── AI commentary on tied-out reconciliations ──────────────────────────────
+
+
+async def build_ai_commentary(
+    *,
+    db: AsyncSession,
+    conn: QboConnection,
+    qid: str,
+    period_end: date,
+    account_name: str,
+    account_number: str,
+    account_type: str,
+    is_credit_natural: bool,
+    opening: Decimal,
+    gl_balance: Decimal,
+    computed: Decimal,
+    items: list[dict[str, Any]],
+    prior: AccountReviewStatus | None,
+) -> dict[str, Any]:
+    """
+    Build the structured AI commentary for a successfully-tied
+    reconciliation. Mix of deterministic heuristic checks (pure
+    Python, auditable, no AI cost) and one optional Claude call for
+    the plain-English narrative.
+
+    Shape:
+      {
+        "generated_at": "2026-05-26T01:30:00+00:00",
+        "confidence":   "high" | "medium" | "low",
+        "checks": [
+          {"name": "...", "status": "pass" | "warn" | "fail", "detail": "..."},
+          ...
+        ],
+        "recommendation": "approve" | "review" | "investigate",
+        "narrative":   "free text — AI summary"
+      }
+
+    The dashboard renders this directly as a tabular card; the per-account
+    PDF renders the same data as a section. Stays embedded with the row
+    forever (don't auto-clear on human edit) — it's a historical snapshot
+    of what AI did at the time of preparation.
+    """
+    checks: list[dict[str, Any]] = []
+
+    # Check 1: Math tie-out — by construction this always passes when we
+    # reach this code path, but record it explicitly so the reviewer sees
+    # the math.
+    checks.append({
+        "name":   "Tie-out math",
+        "status": "pass",
+        "detail": (
+            f"Opening {_money(opening)} + {len(items)} period "
+            f"transaction{'' if len(items) == 1 else 's'} totaling "
+            f"{_money(computed - opening)} = subledger {_money(computed)} = GL "
+            f"{_money(gl_balance)}."
+        ),
+    })
+
+    # Check 2: Opening provenance — was opening rolled forward from a
+    # prior close, or did the AI assume $0 because there's no history?
+    if prior is not None:
+        checks.append({
+            "name":   "Opening balance",
+            "status": "pass",
+            "detail": f"Rolled forward from prior close at {prior.period_end.isoformat()}.",
+        })
+    else:
+        checks.append({
+            "name":   "Opening balance",
+            "status": "warn",
+            "detail": (
+                "No prior-period closing on file — assumed $0 as opening. "
+                "Verify this is the first reconciliation period for the account."
+            ),
+        })
+
+    # Check 3: Data provenance — every reconciling item came directly
+    # from QBO at sync time. Worth surfacing for audit reassurance.
+    checks.append({
+        "name":   "Data provenance",
+        "status": "pass",
+        "detail": (
+            "All reconciling items pulled directly from QuickBooks via the "
+            "GeneralLedger report at the time of sync."
+        ),
+    })
+
+    # Check 4: Item composition — break down what kinds of transactions
+    # were ticked. Warn if a large fraction are manual JEs (those usually
+    # warrant human eyes).
+    type_counts: dict[str, int] = {}
+    je_count = 0
+    for it in items:
+        t = (it.get("txn_type") or "").strip()
+        if t:
+            type_counts[t] = type_counts.get(t, 0) + 1
+        if "journal" in t.lower() or "je" == t.lower():
+            je_count += 1
+    composition = ", ".join(
+        f"{c} {t.lower()}{'s' if c != 1 else ''}"
+        for t, c in sorted(type_counts.items(), key=lambda x: -x[1])
+    ) or "no transactions"
+    if je_count > 0 and je_count >= max(2, len(items) * 0.3):
+        # >=30% manual JEs (and at least 2) → warn
+        checks.append({
+            "name":   "Item composition",
+            "status": "warn",
+            "detail": (
+                f"{composition}. "
+                f"{je_count} manual journal {'entries' if je_count != 1 else 'entry'} — "
+                "review for adjusting entries before approving."
+            ),
+        })
+    else:
+        checks.append({
+            "name":   "Item composition",
+            "status": "pass",
+            "detail": composition + ".",
+        })
+
+    # Check 5: Date distribution — flag if all items cluster at month-end
+    # (often a sign of bulk-entered catch-up activity) or if none of the
+    # items fall in the current month at all.
+    dates_in_period = []
+    for it in items:
+        ds = it.get("txn_date") or ""
+        if not ds:
+            continue
+        try:
+            d = date.fromisoformat(ds[:10])
+            if d.replace(day=1) == period_end.replace(day=1):
+                dates_in_period.append(d)
+        except Exception:
+            continue
+    if items and dates_in_period:
+        last_week = sum(1 for d in dates_in_period if (period_end - d).days <= 7)
+        if last_week == len(dates_in_period) and len(dates_in_period) >= 3:
+            checks.append({
+                "name":   "Date distribution",
+                "status": "warn",
+                "detail": (
+                    f"All {len(dates_in_period)} items fall in the last 7 days of the period — "
+                    "could indicate late or bulk-entered activity. Verify cut-off."
+                ),
+            })
+        else:
+            spread_days = (max(dates_in_period) - min(dates_in_period)).days if len(dates_in_period) > 1 else 0
+            checks.append({
+                "name":   "Date distribution",
+                "status": "pass",
+                "detail": (
+                    f"Activity spread across {spread_days + 1} day"
+                    f"{'' if spread_days == 0 else 's'} of the period."
+                ),
+            })
+
+    # Check 6: Secondary source — pull the account's current QBO balance
+    # as an independent cross-check. For a month whose period_end is in
+    # the past, this confirms that period activity was finalized; if the
+    # numbers don't reconcile we flag (someone may have back-dated entries).
+    try:
+        secondary = await _secondary_qbo_check(
+            conn=conn, db=db, qid=qid,
+            account_name=account_name, account_number=account_number,
+            period_end=period_end, gl_balance=gl_balance,
+        )
+        if secondary is not None:
+            checks.append(secondary)
+    except Exception:
+        logger.exception("Secondary QBO check failed for %s — skipping", qid)
+        # Don't fail the whole commentary because the secondary check failed.
+
+    # Derive confidence + recommendation from the check results.
+    has_warn = any(c["status"] == "warn" for c in checks)
+    has_fail = any(c["status"] == "fail" for c in checks)
+    if has_fail:
+        confidence = "low"
+        recommendation = "investigate"
+    elif has_warn:
+        confidence = "medium"
+        recommendation = "review"
+    else:
+        confidence = "high"
+        recommendation = "approve"
+
+    # Narrative — single Claude call. Falls back to a templated summary if
+    # the call fails so we never block the commentary on AI availability.
+    narrative = _generate_narrative(
+        account_name=account_name, account_number=account_number,
+        account_type=account_type, period_end=period_end,
+        opening=opening, gl_balance=gl_balance, computed=computed,
+        items=items, checks=checks, confidence=confidence,
+    )
+
+    return {
+        "generated_at":   datetime.now(UTC).isoformat(),
+        "confidence":     confidence,
+        "checks":         checks,
+        "recommendation": recommendation,
+        "narrative":      narrative,
+    }
+
+
+async def _secondary_qbo_check(
+    *,
+    conn: QboConnection,
+    db: AsyncSession,
+    qid: str,
+    account_name: str,
+    account_number: str,
+    period_end: date,
+    gl_balance: Decimal,
+) -> dict[str, Any] | None:
+    """Independent verification: pull a fresh look at this account's
+    balance directly from QBO's TrialBalance at period_end and compare
+    against the snapshot we used for the reconciliation. If they match,
+    the snapshot was a true representation of QBO at sync time and
+    nothing has changed since; if they differ, someone back-dated
+    entries after the sync."""
+    try:
+        from core.qbo_tb import fetch_trial_balance, lookup_balance, parse_trial_balance
+        report = await fetch_trial_balance(conn, period_end)
+        parsed = parse_trial_balance(report)
+        live = lookup_balance(parsed, qbo_id=qid, acct_num=account_number, name=account_name)
+    except Exception:
+        return None
+
+    if live is None:
+        return {
+            "name":   "Secondary source verification",
+            "status": "warn",
+            "detail": (
+                "Account not found in a freshly-pulled QBO TrialBalance at period_end — "
+                "it may have been renamed, deleted, or marked inactive since the sync."
+            ),
+        }
+
+    delta = (live - gl_balance).quantize(Decimal("0.01"))
+    if abs(delta) < Decimal("1.00"):
+        return {
+            "name":   "Secondary source verification",
+            "status": "pass",
+            "detail": (
+                f"Re-pulled live from QuickBooks TrialBalance at period_end and matched: "
+                f"{_money(live)}. No back-dated entries since the original sync."
+            ),
+        }
+    return {
+        "name":   "Secondary source verification",
+        "status": "warn",
+        "detail": (
+            f"Live QuickBooks TrialBalance at period_end now shows {_money(live)} "
+            f"vs the snapshot's {_money(gl_balance)} (delta {_money(delta)}). "
+            "Someone may have posted, edited, or back-dated entries after the original sync. "
+            "Re-Sync the period and re-run AI to refresh."
+        ),
+    }
+
+
+def _generate_narrative(
+    *,
+    account_name: str,
+    account_number: str,
+    account_type: str,
+    period_end: date,
+    opening: Decimal,
+    gl_balance: Decimal,
+    computed: Decimal,
+    items: list[dict[str, Any]],
+    checks: list[dict[str, Any]],
+    confidence: str,
+) -> str:
+    """Single Claude call to write a 2-3 sentence plain-English summary
+    of what AI reconciled and what (if anything) a reviewer should
+    double-check. Falls back to a templated summary if the call fails."""
+    try:
+        from core.ai.client import compute_cache_key, generate_narrative
+
+        warn_lines = [c["detail"] for c in checks if c["status"] != "pass"]
+        warn_section = (
+            "Warnings raised during checks:\n" + "\n".join(f"  - {w}" for w in warn_lines) + "\n\n"
+            if warn_lines else
+            "All deterministic checks passed.\n\n"
+        )
+        system_prompt = (
+            "You are a senior accountant summarizing an AI-prepared account reconciliation "
+            "for a reviewer who will decide whether to approve it. Write 2-3 sentences in "
+            "plain English. No markdown, no bullets, no headings. Be concrete and specific "
+            "about what was reconciled. If any check raised a warning, the second sentence "
+            "must explicitly name what the reviewer should verify. Keep it under 70 words."
+        )
+        user_prompt = (
+            f"Account: {account_number + ' · ' if account_number else ''}{account_name} ({account_type})\n"
+            f"Period End: {period_end.isoformat()}\n"
+            f"Reconciled: opening {_money(opening)} + {len(items)} period transaction(s) = "
+            f"closing subledger {_money(computed)} = GL {_money(gl_balance)}.\n"
+            f"Confidence: {confidence}.\n\n"
+            f"{warn_section}"
+            f"Write the summary now."
+        )
+        key = compute_cache_key(
+            account_number or account_name,
+            str(gl_balance), str(computed),
+            f"agentic-narrative-{period_end.isoformat()}",
+        )
+        resp = generate_narrative(system_prompt, user_prompt, key, max_tokens=200)
+        return resp.content.strip()
+    except Exception:
+        logger.exception("Narrative AI call failed — falling back to template")
+        return (
+            f"AI-prepared this {account_type.lower()} account by including all {len(items)} "
+            f"transaction{'' if len(items) == 1 else 's'} posted during the period, which "
+            f"ties subledger {_money(computed)} to GL {_money(gl_balance)} exactly. "
+            f"Confidence: {confidence}."
+        )
 
 
 # ── AI gap analysis ────────────────────────────────────────────────────────

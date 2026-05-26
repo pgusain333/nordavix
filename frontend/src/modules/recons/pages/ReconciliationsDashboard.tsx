@@ -1267,11 +1267,33 @@ export function ReconciliationsDashboard() {
                               <AttachmentsCell files={a.evidence_files ?? []} />
                             </td>
                             <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
-                              <StatusChip
-                                status={status}
-                                disabled={isClosed}
-                                onChange={(next) => setStatusMut.mutate({ id: a.qbo_id, status: next })}
-                              />
+                              <div className="inline-flex items-center gap-1.5">
+                                <StatusChip
+                                  status={status}
+                                  disabled={isClosed}
+                                  onChange={(next) => setStatusMut.mutate({ id: a.qbo_id, status: next })}
+                                />
+                                {/* AI-prepared badge — appears on any row the
+                                    agentic preparer touched. Click the row to
+                                    expand and read the full AI Commentary card. */}
+                                {a.ai_commentary && (
+                                  <span
+                                    className="inline-flex items-center justify-center h-5 w-5 rounded-full"
+                                    style={{
+                                      background: "var(--green-subtle)",
+                                      border: "1px solid var(--green)",
+                                      color: "var(--green)",
+                                    }}
+                                    title={
+                                      `AI-prepared · Confidence: ${a.ai_commentary.confidence} · ` +
+                                      `Recommendation: ${a.ai_commentary.recommendation}. ` +
+                                      `Click the row for the full AI Commentary.`
+                                    }
+                                  >
+                                    <Sparkles size={10} strokeWidth={2} />
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-1.5">
@@ -1805,6 +1827,17 @@ function InlineSubledgerForm({
             attachment, but editing is locked until an admin reopens the period.
           </span>
         </div>
+      )}
+
+      {/* ── AI Commentary card ────────────────────────────────────────
+          Appears when the agentic preparer tied this row out. Tabular
+          layout: confidence + recommendation pills, narrative paragraph,
+          then the deterministic checks list with pass/warn/fail status
+          per row. The reviewer reads this BEFORE the build-up form,
+          decides whether to trust the AI's work, then approves (or
+          edits + saves to override). */}
+      {account.ai_commentary && (
+        <AiCommentaryCard commentary={account.ai_commentary} />
       )}
 
       {/* ── Compact variance strip ───────────────────────────────────
@@ -2341,6 +2374,104 @@ function SubledgerBuildup({
 }
 
 // ── Attachments cell ────────────────────────────────────────────────────────
+// ── AiCommentaryCard ────────────────────────────────────────────────────────
+// Renders the structured commentary the agentic preparer writes onto
+// every successfully-tied row. Lays out as:
+//   1. Pill row: Confidence (high/med/low) · Recommendation (approve/review/...)
+//   2. Narrative — 2-3 sentence AI summary in plain English
+//   3. Checks table — Check name · Status pill · Detail
+// Mirrors the structure of the PDF section so a reviewer sees the same
+// shape on screen and on the audit working paper.
+
+function AiCommentaryCard({ commentary }: {
+  commentary: import("@/modules/recons/api").AiCommentary
+}) {
+  const conf = commentary.confidence
+  const rec = commentary.recommendation
+  const confColor = conf === "high" ? "var(--green)" : conf === "medium" ? "#b45309" : "#b91c1c"
+  const confBg    = conf === "high" ? "var(--green-subtle)"
+                    : conf === "medium" ? "rgba(245, 158, 11, 0.10)"
+                    : "rgba(220, 38, 38, 0.08)"
+  const recLabel = rec === "approve"     ? "Approve as-is"
+                 : rec === "review"      ? "Review flagged items before approving"
+                 : rec === "investigate" ? "Investigate before approving"
+                 : rec
+
+  const statusMeta = {
+    pass: { fg: "var(--green)",     bg: "var(--green-subtle)",      label: "✓ Pass" },
+    warn: { fg: "#b45309",          bg: "rgba(245, 158, 11, 0.12)", label: "⚠ Warn" },
+    fail: { fg: "#b91c1c",          bg: "rgba(220, 38, 38, 0.10)",  label: "✕ Fail" },
+  } as const
+
+  return (
+    <div className="rounded-xl mb-3 overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--green)" }}>
+      {/* Pill row */}
+      <div className="px-4 py-2.5 flex items-center gap-3 flex-wrap"
+        style={{ background: confBg, borderBottom: "1px solid var(--green)" }}>
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide"
+          style={{ color: confColor }}>
+          <Sparkles size={12} strokeWidth={2} /> AI Commentary
+        </span>
+        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
+          style={{ background: "var(--surface)", color: confColor, border: `1px solid ${confColor}` }}>
+          Confidence: {conf}
+        </span>
+        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
+          style={{ background: "var(--surface)", color: confColor, border: `1px solid ${confColor}` }}>
+          {recLabel}
+        </span>
+        <span className="ml-auto text-[10px] italic" style={{ color: "var(--text-muted)" }}>
+          Generated {(() => {
+            try { return new Date(commentary.generated_at).toLocaleString() }
+            catch { return commentary.generated_at }
+          })()}
+        </span>
+      </div>
+
+      {/* Narrative */}
+      {commentary.narrative && (
+        <p className="px-4 py-3 text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+          {commentary.narrative}
+        </p>
+      )}
+
+      {/* Checks table */}
+      {commentary.checks.length > 0 && (
+        <div className="overflow-hidden" style={{ borderTop: "1px solid var(--border)" }}>
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr style={{ background: "var(--surface-2)" }}>
+                <th className="text-left px-3 py-2 font-semibold w-44" style={{ color: "var(--text-muted)" }}>Check</th>
+                <th className="text-left px-3 py-2 font-semibold w-20" style={{ color: "var(--text-muted)" }}>Status</th>
+                <th className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {commentary.checks.map((c, idx) => {
+                const meta = statusMeta[c.status] ?? statusMeta.pass
+                return (
+                  <tr key={`${c.name}-${idx}`} style={{ borderTop: "1px solid var(--border)" }}>
+                    <td className="px-3 py-2 font-medium" style={{ color: "var(--text)" }}>{c.name}</td>
+                    <td className="px-3 py-2">
+                      <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap"
+                        style={{ background: meta.bg, color: meta.fg }}>
+                        {meta.label}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{c.detail}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 // ── AgenticModeToggle ───────────────────────────────────────────────────────
 // Visual toggle that triggers the AI agentic preparer for the focused
 // period. Renders like a pill switch (off → green when on) so the user
