@@ -16,7 +16,7 @@
  *   status = parsed | ready_for_review | complete  → VarianceTable
  *   status = error         → error state
  */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -823,6 +823,53 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
       setError(ex.response?.data?.detail ?? ex.message ?? "Could not pull from QuickBooks.")
     },
   })
+
+  // Auto-run when arriving from the main dashboard's "Open Flux Analysis"
+  // tile (which routes here with both ?new=1 AND ?period=YYYY-MM-DD set).
+  // The picker is bypassed entirely — the user just wants the analysis
+  // for that month, not a date-picker step in between. If they need to
+  // change dates or use a different preset, the picker reappears as
+  // soon as the run errors out.
+  const autoStartedRef = useRef(false)
+  const shouldAutoStart =
+    searchParamsForForm.get("new") === "1" &&
+    !!searchParamsForForm.get("period")
+  useEffect(() => {
+    if (!shouldAutoStart || autoStartedRef.current) return
+    autoStartedRef.current = true
+    run.mutate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Show the loading screen while we either (a) waiting for the auto-run
+  // to fire its first request, or (b) the mutation is in flight, OR
+  // (c) the request succeeded and we're waiting for the parent to
+  // navigate. Errors fall through to the picker UI so the user can
+  // adjust dates and retry.
+  const showLoading =
+    run.isPending ||
+    (shouldAutoStart && !error && !run.isError)
+
+  if (showLoading) {
+    return (
+      <div className="rounded-xl p-12 flex flex-col items-center justify-center text-center"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <div className="relative h-20 w-20 mb-6">
+          <div className="absolute inset-0 rounded-full animate-ping opacity-50"
+            style={{ background: "var(--green-subtle)" }} />
+          <div className="relative h-20 w-20 rounded-full flex items-center justify-center"
+            style={{ background: "var(--green-subtle)" }}>
+            <Spinner className="h-8 w-8" />
+          </div>
+        </div>
+        <h3 className="text-lg font-bold text-theme mb-1">Pulling your trial balance…</h3>
+        <p className="text-sm max-w-md" style={{ color: "var(--text-muted)" }}>
+          Hitting QuickBooks for {fmt(periodEnd)} and {fmt(priorEnd)} —
+          usually 5-15 seconds depending on account count.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="rounded-xl p-5 space-y-4"
