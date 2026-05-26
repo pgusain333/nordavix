@@ -223,7 +223,11 @@ export function DashboardHome() {
     return () => clearTimeout(t)
   }, [blockMsg])
 
-  // Recons buckets — open / reviewed / approved counts derived from the overview
+  // Recons buckets — open / reviewed / approved counts derived from the overview.
+  // Used by the KPI strip ("Open in <month>" + "Variance"). NOT used by the
+  // close-progress card — that reads from `trackerEntry` so it can render
+  // instantly off the cached tracker payload instead of waiting on the
+  // heavy QBO-backed overview query.
   const buckets = useMemo(() => {
     const c = { open: 0, reviewed: 0, approved: 0, total: overview?.accounts.length ?? 0 }
     overview?.accounts.forEach((a) => {
@@ -233,6 +237,14 @@ export function DashboardHome() {
     })
     return c
   }, [overview])
+
+  // Tracker entry for the focused month — derived synchronously from the
+  // cached tracker payload. Memoized so the CloseProgressCard gets a
+  // stable reference and only re-renders when the actual entry changes.
+  const trackerEntry = useMemo(
+    () => tracker?.periods.find((p) => p.period_end === period),
+    [tracker, period],
+  )
 
   const totalVariance = useMemo(() => {
     if (!overview) return 0
@@ -580,8 +592,7 @@ export function DashboardHome() {
         <CloseProgressCard
           monthLabel={monthLabel}
           period={period}
-          buckets={buckets}
-          trackerEntry={tracker?.periods.find((p) => p.period_end === period)}
+          trackerEntry={trackerEntry}
           onOpen={() => navigate(`/app/reconciliations/period/${period}`)}
         />
 
@@ -808,11 +819,24 @@ export function DashboardHome() {
  *   • Not started (no AccountReviewStatus rows yet) → friendly nudge
  *     to start the close
  */
-function CloseProgressCard({ monthLabel, period, buckets, trackerEntry, onOpen }: {
+function CloseProgressCard({ monthLabel, period, trackerEntry, onOpen }: {
   monthLabel: string
   period: string
-  buckets: { open: number; reviewed: number; approved: number; total: number }
-  trackerEntry?: { status: string; approved_pct: number; closed_at: string | null; closed_by: string | null }
+  // All counts/status come from the lightweight tracker payload (one
+  // cheap DB query, cached 60s). The card USED to also read from the
+  // recons `overview` query — but that triggers live QBO calls and
+  // makes the card pop in 3-8s after you click a month tile. Tracker
+  // alone has identical info (total + counts.{pending,reviewed,approved,
+  // flagged} + approved_pct + closed_at) and renders instantly because
+  // the full tracker payload is already cached when the page first loads.
+  trackerEntry?: {
+    status: string
+    approved_pct: number
+    closed_at: string | null
+    closed_by: string | null
+    total: number
+    counts: { pending: number; reviewed: number; approved: number; flagged: number }
+  }
   onOpen: () => void
 }) {
   // Parse period for date math
@@ -831,6 +855,11 @@ function CloseProgressCard({ monthLabel, period, buckets, trackerEntry, onOpen }
     : period
   const pct = Math.min(100, Math.max(0, Math.round(trackerEntry?.approved_pct ?? 0)))
   const status = trackerEntry?.status ?? "not_started"
+  // Derive bucket counts directly from the tracker entry so the card
+  // can render synchronously off the cached tracker payload.
+  const counts = trackerEntry?.counts ?? { pending: 0, reviewed: 0, approved: 0, flagged: 0 }
+  const total = trackerEntry?.total ?? 0
+  const openCount = counts.pending  // "open" = unreviewed accounts
 
   // ── State 1: closed ─────────────────────────────────────────────
   if (status === "closed") {
@@ -852,7 +881,7 @@ function CloseProgressCard({ monthLabel, period, buckets, trackerEntry, onOpen }
             <h3 className="text-lg font-bold text-theme leading-tight">{monthLabel} books closed</h3>
             <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
               {closedAt && <>Closed on {closedAt} · </>}
-              {buckets.approved} of {buckets.total} account{buckets.total === 1 ? "" : "s"} approved
+              {counts.approved} of {total} account{total === 1 ? "" : "s"} approved
             </p>
           </div>
           <Button size="sm" variant="outline" onClick={onOpen}>View</Button>
@@ -862,7 +891,7 @@ function CloseProgressCard({ monthLabel, period, buckets, trackerEntry, onOpen }
   }
 
   // ── State 2: not started ────────────────────────────────────────
-  if (status === "not_started" || buckets.total === 0) {
+  if (status === "not_started" || total === 0) {
     return (
       <div className="rounded-xl overflow-hidden"
         style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
@@ -918,18 +947,17 @@ function CloseProgressCard({ monthLabel, period, buckets, trackerEntry, onOpen }
             }} />
         </div>
         <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-          {buckets.approved} of {buckets.total} accounts approved
+          {counts.approved} of {total} accounts approved
           {pct === 100 && <> · ready to lock the books</>}
         </p>
       </div>
 
       {/* Status breakdown — 4 mini-tiles */}
       <div className="grid grid-cols-4 divide-x" style={{ borderTop: "1px solid var(--border)" }}>
-        <ProgressTile label="Open"     count={buckets.open}                                  fg="#b91c1c"      bg="rgba(220,38,38,0.06)" />
-        <ProgressTile label="Prepared" count={buckets.reviewed}                              fg="#1d4ed8"      bg="rgba(29,78,216,0.06)" />
-        <ProgressTile label="Approved" count={buckets.approved}                              fg="var(--green)" bg="var(--green-subtle)" />
-        <ProgressTile label="Flagged"  count={Math.max(0, buckets.total - buckets.open - buckets.reviewed - buckets.approved)}
-                                                                                              fg="#ef4444"      bg="rgba(239,68,68,0.06)" />
+        <ProgressTile label="Open"     count={openCount}        fg="#b91c1c"      bg="rgba(220,38,38,0.06)" />
+        <ProgressTile label="Prepared" count={counts.reviewed}  fg="#1d4ed8"      bg="rgba(29,78,216,0.06)" />
+        <ProgressTile label="Approved" count={counts.approved}  fg="var(--green)" bg="var(--green-subtle)" />
+        <ProgressTile label="Flagged"  count={counts.flagged}   fg="#ef4444"      bg="rgba(239,68,68,0.06)" />
       </div>
 
       {/* Timeline footer */}
