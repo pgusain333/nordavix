@@ -162,7 +162,13 @@ export interface OverviewAccount {
   subledger_source:       string
   subledger_is_manual:    boolean
   subledger_is_rollforward?: boolean    // default subledger came from prior period close
-  rollforward_from?:      string | null  // ISO date of the prior close we rolled from
+  // Tells the UI which prior source the roll-forward came from:
+  //   "subledger" — a reconciled prior-period subledger (most reliable)
+  //   "gl"        — prior period's GL balance snapshot (audit-ready fallback
+  //                 when no reconciled prior exists)
+  //   null        — no roll-forward; subledger came from a different default
+  rollforward_source?:    "subledger" | "gl" | null
+  rollforward_from?:      string | null  // ISO date of the prior period we rolled from
   subledger_entered_by:   string | null
   subledger_entered_at:   string | null
   evidence_count:         number

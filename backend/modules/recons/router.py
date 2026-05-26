@@ -387,8 +387,14 @@ async def export_account_pdf(
             )
         )).scalar_one_or_none()
 
-        # Most recent prior-period override → opening balance. If none
-        # exists (first-ever reconciliation), opening = 0 with a note.
+        # Opening balance roll-forward chain (same logic as the dashboard
+        # overview + AI agentic preparer — kept in sync so what the
+        # reviewer sees on screen matches what lands in the PDF):
+        #   1. Prior period's reconciled subledger (true rolled-forward)
+        #   2. Prior period's GL snapshot (audit-ready fallback when no
+        #      reconciled prior exists — GL @ prior period_end is
+        #      deterministic and gives first-time recs a sensible start)
+        #   3. Zero (no history)
         prior = (await db.execute(
             select(AccountReviewStatus)
             .where(
@@ -399,14 +405,28 @@ async def export_account_pdf(
             .order_by(AccountReviewStatus.period_end.desc())
             .limit(1)
         )).scalar_one_or_none()
-        opening_balance = (
-            Decimal(prior.subledger_total) if prior and prior.subledger_total is not None
-            else Decimal("0")
-        )
-        opening_source = (
-            f"Rolled forward from {prior.period_end.isoformat()} closing"
-            if prior else "No prior-period closing on file — opening assumed $0"
-        )
+        prior_snap = (await db.execute(
+            select(GlBalanceSnapshot)
+            .where(
+                GlBalanceSnapshot.tenant_id == tenant_id,
+                GlBalanceSnapshot.qbo_account_id == qbo_account_id,
+                GlBalanceSnapshot.period_end < pe,
+            )
+            .order_by(GlBalanceSnapshot.period_end.desc())
+            .limit(1)
+        )).scalar_one_or_none() if prior is None else None
+        if prior is not None and prior.subledger_total is not None:
+            opening_balance = Decimal(prior.subledger_total)
+            opening_source = f"Rolled forward from {prior.period_end.isoformat()} closing subledger"
+        elif prior_snap is not None:
+            opening_balance = Decimal(prior_snap.balance)
+            opening_source = (
+                f"Rolled forward from {prior_snap.period_end.isoformat()} GL balance "
+                "(no reconciled subledger on file for the prior period)"
+            )
+        else:
+            opening_balance = Decimal("0")
+            opening_source = "No prior-period closing on file — opening assumed $0"
 
         # Evidence files (one query per period+account)
         ev_rows = list((await db.execute(

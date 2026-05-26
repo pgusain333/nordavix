@@ -328,6 +328,22 @@ async def _build_overview_from_qbo_data(
         if r.qbo_account_id not in prior_by_acct:
             prior_by_acct[r.qbo_account_id] = r
 
+    # Second roll-forward source: the prior period's GL balance from
+    # gl_balance_snapshots. Used when an account has NO reconciled prior
+    # subledger but DOES have a synced prior-period GL balance — gives
+    # the AI a sensible opening to tie against ("opening = GL @ Mar 31")
+    # so first-time reconciliations actually work.
+    from models.gl_balance_snapshot import GlBalanceSnapshot
+    prior_snap_rows = list((await session.execute(
+        select(GlBalanceSnapshot)
+        .where(GlBalanceSnapshot.period_end < period_end)
+        .order_by(GlBalanceSnapshot.qbo_account_id, GlBalanceSnapshot.period_end.desc())
+    )).scalars().all())
+    prior_snap_by_acct: dict[str, GlBalanceSnapshot] = {}
+    for r in prior_snap_rows:
+        if r.qbo_account_id not in prior_snap_by_acct:
+            prior_snap_by_acct[r.qbo_account_id] = r
+
     # Pull the actual evidence rows so the dashboard can render an inline
     # "attachments" column with click-to-download — no second fetch needed.
     # Bounded per-period set; one query, fan out in memory below.
@@ -356,10 +372,20 @@ async def _build_overview_from_qbo_data(
         #   2) Most recent PRIOR override — rolled forward. This is the
         #      starting point for reconciliation; user opens the row, sees
         #      the gap vs GL, ticks reconciling items to close it.
-        #   3) QBO-computed default (AR aging total, AP aging, GL fallback)
-        #      — only when no history exists for this account.
+        #   3) Most recent PRIOR gl_balance_snapshot — used as opening
+        #      when no reconciled prior subledger exists. The audit-ready
+        #      fallback: GL @ Mar 31 is a deterministic value, so a
+        #      first-time April reconciliation gets a sensible starting
+        #      point ("opening = GL @ Mar 31, add April activity, tie to
+        #      GL @ Apr 30"). Without this an account that's never been
+        #      reconciled would assume opening $0 and look broken.
+        #   4) QBO-computed default (AR aging total, AP aging, current
+        #      GL match) — only when no history of any kind exists.
         is_manual = review is not None and review.subledger_total is not None
         prior_review = prior_by_acct.get(qbo_id)
+        prior_snap = prior_snap_by_acct.get(qbo_id)
+        is_rollforward_from_subledger = False
+        is_rollforward_from_gl = False
         if is_manual:
             subledger_balance = review.subledger_total
             source = review.subledger_source or "Manually entered"
@@ -371,6 +397,16 @@ async def _build_overview_from_qbo_data(
                 "open the row to add reconciling items and adjust to current period."
             )
             has_detail = True
+            is_rollforward_from_subledger = True
+        elif prior_snap is not None:
+            subledger_balance = prior_snap.balance
+            source = (
+                f"Rolled forward from {prior_snap.period_end} GL balance "
+                "(no reconciled subledger on file for the prior period). "
+                "Open the row to add this period's reconciling items."
+            )
+            has_detail = True
+            is_rollforward_from_gl = True
         else:
             subledger_balance, source, has_detail = _subledger_for_account(
                 acct_type=acct_type,
@@ -393,13 +429,27 @@ async def _build_overview_from_qbo_data(
             "subledger_balance":   str(subledger_balance.quantize(Decimal("0.01"))),
             "subledger_source":    source,
             "subledger_is_manual": is_manual,
+            # True for EITHER kind of roll-forward (from a reconciled
+            # prior subledger OR from the prior GL snapshot fallback).
+            # The dashboard shows the "Roll fwd" badge based on this flag.
             "subledger_is_rollforward": (
                 not is_manual
-                and prior_review is not None
-                and prior_review.subledger_total is not None
+                and (is_rollforward_from_subledger or is_rollforward_from_gl)
             ),
-            "rollforward_from":    prior_review.period_end.isoformat()
-                                    if prior_review and not is_manual else None,
+            # Tells the UI WHICH kind of roll-forward it is. Drives the
+            # badge tooltip and styling (subledger = blue, gl = amber)
+            # so reviewers know whether the opening came from real prior
+            # reconciliation work or just from the prior GL snapshot.
+            "rollforward_source":  (
+                "subledger" if is_rollforward_from_subledger
+                else "gl"   if is_rollforward_from_gl
+                else None
+            ),
+            "rollforward_from":    (
+                prior_review.period_end.isoformat() if is_rollforward_from_subledger
+                else prior_snap.period_end.isoformat() if is_rollforward_from_gl
+                else None
+            ),
             "subledger_entered_by": str(review.subledger_entered_by)
                                     if (review and review.subledger_entered_by) else None,
             "subledger_entered_at": review.subledger_entered_at.isoformat()

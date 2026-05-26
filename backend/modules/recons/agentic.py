@@ -184,6 +184,24 @@ async def run_agentic_prep(
         if r.qbo_account_id not in prior_by_qid:
             prior_by_qid[r.qbo_account_id] = r
 
+    # Fallback roll-forward source: prior-period GL snapshot. Used when
+    # an account has no reconciled prior subledger. Without this the AI
+    # would assume opening = $0 on every first-time account and never
+    # tie out. With it, opening = GL @ prior period_end → first April
+    # reconciliation works because (GL @ Mar 31) + April activity = GL @ Apr 30.
+    prior_snap_rows = list((await db.execute(
+        select(GlBalanceSnapshot)
+        .where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.period_end < period_end,
+        )
+        .order_by(GlBalanceSnapshot.qbo_account_id, GlBalanceSnapshot.period_end.desc())
+    )).scalars().all())
+    prior_snap_by_qid: dict[str, GlBalanceSnapshot] = {}
+    for r in prior_snap_rows:
+        if r.qbo_account_id not in prior_snap_by_qid:
+            prior_snap_by_qid[r.qbo_account_id] = r
+
     # Process each account. We commit per-account so a failure on row 7
     # doesn't lose the work done on rows 1-6.
     for snap in snap_rows:
@@ -197,6 +215,7 @@ async def run_agentic_prep(
                 period_end=period_end,
                 review=review_by_qid.get(snap.qbo_account_id),
                 prior=prior_by_qid.get(snap.qbo_account_id),
+                prior_snap=prior_snap_by_qid.get(snap.qbo_account_id),
                 result=result,
             )
         except Exception as exc:
@@ -234,6 +253,7 @@ async def _process_account(
     period_end: date,
     review: AccountReviewStatus | None,
     prior: AccountReviewStatus | None,
+    prior_snap: GlBalanceSnapshot | None,
     result: AgenticResult,
 ) -> None:
     """Apply the agentic prep logic to one account."""
@@ -259,8 +279,29 @@ async def _process_account(
         ))
         return
 
-    # ── Compute opening balance (rolled forward from prior close) ───────
-    opening = Decimal(prior.subledger_total) if prior and prior.subledger_total is not None else Decimal("0")
+    # ── Compute opening balance ─────────────────────────────────────────
+    # Priority chain (matches the dashboard's display logic):
+    #   1. Prior period's reconciled subledger (rolled forward)
+    #   2. Prior period's GL balance snapshot (audit-ready fallback so
+    #      first-time reconciliations have a sensible starting point —
+    #      GL @ Mar 31 is deterministic and auditable; assuming $0 would
+    #      bake the entire historical balance into "current activity"
+    #      and make the AI's math impossible to tie out)
+    #   3. Zero (truly no history)
+    opening_source: str
+    if prior is not None and prior.subledger_total is not None:
+        opening = Decimal(prior.subledger_total)
+        opening_source = f"reconciled prior-period subledger ({prior.period_end.isoformat()})"
+    elif prior_snap is not None:
+        opening = Decimal(prior_snap.balance)
+        opening_source = (
+            f"GL balance at the prior period end ({prior_snap.period_end.isoformat()}) — "
+            "no reconciled subledger on file for the prior period"
+        )
+    else:
+        opening = Decimal("0")
+        opening_source = "no prior period on file (assumed $0 opening)"
+
     gl_balance = Decimal(snap.balance)
     is_credit_natural = snap.account_type in _CREDIT_NATURAL_TYPES
     flip = -1 if is_credit_natural else 1
@@ -314,7 +355,8 @@ async def _process_account(
             account_name=name, account_number=number, account_type=snap.account_type,
             is_credit_natural=is_credit_natural,
             opening=opening, gl_balance=gl_balance, computed=computed,
-            items=items, prior=prior,
+            items=items, prior=prior, prior_snap=prior_snap,
+            opening_source_label=opening_source,
         )
         await _save_prepared(
             db=db, tenant_id=tenant_id, user=user,
@@ -512,6 +554,8 @@ async def build_ai_commentary(
     computed: Decimal,
     items: list[dict[str, Any]],
     prior: AccountReviewStatus | None,
+    prior_snap: GlBalanceSnapshot | None = None,
+    opening_source_label: str = "",
 ) -> dict[str, Any]:
     """
     Build the structured AI commentary for a successfully-tied
@@ -552,13 +596,31 @@ async def build_ai_commentary(
         ),
     })
 
-    # Check 2: Opening provenance — was opening rolled forward from a
-    # prior close, or did the AI assume $0 because there's no history?
-    if prior is not None:
+    # Check 2: Opening provenance — three flavors:
+    #   • Pass : rolled forward from a reconciled prior subledger
+    #   • Warn : rolled forward from prior GL snapshot (no reconciled
+    #            prior subledger, so we're trusting the prior GL was
+    #            correct — auditor should confirm)
+    #   • Warn : truly no prior history — opening assumed $0
+    if prior is not None and prior.subledger_total is not None:
         checks.append({
             "name":   "Opening balance",
             "status": "pass",
-            "detail": f"Rolled forward from prior close at {prior.period_end.isoformat()}.",
+            "detail": (
+                f"Rolled forward from prior period's reconciled subledger "
+                f"({prior.period_end.isoformat()})."
+            ),
+        })
+    elif prior_snap is not None:
+        checks.append({
+            "name":   "Opening balance",
+            "status": "warn",
+            "detail": (
+                f"Rolled forward from prior period's GL balance "
+                f"({prior_snap.period_end.isoformat()}) since no reconciled subledger "
+                "exists for that period. Confirm the prior-period GL was accurate "
+                "before approving."
+            ),
         })
     else:
         checks.append({
