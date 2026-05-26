@@ -41,6 +41,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.auth.clerk_users import _format_display_name, get_clerk_user
 from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
 from core.storage import r2 as r2_storage
@@ -520,8 +521,30 @@ async def export_account_pdf(
             user_rows = list((await db.execute(
                 select(User).where(User.id.in_(actor_ids))
             )).scalars().all())
+            backfill_dirty = False
             for u in user_rows:
-                names_by_id[u.id] = u.email or str(u.id)[:8]
+                # Prefer the local email — fast path. When it's missing
+                # (Clerk JWT didn't carry an `email` claim at sign-up
+                # time, leaving the row with `email=""`), resolve from
+                # Clerk's REST API so the PDF shows "First Last" or
+                # the real email instead of a UUID prefix.
+                display: str | None = u.email or None
+                if not display and u.clerk_user_id:
+                    cu = await get_clerk_user(u.clerk_user_id)
+                    if cu:
+                        display = _format_display_name(cu)
+                        # Opportunistically backfill the email so the
+                        # next render skips the Clerk hop.
+                        if cu.get("email") and not u.email:
+                            u.email = cu["email"]
+                            backfill_dirty = True
+                names_by_id[u.id] = display or f"User {str(u.id)[:8]}"
+            if backfill_dirty:
+                try:
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    logger.exception("Backfilling User.email from Clerk failed")
 
         # Determine if credit-natural for sign-flip on reconciling items.
         credit_natural_types = {

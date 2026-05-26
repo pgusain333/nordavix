@@ -91,7 +91,23 @@ class TenantMiddleware(BaseHTTPMiddleware):
             user = user_result.scalar_one_or_none()
 
             if user is None:
+                # Try the JWT claim first (fast path). Clerk's default
+                # JWT template does NOT include `email`, so this is
+                # usually empty — in that case, fall back to a one-shot
+                # Clerk REST lookup so the row has a real email from
+                # day one (drives PDF preparer/approver names, audit
+                # log "by" chips, etc.).
                 email: str = claims.get("email", "")  # type: ignore[assignment]
+                if not email:
+                    try:
+                        from core.auth.clerk_users import get_clerk_user
+                        cu = await get_clerk_user(clerk_user_id)
+                        if cu and cu.get("email"):
+                            email = cu["email"]
+                    except Exception:
+                        # Don't block sign-in if Clerk lookup hiccups —
+                        # the PDF render path has its own fallback.
+                        pass
                 # Provision the new user's role:
                 # - First user in the tenant → admin (sole-owner case)
                 # - Subsequent users → "preparer" by default; if the user
@@ -129,6 +145,19 @@ class TenantMiddleware(BaseHTTPMiddleware):
             # endpoint session causes "detached instance" errors.
             if user.role in (None, "", "member"):
                 user.role = "admin"
+
+            # Heal empty email on the signed-in user (rows created
+            # before middleware did the Clerk fallback above). Cheap:
+            # one Clerk call per affected user, cached for 5 min, then
+            # we never touch this path again for that user.
+            if not user.email and user.clerk_user_id:
+                try:
+                    from core.auth.clerk_users import get_clerk_user
+                    cu = await get_clerk_user(user.clerk_user_id)
+                    if cu and cu.get("email"):
+                        user.email = cu["email"]
+                except Exception:
+                    pass
 
             await session.commit()
             # Refresh to get server-side timestamps after commit
