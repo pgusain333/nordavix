@@ -61,6 +61,7 @@ import {
 } from "@/modules/recons/api"
 import { workspaceApi } from "@/modules/workspace/api"
 import { useUserNames } from "@/modules/workspace/hooks"
+import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
 import { useQboConnection } from "@/modules/flux/hooks"
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
@@ -306,6 +307,18 @@ export function ReconciliationsDashboard() {
     onError: (err: unknown) => {
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }
       setSyncMsg(`Agentic preparer failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
+    },
+  })
+
+  // Cooperative cancel: signals the backend to stop after its current
+  // account, commits cleanly, and returns the partial result via the
+  // already-pending runAgenticMut. The original request resolves
+  // normally — onSuccess still fires with whatever got processed.
+  const cancelAgenticMut = useMutation({
+    mutationFn: () => reconsApi.cancelAgenticPrep(periodEnd),
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Could not signal stop: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
     },
   })
 
@@ -705,6 +718,16 @@ export function ReconciliationsDashboard() {
 
   return (
     <div ref={pageScrollRef} className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
+      {/* AI-working overlay — covers the page while the agentic preparer
+          runs. Includes a Stop button that signals cooperative cancel
+          to the backend (current account commits, then the run exits). */}
+      <AgenticRunningOverlay
+        open={runAgenticMut.isPending}
+        periodLabel={periodEnd}
+        cancelling={cancelAgenticMut.isPending}
+        onStop={() => cancelAgenticMut.mutate()}
+      />
+
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div
         className="px-4 sm:px-8 pt-5 sm:pt-7 pb-4"

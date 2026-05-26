@@ -440,6 +440,21 @@ async function resetAgenticPrep(periodEnd: string): Promise<AgenticResetResult> 
   return data
 }
 
+/**
+ * Ask an in-flight agentic run to stop. The backend checks the cancel
+ * flag between accounts — the current account finishes and commits,
+ * then the run exits with everything-so-far. Calling cancel when
+ * nothing is running is a harmless no-op.
+ */
+async function cancelAgenticPrep(periodEnd: string): Promise<{ cancelled: true; period_end: string }> {
+  const { data } = await apiClient.post<{ cancelled: true; period_end: string }>(
+    "/api/reconciliations/agentic/cancel",
+    null,
+    { params: { period_end: periodEnd }, timeout: 10_000 },
+  )
+  return data
+}
+
 
 /**
  * Explicit "Sync from QuickBooks" — fetches fresh TrialBalance, AR/AP
@@ -832,6 +847,7 @@ export const reconsApi = {
   syncPeriod,
   runAgenticPrep,
   resetAgenticPrep,
+  cancelAgenticPrep,
   downloadAccountPdf,
   getAccountSubledger,
   getAccountVariance,

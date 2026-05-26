@@ -303,6 +303,31 @@ async def run_agentic_endpoint(
         ) from exc
 
 
+@router.post("/agentic/cancel")
+async def cancel_agentic_endpoint(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,  # noqa: ARG001 — only needed for auth
+    period_end: str = Query(..., description="Period end date YYYY-MM-DD"),
+) -> dict:
+    """
+    Signal an in-flight agentic run to stop. Cooperative: the worker
+    finishes its current account, commits cleanly, then exits with
+    everything-so-far in the result blob. Calling cancel when nothing
+    is running is a no-op (sets a flag that's auto-cleared on next run).
+    """
+    from datetime import date as _date
+
+    from modules.recons.agentic import request_cancel
+
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    request_cancel(tenant_id, pe)
+    logger.info("Agentic cancel requested: tenant=%s period=%s", tenant_id, pe)
+    return {"cancelled": True, "period_end": period_end}
+
+
 @router.post("/sync")
 async def sync_overview_endpoint(
     tenant_id: CurrentTenantId,

@@ -45,6 +45,29 @@ from models.user import User
 
 logger = logging.getLogger(__name__)
 
+
+# ── Cooperative cancellation ────────────────────────────────────────────────
+# In-memory cancel registry. The user can hit "Stop" mid-run; the agentic
+# loop checks the flag between accounts and exits early with whatever it
+# has processed so far. Per-process state is fine — Agentic runs are
+# scoped to a single API request on a single machine; we don't need
+# cross-process coordination.
+
+_CANCEL_FLAGS: set[tuple[str, str]] = set()
+
+
+def request_cancel(tenant_id: uuid.UUID, period_end: date) -> None:
+    """Signal an in-flight agentic run to stop after its current account."""
+    _CANCEL_FLAGS.add((str(tenant_id), period_end.isoformat()))
+
+
+def _is_cancelled(tenant_id: uuid.UUID, period_end: date) -> bool:
+    return (str(tenant_id), period_end.isoformat()) in _CANCEL_FLAGS
+
+
+def _clear_cancel(tenant_id: uuid.UUID, period_end: date) -> None:
+    _CANCEL_FLAGS.discard((str(tenant_id), period_end.isoformat()))
+
 # Credit-natural account types — QBO returns these with positive amounts
 # even though their GL balance is negative (credit). We flip the sign on
 # their transactions so the build-up math reads correctly. Mirrors the
@@ -100,6 +123,9 @@ async def run_agentic_prep(
     and how many accounts need AI analysis."""
     start_dt = datetime.now(UTC)
     result = AgenticResult(period_end=period_end.isoformat(), started_at=start_dt.isoformat())
+
+    # Stale cancel from a previous run shouldn't pre-cancel this one.
+    _clear_cancel(tenant_id, period_end)
 
     # Period must not be closed.
     closed = (await db.execute(
@@ -189,6 +215,23 @@ async def run_agentic_prep(
     # account = the prior reconciled subledger ONLY (close-and-roll).
     # No GL snapshot fallback per user requirement.
     for snap in snap_rows:
+        # Cooperative cancel check — fires between accounts so each
+        # in-flight account gets to commit cleanly before we stop.
+        if _is_cancelled(tenant_id, period_end):
+            _clear_cancel(tenant_id, period_end)
+            result.accounts.append(AccountResult(
+                qbo_account_id="*",
+                account_name="(stopped by user)",
+                account_number="",
+                action="skipped",
+                reason=(
+                    "Stopped before processing this account. Accounts "
+                    "already processed above were saved; the rest are "
+                    "untouched. Click Run AI to resume."
+                ),
+            ))
+            result.skipped += 1
+            break
         try:
             await _process_account(
                 db=db,
