@@ -40,7 +40,13 @@ if (IS_DEV_PLACEHOLDER) {
   createRoot(root).render(
     <StrictMode>
       <ThemeProvider>
-        <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
+        <ClerkProvider
+          publishableKey={PUBLISHABLE_KEY}
+          signInUrl="/sign-in"
+          signUpUrl="/sign-up"
+          signInFallbackRedirectUrl="/app"
+          signUpFallbackRedirectUrl="/app"
+        >
           <QueryClientProvider client={queryClient}>
             <BrowserRouter>
               <App />

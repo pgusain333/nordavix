@@ -21,6 +21,7 @@ import { BooksSetupWizard } from "@/modules/onboarding/pages/BooksSetupWizard"
 import { TeamPage } from "@/modules/workspace/pages/TeamPage"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
 import { CreateCompanyPage } from "@/modules/onboarding/pages/CreateCompanyPage"
+import { AuthPage } from "@/modules/auth/pages/AuthPage"
 import { SettingsPage } from "@/modules/settings/pages/SettingsPage"
 import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
 import { TopProgressBar } from "@/core/ui/TopProgressBar"
@@ -87,6 +88,12 @@ export default function App() {
     <Routes>
       {/* Public marketing pages */}
       <Route path="/" element={<HomePage />} />
+
+      {/* Custom-branded auth surface — replaces Clerk's hosted page.
+          The trailing /* lets Clerk handle its own sub-routes
+          (verification, MFA, OAuth callback, etc.). */}
+      <Route path="/sign-in/*" element={<AuthPage mode="sign-in" />} />
+      <Route path="/sign-up/*" element={<AuthPage mode="sign-up" />} />
 
       {/* Company picker — standalone, no sidebar/layout. Reachable directly
           (for switching) and rendered automatically by WorkspaceGate when

@@ -281,7 +281,7 @@ function Navbar() {
                 </Link>
               ) : (
                 <>
-                  <Link to="/app"
+                  <Link to="/sign-in"
                     className="text-sm transition-colors px-4 py-2"
                     style={{ color: "var(--text-2)" }}
                     onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
@@ -290,7 +290,7 @@ function Navbar() {
                     Sign in
                   </Link>
                   <Link
-                    to="/app"
+                    to="/sign-up"
                     className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
                     style={{ background: "var(--green)" }}
                   >
@@ -389,7 +389,7 @@ function Navbar() {
           ) : (
             <>
               <Link
-                to="/app"
+                to="/sign-up"
                 onClick={closeDrawer}
                 className="flex items-center justify-center gap-2 w-full py-3 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
                 style={{ background: "var(--green)" }}
@@ -398,7 +398,7 @@ function Navbar() {
                 <ArrowRight size={14} strokeWidth={1.8} />
               </Link>
               <Link
-                to="/app"
+                to="/sign-in"
                 onClick={closeDrawer}
                 className="flex items-center justify-center w-full py-2.5 rounded-lg text-sm font-medium transition-colors"
                 style={{ color: "var(--text-2)", border: "1px solid var(--border-strong)" }}
@@ -446,7 +446,7 @@ function HeroSection() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-4 animate-fade-in-up animation-delay-700">
           <Link
-            to="/app"
+            to="/sign-up"
             className="group flex items-center gap-2 text-white font-semibold px-8 py-3.5 rounded-xl transition-opacity hover:opacity-90 shadow-lg text-base"
             style={{ background: "var(--green)" }}
           >
@@ -852,7 +852,7 @@ function CTASection() {
         </p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <Link
-            to="/app"
+            to="/sign-up"
             className="group flex items-center justify-center gap-2 bg-white font-semibold px-10 py-4 rounded-xl transition-all duration-200 shadow-xl text-base hover:opacity-90"
             style={{ color: "var(--green)" }}
           >
