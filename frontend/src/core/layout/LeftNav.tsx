@@ -87,14 +87,15 @@ export function LeftNav({ onClose }: Props) {
           onClick={() => { navigate("/"); onClose?.() }}
           className="flex items-center gap-2.5 min-w-0 flex-1"
         >
-          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-10 w-10 shrink-0 dark:hidden" />
-          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-10 w-10 shrink-0 hidden dark:block" />
-          {/* Wordmark sized to read clearly without overflowing the 240px
-              sidebar — at 26px it sits comfortably next to the 40px mark
-              on both desktop and the mobile drawer (also 240px wide).
-              `truncate` is a safety net for very narrow viewports but
-              shouldn't trigger at default widths. */}
-          <span className="text-[26px] font-semibold tracking-tight text-theme leading-none truncate">
+          {/* Logo + wordmark — smaller on mobile (32px / 20px) so the
+              header doesn't dominate the narrow slide-in drawer;
+              full size on desktop (40px / 26px) where the 240px
+              sidebar has room to breathe. */}
+          <img src="/logo-mark-dark.svg"  alt="Nordavix"
+            className="h-8 w-8 lg:h-10 lg:w-10 shrink-0 dark:hidden" />
+          <img src="/logo-mark-light.svg" alt="Nordavix"
+            className="h-8 w-8 lg:h-10 lg:w-10 shrink-0 hidden dark:block" />
+          <span className="text-xl lg:text-[26px] font-semibold tracking-tight text-theme leading-none truncate">
             nordavix<span style={{ color: "var(--green)" }}>.</span>
           </span>
         </button>

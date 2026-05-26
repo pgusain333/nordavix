@@ -123,11 +123,13 @@ export function AuthPage({ mode }: Props) {
 
         {/* Content stack */}
         <div className="relative z-10 flex flex-col w-full p-12 xl:p-16">
-          {/* Header: logo + wordmark */}
-          <Link to="/" className="inline-flex items-center gap-2.5 group/logo">
-            <img src="/logo-mark-dark.svg" alt="" className="h-9 w-9 dark:hidden" />
-            <img src="/logo-mark-light.svg" alt="" className="h-9 w-9 hidden dark:block" />
-            <span className="font-bold text-2xl tracking-tight" style={{ color: "var(--text)" }}>
+          {/* Header: logo + wordmark — sized to balance against the
+              4xl/5xl headline immediately below. The 48px mark and
+              30px wordmark visually read as one unit at this scale. */}
+          <Link to="/" className="inline-flex items-center gap-3 group/logo">
+            <img src="/logo-mark-dark.svg" alt="" className="h-12 w-12 dark:hidden" />
+            <img src="/logo-mark-light.svg" alt="" className="h-12 w-12 hidden dark:block" />
+            <span className="font-bold text-3xl xl:text-[34px] tracking-tight leading-none" style={{ color: "var(--text)" }}>
               nordavix<span style={{ color: "var(--green)" }}>.</span>
             </span>
           </Link>
