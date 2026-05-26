@@ -16,7 +16,7 @@
  *   status = parsed | ready_for_review | complete  → VarianceTable
  *   status = error         → error state
  */
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -738,15 +738,37 @@ const PERIOD_PRESETS: PeriodPreset[] = [
 
 
 function QboFluxInlineForm({ onComplete }: QboInlineProps) {
-  // Default preset = last month vs prior month
-  const initial = PERIOD_PRESETS[1].compute()
+  // Default preset = last month vs prior month. BUT when the dashboard
+  // routes here with ?period=YYYY-MM-DD (its currently-focused month),
+  // anchor the form on that month instead so the user only needs to
+  // click "Pull from QuickBooks". The comparison stays MoM-style
+  // (prior calendar month, one-year-back option still available via
+  // the YoY preset chip).
+  const [searchParamsForForm] = useSearchParams()
+  const initial = useMemo(() => {
+    const fromUrl = searchParamsForForm.get("period")
+    if (fromUrl && /^\d{4}-\d{2}-\d{2}$/.test(fromUrl)) {
+      const d = new Date(fromUrl + "T00:00:00")
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+      const firstDay = new Date(d.getFullYear(), d.getMonth(), 1)
+      const priorLast = new Date(d.getFullYear(), d.getMonth(), 0)
+      const priorFirst = new Date(d.getFullYear(), d.getMonth() - 1, 1)
+      const iso = (x: Date) => x.toISOString().slice(0, 10)
+      return [iso(firstDay), iso(lastDay), iso(priorFirst), iso(priorLast)] as const
+    }
+    return PERIOD_PRESETS[1].compute()
+  }, [searchParamsForForm])
 
   const [name,        setName]        = useState(`Flux ${initial[1].slice(0, 7)}`)
   const [periodStart, setPeriodStart] = useState(initial[0])
   const [periodEnd,   setPeriodEnd]   = useState(initial[1])
   const [priorStart,  setPriorStart]  = useState(initial[2])
   const [priorEnd,    setPriorEnd]    = useState(initial[3])
-  const [activePreset, setActivePreset] = useState<string | null>(PERIOD_PRESETS[1].key)
+  // If we seeded from ?period= no preset is "active" (the URL took
+  // precedence); otherwise default to the MoM preset highlight.
+  const [activePreset, setActivePreset] = useState<string | null>(
+    searchParamsForForm.get("period") ? null : PERIOD_PRESETS[1].key,
+  )
   const [threshold,   setThreshold]   = useState("5000")
   const [error,       setError]       = useState<string | null>(null)
 

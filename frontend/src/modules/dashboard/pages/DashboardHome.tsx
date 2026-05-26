@@ -697,11 +697,13 @@ export function DashboardHome() {
             )
           })()}
 
-          {/* Open Flux Analysis — lands on the month index so users see
-              their existing analyses (or empty state with a clear "Start
-              new" CTA) rather than the per-analysis picker. */}
+          {/* Open Flux Analysis — drops the user straight into the
+              new-analysis picker with the period pre-filled, so all they
+              have to do is hit "Pull from QuickBooks". ?new=1 keeps the
+              FluxDashboard's auto-redirect-to-most-recent-TB effect from
+              hijacking the navigation. */}
           <button
-            onClick={() => navigate(`/app/flux?period=${period}`)}
+            onClick={() => navigate(`/app/flux/analyses?new=1&period=${period}`)}
             className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
             <div className="px-4 py-3 flex items-center justify-between"
