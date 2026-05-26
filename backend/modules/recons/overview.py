@@ -1,29 +1,34 @@
 """
-Live reconciliation overview — single-source dashboard view.
+Reconciliation overview — snapshot-first dashboard view.
 
-This module is intentionally STATELESS. Everything pulls live from QuickBooks
-when the dashboard refreshes (or the user changes the period). Results aren't
-persisted into reconciliations / reconciliation_items — those tables are for
-the deeper, persistent workflow (notes, approvals, AI summary on a single
-reconciliation).
+How the data flows (post-refactor):
 
-The overview is what the user sees when they open /app/reconciliations:
+  POST /sync (explicit user action)
+      ├── QBO TrialBalance     → gl_balance_snapshots
+      ├── QBO Account list     → gl_balance_snapshots (metadata)
+      ├── QBO AR/AP aging      → period_sync.ar/ap_aging_total
+      └── QBO P&L (YTD)        → period_sync.actual_net_income
 
-  Per balance-sheet account:
-    - Account number, name, type
-    - GL balance as of period_end (from QBO TrialBalance report)
-    - Subledger balance as of period_end (depends on account type)
-    - Variance = GL - Subledger
+  GET /overview (every dashboard render, month-tile click, navigation)
+      └── reads from gl_balance_snapshots + period_sync + account_review_status
+          NO QBO CALLS — pure DB → instant.
 
-  Subledger source by account type:
-    - Bank, Credit Card       → matches GL (no separate subledger)
-    - Accounts Receivable     → sum of customer balances on AR aging report
-                                (proportional split when multiple AR accounts)
-    - Accounts Payable        → sum of vendor balances on AP aging report
-    - All other account types → matches GL (no QBO subledger exists)
+This means navigation between months is free, and the user controls when
+the data refreshes. If a period has never been synced (no `period_sync`
+row) the endpoint returns `synced: false` with empty accounts; the UI
+shows the existing "Sync from QuickBooks" CTA.
 
-Detail endpoints exposed alongside this build the subledger detail rows
-and variance evidence rows on demand.
+Per-account drill-in endpoints (`/account/{id}/subledger`,
+`/account/{id}/variance`) still call QBO live — they're explicit click
+actions where a short wait is expected, and the detail shapes (per-
+customer/vendor lists, GL transactions) aren't snapshotted.
+
+Subledger derivation per account type (unchanged):
+  - Bank, Credit Card       → matches GL (no separate subledger)
+  - Accounts Receivable     → sum of customer balances on AR aging report
+                              (proportional split when multiple AR accounts)
+  - Accounts Payable        → sum of vendor balances on AP aging report
+  - All other account types → matches GL (no QBO subledger exists)
 """
 from __future__ import annotations
 
@@ -71,56 +76,217 @@ SKIP_ACCOUNT_TYPES = {"Income", "Cost of Goods Sold", "Expense", "Other Income",
 
 # ── Public functions ─────────────────────────────────────────────────────────
 
-async def fetch_overview(
+async def sync_overview(
     conn: QboConnection,
     session: AsyncSession,
     period_end: date,
 ) -> dict:
     """
-    Pull every balance-sheet account + its GL + subledger balance + variance.
+    EXPLICIT SYNC PATH — called only by POST /sync. Pulls fresh data from
+    QuickBooks (TrialBalance, Account list, AR/AP aging, YTD P&L), writes
+    snapshots, then returns the same dict shape as `read_overview_from_snapshots`.
 
-    Returns:
-      {
-        "period_end": "YYYY-MM-DD",
-        "accounts": [
-          {
-            "qbo_id": "12",
-            "account_number": "1010",
-            "account_name": "Cash - BofA",
-            "account_type": "Bank",
-            "group_label": "Bank",
-            "gl_balance": "10000.00",
-            "subledger_balance": "10000.00",
-            "subledger_source": "Matches GL (no separate subledger)",
-            "has_subledger_detail": false,
-            "variance": "0.00",
-          }, ...
-        ],
-        "totals": { "gl": "...", "subledger": "...", "variance": "..." },
-        "by_group": [ { "group": "Bank", "count": 2, "gl": "...", ...}, ... ],
-      }
+    Heavy: 5-8 QBO API calls. The user clicked Sync, they expect a wait.
     """
+    import uuid as _uuid
+
+    from core.db.base import current_tenant_id
+    from core.gl_snapshot import capture_snapshot
+    from models.period_sync import PeriodSync
+    from sqlalchemy import select as _select
+
+    tid = current_tenant_id.get()
+    if tid is None:
+        return _empty_overview(period_end, synced=False)
+
     accounts_meta = await _list_balance_sheet_accounts(conn, session)
     if not accounts_meta:
-        return _empty_overview(period_end)
+        return _empty_overview(period_end, synced=False)
 
-    tb_balances = await _qbo_trial_balance_by_account(conn, session, period_end)
-
-    # Capture a snapshot of every account's balance at this period_end
-    # to power the Financial Package's "Nordavix synced" source. Runs
-    # transparently — failure here doesn't break the recons overview.
+    # Capture per-account GL balances (BS + P&L) → gl_balance_snapshots.
+    # capture_snapshot pre-pulls the QBO TrialBalance itself, so we
+    # reuse its result via a fresh _qbo_trial_balance_by_account call —
+    # not ideal but the parsed shape is different and refactoring the
+    # capture function to share is more churn than it's worth.
     try:
-        from core.db.base import current_tenant_id
-        from core.gl_snapshot import capture_snapshot
-        tid = current_tenant_id.get()
-        if tid is not None:
-            await capture_snapshot(session, tid, period_end, conn=conn)
+        await capture_snapshot(session, tid, period_end, conn=conn)
     except Exception:
         logger.exception("GL snapshot capture failed for %s — continuing", period_end)
 
-    # Pull AR / AP aging once each — used to derive per-AR-account subledger
+    tb_balances = await _qbo_trial_balance_by_account(conn, session, period_end)
+
+    # Pull AR / AP aging totals + persist for instant subsequent reads.
     ar_aging_sum = await _aging_total(conn, session, "AgedReceivables", period_end)
     ap_aging_sum = await _aging_total(conn, session, "AgedPayables", period_end)
+
+    # Pull YTD Net Income for the TB check (independent cross-check
+    # against our summed BS account balances).
+    actual_ni: Decimal | None = None
+    pl_error: str | None = None
+    try:
+        ytd_start = period_end.replace(month=1, day=1)
+        pl_report = await _qbo_get(
+            conn, session,
+            "/reports/ProfitAndLoss",
+            params={
+                "start_date":        ytd_start.isoformat(),
+                "end_date":          period_end.isoformat(),
+                "accounting_method": "Accrual",
+                "minorversion":      "65",
+            },
+        )
+        actual_ni = _extract_net_income(pl_report)
+        if actual_ni is None:
+            pl_error = "Could not find Net Income row in P&L report."
+    except Exception:
+        logger.exception("ProfitAndLoss pull failed during sync_overview")
+        pl_error = "Could not pull ProfitAndLoss report from QuickBooks."
+
+    # Upsert period_sync row so future GET /overview reads serve from DB.
+    existing = (await session.execute(
+        _select(PeriodSync).where(
+            PeriodSync.tenant_id == tid,
+            PeriodSync.period_end == period_end,
+        )
+    )).scalar_one_or_none()
+    if existing is None:
+        session.add(PeriodSync(
+            id=_uuid.uuid4(),
+            tenant_id=tid,
+            period_end=period_end,
+            ar_aging_total=ar_aging_sum.quantize(Decimal("0.01")),
+            ap_aging_total=ap_aging_sum.quantize(Decimal("0.01")),
+            actual_net_income=actual_ni.quantize(Decimal("0.01")) if actual_ni is not None else None,
+            pl_error=pl_error,
+        ))
+    else:
+        existing.ar_aging_total = ar_aging_sum.quantize(Decimal("0.01"))
+        existing.ap_aging_total = ap_aging_sum.quantize(Decimal("0.01"))
+        existing.actual_net_income = actual_ni.quantize(Decimal("0.01")) if actual_ni is not None else None
+        existing.pl_error = pl_error
+        existing.synced_at = datetime.utcnow()
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("period_sync upsert failed for %s", period_end)
+
+    # Build the overview from the freshly-captured data (skip the DB
+    # read — we already have everything in memory).
+    return await _build_overview_from_qbo_data(
+        session=session,
+        accounts_meta=accounts_meta,
+        tb_balances=tb_balances,
+        ar_aging_sum=ar_aging_sum,
+        ap_aging_sum=ap_aging_sum,
+        actual_ni=actual_ni,
+        pl_error=pl_error,
+        period_end=period_end,
+    )
+
+
+async def read_overview_from_snapshots(
+    session: AsyncSession,
+    period_end: date,
+) -> dict:
+    """
+    DEFAULT READ PATH — called by GET /overview on every dashboard render
+    and every month-tile click. Pure DB query, ~50ms. No QBO calls.
+
+    Returns the same dict shape as `sync_overview`. If the period has
+    never been synced (no period_sync row), returns `synced: false`
+    with empty accounts so the UI can show the "Click Sync" CTA.
+    """
+    from core.db.base import current_tenant_id
+    from models.gl_balance_snapshot import GlBalanceSnapshot
+    from models.period_sync import PeriodSync
+    from sqlalchemy import select as _select
+
+    tid = current_tenant_id.get()
+    if tid is None:
+        return _empty_overview(period_end, synced=False)
+
+    ps = (await session.execute(
+        _select(PeriodSync).where(
+            PeriodSync.tenant_id == tid,
+            PeriodSync.period_end == period_end,
+        )
+    )).scalar_one_or_none()
+    if ps is None:
+        # Never synced for this period → return empty + synced=False so
+        # the dashboard renders the "Sync from QuickBooks" CTA card.
+        return _empty_overview(period_end, synced=False)
+
+    # Pull every snapshot row for this period (one query).
+    snap_rows = list((await session.execute(
+        _select(GlBalanceSnapshot).where(
+            GlBalanceSnapshot.tenant_id == tid,
+            GlBalanceSnapshot.period_end == period_end,
+        )
+    )).scalars().all())
+    if not snap_rows:
+        return _empty_overview(period_end, synced=False)
+
+    # Convert snapshot rows into the accounts_meta shape that the shared
+    # builder expects. Filter out P&L accounts — those are captured for
+    # the financials module but don't belong in the recons overview.
+    accounts_meta = [
+        {
+            "Id":           s.qbo_account_id,
+            "Name":         s.account_name,
+            "AcctNum":      s.account_number or "",
+            "AccountType":  s.account_type,
+        }
+        for s in snap_rows
+        if s.account_type in ACCOUNT_TYPE_GROUPS
+    ]
+    # In-memory TbBalances shape so _tb_lookup works against snapshots.
+    tb_balances: dict = {
+        "by_id":   {s.qbo_account_id: s.balance for s in snap_rows},
+        "by_name": {s.account_name.lower(): s.balance for s in snap_rows},
+        "rows":    len(snap_rows),
+    }
+    return await _build_overview_from_qbo_data(
+        session=session,
+        accounts_meta=accounts_meta,
+        tb_balances=tb_balances,  # type: ignore[arg-type]
+        ar_aging_sum=ps.ar_aging_total,
+        ap_aging_sum=ps.ap_aging_total,
+        actual_ni=ps.actual_net_income,
+        pl_error=ps.pl_error,
+        period_end=period_end,
+        synced_at=ps.synced_at,
+    )
+
+
+# Back-compat alias — older code paths can keep importing fetch_overview.
+# New code should call sync_overview or read_overview_from_snapshots
+# explicitly.
+async def fetch_overview(
+    conn: QboConnection,
+    session: AsyncSession,
+    period_end: date,
+) -> dict:
+    return await sync_overview(conn, session, period_end)
+
+
+async def _build_overview_from_qbo_data(
+    *,
+    session: AsyncSession,
+    accounts_meta: list[dict],
+    tb_balances: TbBalances,
+    ar_aging_sum: Decimal,
+    ap_aging_sum: Decimal,
+    actual_ni: Decimal | None,
+    pl_error: str | None,
+    period_end: date,
+    synced_at: datetime | None = None,
+) -> dict:
+    """
+    Shared overview-builder used by both sync_overview (fresh QBO data
+    in memory) and read_overview_from_snapshots (data assembled from
+    snapshots). Identical output shape regardless of source.
+    """
 
     # Sum of GL balances across all AR accounts (and AP accounts) so we can
     # apportion when there are multiple AR/AP accounts.
@@ -292,11 +458,11 @@ async def fetch_overview(
     ]
 
     # Trial-balance proof: assets − (liab+equity) should equal P&L net
-    # income for the YTD period. Pulled separately from QBO so we can
-    # surface the comparison on the dashboard ("did the sync land
-    # consistent data?"). If QBO is unreachable for any reason, leave
-    # the fields None and the UI skips the check gracefully.
-    tb_check = await _fetch_tb_check(conn, session, period_end, out_accounts)
+    # income for the YTD period. `actual_ni` is now passed in by both
+    # callers (sync_overview pulls it fresh; read_overview_from_snapshots
+    # reads it from period_sync), so we never call QBO here — the entire
+    # builder is pure CPU + DB work.
+    tb_check = _build_tb_check(period_end, out_accounts, actual_ni, pl_error)
 
     return {
         "period_end": period_end.isoformat(),
@@ -308,6 +474,10 @@ async def fetch_overview(
         },
         "by_group":  by_group,
         "tb_check":  tb_check,
+        # Tells the UI: real data backs this view. False (in
+        # _empty_overview) means the period has never been synced.
+        "synced":    True,
+        "synced_at": synced_at.isoformat() if synced_at else None,
     }
 
 
@@ -460,11 +630,11 @@ def _classify(group_label: str) -> str | None:
     return None
 
 
-async def _fetch_tb_check(
-    conn: QboConnection,
-    session: AsyncSession,
+def _build_tb_check(
     period_end: date,
     accounts: list[dict],
+    actual_ni: Decimal | None,
+    pl_error: str | None,
 ) -> dict | None:
     """
     Sync verification via the accounting equation.
@@ -474,12 +644,12 @@ async def _fetch_tb_check(
         Assets − Liabilities − Equity = Net Income (YTD)
 
     We sum the three sides FROM THE SYNCED PER-ACCOUNT BALANCES (using
-    each account's QBO group_label to classify it), then pull YTD
-    Net Income from QBO's ProfitAndLoss report as an INDEPENDENT
-    source of truth, and compare. If the implied NI matches QBO's
-    reported NI, the sync pulled correct figures.
+    each account's QBO group_label to classify it), then compare against
+    the pre-fetched `actual_ni` (pulled once during the explicit Sync
+    action and cached in period_sync). If the implied NI matches the
+    P&L's reported NI, the sync round-tripped correctly.
 
-    Sign handling (the bug that crashed the earlier version):
+    Sign handling (the bug that crashed an earlier version):
       - GL balances are signed: assets debit-positive, liabilities
         and equity credit-negative.
       - Naively summing absolute values flips contra-account signs:
@@ -490,13 +660,9 @@ async def _fetch_tb_check(
         sides at the end. Contra-accounts net correctly in both
         directions.
 
-    Returns enough numbers for the UI to lay out the three-line equation
-    + the source-of-truth comparison. Returns None-fields gracefully
-    when the P&L pull fails so the dashboard doesn't block.
+    Pure CPU — no QBO calls, no DB queries. The expensive `actual_ni`
+    fetch happens once per Sync, not once per render.
     """
-    # --- 1. Sum the three sides with proper sign handling --------------
-    # Sum signed balances per side. Asset side stays as-is (debit-positive).
-    # Credit sides are flipped at the end to read positive in the UI.
     sum_assets_signed     = Decimal("0")   # debit-natural, sum as-is
     sum_liab_signed       = Decimal("0")   # credit-natural, will negate
     sum_equity_signed     = Decimal("0")   # credit-natural, will negate
@@ -508,36 +674,11 @@ async def _fetch_tb_check(
         elif cls == "equity":    sum_equity_signed += gl
 
     total_assets      = sum_assets_signed.quantize(Decimal("0.01"))
-    total_liabilities = (-sum_liab_signed).quantize(Decimal("0.01"))   # flip to positive
-    total_equity      = (-sum_equity_signed).quantize(Decimal("0.01")) # flip to positive
+    total_liabilities = (-sum_liab_signed).quantize(Decimal("0.01"))
+    total_equity      = (-sum_equity_signed).quantize(Decimal("0.01"))
     implied_ni = (total_assets - total_liabilities - total_equity).quantize(Decimal("0.01"))
 
-    # --- 2. Pull QBO's YTD Net Income from the P&L (cross-check) -------
-    # The independent source of truth: if our implied NI matches QBO's
-    # reported NI on the P&L, the sync round-tripped correctly.
     ytd_start = period_end.replace(month=1, day=1)
-    actual_ni: Decimal | None = None
-    pl_error: str | None = None
-    try:
-        pl_report = await _qbo_get(
-            conn,
-            session,
-            "/reports/ProfitAndLoss",
-            params={
-                "start_date":        ytd_start.isoformat(),
-                "end_date":          period_end.isoformat(),
-                "accounting_method": "Accrual",
-                "minorversion":      "65",
-            },
-        )
-        actual_ni = _extract_net_income(pl_report)
-        if actual_ni is None:
-            pl_error = "Could not find Net Income row in P&L report."
-    except Exception:
-        logger.exception("ProfitAndLoss pull failed for TB check %s → %s", ytd_start, period_end)
-        pl_error = "Could not pull ProfitAndLoss report from QuickBooks."
-
-    # --- 3. Match check --------------------------------------------------
     difference: Decimal | None = None
     balanced: bool | None = None
     if actual_ni is not None:
@@ -547,13 +688,10 @@ async def _fetch_tb_check(
     return {
         "period_end":         period_end.isoformat(),
         "ytd_start":          ytd_start.isoformat(),
-        # Three sides of the balance sheet — what our sync says.
         "total_assets":       str(total_assets),
         "total_liabilities":  str(total_liabilities),
         "total_equity":       str(total_equity),
-        # Math result.
         "implied_net_income": str(implied_ni),
-        # Cross-check against QBO P&L.
         "actual_net_income":  str(actual_ni.quantize(Decimal("0.01"))) if actual_ni is not None else None,
         "difference":         str(difference) if difference is not None else None,
         "balanced":           balanced,
@@ -734,12 +872,17 @@ def _subledger_for_account(
     return gl_balance, "Matches GL — this account type has no separate subledger.", True
 
 
-def _empty_overview(period_end: date) -> dict:
+def _empty_overview(period_end: date, *, synced: bool = False) -> dict:
     return {
         "period_end": period_end.isoformat(),
         "accounts":   [],
         "totals":     {"gl": "0.00", "subledger": "0.00", "variance": "0.00"},
         "by_group":   [],
+        # `synced: false` tells the dashboard to render the "Sync from
+        # QuickBooks" CTA card instead of the empty-state table.
+        "synced":     synced,
+        "synced_at":  None,
+        "tb_check":   None,
     }
 
 

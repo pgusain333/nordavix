@@ -252,6 +252,13 @@ export interface Overview {
   // dashboard so the user can verify the QBO sync is internally
   // consistent before doing close work on top of it.
   tb_check?:       TbCheck | null
+  // True once the period has been Synced at least once. When false,
+  // the dashboard renders the "Sync from QuickBooks" CTA instead of
+  // the empty-state table. GET /overview is pure DB read — the
+  // backend never auto-pulls from QBO. POST /sync is the only thing
+  // that populates this and the snapshot tables.
+  synced?:         boolean
+  synced_at?:      string | null
 }
 
 export interface SubledgerRow {
@@ -325,6 +332,21 @@ async function getDashboard(): Promise<ReconciliationDashboard> {
 async function getOverview(periodEnd: string): Promise<Overview> {
   const { data } = await apiClient.get<Overview>("/api/reconciliations/overview", {
     params: { period_end: periodEnd },
+  })
+  return data
+}
+
+/**
+ * Explicit "Sync from QuickBooks" — fetches fresh TrialBalance, AR/AP
+ * aging, and YTD net income from QBO and persists them as snapshots.
+ * Takes 3-8s; returns the freshly-built Overview so the caller can
+ * skip a follow-up getOverview round-trip.
+ */
+async function syncPeriod(periodEnd: string): Promise<Overview> {
+  const { data } = await apiClient.post<Overview>("/api/reconciliations/sync", null, {
+    params: { period_end: periodEnd },
+    // QBO can be slow — 5min ceiling matches the PDF export timeout
+    timeout: 5 * 60_000,
   })
   return data
 }
@@ -644,6 +666,7 @@ export const reconsApi = {
   listReconciliations,
   getDashboard,
   getOverview,
+  syncPeriod,
   getAccountSubledger,
   getAccountVariance,
   clearSyncedData,

@@ -174,14 +174,17 @@ export function ReconciliationsDashboard() {
   const canReview = me?.role === "admin" || me?.role === "reviewer"
   const isAdmin = me?.role === "admin"
 
-  // Manual-fetch only. We never auto-pull from QBO on mount or period change —
-  // every sync is an explicit user action. `enabled: false` keeps the query
-  // dormant; handleSync() drives it via refetch().
-  const { data: overview, isFetching, refetch, dataUpdatedAt } = useQuery({
+  // GET /overview is now a pure DB read (~50ms) — no QBO calls. Auto-fire
+  // on mount and on every period change so navigation is instant. The
+  // backend returns `synced: false` for periods that have never been
+  // synced; the UI shows the "Sync from QuickBooks" CTA in that case.
+  // POST /sync (handleSync below) is the only thing that hits QBO.
+  const { data: overview, isFetching, dataUpdatedAt } = useQuery({
     queryKey: ["recons-overview", periodEnd],
     queryFn:  () => reconsApi.getOverview(periodEnd),
-    enabled:  false,
-    staleTime: Infinity,
+    enabled:  !!qbo,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   })
 
   // Closed-period flag flows through from /overview. When true, the entire
@@ -241,16 +244,24 @@ export function ReconciliationsDashboard() {
     },
   })
 
+  // POST /sync mutation — pulls fresh data from QBO and persists snapshots.
+  // On success we feed the returned overview straight into the query cache
+  // so the table updates without a second GET roundtrip.
+  const syncMut = useMutation({
+    mutationFn: () => reconsApi.syncPeriod(periodEnd),
+    onSuccess: (data) => {
+      qc.setQueryData(["recons-overview", periodEnd], data)
+      const n = data.accounts.length
+      setSyncMsg(`Synced ${n} account${n === 1 ? "" : "s"} from QuickBooks at ${new Date().toLocaleTimeString()}.`)
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
+    },
+  })
   async function handleSync() {
     setSyncMsg(null)
-    const result = await refetch()
-    if (result.error) {
-      const ex = result.error as { response?: { data?: { detail?: string } }; message?: string }
-      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
-    } else {
-      const n = result.data?.accounts.length ?? 0
-      setSyncMsg(`Synced ${n} account${n === 1 ? "" : "s"} from QuickBooks at ${new Date().toLocaleTimeString()}.`)
-    }
+    await syncMut.mutateAsync().catch(() => { /* error handled in onError */ })
   }
 
   // Auto-dismiss banner after 4 seconds
@@ -288,8 +299,9 @@ export function ReconciliationsDashboard() {
       didAutoSyncRef.current = periodEnd
       return
     }
-    if (overview) {
-      // Already have data — just strip the param, no need to refetch.
+    if (overview?.synced) {
+      // Already synced for this period — no need to autosync; just
+      // strip the param so a refresh doesn't keep re-triggering.
       sp.delete("autosync")
       const qs = sp.toString()
       navigate(`/app/reconciliations/period/${periodEnd}${qs ? "?" + qs : ""}`, { replace: true })
@@ -580,12 +592,12 @@ export function ReconciliationsDashboard() {
             <Button
               size="sm"
               variant="outline"
-              icon={<RefreshCw size={14} strokeWidth={1.8} className={isFetching ? "animate-spin" : undefined} />}
+              icon={<RefreshCw size={14} strokeWidth={1.8} className={syncMut.isPending ? "animate-spin" : undefined} />}
               onClick={handleSync}
-              disabled={!qbo || isFetching}
+              disabled={!qbo || syncMut.isPending}
               title="Re-pull from QuickBooks"
             >
-              <span className="hidden sm:inline">{isFetching ? "Syncing…" : "Sync"}</span>
+              <span className="hidden sm:inline">{syncMut.isPending ? "Syncing…" : "Sync"}</span>
             </Button>
             {isAdmin && (
               isClosed ? (
@@ -693,7 +705,7 @@ export function ReconciliationsDashboard() {
           </div>
         )}
 
-        {qbo && !overview && !isFetching && priorBlockers.length === 0 && (
+        {qbo && overview && overview.synced === false && !isFetching && priorBlockers.length === 0 && (
           <div
             className="rounded-xl p-8 text-center"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
@@ -712,9 +724,10 @@ export function ReconciliationsDashboard() {
             <p className="text-sm max-w-md mx-auto mb-5" style={{ color: "var(--text-muted)" }}>
               Sync pulls every balance-sheet account from QuickBooks at <span className="font-mono">{periodEnd}</span> —
               the GL balances, subledger composition, and prior-period roll-forward — so you can start ticking
-              off accounts. You stay in control: Nordavix never auto-syncs unless you ask.
+              off accounts. After the first sync, switching between months in this workspace is instant; only an
+              explicit Sync re-pulls from QuickBooks.
             </p>
-            <Button size="sm" icon={<RefreshCw size={14} strokeWidth={1.8} />} onClick={handleSync}>
+            <Button size="sm" icon={<RefreshCw size={14} strokeWidth={1.8} />} loading={syncMut.isPending} onClick={handleSync}>
               Sync from QuickBooks
             </Button>
           </div>
@@ -853,10 +866,10 @@ export function ReconciliationsDashboard() {
         )}
 
         {/* Hide the entire dashboard body when sequential-close gate
-            blocks this period — the locked banner above is the only
-            actionable thing. Also: auto-sync is suppressed (see the
-            useEffect earlier). */}
-        {qbo && (overview || isFetching) && priorBlockers.length === 0 && (
+            blocks this period or the period has never been synced.
+            For never-synced periods the "Sync from QuickBooks" CTA
+            above is the only actionable thing. */}
+        {qbo && overview?.synced && priorBlockers.length === 0 && (
           <>
             {/* KPI strip — reconciliation-focused metrics across all
                 synced accounts. GL ↔ Subledger ↔ Variance is the core

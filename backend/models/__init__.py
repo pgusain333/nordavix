@@ -6,6 +6,7 @@ from models.ai_usage import AIUsage
 from models.audit_log import AuditLog
 from models.closed_period import ClosedPeriod
 from models.narrative import Narrative
+from models.period_sync import PeriodSync
 from models.qbo_connection import QboConnection
 from models.subledger_evidence import SubledgerEvidence
 from models.tenant import Tenant
@@ -20,6 +21,7 @@ __all__ = [
     "AuditLog",
     "ClosedPeriod",
     "Narrative",
+    "PeriodSync",
     "QboConnection",
     "SubledgerEvidence",
     "Tenant",

@@ -133,11 +133,62 @@ async def get_overview(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Live snapshot of every balance-sheet account with GL + subledger + variance
-    at the chosen period end. Pulled directly from QuickBooks — no persistence,
-    no AI cost, always fresh. The frontend calls this on dashboard mount and
-    again every time the user changes the period.
+    Reconciliation overview for a period. Reads from our snapshot tables
+    (`gl_balance_snapshots`, `period_sync`, `account_review_status`) —
+    no QBO calls, ~50ms response time. Called on every dashboard mount
+    and every time the user changes the focused period.
+
+    Returns `synced: false` when the period has never been synced; the
+    UI shows the "Sync from QuickBooks" CTA in that case. The explicit
+    POST /sync endpoint is what actually pulls fresh data from QBO and
+    populates the snapshot tables.
     """
+    from modules.recons.overview import read_overview_from_snapshots
+
+    try:
+        pe = date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    await _enforce_books_floor(db, tenant_id, pe)
+
+    # Confirm the connection exists so the UI knows whether to show
+    # the QBO-disconnected banner. We don't actually need it for reads.
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    qbo_connected = conn is not None
+
+    overview = await read_overview_from_snapshots(db, pe)
+    overview["qbo_connected"] = qbo_connected
+
+    # Surface lock status so the UI can render the closed-books banner +
+    # disable mutations. Resolves the closer's name client-side via the
+    # workspace lookup hook.
+    cp = await _is_period_closed(db, pe)
+    overview["is_closed"] = cp is not None
+    overview["closed_by"] = str(cp.closed_by) if cp else None
+    overview["closed_at"] = cp.closed_at.isoformat() if cp and cp.closed_at else None
+    overview["closed_notes"] = cp.notes if cp else None
+    return overview
+
+
+@router.post("/sync")
+async def sync_overview_endpoint(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end date YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Explicit "Sync from QuickBooks" action. Pulls fresh TrialBalance,
+    account list, AR/AP aging, and YTD Net Income from QBO and persists
+    them to the snapshot tables. Returns the freshly-built overview.
+
+    Heavy — ~3-8s of QBO calls. The UI's Sync button calls this; routine
+    navigation goes through GET /overview (instant DB read).
+    """
+    from modules.recons.overview import sync_overview
+
     try:
         pe = date.fromisoformat(period_end)
     except ValueError:
@@ -149,20 +200,14 @@ async def get_overview(
         execution_options={"skip_tenant_filter": True},
     )).scalar_one_or_none()
     if conn is None:
-        return {
-            "period_end": pe.isoformat(),
-            "accounts": [],
-            "totals": {"gl": "0.00", "subledger": "0.00", "variance": "0.00"},
-            "by_group": [],
-            "qbo_connected": False,
-        }
+        raise HTTPException(
+            status_code=400,
+            detail="QuickBooks isn't connected for this workspace. Connect QBO and try again.",
+        )
 
-    overview = await fetch_overview(conn, db, pe)
+    overview = await sync_overview(conn, db, pe)
     overview["qbo_connected"] = True
 
-    # Surface lock status so the UI can render the closed-books banner +
-    # disable mutations. Resolves the closer's name client-side via the
-    # workspace lookup hook.
     cp = await _is_period_closed(db, pe)
     overview["is_closed"] = cp is not None
     overview["closed_by"] = str(cp.closed_by) if cp else None
