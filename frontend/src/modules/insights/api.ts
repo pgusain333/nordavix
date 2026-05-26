@@ -59,6 +59,9 @@ export interface Profitability {
   operating_expenses:   number
   operating_income:     number
   operating_margin_pct: number | null
+  other_income:         number
+  other_expense:        number
+  net_other:            number
   net_income:           number
   net_margin_pct:       number | null
   history:              HistoryPoint[]

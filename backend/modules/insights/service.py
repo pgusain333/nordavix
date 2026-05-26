@@ -35,16 +35,25 @@ logger = logging.getLogger(__name__)
 CASH_TYPES = {"Bank"}
 AR_TYPES   = {"Accounts Receivable"}
 AP_TYPES   = {"Accounts Payable"}
-INCOME_TYPES   = {"Income", "Other Income"}
-COGS_TYPES     = {"Cost of Goods Sold"}
-EXPENSE_TYPES  = {"Expense", "Other Expense"}
+# GAAP-aligned: Revenue is OPERATING income only; "Other Income" sits below
+# Operating Income on the P&L (interest income, gains on sale, etc.).
+# Same for Expense vs Other Expense (Other Expense = interest, losses, …).
+INCOME_TYPES         = {"Income"}
+OTHER_INCOME_TYPES   = {"Other Income"}
+COGS_TYPES           = {"Cost of Goods Sold"}
+EXPENSE_TYPES        = {"Expense"}
+OTHER_EXPENSE_TYPES  = {"Other Expense"}
+
+# Union used for revenue-trend history (showing all top-line income).
+ALL_INCOME_TYPES = INCOME_TYPES | OTHER_INCOME_TYPES
+ALL_EXPENSE_TYPES = EXPENSE_TYPES | OTHER_EXPENSE_TYPES | COGS_TYPES
 
 ASSET_TYPES = {"Bank", "Accounts Receivable", "Other Current Asset", "Fixed Asset", "Other Asset"}
 LIAB_TYPES  = {"Accounts Payable", "Credit Card", "Other Current Liability", "Long Term Liability"}
 EQUITY_TYPES = {"Equity"}
 
 # Credit-natural — balance comes back negative; flip for display.
-CREDIT_NATURAL = LIAB_TYPES | EQUITY_TYPES | INCOME_TYPES
+CREDIT_NATURAL = LIAB_TYPES | EQUITY_TYPES | INCOME_TYPES | OTHER_INCOME_TYPES
 
 ZERO = Decimal("0")
 
@@ -515,13 +524,17 @@ async def compute_overview(
     else:
         runway_months = float((cash_balance / monthly_burn).quantize(Decimal("0.1")))
 
-    # OCF proxy: monthly net income (true OCF needs cash-flow statement)
+    # OCF proxy: monthly net income (true OCF needs cash-flow statement).
+    # NI = Revenue - COGS - OpEx + Other Income - Other Expense — matches the
+    # financials/internal.py formula so the two pages reconcile.
     def ytd_ni(pe: date) -> Decimal:
         rows = snaps_by_pe.get(pe, [])
-        rev  = _sum_by_types_presented(rows, INCOME_TYPES)
-        cogs = _sum_by_types_presented(rows, COGS_TYPES)
-        exp  = _sum_by_types_presented(rows, EXPENSE_TYPES)
-        return rev - cogs - exp
+        rev       = _sum_by_types_presented(rows, INCOME_TYPES)
+        other_inc = _sum_by_types_presented(rows, OTHER_INCOME_TYPES)
+        cogs      = _sum_by_types_presented(rows, COGS_TYPES)
+        opex      = _sum_by_types_presented(rows, EXPENSE_TYPES)
+        other_exp = _sum_by_types_presented(rows, OTHER_EXPENSE_TYPES)
+        return rev - cogs - opex + other_inc - other_exp
 
     def monthly_ni(pe: date) -> Decimal:
         if pe.month == 1:
@@ -600,6 +613,8 @@ async def compute_overview(
     }
 
     # ── Profitability ───────────────────────────────────────────────────────
+    # GAAP separation: Revenue = Income (operating top-line only);
+    # Other Income / Other Expense sit below Operating Income on the P&L.
     def revenue_at(pe: date) -> Decimal:
         return _sum_by_types_presented(snaps_by_pe.get(pe, []), INCOME_TYPES)
 
@@ -608,6 +623,12 @@ async def compute_overview(
 
     def opex_at(pe: date) -> Decimal:
         return _sum_by_types_presented(snaps_by_pe.get(pe, []), EXPENSE_TYPES)
+
+    def other_income_at(pe: date) -> Decimal:
+        return _sum_by_types_presented(snaps_by_pe.get(pe, []), OTHER_INCOME_TYPES)
+
+    def other_expense_at(pe: date) -> Decimal:
+        return _sum_by_types_presented(snaps_by_pe.get(pe, []), OTHER_EXPENSE_TYPES)
 
     def monthly_metric(pe: date, ytd_func) -> Decimal:
         if pe.month == 1:
@@ -629,14 +650,24 @@ async def compute_overview(
         opex_month    = custom_pl["opex"]
         gross_profit  = revenue_month - cogs_month
         operating_inc = gross_profit - opex_month
+        # QBO's own NetIncome from the report already includes Other Income /
+        # Other Expense — trust it. Fall back to OI only if QBO didn't surface
+        # a NetIncome row.
         net_income    = custom_pl["net_income"] or operating_inc
+        other_income_month   = Decimal("0")
+        other_expense_month  = Decimal("0")
+        net_other            = (net_income - operating_inc) if custom_pl["net_income"] else Decimal("0")
     else:
-        revenue_month  = monthly_metric(period_end, revenue_at)
-        cogs_month     = monthly_metric(period_end, cogs_at)
-        opex_month     = monthly_metric(period_end, opex_at)
-        gross_profit   = revenue_month - cogs_month
-        operating_inc  = gross_profit - opex_month
-        net_income     = operating_inc  # ignoring interest/tax — proxy
+        revenue_month       = monthly_metric(period_end, revenue_at)
+        cogs_month          = monthly_metric(period_end, cogs_at)
+        opex_month          = monthly_metric(period_end, opex_at)
+        other_income_month  = monthly_metric(period_end, other_income_at)
+        other_expense_month = monthly_metric(period_end, other_expense_at)
+        gross_profit        = revenue_month - cogs_month
+        operating_inc       = gross_profit - opex_month
+        net_other           = other_income_month - other_expense_month
+        # GAAP: NI = Operating Income + Other Income - Other Expense
+        net_income          = operating_inc + net_other
 
     gm_pct = _to_pct(gross_profit, revenue_month)
     op_pct = _to_pct(operating_inc, revenue_month)
@@ -646,16 +677,26 @@ async def compute_overview(
     gp_prior      = monthly_metric(prior_pe, revenue_at) - monthly_metric(prior_pe, cogs_at) if prior_pe else ZERO
     gm_pct_prior  = _to_pct(gp_prior, revenue_prior) if prior_pe else None
 
-    revenue_history = [
-        {
+    # Pre-compute per-period monthly P&L so the history sparkline is consistent
+    # and we don't recompute the same diffs four times per row.
+    def per_period_pl(p: date) -> dict:
+        rev  = monthly_metric(p, revenue_at)
+        cogs = monthly_metric(p, cogs_at)
+        opex = monthly_metric(p, opex_at)
+        oi   = monthly_metric(p, other_income_at)
+        oe   = monthly_metric(p, other_expense_at)
+        gp   = rev - cogs
+        oi_excl_other = gp - opex  # Operating Income
+        ni   = oi_excl_other + (oi - oe)
+        return {
             "period":  p.isoformat(),
             "label":   p.strftime("%b"),
-            "revenue": _to_money(monthly_metric(p, revenue_at)),
-            "gp":      _to_money(monthly_metric(p, revenue_at) - monthly_metric(p, cogs_at)),
-            "ni":      _to_money(monthly_metric(p, revenue_at) - monthly_metric(p, cogs_at) - monthly_metric(p, opex_at)),
+            "revenue": _to_money(rev),
+            "gp":      _to_money(gp),
+            "ni":      _to_money(ni),
         }
-        for p in period_ends
-    ]
+
+    revenue_history = [per_period_pl(p) for p in period_ends]
 
     profitability = {
         "revenue":              _to_money(revenue_month),
@@ -668,6 +709,9 @@ async def compute_overview(
         "operating_expenses":   _to_money(opex_month),
         "operating_income":     _to_money(operating_inc),
         "operating_margin_pct": op_pct,
+        "other_income":         _to_money(other_income_month),
+        "other_expense":        _to_money(other_expense_month),
+        "net_other":            _to_money(net_other),
         "net_income":           _to_money(net_income),
         "net_margin_pct":       nm_pct,
         "history":              revenue_history,
@@ -698,8 +742,20 @@ async def compute_overview(
                 "value":   _money_str(operating_inc),
                 "risk":    _risk_for("net_margin", op_pct) if op_pct is not None else "neutral",
                 "insight": (
-                    f"Operating margin {op_pct:.1f}%."
+                    f"Operating margin {op_pct:.1f}%. Revenue − COGS − Operating expenses."
                     if op_pct is not None else "Cannot compute margin without revenue."
+                ),
+            },
+            {
+                "kpi":     "Other income / (expense), net",
+                "value":   _money_str(net_other),
+                "risk":    "neutral",
+                "insight": (
+                    f"Other income {_money_str(other_income_month)} less other expense "
+                    f"{_money_str(other_expense_month)}. Sits below Operating Income — "
+                    "interest, gains/losses, FX, etc."
+                    if (other_income_month or other_expense_month)
+                    else "No non-operating income or expense recorded this period."
                 ),
             },
             {
@@ -872,7 +928,11 @@ async def compute_overview(
     }
 
     # ── Expense monitoring ─────────────────────────────────────────────────
-    # Per-account monthly expense (Expense + Other Expense + COGS, sign-flipped)
+    # "Where did the money go?" — covers OpEx + COGS + Other Expense
+    # (interest, fees, losses, …). All three are cash outflows the user
+    # wants to monitor in the close review.
+    EXP_BREAKDOWN_TYPES = ALL_EXPENSE_TYPES
+
     def expense_rows(pe: date) -> dict[str, Decimal]:
         """{ account_name → monthly expense magnitude }"""
         prior = None
@@ -882,12 +942,12 @@ async def compute_overview(
         prior_snaps = snaps_by_pe.get(prior, []) if prior else []
         prior_map: dict[str, Decimal] = {}
         for r in prior_snaps:
-            if r.account_type in EXPENSE_TYPES | COGS_TYPES:
+            if r.account_type in EXP_BREAKDOWN_TYPES:
                 prior_map[r.account_name] = _signed_presentation(r.account_type, r.balance)
 
         result: dict[str, Decimal] = {}
         for r in snaps_by_pe.get(pe, []):
-            if r.account_type in EXPENSE_TYPES | COGS_TYPES:
+            if r.account_type in EXP_BREAKDOWN_TYPES:
                 ytd = _signed_presentation(r.account_type, r.balance)
                 prev = prior_map.get(r.account_name, ZERO) if pe.month != 1 else ZERO
                 result[r.account_name] = ytd - prev
@@ -938,10 +998,10 @@ async def compute_overview(
         "biggest_mom_mover": biggest_mover,
         "kpis": [
             {
-                "kpi":     "Total operating expenses (month)",
+                "kpi":     "Total expenses (all categories)",
                 "value":   _money_str(total_expenses_month),
                 "risk":    "neutral",
-                "insight": "Sum of all Expense + Other Expense + COGS for the period.",
+                "insight": "All cash outflows: COGS + Operating expenses + Other expenses (interest, FX losses, etc.) for the period.",
             },
             {
                 "kpi":     "Largest expense category",
