@@ -258,6 +258,13 @@ export function ReconciliationsDashboard() {
       setSyncMsg(`Period ${periodEnd} closed. Books are now locked.`)
       qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
       qc.invalidateQueries({ queryKey: ["closed-periods"] })
+      // Dashboard tiles + side nav badges read from these — invalidate
+      // so the month-end close progress card flips green immediately
+      // instead of staying stale until the next manual refresh.
+      qc.invalidateQueries({ queryKey: ["period-tracker"] })
+      qc.invalidateQueries({ queryKey: ["books-status"] })
+      qc.invalidateQueries({ queryKey: ["tasks"] })
+      qc.invalidateQueries({ queryKey: ["dashboard-audit"] })
     },
     onError: (err: unknown) => {
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }
@@ -271,6 +278,12 @@ export function ReconciliationsDashboard() {
       setSyncMsg(`Period ${periodEnd} reopened.`)
       qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
       qc.invalidateQueries({ queryKey: ["closed-periods"] })
+      // Same set as closeMut so the dashboard tiles re-light when a
+      // previously-closed period is reopened.
+      qc.invalidateQueries({ queryKey: ["period-tracker"] })
+      qc.invalidateQueries({ queryKey: ["books-status"] })
+      qc.invalidateQueries({ queryKey: ["tasks"] })
+      qc.invalidateQueries({ queryKey: ["dashboard-audit"] })
     },
     onError: (err: unknown) => {
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }

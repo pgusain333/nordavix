@@ -697,9 +697,11 @@ export function DashboardHome() {
             )
           })()}
 
-          {/* Open Flux Analysis */}
+          {/* Open Flux Analysis — lands on the month index so users see
+              their existing analyses (or empty state with a clear "Start
+              new" CTA) rather than the per-analysis picker. */}
           <button
-            onClick={() => navigate(`/app/flux/analyses?period=${period}`)}
+            onClick={() => navigate(`/app/flux?period=${period}`)}
             className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
             <div className="px-4 py-3 flex items-center justify-between"

@@ -26,7 +26,6 @@ import {
   RefreshCw,
   Download,
   X,
-  History,
   RotateCcw,
   Trash2,
   Sparkles,
@@ -78,9 +77,6 @@ export function FluxDashboard() {
   const navigate   = useNavigate()
   const qc         = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
-
-  /** Controls the mobile slide-in analyses list overlay */
-  const [showMobileHistory, setShowMobileHistory] = useState(false)
 
   /** Two-step confirm for destructive actions: null | "reset" | "delete" */
   const [pendingAction, setPendingAction] = useState<"reset" | "delete" | null>(null)
@@ -139,10 +135,6 @@ export function FluxDashboard() {
     return () => clearInterval(interval)
   }, [selectedTb?.id, selectedTb?.status, qc])
 
-  // Close mobile history overlay when a TB is selected
-  useEffect(() => {
-    if (tbId) setShowMobileHistory(false)
-  }, [tbId])
 
   // Deep-link: ?connect=qbo auto-redirects to Intuit's OAuth page once.
   // Dashboard / nav links use this so the user lands in the connect flow immediately.
@@ -167,7 +159,6 @@ export function FluxDashboard() {
     // ?new=1 tells the auto-select effect to skip — user wants the picker,
     // not the most-recent analysis.
     navigate("/app/flux?new=1")
-    setShowMobileHistory(false)
   }
 
   function handleTbComplete(tb: TrialBalance) {
@@ -282,169 +273,16 @@ export function FluxDashboard() {
     : showVarianceTable ? `variance-${tbId}`
     : "loading"
 
-  // ── Shared analyses list (used in both desktop sidebar + mobile overlay) ──
-  const AnalysesList = () => (
-    <>
-      <div className="flex items-center justify-between px-3 py-3"
-        style={{ borderBottom: "1px solid var(--border)" }}>
-        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-          Analyses
-        </span>
-        <div className="flex items-center gap-1">
-          {/* Mobile close button */}
-          <button
-            className="lg:hidden flex items-center justify-center h-6 w-6 rounded-md text-theme-muted hover:text-theme transition-colors"
-            onClick={() => setShowMobileHistory(false)}
-          >
-            <X size={15} strokeWidth={1.6} />
-          </button>
-          <Button size="icon-sm" variant="ghost" title="New analysis" onClick={handleNewAnalysis}>
-            <Plus size={16} strokeWidth={1.6} />
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto py-1">
-        {tbsLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Spinner className="h-4 w-4" />
-          </div>
-        ) : tbs.length === 0 ? (
-          <div className="px-3 py-6 text-center">
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>No analyses yet</p>
-            <button className="text-xs mt-1 hover:underline" style={{ color: "var(--green)" }}
-              onClick={handleNewAnalysis}>
-              Start first run
-            </button>
-          </div>
-        ) : (() => {
-          // Group analyses by the current period's month. Most recent month
-          // first; tabs within a month listed by most-recent end date.
-          // When the user navigated here via "Open Flux Analysis" from the
-          // main dashboard with ?period=YYYY-MM-DD, scroll that month to
-          // the top and highlight it so the relevant analyses are obvious.
-          const highlightedMonth = ((): string | null => {
-            const p = searchParams.get("period")
-            return p && /^\d{4}-\d{2}-\d{2}$/.test(p) ? p.slice(0, 7) : null
-          })()
-          const groups: Record<string, typeof tbs> = {}
-          for (const tb of tbs) {
-            const key = (tb.period_current || "").slice(0, 7) || "unknown"
-            if (!groups[key]) groups[key] = []
-            groups[key].push(tb)
-          }
-          const sortedKeys = Object.keys(groups).sort().reverse()
-          // Bring the highlighted month to the top
-          if (highlightedMonth && sortedKeys.includes(highlightedMonth)) {
-            sortedKeys.splice(sortedKeys.indexOf(highlightedMonth), 1)
-            sortedKeys.unshift(highlightedMonth)
-          }
-          return sortedKeys.map((monthKey) => {
-            const list = groups[monthKey]
-            const label = monthKey === "unknown" ? "Undated" :
-              new Date(monthKey + "-01T00:00:00").toLocaleDateString("en-US", { month: "long", year: "numeric" })
-            const isHighlighted = monthKey === highlightedMonth
-            return (
-              <div key={monthKey}>
-                <div className="px-3 py-1.5 sticky top-0 z-10 flex items-center justify-between"
-                  style={{
-                    background: isHighlighted ? "var(--green-subtle)" : "var(--surface-2)",
-                    borderBottom: "1px solid var(--border)",
-                  }}>
-                  <span className="text-[10px] font-bold uppercase tracking-wider"
-                    style={{ color: isHighlighted ? "var(--green)" : "var(--text-muted)" }}>
-                    {label}
-                  </span>
-                  <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                    {list.length}
-                  </span>
-                </div>
-                {list.map((tb) => {
-                  const isActive = tb.id === tbId
-                  return (
-                    <button
-                      key={tb.id}
-                      className="w-full text-left px-3 py-2.5 flex items-start gap-2 transition-colors duration-150"
-                      style={isActive
-                        ? { background: "var(--surface-2)", borderRight: "2px solid var(--green)" }
-                        : {}}
-                      onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
-                      onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "" }}
-                      onClick={() => { navigate(`/app/flux/${tb.id}`); setShowMobileHistory(false) }}
-                    >
-                      <span
-                        className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0"
-                        style={{ background: STATUS_DOT[tb.status] ?? "var(--border-strong)" }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium truncate text-theme">{tb.name}</p>
-                        <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: "var(--text-muted)" }}>
-                          {new Date(tb.period_current).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                        </p>
-                        <span className="text-[9px] font-semibold uppercase tracking-wider"
-                          style={{ color:
-                            tb.status === "complete"  ? "var(--green)" :
-                            tb.status === "error"     ? "#dc2626" :
-                            ["generating","processing"].includes(tb.status) ? "#92400e" :
-                            "var(--text-muted)"
-                          }}>
-                          {STATUS_LABELS[tb.status] ?? tb.status}
-                        </span>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            )
-          })
-        })()}
-      </div>
-    </>
-  )
+  // (Removed: AnalysesList component + desktop sidebar + mobile drawer.
+  // FluxMonthIndex is now the single navigation surface for analyses.)
 
   return (
     <div className="flex h-full overflow-hidden relative">
+      {/* ANALYSES sidebar removed — FluxMonthIndex is the navigation
+          surface now. FluxDashboard is a focused single-analysis view,
+          reached via the month-list page (or a direct deep link). */}
 
-      {/* ── Left panel: desktop sidebar (hidden on mobile) ── */}
-      <div
-        className="hidden lg:flex h-full w-56 shrink-0 flex-col border-r"
-        style={{ background: "var(--surface)", borderColor: "var(--border)" }}
-      >
-        <AnalysesList />
-      </div>
-
-      {/* ── Mobile overlay: analyses list slides in ── */}
-      <AnimatePresence>
-        {showMobileHistory && (
-          <>
-            {/* Backdrop */}
-            <motion.div
-              key="backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
-              className="lg:hidden absolute inset-0 z-20"
-              style={{ background: "rgba(0,0,0,0.4)" }}
-              onClick={() => setShowMobileHistory(false)}
-            />
-            {/* Drawer */}
-            <motion.div
-              key="drawer"
-              initial={{ x: "-100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "-100%" }}
-              transition={{ duration: 0.22, ease: "easeOut" as const }}
-              className="lg:hidden absolute left-0 top-0 bottom-0 z-30 flex flex-col w-72"
-              style={{ background: "var(--surface)", borderRight: "1px solid var(--border)" }}
-            >
-              <AnalysesList />
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* ── Right panel: always visible ── */}
+      {/* ── Single panel: takes full width ── */}
       <div
         className="flex flex-1 flex-col overflow-hidden min-w-0"
         style={{ background: "var(--bg)" }}
@@ -463,16 +301,6 @@ export function FluxDashboard() {
             onClick={() => navigate("/app/flux")}
           >
             <ArrowLeft size={16} strokeWidth={1.8} />
-          </button>
-
-          {/* Mobile: history toggle button */}
-          <button
-            className="lg:hidden flex items-center justify-center h-7 w-7 rounded-md mr-1 transition-colors text-theme-2"
-            style={{ background: "var(--surface-2)" }}
-            title="View analyses"
-            onClick={() => setShowMobileHistory(true)}
-          >
-            <History size={15} strokeWidth={1.6} />
           </button>
 
           <div className="flex-1 min-w-0">
