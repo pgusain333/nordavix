@@ -19,6 +19,8 @@ import { FinancialsPage } from "@/modules/financials/pages/FinancialsPage"
 import { BooksSetupWizard } from "@/modules/onboarding/pages/BooksSetupWizard"
 import { TeamPage } from "@/modules/workspace/pages/TeamPage"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
+import { CreateCompanyPage } from "@/modules/onboarding/pages/CreateCompanyPage"
+import { SettingsPage } from "@/modules/settings/pages/SettingsPage"
 import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
 import { TopProgressBar } from "@/core/ui/TopProgressBar"
 
@@ -49,6 +51,7 @@ function AppRoutes() {
         <Routes location={location}>
           <Route index element={<DashboardHome />} />
           <Route path="setup/books"  element={<BooksSetupWizard />} />
+          <Route path="settings"     element={<SettingsPage />} />
           <Route path="team"         element={<TeamPage />} />
           <Route path="connections"  element={<ConnectionsPage />} />
           <Route path="tasks"        element={<TasksPage />} />
@@ -92,6 +95,18 @@ export default function App() {
           <>
             <SignedOut><RedirectToSignIn /></SignedOut>
             <SignedIn><CompaniesPanel /></SignedIn>
+          </>
+        }
+      />
+
+      {/* Create-company page — standalone, focused flow. Mounted outside
+          the app shell so the form gets the whole viewport. */}
+      <Route
+        path="/app/companies/new"
+        element={
+          <>
+            <SignedOut><RedirectToSignIn /></SignedOut>
+            <SignedIn><CreateCompanyPage /></SignedIn>
           </>
         }
       />

@@ -8,7 +8,7 @@ import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
-  MessageSquare, type LucideIcon,
+  MessageSquare, Settings, type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { cn } from "@/core/ui/utils"
@@ -188,10 +188,28 @@ export function LeftNav({ onClose }: Props) {
         })}
       </nav>
 
-      {/* Feedback — sits above the Theme/User section so it's easy to
-          spot but doesn't fight the nav items for attention. Subtle
-          ghost button by default, lights up on hover. */}
-      <div className="px-3 pt-2 pb-1" style={{ borderTop: "1px solid var(--nav-border)" }}>
+      {/* Settings + Feedback — utility actions above the Theme/User
+          section. Settings goes first since it's a more frequent
+          destination; Feedback stays below as a secondary action. */}
+      <div className="px-3 pt-2 pb-1 space-y-1.5" style={{ borderTop: "1px solid var(--nav-border)" }}>
+        <NavLink
+          to="/app/settings"
+          onClick={onClose}
+          className={({ isActive }) =>
+            cn(
+              "w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              isActive ? "" : "hover:opacity-90",
+            )
+          }
+          style={({ isActive }) => ({
+            color: isActive ? "var(--green)" : "var(--nav-text)",
+            background: isActive ? "var(--green-subtle)" : "transparent",
+          })}
+          title="Edit company profile, address, tax info, accounting defaults"
+        >
+          <Settings size={16} strokeWidth={1.8} className="shrink-0" />
+          <span className="flex-1 text-left">Settings</span>
+        </NavLink>
         <button
           type="button"
           onClick={() => setFeedbackOpen(true)}
