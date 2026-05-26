@@ -316,20 +316,20 @@ async def _process_account(
         ))
         return
 
-    # Period transactions are pulled ONLY for AI analysis — we do NOT
-    # auto-tick them onto the row. The human preparer reviews the
-    # variance, looks at the period activity, picks which items belong,
-    # then saves via the inline form. AI's role is to set up the view
-    # (opening rolled forward) and to write commentary that helps the
-    # user understand the variance and identify likely reconciling
-    # items — NOT to do the picking itself.
-    candidate_items: list[dict[str, Any]] = []
+    # Agentic Mode is opt-in (user explicitly clicked the button), so we
+    # DO auto-tick every period transaction and try to tie out the row.
+    # This is the "let AI do the bookkeeping for me" action. Users who
+    # want manual control just don't click Agentic Mode — the normal
+    # dashboard workflow shows opening + variance and lets the user pick
+    # items via the inline form. If the user later changes their mind
+    # about AI's work, they can use the Reset AI button to clear it.
+    items: list[dict[str, Any]] = []
     signed_period_sum = Decimal("0")
     for r in gl_rows:
         amount = r["amount"]
         signed = flip * amount
         signed_period_sum += signed
-        candidate_items.append({
+        items.append({
             "txn_id":     r.get("qbo_txn_id") or "",
             "txn_type":   r.get("txn_type") or "",
             "txn_number": r.get("txn_number") or "",
@@ -338,46 +338,77 @@ async def _process_account(
             "memo":       r.get("memo") or "",
         })
 
-    # Variance = GL vs the rolled-forward opening, NO items applied.
-    # This is what the dashboard shows the user.
-    variance = gl_balance - opening
-    tied_out_trivially = abs(variance) < _TIE_TOLERANCE
+    computed = opening + signed_period_sum
+    gap_before = gl_balance - opening   # variance with no items applied
+    gap_after = gl_balance - computed   # variance after ticking all items
+    tied_out = abs(gap_after) < _TIE_TOLERANCE
 
-    if tied_out_trivially:
-        # ── Trivial tie: opening already equals GL ──────────────────────
-        # No period activity needed for this account to reconcile.
-        # Save subledger = opening, no items, mark reviewed. Common
-        # case for inactive accounts that just roll forward unchanged.
+    if tied_out:
+        # ── Auto-tie succeeded: save items + mark reviewed + commentary ─
+        # Build the commentary explaining what AI did (skipped for the
+        # trivial-tie zero-items case — no value in narrating "nothing
+        # happened, opening already equals GL").
+        if items:
+            logger.info(
+                "Agentic: building commentary for %s (%s) — %d item(s)",
+                qid, name, len(items),
+            )
+            try:
+                commentary = await build_ai_commentary(
+                    db=db, conn=conn,
+                    qid=qid, period_end=period_end,
+                    account_name=name, account_number=number, account_type=snap.account_type,
+                    is_credit_natural=is_credit_natural,
+                    opening=opening, gl_balance=gl_balance, computed=computed,
+                    items=items, prior=prior,
+                    opening_source_label=opening_source,
+                )
+            except Exception:
+                logger.exception(
+                    "Agentic: commentary BUILD FAILED for %s (%s) — preparing without commentary",
+                    qid, name,
+                )
+                commentary = None
+        else:
+            commentary = None
+
         await _save_prepared(
             db=db, tenant_id=tenant_id, user=user,
             qid=qid, period_end=period_end, review=review,
-            subledger_total=opening,
-            items=[],          # don't tick anything — there's nothing to tick
+            subledger_total=computed,
+            items=items,
             source_note=(
-                f"AI-prepared: opening {_money(opening)} (rolled forward) = "
-                f"GL {_money(gl_balance)}. No reconciling items needed."
+                f"AI-prepared: opening {_money(opening)} + "
+                f"{len(items)} period transaction{'' if len(items) == 1 else 's'} "
+                f"(net {_money(signed_period_sum)}) = subledger {_money(computed)} = GL {_money(gl_balance)}."
             ),
-            commentary=None,   # nothing to comment on
+            commentary=commentary,
         )
         result.prepared += 1
         result.accounts.append(AccountResult(
             qbo_account_id=qid, account_name=name, account_number=number,
             action="prepared",
-            reason="Opening rolled forward equals GL — trivial tie, no items needed.",
-            items_added=0,
-            gap_before=str(variance.quantize(Decimal('0.01'))),
-            gap_after=str(variance.quantize(Decimal('0.01'))),
+            reason=(
+                f"Tied out by including all {len(items)} transaction"
+                f"{'' if len(items) == 1 else 's'} posted this period."
+                if items else
+                "Opening rolled forward equals GL — trivial tie, no items needed."
+            ),
+            items_added=len(items),
+            gap_before=str(gap_before.quantize(Decimal('0.01'))),
+            gap_after=str(gap_after.quantize(Decimal('0.01'))),
         ))
         return
 
-    # ── Has variance: AI writes analytical commentary, doesn't tick ─────
-    # DO NOT save subledger_total or any reconciling items. The user
-    # opens the row, sees the rolled-forward opening + variance, reads
-    # AI's suggestions, and manually picks the items that explain the
-    # gap. AI's value is identification + analysis, not action.
+    # ── Couldn't tie out: AI analyzes the residual variance ──────────────
+    # Ticking all period items still doesn't match GL → the gap likely
+    # lives outside the current period (back-dated entries, prior-period
+    # adjustments, items not yet posted). Don't save items or subledger
+    # — let user investigate. Write commentary identifying candidates
+    # and explaining what to look for.
     logger.info(
-        "Agentic: analyzing variance for %s (%s) — opening=%s GL=%s variance=%s, %d candidate(s)",
-        qid, name, opening, gl_balance, variance, len(candidate_items),
+        "Agentic: analyzing residual variance for %s (%s) — gap_after=%s, %d candidate(s)",
+        qid, name, gap_after, len(items),
     )
     try:
         commentary = await build_variance_commentary(
@@ -385,20 +416,15 @@ async def _process_account(
             qid=qid, period_end=period_end,
             account_name=name, account_number=number, account_type=snap.account_type,
             is_credit_natural=is_credit_natural,
-            opening=opening, gl_balance=gl_balance, variance=variance,
-            candidate_items=candidate_items,
+            opening=opening, gl_balance=gl_balance, variance=gap_before,
+            candidate_items=items,
             period_activity_sum=signed_period_sum,
             prior=prior,
             opening_source_label=opening_source,
         )
-        logger.info(
-            "Agentic: variance commentary built for %s (%s) — confidence=%s",
-            qid, name,
-            commentary.get("confidence") if commentary else "(none)",
-        )
     except Exception:
         logger.exception(
-            "Agentic: variance commentary failed for %s (%s) — leaving row untouched",
+            "Agentic: variance commentary failed for %s (%s)",
             qid, name,
         )
         commentary = None
@@ -407,7 +433,7 @@ async def _process_account(
         db=db, tenant_id=tenant_id,
         qid=qid, period_end=period_end, review=review,
         commentary=commentary,
-        opening=opening, variance=variance, candidate_count=len(candidate_items),
+        opening=opening, variance=gap_before, candidate_count=len(items),
         prior_period_end=prior.period_end if prior and prior.subledger_total is not None else None,
     )
     result.analyzed += 1
@@ -415,9 +441,8 @@ async def _process_account(
         qbo_account_id=qid, account_name=name, account_number=number,
         action="analyzed",
         reason=(
-            f"Variance of {_money(variance)} — opening {_money(opening)} vs GL {_money(gl_balance)}. "
-            f"AI analyzed {len(candidate_items)} candidate transaction(s) — open the row "
-            "and tick the ones that apply to tie out."
+            f"Couldn't auto-tie — ticking all {len(items)} item(s) leaves "
+            f"residual gap of {_money(gap_after)}. Open the row to review."
         ),
         items_added=0,
         gap_before=str(gap_before.quantize(Decimal('0.01'))),

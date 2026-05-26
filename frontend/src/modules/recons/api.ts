@@ -419,6 +419,27 @@ async function runAgenticPrep(periodEnd: string): Promise<AgenticResult> {
   return data
 }
 
+export interface AgenticResetResult {
+  reset:      number
+  period_end: string
+  message:    string
+}
+
+/**
+ * Reset all AI-prepared work for the period. Clears subledger_total,
+ * reconciling items, AI commentary, and resets status back to pending
+ * on every row AI touched. Lets the user switch from AI-prepared back
+ * to manual reconciliation without per-row editing.
+ */
+async function resetAgenticPrep(periodEnd: string): Promise<AgenticResetResult> {
+  const { data } = await apiClient.post<AgenticResetResult>(
+    "/api/reconciliations/agentic/reset",
+    null,
+    { params: { period_end: periodEnd }, timeout: 60_000 },
+  )
+  return data
+}
+
 
 /**
  * Explicit "Sync from QuickBooks" — fetches fresh TrialBalance, AR/AP
@@ -810,6 +831,7 @@ export const reconsApi = {
   getOverview,
   syncPeriod,
   runAgenticPrep,
+  resetAgenticPrep,
   downloadAccountPdf,
   getAccountSubledger,
   getAccountVariance,

@@ -45,6 +45,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ChevronDown,
+  RotateCcw,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -281,6 +282,46 @@ export function ReconciliationsDashboard() {
     setAgenticResult(null)
     await runAgenticMut.mutateAsync().catch(() => { /* error handled in onError */ })
   }
+
+  // Reset AI agentic work — clears subledger / items / commentary on
+  // every account AI touched, sets them back to pending. Used when the
+  // user wants to switch from AI-prepared back to manual reconciliation.
+  const resetAgenticMut = useMutation({
+    mutationFn: () => reconsApi.resetAgenticPrep(periodEnd),
+    onSuccess: (data) => {
+      setAgenticResult(null)
+      setSyncMsg(data.message)
+      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+      qc.invalidateQueries({ queryKey: ["period-tracker"] })
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Reset failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
+    },
+  })
+
+  async function handleAgenticReset() {
+    if (resetAgenticMut.isPending) return
+    const ok = confirm(
+      `Reset AI's work on every account in ${periodEnd}?\n\n` +
+      "Clears the AI-prepared subledger, reconciling items, AI commentary, " +
+      "and resets status back to pending on every row AI touched.\n\n" +
+      "Doesn't affect human-prepared rows. After reset, each row goes back " +
+      "to showing opening (rolled forward from prior period) + variance, " +
+      "and you can reconcile manually via the inline form.\n\n" +
+      "Continue?",
+    )
+    if (!ok) return
+    await resetAgenticMut.mutateAsync().catch(() => { /* error handled in onError */ })
+  }
+
+  // True when any account on the dashboard has an ai_commentary field —
+  // i.e., AI has done work on this period. Drives the visibility of
+  // the Reset AI button.
+  const hasAgenticWork = useMemo(
+    () => (overview?.accounts ?? []).some((a) => a.ai_commentary),
+    [overview],
+  )
 
 
   // POST /sync mutation — pulls fresh data from QBO and persists snapshots.
@@ -645,6 +686,23 @@ export function ReconciliationsDashboard() {
               disabled={!qbo || !overview?.synced || isClosed || syncMut.isPending}
               onClick={handleAgenticRun}
             />
+            {/* Reset AI — only shown when AI has actually done work on
+                this period (any row with ai_commentary). Lets the user
+                switch from AI-prepared back to manual reconciliation
+                without per-row editing. */}
+            {hasAgenticWork && !isClosed && (
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<RotateCcw size={14} strokeWidth={1.8} className={resetAgenticMut.isPending ? "animate-spin" : undefined} />}
+                onClick={handleAgenticReset}
+                disabled={resetAgenticMut.isPending}
+                title="Clear all AI-prepared subledger values, items, and commentary for this period — switches back to manual reconciliation"
+                style={{ borderColor: "#b45309", color: "#b45309" }}
+              >
+                <span className="hidden sm:inline">{resetAgenticMut.isPending ? "Resetting…" : "Reset AI"}</span>
+              </Button>
+            )}
             {isAdmin && (
               isClosed ? (
                 <Button

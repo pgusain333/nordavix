@@ -173,6 +173,87 @@ async def get_overview(
     return overview
 
 
+@router.post("/agentic/reset")
+async def reset_agentic_endpoint(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end date YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Reset all Agentic Mode work for the period. Clears the AI-prepared
+    subledger total, reconciling items, AI commentary, and resets
+    status back to 'pending' on every row where AI commentary exists
+    (which is how we detect rows AI touched).
+
+    Doesn't touch human-prepared rows. Doesn't touch closed periods
+    (gated by _block_if_closed). Audit-logged with the per-account count.
+    """
+    from datetime import date as _date
+
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    await _block_if_closed(db, pe)
+
+    # Only touch rows that have AI commentary — that's the cleanest
+    # signal that AI did the work. Skip rows where ai_commentary IS
+    # NULL (those were touched by a human via the inline form).
+    rows = list((await db.execute(
+        select(AccountReviewStatus).where(
+            AccountReviewStatus.period_end == pe,
+            AccountReviewStatus.ai_commentary.is_not(None),
+        )
+    )).scalars().all())
+
+    if not rows:
+        return {"reset": 0, "period_end": period_end,
+                "message": "No AI-prepared rows found for this period."}
+
+    now = datetime.now(UTC)
+    for r in rows:
+        # Clear AI-set state. Leave notes alone (human might have added
+        # text in there; AI commentary lives on the separate JSONB field).
+        r.subledger_total = None
+        r.subledger_source = None
+        r.subledger_entered_by = None
+        r.subledger_entered_at = None
+        r.reconciling_items = []
+        r.ai_commentary = None
+        r.status = "pending"
+        r.reviewed_by = None
+        r.reviewed_at = None
+        r.prepared_by = None
+        r.prepared_at = None
+        r.approved_by = None
+        r.approved_at = None
+        r.updated_at = now
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.agentic.reset",
+        entity_type="account_review_status", entity_id=None,
+        metadata={
+            "summary": f"Reset AI agentic work on {len(rows)} account(s) for {period_end}",
+            "period_end": period_end,
+            "count": len(rows),
+        },
+    )
+    await db.commit()
+    logger.info("Agentic reset complete: %d row(s) cleared for %s", len(rows), pe)
+    return {
+        "reset": len(rows),
+        "period_end": period_end,
+        "message": (
+            f"Cleared AI work on {len(rows)} account(s). "
+            "Each row is back to pending with opening rolled forward from prior period — "
+            "you can now reconcile manually via the inline form."
+        ),
+    }
+
+
 @router.post("/agentic/run")
 async def run_agentic_endpoint(
     tenant_id: CurrentTenantId,
