@@ -1388,12 +1388,12 @@ export function ReconciliationsDashboard() {
                                     Variance
                                   </button>
                                 )}
-                                {/* Approved-row "Download PDF" — shows up the moment
-                                    the reviewer approves an account so the audit
-                                    file is one click away. The button is hidden for
-                                    Open/Prepared/Flagged accounts (we don't want
-                                    to encourage exporting unfinished work). */}
-                                {status === "approved" && (
+                                {/* "Download PDF" — available once the row is
+                                    Prepared (reviewed) or Approved so the user
+                                    can pull a working-paper file for either
+                                    state. Prepared exports carry a DRAFT
+                                    watermark; approved exports are clean. */}
+                                {(status === "approved" || status === "reviewed") && (
                                   <DownloadReconButton
                                     qboAccountId={a.qbo_id}
                                     periodEnd={periodEnd}
@@ -2319,10 +2319,10 @@ function SubledgerBuildup({
       <div className="px-4 py-2 flex items-center justify-between"
         style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
         <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-          Subledger build-up
+          Monthly activity
         </span>
         <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-          Opening ± reconciling items = closing
+          Opening + activity = closing
         </span>
       </div>
       <div className="px-4 py-3 space-y-1.5 text-sm">

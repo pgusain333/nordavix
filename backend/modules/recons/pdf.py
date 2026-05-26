@@ -43,9 +43,11 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import (
     BaseDocTemplate,
+    Flowable,
     Frame,
     PageTemplate,
     Paragraph,
+    Spacer,
     Table,
     TableStyle,
 )
@@ -68,25 +70,36 @@ GREY_BG    = colors.Color(0.95, 0.95, 0.95)
 def _styles() -> dict[str, ParagraphStyle]:
     base = getSampleStyleSheet()
     return {
-        "masthead_company": ParagraphStyle(
-            "masthead_company", parent=base["Title"], fontName="Helvetica-Bold",
-            fontSize=18, leading=22, alignment=1, textColor=NAVY, spaceAfter=2,
+        # Letterhead block — bigger, left-aligned for an authoritative
+        # working-paper feel (previous version was centered which read
+        # more like a flyer).
+        "letterhead_company": ParagraphStyle(
+            "letterhead_company", parent=base["Title"], fontName="Helvetica-Bold",
+            fontSize=22, leading=26, textColor=NAVY, spaceAfter=2,
         ),
-        "masthead_title": ParagraphStyle(
-            "masthead_title", parent=base["BodyText"], fontName="Helvetica",
-            fontSize=13, leading=16, alignment=1, textColor=GREY_DARK, spaceAfter=2,
+        "letterhead_kicker": ParagraphStyle(
+            "letterhead_kicker", parent=base["BodyText"], fontName="Helvetica-Bold",
+            fontSize=8, leading=10, textColor=GREY_MID, spaceAfter=6,
+            # uppercase letter-spaced label that sits above the title
         ),
-        "masthead_subtitle": ParagraphStyle(
-            "masthead_subtitle", parent=base["BodyText"], fontName="Helvetica-Oblique",
-            fontSize=11, leading=13, alignment=1, textColor=GREY_MID, spaceAfter=18,
+        "letterhead_title": ParagraphStyle(
+            "letterhead_title", parent=base["BodyText"], fontName="Helvetica",
+            fontSize=14, leading=17, textColor=GREY_DARK, spaceAfter=2,
+        ),
+        "letterhead_meta": ParagraphStyle(
+            "letterhead_meta", parent=base["BodyText"], fontName="Helvetica",
+            fontSize=10, leading=13, textColor=GREY_MID,
         ),
         "section": ParagraphStyle(
             "section", parent=base["BodyText"], fontName="Helvetica-Bold",
-            fontSize=10, leading=12, textColor=NAVY, spaceBefore=14, spaceAfter=6,
+            fontSize=9, leading=11, textColor=NAVY,
+            spaceBefore=16, spaceAfter=4,
+            # tighter spacing, navy color, slightly smaller — reads as a
+            # section divider, not a title
         ),
         "note_body": ParagraphStyle(
             "note_body", parent=base["BodyText"], fontName="Helvetica",
-            fontSize=10, leading=14, textColor=GREY_DARK, spaceBefore=4,
+            fontSize=9.5, leading=13, textColor=GREY_DARK, spaceBefore=4,
         ),
         "note_oblique": ParagraphStyle(
             "note_oblique", parent=base["BodyText"], fontName="Helvetica-Oblique",
@@ -124,6 +137,33 @@ def _fmt_date(d: date | str | None) -> str:
         except Exception:
             return d
     return d.strftime("%b %d, %Y")
+
+
+# ── Small helper flowables ─────────────────────────────────────────────────
+
+
+class _Hairline(Flowable):
+    """A horizontal rule that spans the full body frame width. Used to
+    separate the letterhead from the body content."""
+    def __init__(self, color: colors.Color, width_pts: float = 1.0):
+        super().__init__()
+        self.line_color = color
+        self.line_width = width_pts
+        self.width: float = 0
+        self.height: float = self.line_width
+
+    def wrap(self, avail_w: float, avail_h: float) -> tuple[float, float]:
+        self.width = avail_w
+        return (self.width, self.height)
+
+    def draw(self) -> None:
+        self.canv.setStrokeColor(self.line_color)
+        self.canv.setLineWidth(self.line_width)
+        self.canv.line(0, 0, self.width, 0)
+
+
+def _hairline(color: colors.Color, width_pts: float = 1.0) -> _Hairline:
+    return _Hairline(color, width_pts)
 
 
 # ── Page template ──────────────────────────────────────────────────────────
@@ -181,19 +221,19 @@ def _make_doc(
 # ── Account Information (tabular) ──────────────────────────────────────────
 
 def _account_info_table(data: dict, account_label: str) -> Table:
-    """Two-column key/value table with everything an auditor wants up top —
-    account identifiers, period, status, and the prepared/approved actors.
-    Single tabular block (per user request — was a kv_table + a separate
-    approval_trail before)."""
+    """Account Information block — laid out as a 2x6 grid: label / value
+    in two columns side-by-side for a tighter, more report-like read.
+    Replaces the previous tall single-column key/value layout that
+    chewed up vertical space."""
     pe = data["period_end"]
     if not isinstance(pe, date):
         pe = date.fromisoformat(str(pe))
 
     status_raw = data.get("status", "pending")
     status_display = {
-        "approved": "Reconciled and Approved",
-        "reviewed": "Prepared — pending review",
-        "flagged":  "Flagged for follow-up",
+        "approved": "Reconciled & Approved",
+        "reviewed": "Prepared — Pending Review",
+        "flagged":  "Flagged for Follow-up",
         "pending":  "Open",
     }.get(status_raw, status_raw.replace("_", " ").title())
 
@@ -201,34 +241,55 @@ def _account_info_table(data: dict, account_label: str) -> Table:
         if not name:
             return "—"
         if when:
-            return f"{name} · {_fmt_date(when)}"
+            return f"{name}\n{_fmt_date(when)}"
         return name
 
+    acct_num = data.get("account_number") or "—"
+    acct_name = data.get("account_name") or "—"
+
+    # 4-column layout: label | value | label | value
+    # Each logical row becomes one PDF row with two key/value pairs.
     rows: list[list[Any]] = [
-        ["Account",       account_label],
-        ["Account Type",  data.get("account_type") or "—"],
-        ["Period End",    _fmt_date(pe)],
-        ["Status",        status_display],
-        ["Prepared By",   actor_line(data.get("prepared_by_name"), data.get("prepared_at"))],
-        ["Approved By",   actor_line(data.get("approved_by_name"), data.get("approved_at"))],
+        ["Account No.",   acct_num,                     "Status",      status_display],
+        ["Account Name",  acct_name,                    "Period End",  _fmt_date(pe)],
+        ["Account Type",  data.get("account_type") or "—", "Currency",  "USD"],
+        ["Prepared By",   actor_line(data.get("prepared_by_name"), data.get("prepared_at")),
+         "Approved By",   actor_line(data.get("approved_by_name"), data.get("approved_at"))],
     ]
-    tbl = Table(rows, colWidths=[1.6 * inch, 5.5 * inch])
-    tbl.setStyle(TableStyle([
-        ("FONT",          (0, 0), (0, -1), "Helvetica-Bold", 9),
-        ("FONT",          (1, 0), (1, -1), "Helvetica", 10),
+    tbl = Table(
+        rows,
+        colWidths=[1.05 * inch, 2.45 * inch, 1.05 * inch, 2.55 * inch],
+    )
+    style: list[tuple] = [
+        # Labels (cols 0 + 2): small uppercase grey
+        ("FONT",          (0, 0), (0, -1), "Helvetica-Bold", 7.5),
+        ("FONT",          (2, 0), (2, -1), "Helvetica-Bold", 7.5),
         ("TEXTCOLOR",     (0, 0), (0, -1), GREY_MID),
+        ("TEXTCOLOR",     (2, 0), (2, -1), GREY_MID),
+        # Values (cols 1 + 3): medium dark for readability
+        ("FONT",          (1, 0), (1, -1), "Helvetica", 9.5),
+        ("FONT",          (3, 0), (3, -1), "Helvetica", 9.5),
         ("TEXTCOLOR",     (1, 0), (1, -1), GREY_DARK),
+        ("TEXTCOLOR",     (3, 0), (3, -1), GREY_DARK),
+        # Layout
         ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING",    (0, 0), (-1, -1), 7),
         ("LEFTPADDING",   (0, 0), (-1, -1), 8),
         ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
-        ("BACKGROUND",    (0, 0), (-1, -1), colors.Color(0.98, 0.98, 0.98)),
-        ("LINEABOVE",     (0, 0), (-1, 0), 0.75, NAVY),
+        # Light dividing rule between rows for a "form" feel
+        ("LINEBELOW",     (0, 0), (-1, -2), 0.25, GREY_LIGHT),
+        # Navy top + bottom rule frames the block as a single section
+        ("LINEABOVE",     (0, 0), (-1, 0), 1.0, NAVY),
         ("LINEBELOW",     (0, -1), (-1, -1), 0.75, NAVY),
-        ("ROWBACKGROUNDS",(0, 0), (-1, -1),
-            [colors.Color(0.98, 0.98, 0.98), colors.white]),
-    ]))
+        # Subtle alternating column tint to separate the two key/value pairs
+        ("BACKGROUND",    (0, 0), (1, -1), colors.Color(0.985, 0.987, 0.99)),
+        ("BACKGROUND",    (2, 0), (3, -1), colors.Color(0.97, 0.975, 0.985)),
+    ]
+    # Account Name in row 1 is the most-identifying field — bump it.
+    style.append(("FONT", (1, 1), (1, 1), "Helvetica-Bold", 10))
+    style.append(("TEXTCOLOR", (1, 1), (1, 1), NAVY))
+    tbl.setStyle(TableStyle(style))
     return tbl
 
 
@@ -259,12 +320,16 @@ def _reconciliation_table(data: dict) -> Table:
     header = ["Date", "Type", "Ref #", "Memo / Description", "Amount"]
     rows: list[list[Any]] = [header]
 
-    # 1. Opening — Subledger Balance (RF)
+    # 1. Opening — clean label; source goes in a smaller note line in
+    # the memo column instead of being concatenated onto the label.
     opening_subnote = data.get("opening_source") or ""
-    opening_memo = "Subledger Balance (Rolled Forward)"
-    if opening_subnote:
-        opening_memo = f"Subledger Balance (RF) — {opening_subnote}"
-    rows.append(["", "", "", opening_memo, _fmt_money(opening)])
+    rows.append([
+        "", "", "",
+        f"Opening Subledger Balance" + (
+            f"  ({opening_subnote})" if opening_subnote and len(opening_subnote) < 60 else ""
+        ),
+        _fmt_money(opening),
+    ])
     opening_row_idx = len(rows) - 1
 
     # 2. Reconciling items
@@ -307,59 +372,72 @@ def _reconciliation_table(data: dict) -> Table:
 
     tbl = Table(
         rows,
-        colWidths=[0.85 * inch, 1.25 * inch, 0.85 * inch, 2.95 * inch, 1.2 * inch],
+        # Slightly different proportions: more room for memo, less for type
+        colWidths=[0.85 * inch, 1.15 * inch, 0.75 * inch, 3.15 * inch, 1.20 * inch],
         repeatRows=1,
     )
 
     style: list[tuple] = [
-        # Header
-        ("FONT",          (0, 0), (-1, 0), "Helvetica-Bold", 9),
-        ("TEXTCOLOR",     (0, 0), (-1, 0), NAVY),
+        # Header — navy band on top
+        ("FONT",          (0, 0), (-1, 0), "Helvetica-Bold", 8.5),
+        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+        ("BACKGROUND",    (0, 0), (-1, 0), NAVY),
         ("ALIGN",         (-1, 0), (-1, 0), "RIGHT"),
-        ("LINEBELOW",     (0, 0), (-1, 0), 0.75, NAVY),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-        ("TOPPADDING",    (0, 0), (-1, 0), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
+        ("TOPPADDING",    (0, 0), (-1, 0), 7),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
         # Body defaults
         ("FONT",          (0, 1), (-1, -1), "Helvetica", 9),
         ("TEXTCOLOR",     (0, 1), (-1, -1), GREY_DARK),
         ("ALIGN",         (-1, 1), (-1, -1), "RIGHT"),
         ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
-        ("TOPPADDING",    (0, 1), (-1, -1), 4),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
-        # Opening (Subledger Balance RF) — bold, light grey bg
-        ("FONT",          (0, opening_row_idx), (-1, opening_row_idx), "Helvetica-Bold", 9),
-        ("BACKGROUND",    (0, opening_row_idx), (-1, opening_row_idx), GREY_BG),
-        ("TOPPADDING",    (0, opening_row_idx), (-1, opening_row_idx), 6),
-        ("BOTTOMPADDING", (0, opening_row_idx), (-1, opening_row_idx), 6),
-        # Closing row — bold + rule above
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
+        ("TOPPADDING",    (0, 1), (-1, -1), 5),
+        # (Zebra striping handled per-row below — ROWBACKGROUNDS only
+        # accepts a range across the whole table so we apply BACKGROUND
+        # cell-by-cell for the items section.)
+        # Opening (Subledger Balance Opening) — bold + tinted accent bg
+        ("FONT",          (0, opening_row_idx), (-1, opening_row_idx), "Helvetica-Bold", 9.5),
+        ("BACKGROUND",    (0, opening_row_idx), (-1, opening_row_idx),
+            colors.Color(0.95, 0.953, 0.965)),
+        ("TOPPADDING",    (0, opening_row_idx), (-1, opening_row_idx), 8),
+        ("BOTTOMPADDING", (0, opening_row_idx), (-1, opening_row_idx), 8),
+        ("LINEBELOW",     (0, opening_row_idx), (-1, opening_row_idx), 0.5, GREY_LIGHT),
+        # Closing row — bold + heavy rule above
         ("FONT",          (0, closing_row_idx), (-1, closing_row_idx), "Helvetica-Bold", 10),
-        ("LINEABOVE",     (0, closing_row_idx), (-1, closing_row_idx), 0.75, GREY_DARK),
-        ("TOPPADDING",    (0, closing_row_idx), (-1, closing_row_idx), 6),
-        ("BOTTOMPADDING", (0, closing_row_idx), (-1, closing_row_idx), 4),
+        ("LINEABOVE",     (0, closing_row_idx), (-1, closing_row_idx), 1.0, GREY_DARK),
+        ("TOPPADDING",    (0, closing_row_idx), (-1, closing_row_idx), 7),
+        ("BOTTOMPADDING", (0, closing_row_idx), (-1, closing_row_idx), 5),
+        ("BACKGROUND",    (0, closing_row_idx), (-1, closing_row_idx),
+            colors.Color(0.97, 0.972, 0.98)),
         # GL Balance row — bold (target value to match)
         ("FONT",          (0, gl_row_idx), (-1, gl_row_idx), "Helvetica-Bold", 10),
-        ("TOPPADDING",    (0, gl_row_idx), (-1, gl_row_idx), 4),
-        # Variance row — heavy, navy, double rule, tinted by status
+        ("TOPPADDING",    (0, gl_row_idx), (-1, gl_row_idx), 5),
+        ("BOTTOMPADDING", (0, gl_row_idx), (-1, gl_row_idx), 5),
+        ("BACKGROUND",    (0, gl_row_idx), (-1, gl_row_idx),
+            colors.Color(0.97, 0.972, 0.98)),
+        # Variance row — heavy, double rule, tinted by tie status
         ("FONT",          (0, var_row_idx), (-1, var_row_idx), "Helvetica-Bold", 11),
         ("TEXTCOLOR",     (0, var_row_idx), (-1, var_row_idx), GREEN if tied_out else RED),
-        ("LINEABOVE",     (0, var_row_idx), (-1, var_row_idx), 0.5, NAVY),
-        ("LINEBELOW",     (0, var_row_idx), (-1, var_row_idx), 1.5, NAVY),
+        ("LINEABOVE",     (0, var_row_idx), (-1, var_row_idx), 0.75, NAVY),
+        ("LINEBELOW",     (0, var_row_idx), (-1, var_row_idx), 2.0, NAVY),
         ("BACKGROUND",    (0, var_row_idx), (-1, var_row_idx),
             GREEN_TINT if tied_out else colors.Color(0.725, 0.114, 0.114, alpha=0.08)),
-        ("TOPPADDING",    (0, var_row_idx), (-1, var_row_idx), 8),
-        ("BOTTOMPADDING", (0, var_row_idx), (-1, var_row_idx), 8),
+        ("TOPPADDING",    (0, var_row_idx), (-1, var_row_idx), 10),
+        ("BOTTOMPADDING", (0, var_row_idx), (-1, var_row_idx), 10),
     ]
-    # Red negative amounts on reconciling item rows only.
-    for idx in range(items_start_idx, items_end_idx + 1):
+    # Per-item-row formatting: zebra stripe + red for negative amounts.
+    for n, idx in enumerate(range(items_start_idx, items_end_idx + 1)):
+        # Light tint on every other items row for readability.
+        if n % 2 == 1:
+            style.append((
+                "BACKGROUND", (0, idx), (-1, idx),
+                colors.Color(0.975, 0.978, 0.985),
+            ))
         cell = rows[idx][-1]
         if cell and cell.startswith("$("):
             style.append(("TEXTCOLOR", (-1, idx), (-1, idx), RED))
-    # Light separator under the last reconciling item so the eye sees
-    # "items end here, totals begin".
-    if items_end_idx >= items_start_idx:
-        style.append(("LINEBELOW", (0, items_end_idx), (-1, items_end_idx), 0.25, GREY_LIGHT))
     tbl.setStyle(TableStyle(style))
     return tbl
 
@@ -516,44 +594,80 @@ def build_account_pdf(buffer: BinaryIO, *, data: dict) -> None:
     )
     story: list[Any] = []
 
-    # Masthead — company / "Account Reconciliation" / account · period
-    story.append(Paragraph(company, styles["masthead_company"]))
-    story.append(Paragraph("Account Reconciliation", styles["masthead_title"]))
-    story.append(Paragraph(
-        f"{account_label} · {_fmt_date(pe)}",
-        styles["masthead_subtitle"],
-    ))
+    # ── Letterhead block ────────────────────────────────────────────────
+    # Two-column header: company name + kicker on the left, document
+    # title + period on the right. Reads as an authoritative working
+    # paper rather than a centered marketing-flyer style.
+    period_label_lines = (
+        f'<font color="{GREY_MID.hexval()}">PERIOD ENDING</font><br/>'
+        f'<font color="{NAVY.hexval()}"><b>{_fmt_date(pe).upper()}</b></font>'
+    )
+    title_lines = (
+        f'<font color="{GREY_MID.hexval()}"><b>ACCOUNT RECONCILIATION</b></font><br/>'
+        f'<font color="{GREY_DARK.hexval()}">Working Paper</font>'
+    )
+    letterhead_data = [[
+        Paragraph(company, styles["letterhead_company"]),
+        Paragraph(title_lines, ParagraphStyle(
+            "lh_title_right", parent=styles["letterhead_meta"],
+            fontSize=10, leading=14, alignment=2,  # right-aligned
+        )),
+    ], [
+        Paragraph(
+            f'<font color="{GREY_MID.hexval()}"><b>RECONCILIATION WORKING PAPER</b></font>',
+            ParagraphStyle("lh_kicker", parent=styles["letterhead_kicker"], alignment=0),
+        ),
+        Paragraph(period_label_lines, ParagraphStyle(
+            "lh_period_right", parent=styles["letterhead_meta"],
+            fontSize=10, leading=14, alignment=2,
+        )),
+    ]]
+    letterhead = Table(letterhead_data, colWidths=[3.5 * inch, 3.6 * inch])
+    letterhead.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ("TOPPADDING",    (0, 0), (-1, 0), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 4),
+        ("TOPPADDING",    (0, 1), (-1, 1), 0),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 0),
+    ]))
+    story.append(letterhead)
+    # Heavy navy hairline beneath the letterhead — visual separator
+    # that frames everything above as the "header" of the document.
+    story.append(Spacer(1, 0.06 * inch))
+    story.append(_hairline(NAVY, 1.2))
+    story.append(Spacer(1, 0.18 * inch))
 
-    # 1. Account Information — single tabular block, includes Prepared
-    #    By and Approved By per user request (no separate "Approval
-    #    Trail" section anymore).
-    story.append(Paragraph("Account Information", styles["section"]))
+    # ── 1. Account Information ─────────────────────────────────────────
+    story.append(Paragraph("ACCOUNT INFORMATION", styles["section"]))
     story.append(_account_info_table(data, account_label))
 
-    # 2. Reconciliation — Subledger (RF) + items = closing → GL match → variance.
+    # 2. Reconciliation — Opening + items = closing → GL match → variance.
     items = data.get("reconciling_items") or []
+    item_count_label = (
+        f"{len(items)} RECONCILING ITEM{'' if len(items) == 1 else 'S'}"
+    )
     story.append(Paragraph(
-        f"Reconciliation Summary ({len(items)} reconciling item{'' if len(items) == 1 else 's'})",
+        f"RECONCILIATION SUMMARY  &nbsp;&nbsp;<font size='7' color='{GREY_MID.hexval()}'>· {item_count_label}</font>",
         styles["section"],
     ))
     story.append(_reconciliation_table(data))
 
     # 3. AI commentary (only if this row was AI-prepared — null otherwise).
-    #    Sits before Notes so the reviewer reads the AI's confidence + checks
-    #    + recommendation in flow, then any human notes after.
     commentary = data.get("ai_commentary")
     if commentary and isinstance(commentary, dict):
-        story.append(Paragraph("AI Commentary", styles["section"]))
+        story.append(Paragraph("AI COMMENTARY", styles["section"]))
         story.extend(_ai_commentary_table(commentary, styles))
 
     # 4. Notes (only if preparer or reviewer left one)
     notes = (data.get("notes") or "").strip()
     if notes:
-        story.append(Paragraph("Notes", styles["section"]))
+        story.append(Paragraph("NOTES", styles["section"]))
         story.append(Paragraph(notes, styles["note_body"]))
 
-    # 4. Attachments list
-    story.append(Paragraph("Supporting Attachments", styles["section"]))
+    # 5. Attachments list
+    story.append(Paragraph("SUPPORTING ATTACHMENTS", styles["section"]))
     story.extend(_attachments(data, styles))
 
     doc.build(story)
