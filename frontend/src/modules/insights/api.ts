@@ -108,22 +108,27 @@ export interface Recommendation {
 }
 
 export interface InsightsOverview {
-  period_end:      string
-  period_label:    string
-  qbo_connected:   boolean
-  liquidity:       Liquidity
-  profitability:   Profitability
-  receivables:     Receivables
-  payables:        Payables
-  expenses:        Expenses
-  recommendations: Recommendation[]
+  period_end:       string
+  period_start:     string | null
+  period_label:     string
+  custom_range:     boolean
+  custom_pl_error:  string | null
+  qbo_connected:    boolean
+  liquidity:        Liquidity
+  profitability:    Profitability
+  receivables:      Receivables
+  payables:         Payables
+  expenses:         Expenses
+  recommendations:  Recommendation[]
 }
 
 // ── API ──────────────────────────────────────────────────────────────────────
 
-async function getOverview(periodEnd: string): Promise<InsightsOverview> {
+async function getOverview(periodEnd: string, periodStart?: string | null): Promise<InsightsOverview> {
+  const params: Record<string, string> = { period_end: periodEnd }
+  if (periodStart) params.period_start = periodStart
   const { data } = await apiClient.get<InsightsOverview>(
-    "/api/insights/overview", { params: { period_end: periodEnd } },
+    "/api/insights/overview", { params },
   )
   return data
 }

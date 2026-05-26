@@ -25,10 +25,19 @@ router = APIRouter()
 async def get_overview(
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="YYYY-MM-DD"),
+    period_start: str | None = Query(default=None, description="YYYY-MM-DD — optional. When provided, P&L metrics span [period_start, period_end] via a live QBO ProfitAndLoss call instead of the calendar month containing period_end."),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     try:
         pe = date.fromisoformat(period_end)
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD")
-    return await compute_overview(db, tenant_id, pe)
+    ps: date | None = None
+    if period_start:
+        try:
+            ps = date.fromisoformat(period_start)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="period_start must be YYYY-MM-DD")
+        if ps > pe:
+            raise HTTPException(status_code=400, detail="period_start must be on or before period_end")
+    return await compute_overview(db, tenant_id, pe, period_start=ps)

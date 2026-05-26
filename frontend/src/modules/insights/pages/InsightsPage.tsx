@@ -1,22 +1,29 @@
 /**
  * Insights — decision-grade dashboard, not a vanity chart wall.
  *
- * Each section leads with a KPI table (KPI / Value / Risk / Insight),
- * supported by a small chart only when the chart tells a story the
- * table doesn't. Designed to answer "what should I do this month?"
- * not "where can I find this number?".
+ * UX notes:
+ *  • No auto-fetch. The user picks a period (month or custom range)
+ *    and clicks Generate. Re-clicking Generate refreshes.
+ *  • Sticky sub-nav: scrolls anchor the visible section via
+ *    IntersectionObserver so the user knows where they are; clicking
+ *    a pill smooth-scrolls there.
+ *  • Sparklines are interactive — hover for tooltip with exact
+ *    value + date; click a point to refocus the whole page on that
+ *    month (re-fetches automatically).
  */
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   TrendingUp, TrendingDown, Wallet, ReceiptText, ArrowDownToLine,
   ArrowUpFromLine, LineChart as LineIcon, Sparkles, AlertTriangle,
-  Calendar, RefreshCw, Info, Lightbulb,
+  Play, Info, Lightbulb, MousePointerClick,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
-import { insightsApi, type InsightsOverview, type KpiRow, type RiskLevel, type HistoryPoint } from "@/modules/insights/api"
+import {
+  insightsApi, type InsightsOverview, type KpiRow, type RiskLevel, type HistoryPoint,
+} from "@/modules/insights/api"
 
 // ── Period helpers ───────────────────────────────────────────────────────────
 
@@ -24,17 +31,21 @@ function lastDayOfMonth(year: number, monthIdx: number): string {
   const last = new Date(year, monthIdx + 1, 0)
   return last.toISOString().slice(0, 10)
 }
-
+function firstDayOfMonth(year: number, monthIdx: number): string {
+  return new Date(year, monthIdx, 1).toISOString().slice(0, 10)
+}
 function defaultPeriodEnd(): string {
   const now = new Date()
-  // Default to the prior fully-closed month
   return lastDayOfMonth(now.getFullYear(), now.getMonth() - 1)
 }
-
+function defaultPeriodStart(periodEnd: string): string {
+  const d = new Date(periodEnd)
+  return firstDayOfMonth(d.getFullYear(), d.getMonth())
+}
 function monthOptions(): { value: string; label: string }[] {
   const now = new Date()
   const out: { value: string; label: string }[] = []
-  for (let i = 1; i <= 12; i++) {
+  for (let i = 1; i <= 24; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
     out.push({
       value: lastDayOfMonth(d.getFullYear(), d.getMonth()),
@@ -44,88 +55,118 @@ function monthOptions(): { value: string; label: string }[] {
   return out
 }
 
+// Section anchor registry
+const SECTIONS = [
+  { id: "recommendations", label: "Risks",         icon: AlertTriangle },
+  { id: "liquidity",       label: "Liquidity",     icon: Wallet },
+  { id: "profitability",   label: "P&L",           icon: LineIcon },
+  { id: "receivables",     label: "AR",            icon: ArrowDownToLine },
+  { id: "payables",        label: "AP",            icon: ArrowUpFromLine },
+  { id: "expenses",        label: "Expenses",      icon: ReceiptText },
+] as const
+
+type SectionId = typeof SECTIONS[number]["id"]
+
 // ── Main page ────────────────────────────────────────────────────────────────
+
+type DateMode = "month" | "custom"
+
+interface PendingPeriod {
+  mode:         DateMode
+  periodEnd:    string
+  periodStart?: string  // present when mode === "custom"
+}
 
 export function InsightsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [period, setPeriod] = useState<string>(searchParams.get("period") || defaultPeriodEnd())
 
-  function setPeriodAndUrl(p: string) {
-    setPeriod(p)
-    const next = new URLSearchParams(searchParams)
-    next.set("period", p)
-    setSearchParams(next, { replace: true })
-  }
+  // ── Form state (what's in the picker, not necessarily what's loaded) ──
+  const initialEnd = searchParams.get("period_end") || searchParams.get("period") || defaultPeriodEnd()
+  const initialStart = searchParams.get("period_start") || undefined
+  const initialMode: DateMode = initialStart ? "custom" : "month"
 
-  const { data, isLoading, isFetching, refetch, error } = useQuery<InsightsOverview, Error>({
-    queryKey: ["insights-overview", period],
-    queryFn:  () => insightsApi.getOverview(period),
+  const [mode, setMode] = useState<DateMode>(initialMode)
+  const [periodEnd, setPeriodEnd] = useState<string>(initialEnd)
+  const [periodStart, setPeriodStart] = useState<string>(initialStart ?? defaultPeriodStart(initialEnd))
+
+  // ── What's actually been requested (gates the query) ──
+  const [pending, setPending] = useState<PendingPeriod | null>(() => {
+    // Only auto-load if the URL had explicit params (i.e. a shared link)
+    if (searchParams.get("period_end") || searchParams.get("period")) {
+      return initialStart
+        ? { mode: "custom", periodEnd: initialEnd, periodStart: initialStart }
+        : { mode: "month",  periodEnd: initialEnd }
+    }
+    return null
+  })
+
+  const queryKey = useMemo(
+    () => ["insights-overview", pending?.periodEnd ?? null, pending?.periodStart ?? null] as const,
+    [pending],
+  )
+
+  const { data, isFetching, error } = useQuery<InsightsOverview, Error>({
+    queryKey,
+    queryFn:  () => insightsApi.getOverview(pending!.periodEnd, pending?.periodStart ?? null),
+    enabled:  pending !== null,
     staleTime: 60_000,
   })
 
+  function generate() {
+    const payload: PendingPeriod = mode === "custom"
+      ? { mode, periodEnd, periodStart }
+      : { mode, periodEnd }
+    setPending(payload)
+    const next = new URLSearchParams(searchParams)
+    next.set("period_end", payload.periodEnd)
+    if (payload.periodStart) next.set("period_start", payload.periodStart)
+    else next.delete("period_start")
+    next.delete("period")  // legacy key
+    setSearchParams(next, { replace: true })
+  }
+
+  function jumpToMonth(periodEndISO: string) {
+    setMode("month")
+    setPeriodEnd(periodEndISO)
+    setPeriodStart(defaultPeriodStart(periodEndISO))
+    const payload: PendingPeriod = { mode: "month", periodEnd: periodEndISO }
+    setPending(payload)
+    const next = new URLSearchParams(searchParams)
+    next.set("period_end", payload.periodEnd)
+    next.delete("period_start"); next.delete("period")
+    setSearchParams(next, { replace: true })
+  }
+
+  // ── Layout ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      {/* Header */}
-      <div className="px-4 sm:px-8 py-5 sm:py-6 shrink-0"
-        style={{ borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
-        <div className="max-w-7xl mx-auto flex items-start gap-3 flex-wrap">
-          <div className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-            <Lightbulb size={18} strokeWidth={1.8} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-lg sm:text-xl font-bold text-theme leading-tight">Insights</h1>
-              {data && (
-                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full"
-                  style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
-                  {data.period_label}
-                </span>
-              )}
-            </div>
-            <p className="text-xs sm:text-sm mt-1" style={{ color: "var(--text-muted)" }}>
-              Decisions, risks, recommendations — synthesised from your books for the period.
+      <Header
+        mode={mode} setMode={setMode}
+        periodEnd={periodEnd} setPeriodEnd={setPeriodEnd}
+        periodStart={periodStart} setPeriodStart={setPeriodStart}
+        onGenerate={generate}
+        isFetching={isFetching}
+        loadedLabel={data?.period_label}
+      />
+
+      {pending && data && <JumpNav data={data} />}
+
+      <div className="flex-1 px-4 sm:px-8 py-6 max-w-7xl w-full mx-auto">
+        {/* Empty state — never auto-loaded */}
+        {!pending && (
+          <EmptyState onGenerate={generate} />
+        )}
+
+        {pending && !data && isFetching && (
+          <div className="h-64 flex flex-col items-center justify-center gap-3">
+            <Spinner className="h-6 w-6" />
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              Crunching the numbers…
             </p>
           </div>
-
-          <div className="flex items-center gap-2">
-            <Calendar size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-            <select
-              value={period}
-              onChange={(e) => setPeriodAndUrl(e.target.value)}
-              className="rounded-lg px-3 py-1.5 text-sm font-medium outline-none"
-              style={{
-                background: "var(--surface-2)",
-                border: "1px solid var(--border-strong)",
-                color: "var(--text)",
-              }}
-            >
-              {monthOptions().map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-            <button
-              onClick={() => refetch()}
-              disabled={isFetching}
-              title="Refresh"
-              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-opacity hover:opacity-90 disabled:opacity-50"
-              style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-            >
-              <RefreshCw size={12} strokeWidth={2} className={isFetching ? "animate-spin" : ""} />
-              Refresh
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="flex-1 px-4 sm:px-8 py-6 max-w-7xl w-full mx-auto">
-        {isLoading && (
-          <div className="h-64 flex items-center justify-center">
-            <Spinner className="h-6 w-6" />
-          </div>
         )}
-        {error && !isLoading && (
+
+        {pending && error && !isFetching && (
           <div className="rounded-lg p-4 flex items-start gap-3"
             style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
             <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: "#dc2626" }} />
@@ -136,22 +177,97 @@ export function InsightsPage() {
           </div>
         )}
 
-        {data && (
+        {pending && data && (
           <AnimatePresence mode="wait">
             <motion.div
-              key={period}
+              key={`${data.period_end}-${data.period_start ?? ""}`}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.22, ease: "easeOut" }}
               className="space-y-6"
             >
+              {data.custom_range && data.custom_pl_error && (
+                <div className="rounded-lg p-3 flex items-start gap-2"
+                  style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}>
+                  <Info size={14} className="shrink-0 mt-0.5" style={{ color: "#92400e" }} />
+                  <p className="text-[12px]" style={{ color: "#92400e" }}>
+                    Custom-range P&L call failed: <em>{data.custom_pl_error}</em> — showing
+                    snapshot-based monthly figures instead.
+                  </p>
+                </div>
+              )}
+
               <HeroKpis data={data} />
-              <Recommendations data={data} />
-              <LiquiditySection data={data} />
-              <ProfitabilitySection data={data} />
-              <ReceivablesSection data={data} />
-              <PayablesSection data={data} />
-              <ExpensesSection data={data} />
+              <Section id="recommendations" title="Risks & recommendations" icon={Sparkles}
+                description="Heuristic-flagged action items for the selected period.">
+                <Recommendations data={data} />
+              </Section>
+              <Section id="liquidity" title="Liquidity" icon={Wallet}
+                description="Cash position, burn rate, runway, and operating cash flow.">
+                <KpiTable rows={data.liquidity.kpis} />
+                <SectionDivider label="Cash & operating cash flow — last 7 months" />
+                <DualSparkline history={data.liquidity.history}
+                  leftKey="cash" rightKey="ocf"
+                  leftLabel="Cash balance" rightLabel="Monthly OCF"
+                  onPointClick={jumpToMonth} />
+              </Section>
+              <Section id="profitability" title="Revenue & profitability" icon={LineIcon}
+                description="Top-line trends and margin compression.">
+                <KpiTable rows={data.profitability.kpis} />
+                <SectionDivider label="Revenue, GP, and net income — last 7 months" />
+                <TripleSparkline history={data.profitability.history}
+                  keys={["revenue", "gp", "ni"]}
+                  labels={["Revenue", "Gross profit", "Net income"]}
+                  onPointClick={jumpToMonth} />
+              </Section>
+              <Section id="receivables" title="Receivables (AR)" icon={ArrowDownToLine}
+                description="How quickly customers pay, where risk concentrates, largest overdue accounts.">
+                <KpiTable rows={data.receivables.kpis} />
+                {data.receivables.aging.length > 0 ? (
+                  <>
+                    <SectionDivider label="Aging concentration" />
+                    <AgingBars buckets={data.receivables.aging} />
+                  </>
+                ) : data.receivables.qbo_error && <InlineHint text={data.receivables.qbo_error} />}
+                {data.receivables.top_customers.length > 0 && (
+                  <>
+                    <SectionDivider label="Top 5 overdue customers" />
+                    <EntityTable rows={data.receivables.top_customers} entityLabel="Customer" />
+                  </>
+                )}
+              </Section>
+              <Section id="payables" title="Payables (AP)" icon={ArrowUpFromLine}
+                description="How quickly you're paying suppliers. Stretched payables damage relationships.">
+                <KpiTable rows={data.payables.kpis} />
+                {data.payables.aging.length > 0 ? (
+                  <>
+                    <SectionDivider label="Aging concentration" />
+                    <AgingBars buckets={data.payables.aging} />
+                  </>
+                ) : data.payables.qbo_error && <InlineHint text={data.payables.qbo_error} />}
+                {data.payables.top_vendors.length > 0 && (
+                  <>
+                    <SectionDivider label="Top 5 owed vendors" />
+                    <EntityTable rows={data.payables.top_vendors} entityLabel="Vendor" />
+                  </>
+                )}
+              </Section>
+              <Section id="expenses" title="Expense monitoring" icon={ReceiptText}
+                description="Where the money went + month-over-month movers for anomaly detection.">
+                <KpiTable rows={data.expenses.kpis} />
+                {data.expenses.top_categories.length > 0 && (
+                  <>
+                    <SectionDivider label="Largest categories (by spend this period)" />
+                    <CategoryBars rows={data.expenses.top_categories} />
+                  </>
+                )}
+                {data.expenses.top_movers.length > 0 && (
+                  <>
+                    <SectionDivider label="Biggest month-over-month movers" />
+                    <MoversTable rows={data.expenses.top_movers} />
+                  </>
+                )}
+              </Section>
             </motion.div>
           </AnimatePresence>
         )}
@@ -160,10 +276,311 @@ export function InsightsPage() {
   )
 }
 
-// ── Hero KPI strip ───────────────────────────────────────────────────────────
+// ── Header ───────────────────────────────────────────────────────────────────
+
+function Header({
+  mode, setMode, periodEnd, setPeriodEnd, periodStart, setPeriodStart,
+  onGenerate, isFetching, loadedLabel,
+}: {
+  mode: DateMode; setMode: (m: DateMode) => void
+  periodEnd: string; setPeriodEnd: (s: string) => void
+  periodStart: string; setPeriodStart: (s: string) => void
+  onGenerate: () => void
+  isFetching: boolean
+  loadedLabel?: string
+}) {
+  const valid = mode === "month"
+    ? !!periodEnd
+    : !!periodStart && !!periodEnd && periodStart <= periodEnd
+
+  return (
+    <div className="px-4 sm:px-8 py-5 sm:py-6 shrink-0"
+      style={{ borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
+      <div className="max-w-7xl mx-auto">
+        <div className="flex items-start gap-3 flex-wrap">
+          <div className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+            <Lightbulb size={18} strokeWidth={1.8} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-lg sm:text-xl font-bold text-theme leading-tight">Insights</h1>
+              {loadedLabel && (
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full"
+                  style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+                  {loadedLabel}
+                </span>
+              )}
+            </div>
+            <p className="text-xs sm:text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+              Pick a period, click <em>Generate</em>, and Nordavix synthesises risks
+              and recommendations from your books.
+            </p>
+          </div>
+        </div>
+
+        {/* Period picker row */}
+        <div className="mt-4 flex items-end gap-2 flex-wrap">
+          {/* Mode tabs */}
+          <div className="inline-flex rounded-lg p-0.5"
+            style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+            <button
+              onClick={() => setMode("month")}
+              className="px-3 py-1.5 text-xs font-semibold rounded-md transition-all"
+              style={{
+                background: mode === "month" ? "var(--surface)" : "transparent",
+                color:      mode === "month" ? "var(--text)"    : "var(--text-muted)",
+              }}
+            >Month</button>
+            <button
+              onClick={() => setMode("custom")}
+              className="px-3 py-1.5 text-xs font-semibold rounded-md transition-all"
+              style={{
+                background: mode === "custom" ? "var(--surface)" : "transparent",
+                color:      mode === "custom" ? "var(--text)"    : "var(--text-muted)",
+              }}
+            >Custom range</button>
+          </div>
+
+          {mode === "month" ? (
+            <FieldShell label="Period">
+              <select
+                value={periodEnd}
+                onChange={(e) => setPeriodEnd(e.target.value)}
+                className="rounded-lg px-3 py-1.5 text-sm font-medium outline-none"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+              >
+                {monthOptions().map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </FieldShell>
+          ) : (
+            <>
+              <FieldShell label="From">
+                <input
+                  type="date"
+                  value={periodStart}
+                  onChange={(e) => setPeriodStart(e.target.value)}
+                  max={periodEnd}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium outline-none"
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+                />
+              </FieldShell>
+              <FieldShell label="To">
+                <input
+                  type="date"
+                  value={periodEnd}
+                  onChange={(e) => setPeriodEnd(e.target.value)}
+                  min={periodStart}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium outline-none"
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+                />
+              </FieldShell>
+              <PresetButtons
+                onPick={(s, e) => { setPeriodStart(s); setPeriodEnd(e) }}
+              />
+            </>
+          )}
+
+          <button
+            onClick={onGenerate}
+            disabled={!valid || isFetching}
+            className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+            style={{ background: "var(--green)" }}
+          >
+            {isFetching
+              ? <><Spinner className="h-3.5 w-3.5" /> Generating…</>
+              : <><Play size={12} strokeWidth={2.4} /> Generate insights</>}
+          </button>
+        </div>
+
+        {mode === "custom" && (
+          <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
+            For custom ranges we call QuickBooks ProfitAndLoss live for the exact
+            window — slightly slower than monthly snapshots, but accurate to the day.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FieldShell({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-wider mb-0.5" style={{ color: "var(--text-muted)" }}>
+        {label}
+      </p>
+      {children}
+    </div>
+  )
+}
+
+function PresetButtons({ onPick }: { onPick: (start: string, end: string) => void }) {
+  const today = new Date()
+  const todayISO = today.toISOString().slice(0, 10)
+
+  const lastDayOfPriorMonth = (() => {
+    const d = new Date(today.getFullYear(), today.getMonth(), 0)
+    return d.toISOString().slice(0, 10)
+  })()
+
+  const presets: { label: string; start: string; end: string }[] = useMemo(() => {
+    const ytdStart = `${today.getFullYear()}-01-01`
+    const last30Start = new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10)
+    const last90Start = new Date(today.getTime() - 90 * 86400_000).toISOString().slice(0, 10)
+    const q1Start = `${today.getFullYear()}-01-01`,  q1End = `${today.getFullYear()}-03-31`
+    const q2Start = `${today.getFullYear()}-04-01`,  q2End = `${today.getFullYear()}-06-30`
+    return [
+      { label: "MTD",     start: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`, end: todayISO },
+      { label: "Last 30", start: last30Start, end: todayISO },
+      { label: "Last 90", start: last90Start, end: todayISO },
+      { label: "QTD",     start: today.getMonth() < 3 ? q1Start : today.getMonth() < 6 ? q2Start : today.getMonth() < 9 ? `${today.getFullYear()}-07-01` : `${today.getFullYear()}-10-01`, end: todayISO },
+      { label: "Q1",      start: q1Start, end: q1End },
+      { label: "Q2",      start: q2Start, end: q2End },
+      { label: "YTD",     start: ytdStart, end: lastDayOfPriorMonth > ytdStart ? lastDayOfPriorMonth : todayISO },
+    ]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {presets.map((p) => (
+        <button key={p.label}
+          onClick={() => onPick(p.start, p.end)}
+          className="text-[11px] font-semibold px-2 py-1 rounded-md transition-colors"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-2)" }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--green)" }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)" }}
+        >
+          {p.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ── Empty state ──────────────────────────────────────────────────────────────
+
+function EmptyState({ onGenerate }: { onGenerate: () => void }) {
+  return (
+    <div className="rounded-2xl p-10 text-center"
+      style={{ background: "var(--surface)", border: "1px dashed var(--border-strong)" }}>
+      <div className="h-14 w-14 mx-auto rounded-xl flex items-center justify-center mb-4"
+        style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+        <Lightbulb size={26} strokeWidth={1.6} />
+      </div>
+      <h2 className="text-lg font-bold text-theme mb-1.5">Ready when you are</h2>
+      <p className="text-sm mb-5 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+        Pick a period from the header — a calendar month or any custom date range —
+        then click <strong style={{ color: "var(--text)" }}>Generate insights</strong>.
+        Nothing fires until you ask.
+      </p>
+      <button onClick={onGenerate}
+        className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90"
+        style={{ background: "var(--green)" }}>
+        <Play size={14} strokeWidth={2.4} />
+        Generate for the default period
+      </button>
+    </div>
+  )
+}
+
+// ── Sticky jump-to-section nav ───────────────────────────────────────────────
+
+function JumpNav({ data }: { data: InsightsOverview }) {
+  void data
+  const [active, setActive] = useState<SectionId>("recommendations")
+
+  // Watch which section is in view
+  useEffect(() => {
+    const els = SECTIONS
+      .map((s) => document.getElementById(`insights-section-${s.id}`))
+      .filter((e): e is HTMLElement => !!e)
+    if (els.length === 0) return
+
+    const obs = new IntersectionObserver((entries) => {
+      // Pick the entry whose top is closest to the top of the viewport but
+      // still visible — feels more natural than "first intersecting".
+      const visible = entries.filter((e) => e.isIntersecting)
+      if (visible.length === 0) return
+      visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
+      const top = visible[0]
+      const id = top.target.id.replace("insights-section-", "") as SectionId
+      setActive(id)
+    }, { rootMargin: "-100px 0px -60% 0px", threshold: [0, 0.1, 0.5, 1] })
+
+    els.forEach((el) => obs.observe(el))
+    return () => obs.disconnect()
+  }, [])
+
+  function scrollTo(id: SectionId) {
+    const el = document.getElementById(`insights-section-${id}`)
+    if (!el) return
+    el.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+
+  return (
+    <div className="sticky top-0 z-10 px-4 sm:px-8 py-2 backdrop-blur"
+      style={{
+        background: "color-mix(in oklab, var(--bg) 92%, transparent)",
+        borderBottom: "1px solid var(--border)",
+      }}>
+      <div className="max-w-7xl mx-auto flex items-center gap-1.5 overflow-x-auto"
+        style={{ scrollbarWidth: "none" }}>
+        {SECTIONS.map((s) => {
+          const Icon = s.icon
+          const isActive = active === s.id
+          return (
+            <button key={s.id}
+              onClick={() => scrollTo(s.id)}
+              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-all"
+              style={{
+                background: isActive ? "var(--green-subtle)" : "transparent",
+                color:      isActive ? "var(--green)"        : "var(--text-2)",
+                border:     `1px solid ${isActive ? "var(--green)" : "var(--border)"}`,
+              }}
+            >
+              <Icon size={11} strokeWidth={2} />
+              {s.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Section wrapper with anchor ──────────────────────────────────────────────
+
+function Section({
+  id, title, icon: Icon, description, children,
+}: {
+  id: SectionId; title: string; icon: React.ElementType; description: string; children: React.ReactNode;
+}) {
+  return (
+    <section id={`insights-section-${id}`} className="rounded-2xl scroll-mt-20"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-start gap-3">
+          <span className="h-8 w-8 rounded-md flex items-center justify-center shrink-0"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+            <Icon size={15} strokeWidth={1.8} />
+          </span>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-bold text-theme">{title}</h2>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>
+          </div>
+        </div>
+      </div>
+      <div className="p-5 space-y-5">{children}</div>
+    </section>
+  )
+}
+
+// ── Hero KPIs ────────────────────────────────────────────────────────────────
 
 function HeroKpis({ data }: { data: InsightsOverview }) {
-  const tiles = useMemo(() => [
+  const tiles = [
     {
       label:  "Cash balance",
       value:  fmtMoney(data.liquidity.cash_balance),
@@ -174,44 +591,38 @@ function HeroKpis({ data }: { data: InsightsOverview }) {
     {
       label:  "Runway",
       value:  data.liquidity.runway_months !== null
-        ? `${data.liquidity.runway_months.toFixed(1)} mo`
-        : "Indefinite",
-      change: null,
-      changeUp: false,
+        ? `${data.liquidity.runway_months.toFixed(1)} mo` : "Indefinite",
+      change: null, changeUp: false,
       sub:    data.liquidity.runway_months !== null ? "at current burn" : "cash-positive",
       risk:   riskColor(runwayRisk(data.liquidity.runway_months)),
     },
     {
-      label:  "Revenue (mo)",
+      label:  "Revenue",
       value:  fmtMoney(data.profitability.revenue),
       change: data.profitability.revenue_change_str,
       changeUp: (data.profitability.revenue_change_str ?? "").startsWith("+"),
-      sub:    "this period",
+      sub:    data.custom_range ? "for selected window" : "this month",
     },
     {
       label:  "Net margin",
       value:  data.profitability.net_margin_pct !== null
-        ? `${data.profitability.net_margin_pct.toFixed(1)}%`
-        : "—",
-      change: null,
-      changeUp: false,
+        ? `${data.profitability.net_margin_pct.toFixed(1)}%` : "—",
+      change: null, changeUp: false,
       sub:    "net income / revenue",
       risk:   data.profitability.net_margin_pct !== null
         ? (data.profitability.net_margin_pct >= 15 ? "green"
           : data.profitability.net_margin_pct >= 0 ? "amber" : "red")
         : "neutral",
     },
-  ], [data])
+  ]
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       {tiles.map((t, i) => (
-        <div key={i} className="rounded-2xl p-4 transition-all"
+        <div key={i} className="rounded-2xl p-4"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-              {t.label}
-            </span>
+            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{t.label}</span>
             {"risk" in t && t.risk && t.risk !== "neutral" && (
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: t.risk }} />
             )}
@@ -233,77 +644,37 @@ function HeroKpis({ data }: { data: InsightsOverview }) {
   )
 }
 
-// ── Recommendations ──────────────────────────────────────────────────────────
+// ── Recommendations ─────────────────────────────────────────────────────────
 
 function Recommendations({ data }: { data: InsightsOverview }) {
   if (!data.recommendations || data.recommendations.length === 0) return null
   return (
-    <section className="rounded-2xl overflow-hidden"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-      <div className="px-5 py-4 flex items-center gap-2"
-        style={{ borderBottom: "1px solid var(--border)" }}>
-        <Sparkles size={15} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-        <h2 className="text-sm font-bold text-theme">Risks & recommendations</h2>
-        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-          ({data.recommendations.length})
-        </span>
-      </div>
-      <ul className="divide-y" style={{ borderColor: "var(--border)" }}>
-        {data.recommendations.map((r, i) => (
-          <li key={i} className="px-5 py-4 flex items-start gap-3">
-            <span className="h-7 w-7 rounded-md flex items-center justify-center shrink-0"
-              style={{
-                background: priorityBg(r.priority),
-                color: priorityFg(r.priority),
-              }}>
-              {r.priority === "high" ? <AlertTriangle size={13} strokeWidth={1.8} />
-                : r.priority === "medium" ? <Info size={13} strokeWidth={1.8} />
-                : <Lightbulb size={13} strokeWidth={1.8} />}
-            </span>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>{r.title}</p>
-                <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                  style={{ background: priorityBg(r.priority), color: priorityFg(r.priority) }}>
-                  {r.priority}
-                </span>
-              </div>
-              <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>{r.detail}</p>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </section>
-  )
-}
-
-// ── Section wrappers ─────────────────────────────────────────────────────────
-
-function Section({ title, icon: Icon, description, children }: {
-  title: string; icon: React.ElementType; description: string; children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-2xl"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-      <div className="px-5 py-4"
-        style={{ borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-start gap-3">
-          <span className="h-8 w-8 rounded-md flex items-center justify-center shrink-0"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-            <Icon size={15} strokeWidth={1.8} />
+    <ul className="divide-y -mx-5 -my-5" style={{ borderColor: "var(--border)" }}>
+      {data.recommendations.map((r, i) => (
+        <li key={i} className="px-5 py-4 flex items-start gap-3">
+          <span className="h-7 w-7 rounded-md flex items-center justify-center shrink-0"
+            style={{ background: priorityBg(r.priority), color: priorityFg(r.priority) }}>
+            {r.priority === "high" ? <AlertTriangle size={13} strokeWidth={1.8} />
+              : r.priority === "medium" ? <Info size={13} strokeWidth={1.8} />
+              : <Lightbulb size={13} strokeWidth={1.8} />}
           </span>
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-bold text-theme">{title}</h2>
-            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>{r.title}</p>
+              <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={{ background: priorityBg(r.priority), color: priorityFg(r.priority) }}>
+                {r.priority}
+              </span>
+            </div>
+            <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>{r.detail}</p>
           </div>
-        </div>
-      </div>
-      <div className="p-5 space-y-5">
-        {children}
-      </div>
-    </section>
+        </li>
+      ))}
+    </ul>
   )
 }
+
+// ── KPI Table ────────────────────────────────────────────────────────────────
 
 function KpiTable({ rows }: { rows: KpiRow[] }) {
   return (
@@ -344,230 +715,164 @@ function RiskPill({ level }: { level: RiskLevel }) {
   )
 }
 
-// ── Liquidity ────────────────────────────────────────────────────────────────
+// ── Interactive sparklines ───────────────────────────────────────────────────
 
-function LiquiditySection({ data }: { data: InsightsOverview }) {
-  return (
-    <Section title="Liquidity" icon={Wallet}
-      description="Cash position, burn rate, runway, and operating cash flow. The 'can we keep paying our bills' picture.">
-      <KpiTable rows={data.liquidity.kpis} />
-      <SectionDivider label="Cash & operating cash flow — last 7 months" />
-      <DualSparkline
-        history={data.liquidity.history}
-        leftKey="cash"
-        rightKey="ocf"
-        leftLabel="Cash balance"
-        rightLabel="Monthly OCF"
-      />
-    </Section>
-  )
-}
-
-// ── Profitability ────────────────────────────────────────────────────────────
-
-function ProfitabilitySection({ data }: { data: InsightsOverview }) {
-  return (
-    <Section title="Revenue & profitability" icon={LineIcon}
-      description="Top-line trends and margin compression. Watch GP / OPEX dynamics for early signs of pricing or scaling issues.">
-      <KpiTable rows={data.profitability.kpis} />
-      <SectionDivider label="Revenue, GP, and net income — last 7 months" />
-      <TripleSparkline
-        history={data.profitability.history}
-        keys={["revenue", "gp", "ni"]}
-        labels={["Revenue", "Gross profit", "Net income"]}
-      />
-    </Section>
-  )
-}
-
-// ── Receivables ──────────────────────────────────────────────────────────────
-
-function ReceivablesSection({ data }: { data: InsightsOverview }) {
-  return (
-    <Section title="Receivables (AR)" icon={ArrowDownToLine}
-      description="How quickly customers pay you, where the risk concentrates, and the largest overdue balances.">
-      <KpiTable rows={data.receivables.kpis} />
-
-      {data.receivables.aging.length > 0 ? (
-        <>
-          <SectionDivider label="Aging concentration" />
-          <AgingBars buckets={data.receivables.aging} />
-        </>
-      ) : data.receivables.qbo_error && (
-        <div className="text-[12px] flex items-center gap-2 rounded-lg p-3"
-          style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
-          <Info size={12} strokeWidth={1.8} />
-          {data.receivables.qbo_error}
-        </div>
-      )}
-
-      {data.receivables.top_customers.length > 0 && (
-        <>
-          <SectionDivider label="Top 5 overdue customers" />
-          <EntityTable rows={data.receivables.top_customers} entityLabel="Customer" />
-        </>
-      )}
-    </Section>
-  )
-}
-
-// ── Payables ─────────────────────────────────────────────────────────────────
-
-function PayablesSection({ data }: { data: InsightsOverview }) {
-  return (
-    <Section title="Payables (AP)" icon={ArrowUpFromLine}
-      description="How quickly you're paying suppliers. Stretching too far damages relationships; paying too fast hurts working capital.">
-      <KpiTable rows={data.payables.kpis} />
-
-      {data.payables.aging.length > 0 ? (
-        <>
-          <SectionDivider label="Aging concentration" />
-          <AgingBars buckets={data.payables.aging} />
-        </>
-      ) : data.payables.qbo_error && (
-        <div className="text-[12px] flex items-center gap-2 rounded-lg p-3"
-          style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
-          <Info size={12} strokeWidth={1.8} />
-          {data.payables.qbo_error}
-        </div>
-      )}
-
-      {data.payables.top_vendors.length > 0 && (
-        <>
-          <SectionDivider label="Top 5 owed vendors" />
-          <EntityTable rows={data.payables.top_vendors} entityLabel="Vendor" />
-        </>
-      )}
-    </Section>
-  )
-}
-
-// ── Expenses ─────────────────────────────────────────────────────────────────
-
-function ExpensesSection({ data }: { data: InsightsOverview }) {
-  return (
-    <Section title="Expense monitoring" icon={ReceiptText}
-      description="Where the money went this month + month-over-month movers. Quick anomaly detection for the close review.">
-      <KpiTable rows={data.expenses.kpis} />
-
-      {data.expenses.top_categories.length > 0 && (
-        <>
-          <SectionDivider label="Largest categories (by spend this month)" />
-          <CategoryBars rows={data.expenses.top_categories} />
-        </>
-      )}
-
-      {data.expenses.top_movers.length > 0 && (
-        <>
-          <SectionDivider label="Biggest month-over-month movers" />
-          <MoversTable rows={data.expenses.top_movers} />
-        </>
-      )}
-    </Section>
-  )
-}
-
-// ── Mini-charts (SVG, no chart lib) ──────────────────────────────────────────
-
-function DualSparkline({ history, leftKey, rightKey, leftLabel, rightLabel }: {
+function DualSparkline({ history, leftKey, rightKey, leftLabel, rightLabel, onPointClick }: {
   history: HistoryPoint[]; leftKey: keyof HistoryPoint; rightKey: keyof HistoryPoint;
-  leftLabel: string; rightLabel: string;
+  leftLabel: string; rightLabel: string; onPointClick: (periodEnd: string) => void;
 }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <SparklineCard label={leftLabel} points={history.map((h) => ({ x: h.label, y: Number(h[leftKey] ?? 0) }))} color="var(--green)" />
-      <SparklineCard label={rightLabel} points={history.map((h) => ({ x: h.label, y: Number(h[rightKey] ?? 0) }))} color="#6366f1" />
+      <SparklineCard label={leftLabel}  points={history.map((h) => ({ x: h.label, y: Number(h[leftKey] ?? 0),  period: h.period }))} color="var(--green)" onPointClick={onPointClick} />
+      <SparklineCard label={rightLabel} points={history.map((h) => ({ x: h.label, y: Number(h[rightKey] ?? 0), period: h.period }))} color="#6366f1"       onPointClick={onPointClick} />
     </div>
   )
 }
 
-function TripleSparkline({ history, keys, labels }: {
+function TripleSparkline({ history, keys, labels, onPointClick }: {
   history: HistoryPoint[]; keys: (keyof HistoryPoint)[]; labels: string[];
+  onPointClick: (periodEnd: string) => void;
 }) {
   const colors = ["var(--green)", "#6366f1", "#f59e0b"]
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
       {keys.map((k, i) => (
-        <SparklineCard
-          key={String(k)}
-          label={labels[i]}
-          points={history.map((h) => ({ x: h.label, y: Number(h[k] ?? 0) }))}
-          color={colors[i]}
-        />
+        <SparklineCard key={String(k)} label={labels[i]}
+          points={history.map((h) => ({ x: h.label, y: Number(h[k] ?? 0), period: h.period }))}
+          color={colors[i]} onPointClick={onPointClick} />
       ))}
     </div>
   )
 }
 
-function SparklineCard({ label, points, color }: { label: string; points: { x: string; y: number }[]; color: string }) {
+interface SparkPoint { x: string; y: number; period: string }
+
+function SparklineCard({ label, points, color, onPointClick }: {
+  label: string; points: SparkPoint[]; color: string; onPointClick: (periodEnd: string) => void;
+}) {
   const W = 220, H = 60, PAD = 4
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  const ref = useRef<SVGSVGElement | null>(null)
+
   if (!points || points.length === 0) return null
   const ys = points.map((p) => p.y)
   const min = Math.min(...ys, 0)
   const max = Math.max(...ys, 0)
   const span = max - min || 1
-  const last = points[points.length - 1].y
-  const prev = points.length > 1 ? points[points.length - 2].y : last
   const dx = (W - PAD * 2) / Math.max(1, points.length - 1)
   const toY = (v: number) => H - PAD - ((v - min) / span) * (H - PAD * 2)
   const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${PAD + i * dx} ${toY(p.y)}`).join(" ")
   const area = `${path} L ${PAD + (points.length - 1) * dx} ${H - PAD} L ${PAD} ${H - PAD} Z`
+  const gradId = `sg-${label.replace(/[^a-z0-9]/gi, "")}`
+
+  const last = points[points.length - 1].y
+  const prev = points.length > 1 ? points[points.length - 2].y : last
   const change = prev !== 0 ? ((last - prev) / Math.abs(prev)) * 100 : null
 
+  const displayed = hoverIdx !== null ? points[hoverIdx] : points[points.length - 1]
+
+  function handlePointer(e: React.PointerEvent<SVGSVGElement>) {
+    if (!ref.current) return
+    const rect = ref.current.getBoundingClientRect()
+    const xInSvg = ((e.clientX - rect.left) / rect.width) * W
+    const idx = Math.max(0, Math.min(points.length - 1, Math.round((xInSvg - PAD) / dx)))
+    setHoverIdx(idx)
+  }
+  function handleLeave() { setHoverIdx(null) }
+  function handleClick() {
+    if (hoverIdx !== null) onPointClick(points[hoverIdx].period)
+  }
+
   return (
-    <div className="rounded-lg p-3"
+    <div className="rounded-lg p-3 group/spark"
       style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
       <div className="flex items-center justify-between mb-1">
         <p className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
           {label}
         </p>
-        {change !== null && (
+        {change !== null && hoverIdx === null && (
           <span className="text-[10px] font-bold"
             style={{ color: change >= 0 ? "var(--green)" : "#dc2626" }}>
             {change >= 0 ? "+" : ""}{change.toFixed(1)}%
           </span>
         )}
+        {hoverIdx !== null && (
+          <span className="text-[10px] font-bold" style={{ color: "var(--text-2)" }}>
+            {displayed.x}
+          </span>
+        )}
       </div>
-      <p className="text-base font-bold mb-1" style={{ color: "var(--text)" }}>
-        {fmtMoney(last)}
+      <p className="text-base font-bold mb-1 tabular-nums" style={{ color: "var(--text)" }}>
+        {fmtMoney(displayed.y)}
       </p>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="overflow-visible">
-        <defs>
-          <linearGradient id={`grad-${label.replace(/\s/g, "")}`} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%"  stopColor={color} stopOpacity="0.22" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <path d={area} fill={`url(#grad-${label.replace(/\s/g, "")})`} />
-        <path d={path} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
-        {points.map((p, i) => (
-          <circle key={i}
-            cx={PAD + i * dx}
-            cy={toY(p.y)}
-            r={i === points.length - 1 ? 2.6 : 1.6}
-            fill={i === points.length - 1 ? color : "var(--surface)"}
-            stroke={color}
-            strokeWidth="1"
-          />
-        ))}
-      </svg>
+      <div className="relative">
+        <svg ref={ref}
+          width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+          className="overflow-visible cursor-pointer touch-none"
+          onPointerMove={handlePointer}
+          onPointerLeave={handleLeave}
+          onClick={handleClick}
+          role="button"
+          tabIndex={0}
+        >
+          <defs>
+            <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%"  stopColor={color} stopOpacity="0.22" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path d={area} fill={`url(#${gradId})`} />
+          <path d={path} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+          {/* Hover crosshair */}
+          {hoverIdx !== null && (
+            <line
+              x1={PAD + hoverIdx * dx} y1={PAD}
+              x2={PAD + hoverIdx * dx} y2={H - PAD}
+              stroke="var(--text-muted)" strokeWidth="0.5" strokeDasharray="2 2" opacity="0.6"
+            />
+          )}
+          {points.map((p, i) => {
+            const isHover = hoverIdx === i
+            const isLast  = i === points.length - 1
+            return (
+              <circle key={i}
+                cx={PAD + i * dx}
+                cy={toY(p.y)}
+                r={isHover ? 3.5 : isLast ? 2.6 : 1.6}
+                fill={isHover ? color : (isLast ? color : "var(--surface)")}
+                stroke={color}
+                strokeWidth={isHover ? 1.4 : 1}
+              />
+            )
+          })}
+        </svg>
+      </div>
       <div className="flex justify-between mt-1">
         {points.map((p, i) => (
-          <span key={i} className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+          <span key={i} className="text-[9px]" style={{ color: hoverIdx === i ? "var(--text)" : "var(--text-muted)" }}>
             {i === 0 || i === points.length - 1 || i % 2 === 0 ? p.x : ""}
           </span>
         ))}
       </div>
+      <p className="text-[9px] mt-1 flex items-center gap-1 opacity-0 group-hover/spark:opacity-100 transition-opacity"
+        style={{ color: "var(--text-muted)" }}>
+        <MousePointerClick size={9} strokeWidth={2} />
+        Click a point to focus that month
+      </p>
     </div>
   )
 }
 
+// ── Aging bars (interactive on hover) ────────────────────────────────────────
+
 function AgingBars({ buckets }: { buckets: { bucket: string; amount: number; pct: number }[] }) {
   const colors = ["#10b981", "#84cc16", "#f59e0b", "#f97316", "#ef4444"]
+  const total = buckets.reduce((s, b) => s + b.amount, 0)
   return (
     <div className="space-y-2">
       {buckets.map((b, i) => (
-        <div key={i} className="flex items-center gap-3">
+        <div key={i} className="flex items-center gap-3 group/bar"
+          title={`${b.bucket}: ${fmtMoney(b.amount)} (${b.pct.toFixed(1)}% of ${fmtMoney(total)})`}>
           <span className="text-[11px] font-semibold w-16 text-right shrink-0" style={{ color: "var(--text-2)" }}>
             {b.bucket}
           </span>
@@ -592,16 +897,17 @@ function AgingBars({ buckets }: { buckets: { bucket: string; amount: number; pct
   )
 }
 
+// ── Category bars + movers table ─────────────────────────────────────────────
+
 function CategoryBars({ rows }: { rows: { category: string; amount: number; change_pct: number | null }[] }) {
   if (!rows.length) return null
   const max = Math.max(...rows.map((r) => Math.abs(r.amount))) || 1
   return (
     <div className="space-y-1.5">
       {rows.map((r, i) => (
-        <div key={i} className="flex items-center gap-3">
-          <span className="text-[11px] font-medium w-44 shrink-0 truncate" style={{ color: "var(--text-2)" }} title={r.category}>
-            {r.category}
-          </span>
+        <div key={i} className="flex items-center gap-3"
+          title={`${r.category}: ${fmtMoney(r.amount)}${r.change_pct !== null ? ` (${r.change_pct >= 0 ? "+" : ""}${r.change_pct.toFixed(1)}% MoM)` : ""}`}>
+          <span className="text-[11px] font-medium w-44 shrink-0 truncate" style={{ color: "var(--text-2)" }}>{r.category}</span>
           <div className="flex-1 h-4 rounded-md overflow-hidden" style={{ background: "var(--surface-2)" }}>
             <motion.div
               className="h-full"
@@ -662,7 +968,7 @@ function EntityTable({ rows, entityLabel }: { rows: { name: string; total: numbe
       <table className="w-full text-sm">
         <thead>
           <tr style={{ borderBottom: "1px solid var(--border)" }}>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider pb-2 pr-3" style={{ color: "var(--text-muted)" }}>{entityLabel}</th>
+            <th className="text-left  text-[10px] font-bold uppercase tracking-wider pb-2 pr-3" style={{ color: "var(--text-muted)" }}>{entityLabel}</th>
             <th className="text-right text-[10px] font-bold uppercase tracking-wider pb-2 pr-2" style={{ color: "var(--text-muted)" }}>Current</th>
             <th className="text-right text-[10px] font-bold uppercase tracking-wider pb-2 pr-2" style={{ color: "var(--text-muted)" }}>1–30</th>
             <th className="text-right text-[10px] font-bold uppercase tracking-wider pb-2 pr-2" style={{ color: "var(--text-muted)" }}>31–60</th>
@@ -698,7 +1004,17 @@ function SectionDivider({ label }: { label: string }) {
   )
 }
 
-// ── Utilities ────────────────────────────────────────────────────────────────
+function InlineHint({ text }: { text: string }) {
+  return (
+    <div className="text-[12px] flex items-center gap-2 rounded-lg p-3"
+      style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+      <Info size={12} strokeWidth={1.8} />
+      {text}
+    </div>
+  )
+}
+
+// ── Utils ────────────────────────────────────────────────────────────────────
 
 function fmtMoney(n: number): string {
   const abs = Math.abs(n)
@@ -739,3 +1055,4 @@ function priorityFg(p: "high" | "medium" | "low"): string {
   if (p === "medium") return "#b45309"
   return "#16a34a"
 }
+

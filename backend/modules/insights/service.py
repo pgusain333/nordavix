@@ -245,6 +245,88 @@ def _parse_aging_rows(report: dict) -> tuple[list[dict], dict[str, Decimal]]:
     return entity_rows, bucket_totals
 
 
+def _last_numeric_cell(col_data: list[dict]) -> Decimal:
+    """Walk a QBO row's ColData back-to-front and return the first numeric value."""
+    for cell in reversed(col_data or []):
+        v = (cell or {}).get("value")
+        if v in (None, ""):
+            continue
+        try:
+            return Decimal(str(v))
+        except Exception:
+            continue
+    return ZERO
+
+
+def _parse_pl_summary(report: dict) -> dict:
+    """
+    Walk a QBO ProfitAndLoss report and return:
+      { revenue, cogs, opex, net_income, expense_by_account: {name: Decimal} }
+
+    The report nests group totals (Income / COGS / Expenses / NetIncome).
+    For each group we read the Summary.ColData last numeric cell. For
+    Expenses we also collect every leaf account so the Insights page
+    can show top-categories + MoM movers over the custom range.
+    """
+    totals = {"revenue": ZERO, "cogs": ZERO, "opex": ZERO, "net_income": ZERO}
+    expense_by_account: dict[str, Decimal] = {}
+
+    def walk(rows: list[dict], inside_expenses: bool = False) -> None:
+        for r in rows:
+            group = r.get("group") or ""
+            row_type = r.get("type") or ""
+            summary = (r.get("Summary") or {}).get("ColData") or []
+
+            if group == "Income":
+                totals["revenue"] = _last_numeric_cell(summary)
+            elif group == "COGS":
+                totals["cogs"] = _last_numeric_cell(summary)
+            elif group == "Expenses":
+                totals["opex"] = _last_numeric_cell(summary)
+            elif group == "NetIncome":
+                totals["net_income"] = _last_numeric_cell(summary)
+
+            # Collect leaf expense accounts when we're inside the Expenses section.
+            if inside_expenses and row_type == "Data":
+                col = r.get("ColData") or []
+                name = (col[0].get("value") if col else None) or ""
+                amt = _last_numeric_cell(col)
+                if name and amt != 0:
+                    expense_by_account[name] = expense_by_account.get(name, ZERO) + amt
+
+            nested = (r.get("Rows") or {}).get("Row") or []
+            if nested:
+                walk(nested, inside_expenses=inside_expenses or group == "Expenses")
+
+    walk((report.get("Rows") or {}).get("Row") or [])
+    return {**totals, "expense_by_account": expense_by_account}
+
+
+async def _fetch_pl_summary(
+    conn: QboConnection | None,
+    db: AsyncSession,
+    period_start: date,
+    period_end: date,
+) -> tuple[dict | None, str | None]:
+    """Return (summary, error). Either is non-null."""
+    if conn is None:
+        return None, "QuickBooks isn't connected — can't compute P&L for the custom range."
+    try:
+        report = await _qbo_get(
+            conn, db, "/reports/ProfitAndLoss",
+            params={
+                "start_date":        period_start.isoformat(),
+                "end_date":          period_end.isoformat(),
+                "accounting_method": "Accrual",
+                "minorversion":      "65",
+            },
+        )
+    except Exception:
+        logger.exception("Insights P&L pull failed for [%s..%s]", period_start, period_end)
+        return None, f"Could not load ProfitAndLoss from QuickBooks for {period_start} to {period_end}."
+    return _parse_pl_summary(report), None
+
+
 async def _fetch_aging(
     conn: QboConnection | None,
     db: AsyncSession,
@@ -376,6 +458,7 @@ async def compute_overview(
     tenant_id,
     period_end: date,
     *,
+    period_start: date | None = None,
     months_history: int = 6,
 ) -> dict[str, Any]:
     """
@@ -401,6 +484,13 @@ async def compute_overview(
 
     # QBO connection (best-effort)
     qbo_conn = (await db.execute(select(QboConnection))).scalars().first()
+
+    # Custom range: pull a live P&L for the exact window. Overrides the
+    # snapshot-diff P&L numbers (which always span calendar months).
+    custom_pl: dict | None = None
+    custom_pl_error: str | None = None
+    if period_start is not None:
+        custom_pl, custom_pl_error = await _fetch_pl_summary(qbo_conn, db, period_start, period_end)
 
     # ── Liquidity ───────────────────────────────────────────────────────────
     def cash_at(pe: date) -> Decimal:
@@ -530,12 +620,23 @@ async def compute_overview(
             return ytd_func(pe)
         return ytd_func(pe) - ytd_func(prior)
 
-    revenue_month  = monthly_metric(period_end, revenue_at)
-    cogs_month     = monthly_metric(period_end, cogs_at)
-    opex_month     = monthly_metric(period_end, opex_at)
-    gross_profit   = revenue_month - cogs_month
-    operating_inc  = gross_profit - opex_month
-    net_income     = operating_inc  # ignoring interest/tax — proxy
+    # P&L for the requested window. If period_start was provided AND the live
+    # QBO call succeeded, use those exact numbers; otherwise fall back to the
+    # snapshot-diff over the calendar month containing period_end.
+    if custom_pl is not None:
+        revenue_month = custom_pl["revenue"]
+        cogs_month    = custom_pl["cogs"]
+        opex_month    = custom_pl["opex"]
+        gross_profit  = revenue_month - cogs_month
+        operating_inc = gross_profit - opex_month
+        net_income    = custom_pl["net_income"] or operating_inc
+    else:
+        revenue_month  = monthly_metric(period_end, revenue_at)
+        cogs_month     = monthly_metric(period_end, cogs_at)
+        opex_month     = monthly_metric(period_end, opex_at)
+        gross_profit   = revenue_month - cogs_month
+        operating_inc  = gross_profit - opex_month
+        net_income     = operating_inc  # ignoring interest/tax — proxy
 
     gm_pct = _to_pct(gross_profit, revenue_month)
     op_pct = _to_pct(operating_inc, revenue_month)
@@ -792,8 +893,13 @@ async def compute_overview(
                 result[r.account_name] = ytd - prev
         return result
 
-    curr_exp = expense_rows(period_end)
-    prev_exp = expense_rows(prior_pe) if prior_pe else {}
+    # When a custom range is in play, the live QBO P&L gives us exact
+    # expense-by-account totals for the window — use those instead of the
+    # snapshot-based monthly diff. MoM context (prev_exp) still comes
+    # from snapshots: it's "this window vs prior calendar month" only
+    # when the window is a calendar month, otherwise we hide the change.
+    curr_exp = custom_pl["expense_by_account"] if custom_pl is not None else expense_rows(period_end)
+    prev_exp = expense_rows(prior_pe) if (prior_pe and custom_pl is None) else {}
 
     by_category_list: list[dict] = []
     biggest_mover: dict | None = None
@@ -859,15 +965,24 @@ async def compute_overview(
         ],
     }
 
+    # Period label is the user-friendly window description
+    if period_start is not None:
+        period_label = f"{period_start.strftime('%b %d, %Y')} – {period_end.strftime('%b %d, %Y')}"
+    else:
+        period_label = period_end.strftime("%B %Y")
+
     payload = {
-        "period_end":   period_end.isoformat(),
-        "period_label": period_end.strftime("%B %Y"),
-        "liquidity":    liquidity,
-        "receivables":  receivables,
-        "payables":     payables,
-        "profitability": profitability,
-        "expenses":     expenses,
-        "qbo_connected": qbo_conn is not None,
+        "period_end":     period_end.isoformat(),
+        "period_start":   period_start.isoformat() if period_start else None,
+        "period_label":   period_label,
+        "custom_range":   period_start is not None,
+        "custom_pl_error": custom_pl_error,
+        "liquidity":      liquidity,
+        "receivables":    receivables,
+        "payables":       payables,
+        "profitability":  profitability,
+        "expenses":       expenses,
+        "qbo_connected":  qbo_conn is not None,
     }
 
     payload["recommendations"] = _build_recommendations(payload)
