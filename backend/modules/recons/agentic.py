@@ -252,38 +252,36 @@ async def _process_account(
             reason="Already approved — AI does not touch signed-off reconciliations.",
         ))
         return
-    # Detect whether a populated subledger_total was set by AI vs by a
-    # human. AI defers to humans but should refresh its OWN prior work
-    # (especially after logic improvements like the prior-GL roll-forward
-    # fallback). Three signals identify an AI-set subledger:
-    #   1. ai_commentary is not null (new column from the commentary
-    #      feature — present on every AI-prepared row going forward)
-    #   2. subledger_source string starts with "AI-prepared" (legacy
-    #      AI runs from before the commentary feature shipped)
-    #   3. The user clicking Agentic Mode now is the same one who last
-    #      saved the subledger AND it has an AI-shaped source — they're
-    #      re-running their own automation, allow it.
+    # Skip only TRULY-MANUAL seed entries — i.e., subledger_total was
+    # set BUT no prior reconciled period exists to roll from. In that
+    # case the value is the start of the close-and-roll chain (a
+    # human-typed initial number) and AI shouldn't touch it.
+    #
+    # When a prior reconciled period exists, any saved subledger_total
+    # on the current row came from one of:
+    #   - AI's own prior run (we now want to refresh)
+    #   - Auto-save on approval (auto-saved rolled-forward + items)
+    #   - Manual save via the inline form (still roll-forward-derived
+    #     because the form computes total = opening + items)
+    # All three are fair game for re-prep — AI just recomputes and
+    # overwrites with fresh data.
     if review and review.subledger_total is not None:
-        src = (review.subledger_source or "").lower()
-        was_ai = (
-            review.ai_commentary is not None
-            or src.startswith("ai-prepared")
-            or "ai-prepared" in src
-        )
-        if not was_ai:
+        has_prior_rolled = prior is not None and prior.subledger_total is not None
+        if not has_prior_rolled:
             result.skipped += 1
             result.accounts.append(AccountResult(
                 qbo_account_id=qid, account_name=name, account_number=number,
                 action="skipped",
                 reason=(
-                    "A human preparer already entered a manual subledger value — "
-                    "AI defers to human input. Clear the override on the row if "
-                    "you want AI to re-prepare it."
+                    "Manual seed entry (no prior reconciled period to roll from) — "
+                    "AI defers to human input. Reconcile a prior period first if "
+                    "you want AI to roll forward and refresh this."
                 ),
             ))
             return
-        # Otherwise: AI set this previously. Re-prep is allowed — fall
-        # through to the normal flow, which overwrites with fresh data.
+        # Otherwise: there's a prior to roll from. The current saved
+        # value can be safely overwritten — AI re-computes from the
+        # same chain anyway. Fall through.
 
     # ── Compute opening balance — strict close-and-roll ────────────────
     # Opening = prior reconciled subledger ONLY. If no prior is

@@ -381,24 +381,44 @@ async def _build_overview_from_qbo_data(
         #      reconciled would assume opening $0 and look broken.
         #   4) QBO-computed default (AR aging total, AP aging, current
         #      GL match) — only when no history of any kind exists.
-        is_manual = review is not None and review.subledger_total is not None
+        has_saved_subledger = review is not None and review.subledger_total is not None
         prior_review = prior_by_acct.get(qbo_id)
-        # Strict close-and-roll: opening = prior reconciled subledger ONLY.
-        # No GL snapshot fallback. If no prior is reconciled, opening = $0
-        # and the user is expected to reconcile the prior period first.
-        is_rollforward_from_subledger = (
+        has_prior_rolled = (
             prior_review is not None and prior_review.subledger_total is not None
         )
+        # Roll-forward whenever a prior reconciled period exists — even
+        # if the CURRENT period's subledger has already been saved (via
+        # AI prep or auto-save on approval). The badge tells the user
+        # "this value comes from the close-and-roll chain", which is
+        # always true when a prior reconciled period exists.
+        is_rollforward_from_subledger = has_prior_rolled
+        # "Manual" means: subledger was set for this period BUT there's
+        # no prior reconciled period to roll from — i.e., a seed entry
+        # at the start of the close-and-roll chain. Truly user-entered
+        # initial value, not derived from any prior period.
+        is_manual_seed = has_saved_subledger and not has_prior_rolled
+
         rollforward_opening = (
-            Decimal(prior_review.subledger_total) if is_rollforward_from_subledger
+            Decimal(prior_review.subledger_total) if has_prior_rolled
             else Decimal("0")
         )
 
-        if is_manual:
+        if has_saved_subledger:
+            # Display the saved value either way (it's the canonical
+            # current-period subledger). The is_manual_seed / is_rollforward
+            # flags above drive the badge in the UI.
             subledger_balance = review.subledger_total
-            source = review.subledger_source or "Manually entered"
+            if has_prior_rolled:
+                source = (
+                    f"Rolled forward from {prior_review.period_end} closing — "
+                    "open the row to review reconciling items."
+                )
+            else:
+                source = review.subledger_source or "Manually entered (seed)"
             has_detail = True
-        elif is_rollforward_from_subledger:
+        elif has_prior_rolled:
+            # Nothing saved yet for this period — show the rolled-
+            # forward value as the default. User can tick items to adjust.
             subledger_balance = prior_review.subledger_total
             source = (
                 f"Rolled forward from {prior_review.period_end} closing — "
@@ -426,14 +446,17 @@ async def _build_overview_from_qbo_data(
             "gl_balance":          str(gl_balance.quantize(Decimal("0.01"))),
             "subledger_balance":   str(subledger_balance.quantize(Decimal("0.01"))),
             "subledger_source":    source,
-            "subledger_is_manual": is_manual,
-            # True when opening rolled forward from a prior reconciled
-            # subledger. The dashboard shows the "Roll fwd" badge based
-            # on this flag (now always the blue/subledger variant since
-            # the GL fallback was removed).
-            "subledger_is_rollforward": not is_manual and is_rollforward_from_subledger,
-            # Kept on the response for back-compat with frontend code
-            # that still reads it; only ever "subledger" or null now.
+            # Green "Manual" dot — TRUE only when this is a seed entry
+            # (subledger set with no prior period to roll from). Used
+            # to be true for ANY saved subledger, which lit the dot up
+            # on AI-prepared / auto-saved roll-forward rows incorrectly.
+            "subledger_is_manual": is_manual_seed,
+            # "Roll fwd" badge — TRUE whenever a prior reconciled
+            # period exists, regardless of whether the current period
+            # has a saved subledger or not. The badge means "this
+            # value comes from the close-and-roll chain" which is
+            # accurate in both cases.
+            "subledger_is_rollforward": is_rollforward_from_subledger,
             "rollforward_source":  "subledger" if is_rollforward_from_subledger else None,
             "rollforward_from":    (
                 prior_review.period_end.isoformat() if is_rollforward_from_subledger
