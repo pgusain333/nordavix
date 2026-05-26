@@ -192,17 +192,16 @@ def _severity_for_recon(review_status: str, due_date: date) -> str:
 
 
 def _is_open(t: TaskOut) -> bool:
+    # Snooze was removed from TaskOut in the v3 schema (workflow noise —
+    # users just toggled it for everything). The TaskAction DB model still
+    # has the column for back-compat, but TaskOut intentionally drops it,
+    # so this function — which takes the API-shape — must NOT read it.
+    # Reading it here was raising AttributeError on /tasks/count and
+    # PendingRollbackError'ing the request session.
     if t.completed_at:
         return False
     if t.dismissed_at:
         return False
-    if t.snooze_until:
-        try:
-            d = date.fromisoformat(t.snooze_until)
-            if d >= date.today():
-                return False
-        except Exception:
-            pass
     # Approved recons + flux are "done" from a workflow perspective even
     # without an overlay completed_at — they don't belong in the open list.
     if t.status == "approved":

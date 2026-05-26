@@ -69,8 +69,15 @@ async def capture_snapshot(
     all_accts_by_id = {str(a.get("Id")): a for a in (bs_accts + pl_accts) if a.get("Id")}
 
     from core.qbo_tb import lookup_balance
+    # Explicit tenant_id filter (don't rely on the session listener — the
+    # whole point of this query is to find rows we can update, and if the
+    # listener ever gets bypassed by a missing context var we'd grab
+    # cross-tenant rows and silently mutate them).
     existing = list((await db.execute(
-        select(GlBalanceSnapshot).where(GlBalanceSnapshot.period_end == period_end)
+        select(GlBalanceSnapshot).where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.period_end == period_end,
+        )
     )).scalars().all())
     existing_by_acct: dict[str, GlBalanceSnapshot] = {r.qbo_account_id: r for r in existing}
 
@@ -91,7 +98,15 @@ async def capture_snapshot(
 
         row = existing_by_acct.get(qid)
         if row is None:
+            # `tenant_id` MUST be set explicitly: TenantBase declares the
+            # column NOT NULL, and the tenancy session listener only
+            # auto-injects WHERE filters on reads — it never fills in
+            # tenant_id on inserts. Omitting it raises NotNullViolation,
+            # which puts the AsyncSession into PendingRollback and breaks
+            # every subsequent query the request makes (in particular,
+            # the Financials PDF export — which is why it was failing).
             row = GlBalanceSnapshot(
+                tenant_id=tenant_id,
                 qbo_account_id=qid,
                 period_end=period_end,
                 account_number=acct_num or None,
@@ -110,6 +125,9 @@ async def capture_snapshot(
     try:
         await db.commit()
     except Exception:
+        # Roll back so the caller's session is usable again (without this,
+        # the next query on the same session hits PendingRollbackError).
+        await db.rollback()
         logger.exception("Snapshot commit failed for %s", period_end)
         return 0
     return written
