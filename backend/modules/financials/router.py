@@ -628,27 +628,52 @@ async def export_pdf(
         kinds = ["income_statement", "balance_sheet", "cash_flow"]
     else:
         raise HTTPException(400, "statement must be is | bs | cf | full.")
-    # Sequential builds — see note in _build_statement about the
-    # SQLAlchemy session race that asyncio.gather triggers.
-    statements: list[StatementOut] = []
-    for k in kinds:
-        statements.append(await _build_statement(tenant_id, db, pe, k, comparative, source=source))
+    # Wrap the whole build in explicit error capture so the user sees a
+    # useful message in the UI instead of a generic axios "Network Error".
+    # Logs the full traceback for our own debugging. Each stage logs its
+    # own start/end so when something hangs we can see which stage
+    # consumed the time.
+    logger.info("PDF export start: tenant=%s period=%s source=%s kinds=%s",
+                tenant_id, pe, source, kinds)
+    try:
+        # Sequential builds — see note in _build_statement about the
+        # SQLAlchemy session race that asyncio.gather triggers.
+        statements: list[StatementOut] = []
+        for k in kinds:
+            logger.info("PDF export: building %s", k)
+            statements.append(await _build_statement(tenant_id, db, pe, k, comparative, source=source))
 
-    from modules.financials.pdf import build_pdf
-    buf = io.BytesIO()
-    company = statements[0].company if statements else "Your Company"
-    build_pdf(
-        buf,
-        company=company,
-        period_end=pe,
-        statements=statements,
-        prepared_by=user.email or "",
-        is_draft=(closed is None),
-    )
-    buf.seek(0)
-    label = "draft-" if closed is None else ""
-    fname = f"{label}financial-package-{pe.isoformat()}.pdf"
-    return StreamingResponse(
-        buf, media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
+        logger.info("PDF export: rendering PDF (%d statements)", len(statements))
+        from modules.financials.pdf import build_pdf
+        buf = io.BytesIO()
+        company = statements[0].company if statements else "Your Company"
+        build_pdf(
+            buf,
+            company=company,
+            period_end=pe,
+            statements=statements,
+            prepared_by=user.email or "",
+            is_draft=(closed is None),
+        )
+        buf.seek(0)
+        label = "draft-" if closed is None else ""
+        fname = f"{label}financial-package-{pe.isoformat()}.pdf"
+        logger.info("PDF export done: %d bytes", buf.getbuffer().nbytes)
+        return StreamingResponse(
+            buf, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    except HTTPException:
+        # Already a user-shaped error (401, 403, 502 from QBO failures
+        # inside _build_statement) — let FastAPI handle it normally so
+        # the frontend's error reader sees a real detail string.
+        raise
+    except Exception as exc:
+        logger.exception("PDF export failed for tenant=%s period=%s source=%s",
+                          tenant_id, pe, source)
+        # Surface the real failure to the user — never leave them with
+        # the browser's generic "Network Error".
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF generation failed: {type(exc).__name__}: {str(exc)[:200]}",
+        ) from exc

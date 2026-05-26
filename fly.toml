@@ -16,9 +16,12 @@ primary_region = "iad"
 [http_service]
   internal_port = 8000
   force_https = true
+  # Keep one machine always running so PDF-export requests never hit
+  # a cold-start delay (cold starts were causing intermittent
+  # "Network Error" reports on the financials Export button).
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ["app"]
 
   [http_service.concurrency]
@@ -28,7 +31,12 @@ primary_region = "iad"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
+  # 1GB so PDF rendering (ReportLab + parsed report data + FastAPI
+  # baseline) doesn't OOM-kill the process under peak. 512mb was
+  # tight enough that big "full package" PDFs would occasionally
+  # crash mid-build and the browser saw the dropped connection as
+  # a "Network Error".
+  memory = "1gb"
 
 [checks]
   [checks.health]
