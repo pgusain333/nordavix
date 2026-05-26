@@ -316,132 +316,108 @@ async def _process_account(
         ))
         return
 
-    # Build the reconciling-items payload in the EXACT shape the inline
-    # form / PDF / overview code expects.
-    items: list[dict[str, Any]] = []
-    signed_sum = Decimal("0")
+    # Period transactions are pulled ONLY for AI analysis — we do NOT
+    # auto-tick them onto the row. The human preparer reviews the
+    # variance, looks at the period activity, picks which items belong,
+    # then saves via the inline form. AI's role is to set up the view
+    # (opening rolled forward) and to write commentary that helps the
+    # user understand the variance and identify likely reconciling
+    # items — NOT to do the picking itself.
+    candidate_items: list[dict[str, Any]] = []
+    signed_period_sum = Decimal("0")
     for r in gl_rows:
-        amount = r["amount"]  # Decimal — already signed per QBO's convention
+        amount = r["amount"]
         signed = flip * amount
-        signed_sum += signed
-        items.append({
+        signed_period_sum += signed
+        candidate_items.append({
             "txn_id":     r.get("qbo_txn_id") or "",
             "txn_type":   r.get("txn_type") or "",
             "txn_number": r.get("txn_number") or "",
             "txn_date":   r["txn_date"].isoformat() if r.get("txn_date") else "",
-            "amount":     str(amount),     # store raw amount; flip happens at display time
+            "amount":     str(amount),
             "memo":       r.get("memo") or "",
         })
 
-    computed = opening + signed_sum
-    gap_before = gl_balance - opening   # before any items
-    gap_after = gl_balance - computed   # after ticking all items
-    tied_out = abs(gap_after) < _TIE_TOLERANCE
+    # Variance = GL vs the rolled-forward opening, NO items applied.
+    # This is what the dashboard shows the user.
+    variance = gl_balance - opening
+    tied_out_trivially = abs(variance) < _TIE_TOLERANCE
 
-    if tied_out:
-        # ── Auto-prepare: save override + mark reviewed + AI commentary ─
-        # Commentary is only useful when AI actually DID something — i.e.,
-        # ticked one or more reconciling items. Accounts with zero period
-        # activity tie out trivially (opening rolled forward = GL), so
-        # there's nothing for the AI to explain. Skip the commentary
-        # build + the Claude call in that case (no value, just cost).
-        if items:
-            logger.info(
-                "Agentic: building commentary for %s (%s) — %d item(s)",
-                qid, name, len(items),
-            )
-            try:
-                commentary = await build_ai_commentary(
-                    db=db, conn=conn,
-                    qid=qid, period_end=period_end,
-                    account_name=name, account_number=number, account_type=snap.account_type,
-                    is_credit_natural=is_credit_natural,
-                    opening=opening, gl_balance=gl_balance, computed=computed,
-                    items=items, prior=prior,
-                    opening_source_label=opening_source,
-                )
-                logger.info(
-                    "Agentic: commentary built for %s (%s) — confidence=%s recommendation=%s",
-                    qid, name,
-                    commentary.get("confidence") if commentary else "(none)",
-                    commentary.get("recommendation") if commentary else "(none)",
-                )
-            except Exception:
-                # Don't let a commentary failure block the prep — the
-                # account still gets tied out + saved; just no card.
-                logger.exception(
-                    "Agentic: commentary BUILD FAILED for %s (%s) — preparing without commentary",
-                    qid, name,
-                )
-                commentary = None
-        else:
-            logger.info(
-                "Agentic: skipping commentary for %s (%s) — zero items (trivial tie-out)",
-                qid, name,
-            )
-            commentary = None
+    if tied_out_trivially:
+        # ── Trivial tie: opening already equals GL ──────────────────────
+        # No period activity needed for this account to reconcile.
+        # Save subledger = opening, no items, mark reviewed. Common
+        # case for inactive accounts that just roll forward unchanged.
         await _save_prepared(
             db=db, tenant_id=tenant_id, user=user,
             qid=qid, period_end=period_end, review=review,
-            subledger_total=computed,
-            items=items,
+            subledger_total=opening,
+            items=[],          # don't tick anything — there's nothing to tick
             source_note=(
-                f"AI-prepared: opening {_money(opening)} + "
-                f"{len(items)} period transaction{'' if len(items) == 1 else 's'} "
-                f"(net {_money(signed_sum)}) = subledger {_money(computed)} = GL {_money(gl_balance)}."
+                f"AI-prepared: opening {_money(opening)} (rolled forward) = "
+                f"GL {_money(gl_balance)}. No reconciling items needed."
             ),
-            commentary=commentary,
+            commentary=None,   # nothing to comment on
         )
         result.prepared += 1
         result.accounts.append(AccountResult(
             qbo_account_id=qid, account_name=name, account_number=number,
             action="prepared",
-            reason=(
-                f"Tied out by including all {len(items)} transaction"
-                f"{'' if len(items) == 1 else 's'} posted this period."
-            ),
-            items_added=len(items),
-            gap_before=str(gap_before.quantize(Decimal('0.01'))),
-            gap_after=str(gap_after.quantize(Decimal('0.01'))),
+            reason="Opening rolled forward equals GL — trivial tie, no items needed.",
+            items_added=0,
+            gap_before=str(variance.quantize(Decimal('0.01'))),
+            gap_after=str(variance.quantize(Decimal('0.01'))),
         ))
         return
 
-    # ── Can't tie out — AI analyzes likely reasons for the residual gap ─
-    # Don't change the status. Don't save items. Just attach a note so
-    # a human preparer reads the analysis when they open the row.
+    # ── Has variance: AI writes analytical commentary, doesn't tick ─────
+    # DO NOT save subledger_total or any reconciling items. The user
+    # opens the row, sees the rolled-forward opening + variance, reads
+    # AI's suggestions, and manually picks the items that explain the
+    # gap. AI's value is identification + analysis, not action.
+    logger.info(
+        "Agentic: analyzing variance for %s (%s) — opening=%s GL=%s variance=%s, %d candidate(s)",
+        qid, name, opening, gl_balance, variance, len(candidate_items),
+    )
     try:
-        ai_note = _analyze_gap(
-            account_name=name,
-            account_number=number,
-            account_type=snap.account_type,
-            period_end=period_end,
-            opening=opening,
-            gl_balance=gl_balance,
-            ticked_sum=signed_sum,
-            items=items,
-            residual_gap=gap_after,
+        commentary = await build_variance_commentary(
+            db=db, conn=conn,
+            qid=qid, period_end=period_end,
+            account_name=name, account_number=number, account_type=snap.account_type,
+            is_credit_natural=is_credit_natural,
+            opening=opening, gl_balance=gl_balance, variance=variance,
+            candidate_items=candidate_items,
+            period_activity_sum=signed_period_sum,
+            prior=prior,
+            opening_source_label=opening_source,
         )
-    except Exception as e:
-        logger.exception("AI analysis failed for %s", qid)
-        ai_note = (
-            f"AI-analyzed: couldn't auto-tie. Opening {_money(opening)} + period activity "
-            f"{_money(signed_sum)} = {_money(computed)} vs GL {_money(gl_balance)} "
-            f"(residual gap {_money(gap_after)}). "
-            f"AI gap-analysis call failed: {type(e).__name__}."
+        logger.info(
+            "Agentic: variance commentary built for %s (%s) — confidence=%s",
+            qid, name,
+            commentary.get("confidence") if commentary else "(none)",
         )
+    except Exception:
+        logger.exception(
+            "Agentic: variance commentary failed for %s (%s) — leaving row untouched",
+            qid, name,
+        )
+        commentary = None
 
-    await _save_analyzed_note(
+    await _save_analyzed_row(
         db=db, tenant_id=tenant_id,
         qid=qid, period_end=period_end, review=review,
-        note=ai_note,
+        commentary=commentary,
+        opening=opening, variance=variance, candidate_count=len(candidate_items),
+        prior_period_end=prior.period_end if prior and prior.subledger_total is not None else None,
     )
     result.analyzed += 1
     result.accounts.append(AccountResult(
         qbo_account_id=qid, account_name=name, account_number=number,
         action="analyzed",
         reason=(
-            f"Couldn't auto-tie (residual gap {_money(gap_after)}). "
-            "AI analysis written to the row's notes — a human preparer needs to finish this one."
+            f"Variance of {_money(variance)} — opening {_money(opening)} vs GL {_money(gl_balance)}. "
+            f"AI analyzed {len(candidate_items)} candidate transaction(s) — open the row "
+            "and tick the ones that apply to tie out."
         ),
         items_added=0,
         gap_before=str(gap_before.quantize(Decimal('0.01'))),
@@ -523,24 +499,32 @@ async def _save_prepared(
     await db.commit()
 
 
-async def _save_analyzed_note(
+async def _save_analyzed_row(
     *,
     db: AsyncSession,
     tenant_id: uuid.UUID,
     qid: str,
     period_end: date,
     review: AccountReviewStatus | None,
-    note: str,
+    commentary: dict[str, Any] | None,
+    opening: Decimal,
+    variance: Decimal,
+    candidate_count: int,
+    prior_period_end: date | None,
 ) -> None:
-    """Upsert AccountReviewStatus with an AI analysis note. Status stays
-    "pending" (don't flip it — only successful ties prepare). If there
-    are existing preparer notes we append rather than overwrite."""
-    now = datetime.now(UTC)
-    final_note = note
-    if review and review.notes and review.notes.strip():
-        # Don't clobber human notes — append.
-        final_note = f"{review.notes.rstrip()}\n\n— AI analysis added {now.strftime('%Y-%m-%d')} —\n{note}"
+    """Save AI's analysis for an account that has variance — but
+    CRUCIALLY: don't touch subledger_total or reconciling_items.
 
+    The whole point of this fix is that AI doesn't auto-tick items.
+    The user manually picks items via the inline form. AI's job is
+    to write commentary that helps the user identify likely items
+    and explain the variance.
+
+    Status stays "pending" so the user knows there's work to do.
+    The ai_commentary field gets the structured analysis (rendered
+    as the AI Commentary card in the expanded row + on the PDF).
+    """
+    now = datetime.now(UTC)
     if review is None:
         review = AccountReviewStatus(
             id=uuid.uuid4(),
@@ -548,17 +532,273 @@ async def _save_analyzed_note(
             qbo_account_id=qid,
             period_end=period_end,
             status="pending",
-            notes=final_note,
             reconciling_items=[],
+            ai_commentary=commentary,
         )
         db.add(review)
     else:
-        review.notes = final_note
+        # Status: don't promote. If the user has been working on this
+        # row (status reviewed/approved), leave status alone — they
+        # know what they're doing. Otherwise leave at pending.
+        review.ai_commentary = commentary
+        # DO NOT TOUCH subledger_total, reconciling_items, status, or
+        # any actor stamps — this is purely analytical output, not work.
 
     await db.commit()
 
 
-# ── AI commentary on tied-out reconciliations ──────────────────────────────
+# ── AI commentary on accounts with variance (analyze, don't act) ───────────
+
+
+async def build_variance_commentary(
+    *,
+    db: AsyncSession,
+    conn: QboConnection,
+    qid: str,
+    period_end: date,
+    account_name: str,
+    account_number: str,
+    account_type: str,
+    is_credit_natural: bool,
+    opening: Decimal,
+    gl_balance: Decimal,
+    variance: Decimal,
+    candidate_items: list[dict[str, Any]],
+    period_activity_sum: Decimal,
+    prior: AccountReviewStatus | None,
+    opening_source_label: str = "",
+) -> dict[str, Any]:
+    """
+    Build structured AI commentary for an account WITH variance —
+    AI's role here is to ANALYZE and SUGGEST, never to auto-tick.
+
+    Same shape as build_ai_commentary so the dashboard + PDF render
+    consistently:
+      { generated_at, confidence, checks[], recommendation, narrative }
+
+    Confidence/recommendation flavors:
+      • high   / approve   — period activity sums to exactly variance →
+        ticking all candidates would tie. User can review + bulk-tick.
+      • medium / review    — partial match, some candidates likely apply
+      • low    / investigate — period activity doesn't explain variance;
+        the gap likely lives outside the current period (back-dated entries,
+        prior-period adjustments, subledger truly differs from GL).
+    """
+    checks: list[dict[str, Any]] = []
+
+    # Check 1: Variance vs period activity — does ticking all candidates
+    # explain the gap? This is the auditable "would auto-tick have
+    # worked" check.
+    sum_minus_variance = (period_activity_sum - variance).quantize(Decimal("0.01"))
+    if abs(sum_minus_variance) < _TIE_TOLERANCE:
+        checks.append({
+            "name":   "Variance vs period activity",
+            "status": "pass",
+            "detail": (
+                f"Variance of {_money(variance)} exactly matches the net of "
+                f"{len(candidate_items)} period transaction(s) ({_money(period_activity_sum)}). "
+                "Ticking all of them in the inline form would tie this account out."
+            ),
+        })
+        match_quality = "full"
+    elif period_activity_sum != 0 and abs(sum_minus_variance) < abs(variance):
+        checks.append({
+            "name":   "Variance vs period activity",
+            "status": "warn",
+            "detail": (
+                f"Variance is {_money(variance)} and period activity nets "
+                f"{_money(period_activity_sum)} — partial match. Some of the "
+                f"{len(candidate_items)} candidate transaction(s) likely apply, "
+                "but additional out-of-period items may be needed too."
+            ),
+        })
+        match_quality = "partial"
+    else:
+        checks.append({
+            "name":   "Variance vs period activity",
+            "status": "warn",
+            "detail": (
+                f"Variance of {_money(variance)} doesn't line up with the period's "
+                f"net activity ({_money(period_activity_sum)}). The gap likely "
+                "lives outside the current month — possible causes: back-dated "
+                "entries, prior-period adjustments, manual JEs not yet posted, "
+                "or a genuine subledger-vs-GL difference that needs investigation."
+            ),
+        })
+        match_quality = "none"
+
+    # Check 2: Opening provenance
+    if prior is not None and prior.subledger_total is not None:
+        checks.append({
+            "name":   "Opening balance",
+            "status": "pass",
+            "detail": (
+                f"Rolled forward from prior period's reconciled subledger "
+                f"({prior.period_end.isoformat()})."
+            ),
+        })
+    else:
+        checks.append({
+            "name":   "Opening balance",
+            "status": "warn",
+            "detail": (
+                "No prior-period reconciled subledger on file — assumed $0 "
+                "opening. Reconcile the prior period first so the chain rolls "
+                "forward properly."
+            ),
+        })
+
+    # Check 3: Candidate volume + composition
+    if not candidate_items:
+        checks.append({
+            "name":   "Period activity",
+            "status": "warn",
+            "detail": (
+                "No transactions found in QuickBooks for this account in the "
+                "period. The variance likely comes from out-of-period activity "
+                "or a non-QBO source (bank statement, vendor invoice, etc.)."
+            ),
+        })
+    else:
+        type_counts: dict[str, int] = {}
+        je_count = 0
+        for it in candidate_items:
+            t = (it.get("txn_type") or "").strip()
+            if t:
+                type_counts[t] = type_counts.get(t, 0) + 1
+            if "journal" in t.lower():
+                je_count += 1
+        comp = ", ".join(
+            f"{c} {t.lower()}{'s' if c != 1 else ''}"
+            for t, c in sorted(type_counts.items(), key=lambda x: -x[1])
+        )
+        if je_count > 0 and je_count >= max(2, len(candidate_items) * 0.3):
+            checks.append({
+                "name":   "Period activity",
+                "status": "warn",
+                "detail": (
+                    f"{len(candidate_items)} candidate transaction(s): {comp}. "
+                    f"{je_count} are manual journal entries — review those "
+                    "carefully before ticking; they're often the cause of "
+                    "subledger-vs-GL gaps."
+                ),
+            })
+        else:
+            checks.append({
+                "name":   "Period activity",
+                "status": "pass",
+                "detail": f"{len(candidate_items)} candidate transaction(s): {comp}.",
+            })
+
+    # Derive confidence + recommendation from check results + match
+    has_warn = any(c["status"] == "warn" for c in checks)
+    if match_quality == "full" and not has_warn:
+        confidence = "high"
+        recommendation = "review"   # user reviews + ticks; AI never auto-prepares
+    elif match_quality == "full":
+        confidence = "medium"
+        recommendation = "review"
+    elif match_quality == "partial":
+        confidence = "medium"
+        recommendation = "review"
+    else:
+        confidence = "low"
+        recommendation = "investigate"
+
+    # Narrative — single Claude call to summarize what the user should do.
+    narrative = _generate_variance_narrative(
+        account_name=account_name, account_number=account_number,
+        account_type=account_type, period_end=period_end,
+        opening=opening, gl_balance=gl_balance, variance=variance,
+        candidate_items=candidate_items,
+        period_activity_sum=period_activity_sum,
+        match_quality=match_quality,
+        confidence=confidence,
+    )
+
+    return {
+        "generated_at":   datetime.now(UTC).isoformat(),
+        "confidence":     confidence,
+        "checks":         checks,
+        "recommendation": recommendation,
+        "narrative":      narrative,
+    }
+
+
+def _generate_variance_narrative(
+    *,
+    account_name: str,
+    account_number: str,
+    account_type: str,
+    period_end: date,
+    opening: Decimal,
+    gl_balance: Decimal,
+    variance: Decimal,
+    candidate_items: list[dict[str, Any]],
+    period_activity_sum: Decimal,
+    match_quality: str,
+    confidence: str,
+) -> str:
+    """Plain-English summary of the variance + what the user should
+    do next. Single Claude call, falls back to a templated summary
+    if the API fails."""
+    try:
+        from core.ai.client import compute_cache_key, generate_narrative
+
+        # Compact summary of top candidates by absolute amount.
+        sorted_items = sorted(
+            candidate_items,
+            key=lambda i: abs(Decimal(str(i.get("amount", "0") or "0"))),
+            reverse=True,
+        )[:5]
+        items_summary = "\n".join(
+            f"  - {i.get('txn_date','')} {i.get('txn_type','')} "
+            f"#{i.get('txn_number','')}: "
+            f"{_money(Decimal(str(i.get('amount','0') or '0')))} — "
+            f"{(i.get('memo') or '')[:80]}"
+            for i in sorted_items
+        ) or "  (no candidate transactions in the period)"
+
+        system_prompt = (
+            "You are a senior accountant helping a preparer understand a "
+            "month-end account variance. Write 2-3 sentences in plain English "
+            "explaining what the variance likely represents and which "
+            "transactions the preparer should review first. Do NOT recommend "
+            "ticking specific items — that's the preparer's call. Be specific "
+            "about which transactions look most relevant given the variance "
+            "amount. No markdown, no bullets. Under 80 words."
+        )
+        user_prompt = (
+            f"Account: {account_number + ' · ' if account_number else ''}{account_name} ({account_type})\n"
+            f"Period End: {period_end.isoformat()}\n\n"
+            f"Opening (rolled forward): {_money(opening)}\n"
+            f"GL balance: {_money(gl_balance)}\n"
+            f"Variance to reconcile: {_money(variance)}\n"
+            f"Net of {len(candidate_items)} period transaction(s): {_money(period_activity_sum)}\n"
+            f"Match quality between activity and variance: {match_quality}\n\n"
+            f"Top candidates by magnitude:\n{items_summary}\n\n"
+            f"Summarize for the preparer."
+        )
+        key = compute_cache_key(
+            account_number or account_name,
+            str(gl_balance), str(opening),
+            f"agentic-variance-{period_end.isoformat()}",
+        )
+        resp = generate_narrative(system_prompt, user_prompt, key, max_tokens=220)
+        return resp.content.strip()
+    except Exception:
+        logger.exception("Variance narrative AI call failed — falling back to template")
+        return (
+            f"Variance of {_money(variance)} between rolled-forward opening "
+            f"{_money(opening)} and GL {_money(gl_balance)}. "
+            f"{len(candidate_items)} candidate transaction(s) totaling "
+            f"{_money(period_activity_sum)} were found in the period. "
+            "Open the row to review and tick the items that apply."
+        )
+
+
+# ── AI commentary on tied-out reconciliations (legacy — only called by the
+# trivial-tie path now, since we no longer auto-tick items) ────────────────
 
 
 async def build_ai_commentary(
@@ -881,84 +1121,6 @@ def _generate_narrative(
             f"ties subledger {_money(computed)} to GL {_money(gl_balance)} exactly. "
             f"Confidence: {confidence}."
         )
-
-
-# ── AI gap analysis ────────────────────────────────────────────────────────
-
-
-def _analyze_gap(
-    *,
-    account_name: str,
-    account_number: str,
-    account_type: str,
-    period_end: date,
-    opening: Decimal,
-    gl_balance: Decimal,
-    ticked_sum: Decimal,
-    items: list[dict[str, Any]],
-    residual_gap: Decimal,
-) -> str:
-    """Ask Claude for 2-3 likely reasons the AI couldn't tie this account.
-
-    Single API call per non-tying account — adds ~$0.001-0.005 + ~1-2s
-    per call. For a small period (5-10 non-tying accounts) the total
-    overhead is acceptable. For a large period the upstream caller can
-    rate-limit (out of scope here)."""
-    # Compact summary of the items (don't ship 100 lines of memo text
-    # to the API — pick top 5 by absolute amount).
-    sorted_items = sorted(
-        items,
-        key=lambda i: abs(Decimal(str(i.get("amount", "0") or "0"))),
-        reverse=True,
-    )[:5]
-    items_summary = "\n".join(
-        f"  - {i.get('txn_date','')} {i.get('txn_type','')} #{i.get('txn_number','')}: "
-        f"{_money(Decimal(str(i.get('amount','0') or '0')))} — {(i.get('memo') or '')[:80]}"
-        for i in sorted_items
-    ) or "  (no transactions posted to this account in the period)"
-
-    system_prompt = (
-        "You are a senior accountant reviewing a month-end account reconciliation that "
-        "failed to tie out by including all current-period transactions. Your job is to "
-        "explain — in 2-3 sentences — the MOST LIKELY reasons for the residual gap.\n\n"
-        "Output rules:\n"
-        "  - Plain text only — no markdown, no headings, no bullets.\n"
-        "  - Be specific and actionable: name what a preparer should check next.\n"
-        "  - Don't invent transactions or amounts — work only from what's provided.\n"
-        "  - Skip generic platitudes like 'review with care' — give concrete leads.\n"
-        "  - Keep it under 80 words."
-    )
-    user_prompt = (
-        f"Account: {account_number + ' · ' if account_number else ''}{account_name}\n"
-        f"Account Type: {account_type}\n"
-        f"Period End: {period_end.isoformat()}\n\n"
-        f"Opening balance (rolled forward from prior close): {_money(opening)}\n"
-        f"GL balance at period end: {_money(gl_balance)}\n"
-        f"Net activity from {len(items)} current-period transaction(s): {_money(ticked_sum)}\n"
-        f"Computed closing subledger (opening + activity): {_money(opening + ticked_sum)}\n"
-        f"Residual gap (GL − computed subledger): {_money(residual_gap)}\n\n"
-        f"Top transactions by magnitude:\n{items_summary}\n\n"
-        f"What are the 2-3 most likely reasons this account doesn't tie out?"
-    )
-
-    # Reuse the existing AI client. cache_key is informational here — we
-    # don't have a stable cache concept for gap analysis (the data changes
-    # every sync), but pass a deterministic-ish key for telemetry.
-    from core.ai.client import compute_cache_key, generate_narrative
-    key = compute_cache_key(
-        account_number or account_name,
-        str(gl_balance), str(opening),
-        f"agentic-gap-{period_end.isoformat()}",
-    )
-    resp = generate_narrative(system_prompt, user_prompt, key, max_tokens=240)
-
-    return (
-        f"AI-analyzed: couldn't auto-tie this account. "
-        f"Opening {_money(opening)} + {len(items)} period transaction(s) totaling "
-        f"{_money(ticked_sum)} = computed subledger {_money(opening + ticked_sum)}, "
-        f"vs GL {_money(gl_balance)} (residual gap {_money(residual_gap)}).\n\n"
-        f"Likely reasons:\n{resp.content.strip()}"
-    )
 
 
 # ── Display formatting ─────────────────────────────────────────────────────
