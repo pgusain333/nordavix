@@ -202,13 +202,9 @@ export function FluxDashboard() {
     onError: () => setPendingAction(null),
   })
 
-  // Approve the entire analysis — stamps approved_by/at + moves to "complete"
-  const approveTbMut = useMutation({
-    mutationFn: (id: string) => api.approveTrialBalance(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["trial-balances"] })
-    },
-  })
+  // (Removed: approveTbMut — TB-level Approve button was dropped from
+  // the header. Approvals happen per-variance via the row check icon or
+  // via the bulk-action bar in the variance table.)
 
   // Run AI analysis on all material+pending variances
   const runFluxMut = useMutation({
@@ -482,21 +478,11 @@ export function FluxDashboard() {
                 <span className="hidden sm:inline">Find reasons</span>
               </Button>
             )}
-            {/* Approve analysis — only shown for TBs with results that aren't yet approved */}
-            {showVarianceTable && selectedTb && !selectedTb.approved_at && (
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<CheckCircle2 size={14} strokeWidth={1.8} />}
-                loading={approveTbMut.isPending}
-                onClick={() => tbId && approveTbMut.mutate(tbId)}
-                title="Sign off on this analysis"
-                style={{ borderColor: "var(--green)", color: "var(--green)" }}
-              >
-                <span className="hidden sm:inline">Approve</span>
-              </Button>
-            )}
-            {/* Approved badge in place of the button once signed off */}
+            {/* TB-level Approve button removed per UX request — approvals
+                happen per-variance via the row's check icon, or via the
+                bulk action bar that appears when rows are selected via
+                the new checkbox column. The "Approved" badge remains
+                so the user still sees TB-level sign-off state. */}
             {showVarianceTable && selectedTb && selectedTb.approved_at && (
               <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
                 style={{ background: "var(--green-subtle)", color: "var(--green)" }}

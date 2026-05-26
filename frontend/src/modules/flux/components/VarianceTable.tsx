@@ -77,15 +77,40 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   const [sorting,    setSorting]   = useState<SortingState>([
     { id: "is_material", desc: true },
   ])
-  const [filter, setFilter]       = useState<"all" | "material" | "pending">("all")
+  // Status buckets mirror Reconciliations exactly:
+  //   open      = needs work (pending / generating / flagged)
+  //   prepared  = AI commentary written but not yet approved
+  //                (generated / edited)
+  //   approved  = signed off
+  //   all       = everything
+  const [filter, setFilter] = useState<"open" | "prepared" | "approved" | "all">("open")
   const [expandedRow, setExpanded] = useState<string | null>(null)
   const [editingRow,  setEditing]  = useState<string | null>(null)
   const [editContent, setEditContent] = useState("")
+  // Bulk selection — same pattern as the recon accounts table.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
 
   // ── Approve mutation ───────────────────────────────────────────────────────
   const approve = useMutation({
     mutationFn: (varId: string) => api.approveVariance(tbId, varId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["variances", tbId] }),
+  })
+
+  // Bulk approve — fires the per-row approve in a loop and invalidates
+  // once at the end. Backend doesn't expose a bulk endpoint for flux yet;
+  // this keeps the UX consistent without a schema change.
+  const bulkApprove = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        await api.approveVariance(tbId, id).catch((err) => {
+          console.warn("Bulk approve: variance failed", id, err)
+        })
+      }
+    },
+    onSuccess: () => {
+      setSelected(new Set())
+      qc.invalidateQueries({ queryKey: ["variances", tbId] })
+    },
   })
 
   // ── Narrative edit mutation ────────────────────────────────────────────────
@@ -106,15 +131,70 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
 
   // ── Filter data ────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
-    if (filter === "material") return rows.filter((r) => r.is_material)
-    if (filter === "pending")  return rows.filter((r) =>
-      ["pending", "generating", "generated"].includes(r.status)
-    )
+    if (filter === "open")     return rows.filter((r) => ["pending", "generating", "flagged"].includes(r.status))
+    if (filter === "prepared") return rows.filter((r) => ["generated", "edited"].includes(r.status))
+    if (filter === "approved") return rows.filter((r) => r.status === "approved")
     return rows
   }, [rows, filter])
 
+  // Bucket counts for the tab labels
+  const bucketCounts = useMemo(() => ({
+    open:     rows.filter((r) => ["pending", "generating", "flagged"].includes(r.status)).length,
+    prepared: rows.filter((r) => ["generated", "edited"].includes(r.status)).length,
+    approved: rows.filter((r) => r.status === "approved").length,
+    all:      rows.length,
+  }), [rows])
+
   // ── Columns ────────────────────────────────────────────────────────────────
+  // Note: `selected` is captured in the closure for the checkbox column
+  // header / cell. TanStack Table memoizes columns; re-creating them on
+  // every selection change is the simplest way to keep the indeterminate
+  // header checkbox in sync with the filtered view.
+  const visibleIds = filtered.map((r) => r.id)
+  const allChecked = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id))
+  const someChecked = visibleIds.some((id) => selected.has(id))
+
   const columns = useMemo(() => [
+    // Checkbox column — same pattern as the recon accounts table. Click
+    // anywhere on this cell is stopped from bubbling to the row's
+    // expand handler.
+    col.display({
+      id: "_select",
+      size: 36,
+      header: () => (
+        <input
+          type="checkbox"
+          aria-label="Select all visible"
+          checked={allChecked}
+          ref={(el) => { if (el) el.indeterminate = !allChecked && someChecked }}
+          onChange={(e) => {
+            const next = new Set(selected)
+            if (e.target.checked) visibleIds.forEach((id) => next.add(id))
+            else                  visibleIds.forEach((id) => next.delete(id))
+            setSelected(next)
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ),
+      cell: (c) => {
+        const id = c.row.original.id
+        const checked = selected.has(id)
+        return (
+          <input
+            type="checkbox"
+            aria-label={`Select variance ${c.row.original.account_name}`}
+            checked={checked}
+            onChange={() => {
+              const next = new Set(selected)
+              if (next.has(id)) next.delete(id)
+              else              next.add(id)
+              setSelected(next)
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        )
+      },
+    }),
     col.accessor("account_number", {
       header: "Account No.",
       size:   90,
@@ -246,7 +326,12 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         )
       },
     }),
-  ], [approve, tbId, periodCurrent, periodPrior])
+  // selected / visibleIds / *Checked are intentionally in deps so the
+  // header checkbox + per-row checked state re-render on selection
+  // change. allChecked / someChecked are derived from selected +
+  // visibleIds so listing those covers them.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [approve, tbId, periodCurrent, periodPrior, selected, filter, rows])
 
   const table = useReactTable({
     data:               filtered,
@@ -260,21 +345,56 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const materialCount = rows.filter((r) => r.is_material).length
-  const pendingCount  = rows.filter((r) =>
-    ["pending", "generating", "generated"].includes(r.status)
-  ).length
 
-  // Filter buckets — same tab styling as the Reconciliations dashboard
-  // (colored background + colored text when active, transparent +
-  // muted otherwise). Inside a rounded-lg surface-2 group container.
+  // Filter buckets — match the Reconciliations status buckets EXACTLY:
+  // Open (red) / Prepared (blue) / Approved (green) / All (neutral).
+  // Same labels, same colors, same chrome.
   const FILTER_BUCKETS = [
-    { key: "all",      label: "All",      fg: "var(--text)",  bg: "var(--surface)",    count: rows.length },
-    { key: "material", label: "Material", fg: "#b45309",      bg: "#fef3c7",           count: materialCount },
-    { key: "pending",  label: "Pending",  fg: "#b91c1c",      bg: "#fef2f2",           count: pendingCount },
+    { key: "open",     label: "Open",     fg: "#b91c1c",      bg: "#fef2f2",        count: bucketCounts.open },
+    { key: "prepared", label: "Prepared", fg: "#1d4ed8",      bg: "#dbeafe",        count: bucketCounts.prepared },
+    { key: "approved", label: "Approved", fg: "var(--green)", bg: "var(--green-subtle)", count: bucketCounts.approved },
+    { key: "all",      label: "All",      fg: "var(--text)",  bg: "var(--surface)", count: bucketCounts.all },
   ] as const
+
+  // Ids of currently-selected variances that are not yet approved —
+  // bulk approve only makes sense for these.
+  const selectedApprovable = useMemo(
+    () => Array.from(selected).filter((id) => {
+      const r = rows.find((x) => x.id === id)
+      return r && r.status !== "approved"
+    }),
+    [selected, rows],
+  )
 
   return (
     <div className="flex flex-col h-full px-4 sm:px-6 py-4 gap-4" style={{ background: "var(--bg)" }}>
+      {/* Bulk action bar — appears when the user selects rows via the
+          checkbox column. Mirrors the recon dashboard's bulk-action
+          surface (sticky-feeling banner at the top of the table). */}
+      {selected.size > 0 && (
+        <div className="rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap"
+          style={{ background: "var(--green-subtle)", border: "1px solid var(--green)" }}>
+          <span className="text-xs font-semibold" style={{ color: "var(--green)" }}>
+            {selected.size} selected
+          </span>
+          <Button
+            size="sm"
+            icon={<CheckCircle2 size={12} strokeWidth={2} />}
+            disabled={selectedApprovable.length === 0 || bulkApprove.isPending}
+            loading={bulkApprove.isPending}
+            onClick={() => bulkApprove.mutate(selectedApprovable)}
+          >
+            Approve {selectedApprovable.length}
+          </Button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="text-xs ml-auto hover:underline"
+            style={{ color: "var(--text-muted)" }}>
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {/* Filters row — sits ABOVE the table card (like recon) instead of
           being baked into the same container. Tabs match the recon
           status-bucket style for visual parity. */}
@@ -286,7 +406,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
             return (
               <button
                 key={b.key}
-                onClick={() => setFilter(b.key)}
+                onClick={() => { setFilter(b.key); setSelected(new Set()) }}
                 className="inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all"
                 style={{
                   background: active ? b.bg   : "transparent",
