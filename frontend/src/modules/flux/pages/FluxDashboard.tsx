@@ -86,6 +86,22 @@ export function FluxDashboard() {
   /** Transient banner shown after Find-reasons runs ("Queued X analyses…") */
   const [runMsg, setRunMsg] = useState<{ kind: "ok" | "info" | "err"; text: string } | null>(null)
 
+  // KPI sticky-on-scroll — exact same pattern as the Reconciliations
+  // dashboard. Once the user scrolls past ~140px the 4-card grid
+  // collapses into a single compact horizontal bar that stays pinned
+  // to the top while they review the variance table. AnimatePresence
+  // mode="wait" handles the fade-and-slide between the two layouts so
+  // the swap feels smooth rather than abrupt.
+  const pageScrollRef = useRef<HTMLDivElement>(null)
+  const [isKpiCompact, setIsKpiCompact] = useState(false)
+  useEffect(() => {
+    const el = pageScrollRef.current
+    if (!el) return
+    const handler = () => setIsKpiCompact(el.scrollTop > 140)
+    el.addEventListener("scroll", handler, { passive: true })
+    return () => el.removeEventListener("scroll", handler)
+  }, [tbId])  // re-bind when navigating between analyses (ref may swap)
+
   // List of all TBs — only auto-refresh while one is mid-processing.
   // Idle list re-fetches on mount / explicit invalidation only.
   const { data: tbs = [], isLoading: tbsLoading } = useQuery({
@@ -538,104 +554,116 @@ export function FluxDashboard() {
           )}
         </AnimatePresence>
 
-        {/* ── Animated content ── */}
+        {/* ── Animated content ──
+            Two render paths share this region:
+              · Variance state → page-level scroll container with a
+                sticky KPI strip that collapses to a compact bar
+                once the user scrolls (mirrors Reconciliations).
+              · Every other state (empty / upload / processing /
+                error) keeps the AnimatePresence + absolute-position
+                swap because they're single-screen layouts.            */}
         <div className="flex-1 overflow-hidden relative">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={contentKey}
-              variants={panelVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              className="absolute inset-0 flex flex-col"
-            >
+          {showVarianceTable ? (
+            <div ref={pageScrollRef} className="absolute inset-0 overflow-y-auto">
+              {/* Sticky KPI cards — full-grid layout collapses to a
+                  compact horizontal bar after ~140px of scroll. */}
+              <div className="sticky top-0 z-20 px-4 sm:px-6 pt-3 pb-2"
+                style={{ background: "var(--bg)" }}>
+                <FluxKpiStrip rows={variances} compact={isKpiCompact} />
+              </div>
 
-              {showEmpty && (
-                <div className="h-full overflow-y-auto">
-                  <FluxEmptyState
-                    qboConnected={!!qboConn}
-                    qboCompany={qboConn?.company}
-                    onComplete={handleTbComplete}
-                    onConnectQbo={() => navigate("/app/connections")}
-                  />
-                </div>
-              )}
-
-              {showUploadFlow && (
-                <div className="h-full overflow-y-auto">
-                  {/* Re-upload path: the TB record exists (status=pending) but
-                      has no file yet. UploadFlow handles upload+parse+run. */}
-                  <UploadFlow onComplete={handleTbComplete} qboConnected={!!qboConn} forceSource="upload" />
-                </div>
-              )}
-
-              {showProcessing && (
-                <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                  <div className="relative h-16 w-16 mb-5">
-                    <div className="absolute inset-0 rounded-full animate-ping opacity-40" style={{ background: "#fef3c7" }} />
-                    <div className="relative h-16 w-16 rounded-full flex items-center justify-center" style={{ background: "#fef3c7" }}>
-                      <Spinner className="h-7 w-7 text-[#92400e]" />
-                    </div>
-                  </div>
-                  <p className="text-base font-semibold text-theme mb-2">Processing your file…</p>
-                  <p className="text-sm max-w-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                    Reading your trial balance and computing variances. Usually takes a few seconds.
-                  </p>
-                </div>
-              )}
-
-              {showError && (
-                <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                  <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4" style={{ background: "#fee2e2" }}>
-                    <AlertCircle size={28} strokeWidth={1.6} style={{ color: "#dc2626" }} />
-                  </div>
-                  <p className="text-base font-semibold text-theme mb-2">Processing failed</p>
-                  <p className="text-sm max-w-xs leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
-                    {selectedTb?.error_detail ?? "An error occurred while processing your file."}
-                  </p>
-                  <Button variant="outline" size="sm" icon={<RefreshCw size={14} strokeWidth={1.6} />} onClick={handleNewAnalysis}>
-                    Try Again
-                  </Button>
-                </div>
-              )}
-
-              {showVarianceTable && (
-                <div className="px-4 sm:px-6 pt-3">
-                  <FluxKpiStrip rows={variances} />
-                </div>
-              )}
-
-              {showVarianceTable && (
-                <VarianceTable
-                  tbId={tbId!}
-                  rows={variances}
-                  isLoading={variancesLoading}
-                  onExport={handleExport}
-                  periodCurrent={selectedTb?.period_current}
-                  periodPrior={selectedTb?.period_prior}
-                />
-              )}
-
-              {/* AI-working overlay — appears while the agentic-flux
-                  run is in flight. Stop button signals cooperative
-                  cancel; the run exits after the current variance. */}
-              <AgenticRunningOverlay
-                open={runAgenticFluxMut.isPending}
-                periodLabel={selectedTb?.name ?? null}
-                cancelling={cancelAgenticFluxMut.isPending}
-                onStop={() => cancelAgenticFluxMut.mutate()}
-                title="AI is writing flux commentary"
-                statusLines={[
-                  "Reading the GL detail behind each material variance…",
-                  "Pulling transaction evidence from QuickBooks…",
-                  "Drafting drivers, one-offs, and normalized run-rate…",
-                  "Asking Claude for the most plausible explanation…",
-                  "Saving commentary with a confidence score…",
-                ]}
+              <VarianceTable
+                tbId={tbId!}
+                rows={variances}
+                isLoading={variancesLoading}
+                onExport={handleExport}
+                periodCurrent={selectedTb?.period_current}
+                periodPrior={selectedTb?.period_prior}
               />
+            </div>
+          ) : (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={contentKey}
+                variants={panelVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                className="absolute inset-0 flex flex-col"
+              >
 
-            </motion.div>
-          </AnimatePresence>
+                {showEmpty && (
+                  <div className="h-full overflow-y-auto">
+                    <FluxEmptyState
+                      qboConnected={!!qboConn}
+                      qboCompany={qboConn?.company}
+                      onComplete={handleTbComplete}
+                      onConnectQbo={() => navigate("/app/connections")}
+                    />
+                  </div>
+                )}
+
+                {showUploadFlow && (
+                  <div className="h-full overflow-y-auto">
+                    {/* Re-upload path: the TB record exists (status=pending) but
+                        has no file yet. UploadFlow handles upload+parse+run. */}
+                    <UploadFlow onComplete={handleTbComplete} qboConnected={!!qboConn} forceSource="upload" />
+                  </div>
+                )}
+
+                {showProcessing && (
+                  <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                    <div className="relative h-16 w-16 mb-5">
+                      <div className="absolute inset-0 rounded-full animate-ping opacity-40" style={{ background: "#fef3c7" }} />
+                      <div className="relative h-16 w-16 rounded-full flex items-center justify-center" style={{ background: "#fef3c7" }}>
+                        <Spinner className="h-7 w-7 text-[#92400e]" />
+                      </div>
+                    </div>
+                    <p className="text-base font-semibold text-theme mb-2">Processing your file…</p>
+                    <p className="text-sm max-w-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                      Reading your trial balance and computing variances. Usually takes a few seconds.
+                    </p>
+                  </div>
+                )}
+
+                {showError && (
+                  <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                    <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4" style={{ background: "#fee2e2" }}>
+                      <AlertCircle size={28} strokeWidth={1.6} style={{ color: "#dc2626" }} />
+                    </div>
+                    <p className="text-base font-semibold text-theme mb-2">Processing failed</p>
+                    <p className="text-sm max-w-xs leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
+                      {selectedTb?.error_detail ?? "An error occurred while processing your file."}
+                    </p>
+                    <Button variant="outline" size="sm" icon={<RefreshCw size={14} strokeWidth={1.6} />} onClick={handleNewAnalysis}>
+                      Try Again
+                    </Button>
+                  </div>
+                )}
+
+              </motion.div>
+            </AnimatePresence>
+          )}
+
+          {/* AI-working overlay — independent of which state is
+              showing. Lives outside the conditional so it can
+              cover any content while the agentic-flux run is in
+              flight. Stop button signals cooperative cancel; the
+              run exits after the current variance. */}
+          <AgenticRunningOverlay
+            open={runAgenticFluxMut.isPending}
+            periodLabel={selectedTb?.name ?? null}
+            cancelling={cancelAgenticFluxMut.isPending}
+            onStop={() => cancelAgenticFluxMut.mutate()}
+            title="AI is writing flux commentary"
+            statusLines={[
+              "Reading the GL detail behind each material variance…",
+              "Pulling transaction evidence from QuickBooks…",
+              "Drafting drivers, one-offs, and normalized run-rate…",
+              "Asking Claude for the most plausible explanation…",
+              "Saving commentary with a confidence score…",
+            ]}
+          />
         </div>
       </div>
     </div>
@@ -1084,7 +1112,7 @@ function FieldLabel({ label, children }: { label: string; children: React.ReactN
 // commentary coverage. Plus a Run-AI button that fires the agentic
 // flux runner (handler comes from the parent).
 
-function FluxKpiStrip({ rows }: { rows: VarianceRow[] }) {
+function FluxKpiStrip({ rows, compact }: { rows: VarianceRow[]; compact: boolean }) {
   const total = rows.length
   const material = rows.filter((r) => r.is_material)
   const approved = material.filter((r) => r.status === "approved")
@@ -1099,33 +1127,88 @@ function FluxKpiStrip({ rows }: { rows: VarianceRow[] }) {
     ? Math.round((withNarrative.length / material.length) * 100)
     : 0
 
-  // KPI grid — same chrome as the Reconciliations dashboard: each tile
-  // is its own rounded-xl card with the standard card shadow so the
-  // two pages read as one product. (Agentic Mode lives in the header
-  // action cluster now — no separate wide card.)
+  // Same compact/full KPI swap pattern as the Reconciliations dashboard:
+  //   · compact = pinned horizontal bar with inline metric pills + an
+  //     approval progress bar on the right.
+  //   · full    = 4-card grid, each tile its own rounded-xl with the
+  //     standard card shadow.
+  // AnimatePresence mode="wait" + initial={false} = fade-and-slide swap
+  // when the user crosses the scroll threshold.
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <FluxKpi
-        label="Material variances"
-        value={String(material.length)}
-        sub={total > 0 ? `of ${total} total` : "no variances"}
-        tone={material.length > 0 ? "var(--text)" : "var(--text-muted)"} />
-      <FluxKpi
-        label="Total |variance|"
-        value={fmtMoneyShort(totalAbsVar)}
-        sub="sum of absolute movements"
-        tone="var(--text)" />
-      <FluxKpi
-        label="Approval"
-        value={`${approved.length} / ${material.length}`}
-        sub={material.length > 0 ? `${approvalPct}% of material` : "—"}
-        tone={approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
-      <FluxKpi
-        label="AI coverage"
-        value={`${withNarrative.length} / ${material.length}`}
-        sub={material.length > 0 ? `${coveragePct}% commentary written` : "—"}
-        tone={coveragePct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
-    </div>
+    <AnimatePresence mode="wait" initial={false}>
+      {compact ? (
+        <motion.div
+          key="flux-kpi-compact"
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.16, ease: "easeOut" }}
+          className="rounded-lg flex items-center gap-3 sm:gap-5 px-4 py-2.5 overflow-x-auto"
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
+          }}>
+          <KpiInline
+            label="Mat"
+            value={String(material.length)}
+            tone={material.length > 0 ? "var(--text)" : "var(--text-muted)"} />
+          <KpiInline
+            label="Var"
+            value={fmtMoneyShort(totalAbsVar)}
+            tone="var(--text)" />
+          <KpiInline
+            label="AI"
+            value={`${withNarrative.length}/${material.length}`}
+            tone={coveragePct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            <span className="text-[11px] font-semibold tabular-nums"
+              style={{ color: approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text)" }}>
+              {approved.length}/{material.length}
+            </span>
+            <div className="h-1.5 w-20 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
+              <motion.div className="h-full"
+                initial={{ width: 0 }}
+                animate={{ width: `${approvalPct}%` }}
+                transition={{ duration: 0.4, ease: "easeOut" }}
+                style={{ background: approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text-muted)" }} />
+            </div>
+            <span className="text-[10px] hidden sm:inline" style={{ color: "var(--text-muted)" }}>
+              {approvalPct}%
+            </span>
+          </div>
+        </motion.div>
+      ) : (
+        <motion.div
+          key="flux-kpi-full"
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.16, ease: "easeOut" }}
+          className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <FluxKpi
+            label="Material variances"
+            value={String(material.length)}
+            sub={total > 0 ? `of ${total} total` : "no variances"}
+            tone={material.length > 0 ? "var(--text)" : "var(--text-muted)"} />
+          <FluxKpi
+            label="Total |variance|"
+            value={fmtMoneyShort(totalAbsVar)}
+            sub="sum of absolute movements"
+            tone="var(--text)" />
+          <FluxKpi
+            label="Approval"
+            value={`${approved.length} / ${material.length}`}
+            sub={material.length > 0 ? `${approvalPct}% of material` : "—"}
+            tone={approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+          <FluxKpi
+            label="AI coverage"
+            value={`${withNarrative.length} / ${material.length}`}
+            sub={material.length > 0 ? `${coveragePct}% commentary written` : "—"}
+            tone={coveragePct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }
 
@@ -1139,6 +1222,22 @@ function FluxKpi({ label, value, sub, tone }: { label: string; value: string; su
       <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
       <p className="text-xl sm:text-2xl font-bold tabular-nums mt-1" style={{ color: tone }}>{value}</p>
       {sub && <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{sub}</p>}
+    </div>
+  )
+}
+
+/**
+ * Compact inline KPI used by the sticky condensed KPI bar.
+ * Single row, tight typography — pairs a label + value (no sub).
+ * Same shape as the KpiInline in ReconciliationsDashboard so the two
+ * compact bars look identical when the user scrolls.
+ */
+function KpiInline({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <div className="flex items-baseline gap-1.5 shrink-0">
+      <span className="text-[10px] font-bold uppercase tracking-wider"
+        style={{ color: "var(--text-muted)" }}>{label}</span>
+      <span className="text-sm font-bold tabular-nums" style={{ color: tone }}>{value}</span>
     </div>
   )
 }

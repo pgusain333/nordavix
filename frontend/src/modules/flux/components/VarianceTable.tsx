@@ -367,34 +367,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   )
 
   return (
-    <div className="flex flex-col h-full px-4 sm:px-6 py-4 gap-4" style={{ background: "var(--bg)" }}>
-      {/* Bulk action bar — appears when the user selects rows via the
-          checkbox column. Mirrors the recon dashboard's bulk-action
-          surface (sticky-feeling banner at the top of the table). */}
-      {selected.size > 0 && (
-        <div className="rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap"
-          style={{ background: "var(--green-subtle)", border: "1px solid var(--green)" }}>
-          <span className="text-xs font-semibold" style={{ color: "var(--green)" }}>
-            {selected.size} selected
-          </span>
-          <Button
-            size="sm"
-            icon={<CheckCircle2 size={12} strokeWidth={2} />}
-            disabled={selectedApprovable.length === 0 || bulkApprove.isPending}
-            loading={bulkApprove.isPending}
-            onClick={() => bulkApprove.mutate(selectedApprovable)}
-          >
-            Approve {selectedApprovable.length}
-          </Button>
-          <button
-            onClick={() => setSelected(new Set())}
-            className="text-xs ml-auto hover:underline"
-            style={{ color: "var(--text-muted)" }}>
-            Clear selection
-          </button>
-        </div>
-      )}
-
+    <div className="flex flex-col px-4 sm:px-6 py-4 gap-4" style={{ background: "var(--bg)" }}>
       {/* Filters row — sits ABOVE the table card (like recon) instead of
           being baked into the same container. Tabs match the recon
           status-bucket style for visual parity. */}
@@ -432,19 +405,20 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       </div>
 
       {/* Table card — same rounded-xl + surface + card-shadow chrome
-          as the recon accounts table so the two pages read as one. */}
-      <div className="flex-1 rounded-xl overflow-hidden flex flex-col min-h-0"
+          as the recon accounts table so the two pages read as one.
+          No flex-1 / internal scroll: the parent FluxDashboard handles
+          page-level scrolling so the sticky KPI strip works. */}
+      <div className="rounded-xl overflow-hidden"
         style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-      <div className="flex-1 overflow-auto" style={{ background: "var(--surface)" }}>
         {isLoading ? (
-          <div className="flex items-center justify-center h-full">
+          <div className="py-12 flex items-center justify-center">
             <div className="flex items-center gap-2 text-sm" style={{ color: "var(--text-muted)" }}>
               <Spinner />
               Loading variances…
             </div>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center py-12">
+          <div className="py-12 flex flex-col items-center text-center">
             <div
               className="h-12 w-12 rounded-full flex items-center justify-center mb-3"
               style={{ background: "var(--surface-2)" }}
@@ -461,35 +435,73 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
             </button>
           </div>
         ) : (
-          <table className="w-full min-w-[900px] text-sm border-separate border-spacing-0">
-            <thead className="sticky top-0 z-10">
-              <tr style={{ background: "var(--surface-2)" }}>
-                {table.getFlatHeaders().map((header) => (
-                  <th
-                    key={header.id}
-                    className={cn(
-                      "px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide select-none whitespace-nowrap",
-                      header.column.getCanSort() && "cursor-pointer transition-colors"
-                    )}
-                    style={{
-                      width: header.getSize(),
-                      borderBottom: "1px solid var(--border)",
-                      color: "var(--text-muted)",
-                    }}
-                    onClick={header.column.getToggleSortingHandler()}
-                  >
-                    <span className="flex items-center gap-1">
-                      {flexRender(header.column.columnDef.header, header.getContext())}
-                      {header.column.getCanSort() && (
-                        header.column.getIsSorted() === "asc"  ? <ChevronUp   size={12} /> :
-                        header.column.getIsSorted() === "desc" ? <ChevronDown size={12} /> :
-                        <ChevronsUpDown size={12} className="opacity-40" />
-                      )}
-                    </span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
+          <>
+            {/* Bulk-action toolbar — appears INSIDE the table card,
+                directly above the thead, the moment one or more
+                variance rows are checked. Matches the exact chrome
+                used by the Reconciliations accounts table: green
+                subtle background, 1px border below, 11px label,
+                Approve primary + Clear selection on the right. */}
+            {selected.size > 0 && (
+              <div className="px-4 py-2 flex items-center gap-2 flex-wrap"
+                style={{ background: "var(--green-subtle)", borderBottom: "1px solid var(--border)" }}>
+                <span className="text-[11px] font-semibold" style={{ color: "var(--green)" }}>
+                  {selected.size} selected
+                </span>
+                <Button
+                  size="sm"
+                  icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
+                  loading={bulkApprove.isPending}
+                  disabled={selectedApprovable.length === 0}
+                  onClick={() => bulkApprove.mutate(selectedApprovable)}
+                  title={selectedApprovable.length === 0
+                    ? "Every selected variance is already approved"
+                    : `Approve ${selectedApprovable.length} variance${selectedApprovable.length === 1 ? "" : "s"}`}
+                >
+                  Approve{selectedApprovable.length > 0 && selectedApprovable.length !== selected.size
+                    ? ` (${selectedApprovable.length})`
+                    : ""}
+                </Button>
+                <button
+                  onClick={() => setSelected(new Set())}
+                  className="ml-auto text-[11px] font-medium"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Clear selection
+                </button>
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[900px] text-sm border-separate border-spacing-0">
+                <thead>
+                  <tr style={{ background: "var(--surface-2)" }}>
+                    {table.getFlatHeaders().map((header) => (
+                      <th
+                        key={header.id}
+                        className={cn(
+                          "px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide select-none whitespace-nowrap",
+                          header.column.getCanSort() && "cursor-pointer transition-colors"
+                        )}
+                        style={{
+                          width: header.getSize(),
+                          borderBottom: "1px solid var(--border)",
+                          color: "var(--text-muted)",
+                        }}
+                        onClick={header.column.getToggleSortingHandler()}
+                      >
+                        <span className="flex items-center gap-1">
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          {header.column.getCanSort() && (
+                            header.column.getIsSorted() === "asc"  ? <ChevronUp   size={12} /> :
+                            header.column.getIsSorted() === "desc" ? <ChevronDown size={12} /> :
+                            <ChevronsUpDown size={12} className="opacity-40" />
+                          )}
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
             <tbody>
               {table.getRowModel().rows.map((row) => {
                 const isExpanded = expandedRow === row.original.id
@@ -567,10 +579,11 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                   </Fragment>
                 )
               })}
-            </tbody>
-          </table>
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
-      </div>
 
       {/* Footer summary */}
       {!isLoading && rows.length > 0 && (
