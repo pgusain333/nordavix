@@ -265,6 +265,225 @@ async def get_account_variance(
     return await fetch_variance_detail(conn, db, qbo_account_id, pe)
 
 
+@router.get("/account/{qbo_account_id}/pdf")
+async def export_account_pdf(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Per-account reconciliation PDF — an audit working-paper for one
+    account in one period. Bundles GL/Subledger/Variance summary,
+    the full reconciling-items build-up, prepared/approved trail,
+    notes, and the list of supporting evidence files.
+
+    Unsynced or never-reviewed accounts are exported as DRAFT (large
+    watermark + DRAFT label on cover). Approved accounts produce a
+    clean signed-off file.
+
+    Wraps everything in explicit error capture so any failure surfaces
+    a real detail string to the UI instead of a generic "Network Error".
+    """
+    import io
+    import uuid as _uuid
+    from datetime import date as _date
+
+    from models.account_review_status import AccountReviewStatus
+    from models.gl_balance_snapshot import GlBalanceSnapshot
+    from models.subledger_evidence import SubledgerEvidence
+    from models.user import User
+
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    logger.info(
+        "Account PDF export start: tenant=%s qbo_account=%s period=%s",
+        tenant_id, qbo_account_id, pe,
+    )
+
+    try:
+        # Resolve company name once (uses the workspace name, falls back
+        # to the QBO sandbox name only if the workspace was never named).
+        from modules.financials.router import _company_name
+        company = await _company_name(db, tenant_id)
+
+        # Pull the account's GL snapshot — this is the source of truth
+        # for GL balance + account metadata (name/number/type).
+        snap = (await db.execute(
+            select(GlBalanceSnapshot).where(
+                GlBalanceSnapshot.tenant_id == tenant_id,
+                GlBalanceSnapshot.qbo_account_id == qbo_account_id,
+                GlBalanceSnapshot.period_end == pe,
+            )
+        )).scalar_one_or_none()
+        if snap is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No GL snapshot found for this account at this period. "
+                    "Click Sync on the Reconciliations dashboard first, "
+                    "then re-export."
+                ),
+            )
+
+        # Current-period review status (status, reconciling_items, notes,
+        # actor stamps, subledger_total, evidence).
+        review = (await db.execute(
+            select(AccountReviewStatus).where(
+                AccountReviewStatus.qbo_account_id == qbo_account_id,
+                AccountReviewStatus.period_end == pe,
+            )
+        )).scalar_one_or_none()
+
+        # Most recent prior-period override → opening balance. If none
+        # exists (first-ever reconciliation), opening = 0 with a note.
+        prior = (await db.execute(
+            select(AccountReviewStatus)
+            .where(
+                AccountReviewStatus.qbo_account_id == qbo_account_id,
+                AccountReviewStatus.period_end < pe,
+                AccountReviewStatus.subledger_total.is_not(None),
+            )
+            .order_by(AccountReviewStatus.period_end.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        opening_balance = (
+            Decimal(prior.subledger_total) if prior and prior.subledger_total is not None
+            else Decimal("0")
+        )
+        opening_source = (
+            f"Rolled forward from {prior.period_end.isoformat()} closing"
+            if prior else "No prior-period closing on file — opening assumed $0"
+        )
+
+        # Evidence files (one query per period+account)
+        ev_rows = list((await db.execute(
+            select(SubledgerEvidence).where(
+                SubledgerEvidence.qbo_account_id == qbo_account_id,
+                SubledgerEvidence.period_end == pe,
+            )
+            .order_by(SubledgerEvidence.uploaded_at.desc())
+        )).scalars().all())
+
+        # Resolve actor user IDs → human names. Single batched lookup.
+        actor_ids: list[_uuid.UUID] = []
+        for uid in (
+            getattr(review, "prepared_by", None) if review else None,
+            getattr(review, "approved_by", None) if review else None,
+        ):
+            if uid:
+                actor_ids.append(uid)
+        names_by_id: dict[_uuid.UUID, str] = {}
+        if actor_ids:
+            user_rows = list((await db.execute(
+                select(User).where(User.id.in_(actor_ids))
+            )).scalars().all())
+            for u in user_rows:
+                names_by_id[u.id] = u.email or str(u.id)[:8]
+
+        # Determine if credit-natural for sign-flip on reconciling items.
+        credit_natural_types = {
+            "Accounts Payable", "Credit Card",
+            "Other Current Liability", "Long Term Liability", "Equity",
+        }
+        is_credit_natural = snap.account_type in credit_natural_types
+
+        # The "subledger balance" used in the dashboard. Manual override
+        # (set by user) wins; otherwise it's the rolled-forward opening
+        # plus the reconciling items the preparer ticked. This mirrors
+        # the dashboard's compute logic so the PDF matches what the
+        # user signed off on.
+        if review and review.subledger_total is not None:
+            subledger_balance = Decimal(review.subledger_total)
+        else:
+            subledger_balance = opening_balance
+            for it in (review.reconciling_items if review else []) or []:
+                is_manual = str(it.get("txn_id", "")).startswith("manual-")
+                raw = Decimal(str(it.get("amount", "0") or "0"))
+                signed = raw if is_manual else ((-1 if is_credit_natural else 1) * raw)
+                subledger_balance += signed
+
+        status_str = review.status if review else "pending"
+        # An account that's "approved" gets a clean PDF; everything else
+        # is a draft (watermarked).
+        is_draft = status_str != "approved"
+
+        data = {
+            "company":            company,
+            "account_number":     snap.account_number or "",
+            "account_name":       snap.account_name,
+            "account_type":       snap.account_type,
+            "period_end":         pe,
+            "status":             status_str,
+            "gl_balance":         str(snap.balance),
+            "subledger_balance":  str(subledger_balance),
+            "opening_balance":    str(opening_balance),
+            "opening_source":     opening_source,
+            "is_credit_natural":  is_credit_natural,
+            "reconciling_items":  (review.reconciling_items if review else []) or [],
+            "notes":              (review.notes if review else None),
+            "prepared_by_name":   (
+                names_by_id.get(review.prepared_by) if review and review.prepared_by else None
+            ),
+            "prepared_at":        (
+                review.prepared_at.isoformat() if review and review.prepared_at else None
+            ),
+            "approved_by_name":   (
+                names_by_id.get(review.approved_by) if review and review.approved_by else None
+            ),
+            "approved_at":        (
+                review.approved_at.isoformat() if review and review.approved_at else None
+            ),
+            "evidence_files":     [
+                {
+                    "file_name":   e.file_name,
+                    "uploaded_at": e.uploaded_at.isoformat() if e.uploaded_at else None,
+                }
+                for e in ev_rows
+            ],
+            "is_draft":           is_draft,
+            "prepared_by":        user.email or "",
+        }
+
+        logger.info(
+            "Account PDF export: rendering for %s (%s) — %d items, %d files, draft=%s",
+            snap.account_name, snap.account_type, len(data["reconciling_items"]),
+            len(data["evidence_files"]), is_draft,
+        )
+        from modules.recons.pdf import build_account_pdf
+        buf = io.BytesIO()
+        build_account_pdf(buf, data=data)
+        buf.seek(0)
+
+        # Build a clean filename: AccountReconciliation_2026-04-30_1010-Cash-Operating.pdf
+        safe_name = (
+            (snap.account_number + "-" if snap.account_number else "")
+            + snap.account_name.replace(" ", "-").replace("/", "-")
+        )[:80]
+        prefix = "draft-" if is_draft else ""
+        fname = f"{prefix}account-reconciliation-{pe.isoformat()}-{safe_name}.pdf"
+        logger.info("Account PDF export done: %d bytes", buf.getbuffer().nbytes)
+        return StreamingResponse(
+            buf, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Account PDF export failed for tenant=%s qbo_account=%s period=%s",
+            tenant_id, qbo_account_id, pe,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Reconciliation PDF generation failed: {type(exc).__name__}: {str(exc)[:200]}",
+        ) from exc
+
+
 @router.post("/account/{qbo_account_id}/status")
 async def update_account_review_status(
     qbo_account_id: str,

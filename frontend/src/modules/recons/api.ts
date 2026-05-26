@@ -367,6 +367,64 @@ async function getAccountVariance(qboAccountId: string, periodEnd: string): Prom
   return data
 }
 
+/**
+ * Per-account reconciliation PDF. Bundles GL/Subledger/Variance summary,
+ * the full reconciling-items build-up, prepared/approved trail, notes,
+ * and the list of supporting evidence files into an audit-ready working
+ * paper. Triggers a browser download on success; throws a useful error
+ * (parsed from the JSON body) on failure so the caller can surface it.
+ */
+async function downloadAccountPdf(
+  qboAccountId: string,
+  periodEnd: string,
+  fallbackName?: string,
+): Promise<void> {
+  try {
+    const resp = await apiClient.get(
+      `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/pdf`,
+      {
+        params: { period_end: periodEnd },
+        responseType: "blob",
+        // PDF render is fast (~100ms) but allow a generous ceiling for
+        // unusually large reconciling-items sets.
+        timeout: 60_000,
+      },
+    )
+    if (!resp.data || (resp.data as Blob).size === 0) {
+      throw new Error("Server returned an empty PDF. Try again.")
+    }
+    // The server suggests a clean filename via Content-Disposition; honor it.
+    const cd = (resp.headers as Record<string, string>)["content-disposition"] ?? ""
+    const fnameMatch = cd.match(/filename="([^"]+)"/)
+    const fname = fnameMatch
+      ? fnameMatch[1]
+      : `reconciliation-${periodEnd}-${(fallbackName ?? qboAccountId).replace(/[^a-z0-9-]/gi, "-")}.pdf`
+    const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }))
+    const a = document.createElement("a")
+    a.href = url
+    a.download = fname
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e: unknown) {
+    // axios + responseType=blob → error body is a Blob. Read it back so
+    // the user sees the real backend detail string instead of "Network Error".
+    const err = e as { response?: { data?: Blob; status?: number }; message?: string }
+    if (err.response?.data instanceof Blob) {
+      try {
+        const txt = await err.response.data.text()
+        const parsed = JSON.parse(txt) as { detail?: string }
+        throw new Error(parsed.detail ?? `HTTP ${err.response.status}`)
+      } catch (parseErr) {
+        if (parseErr instanceof Error && parseErr.message.startsWith("HTTP")) throw parseErr
+        throw new Error(err.message ?? "PDF download failed")
+      }
+    }
+    throw new Error(err.message ?? "PDF download failed — check your network and try again.")
+  }
+}
+
 async function clearSyncedData(): Promise<void> {
   await apiClient.post("/api/reconciliations/clear-synced-data")
 }
@@ -667,6 +725,7 @@ export const reconsApi = {
   getDashboard,
   getOverview,
   syncPeriod,
+  downloadAccountPdf,
   getAccountSubledger,
   getAccountVariance,
   clearSyncedData,

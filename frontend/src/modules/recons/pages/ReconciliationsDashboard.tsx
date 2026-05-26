@@ -1246,6 +1246,18 @@ export function ReconciliationsDashboard() {
                                     Variance
                                   </button>
                                 )}
+                                {/* Approved-row "Download PDF" — shows up the moment
+                                    the reviewer approves an account so the audit
+                                    file is one click away. The button is hidden for
+                                    Open/Prepared/Flagged accounts (we don't want
+                                    to encourage exporting unfinished work). */}
+                                {status === "approved" && (
+                                  <DownloadReconButton
+                                    qboAccountId={a.qbo_id}
+                                    periodEnd={periodEnd}
+                                    accountName={a.account_name}
+                                  />
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -2270,6 +2282,62 @@ function SubledgerBuildup({
 }
 
 // ── Attachments cell ────────────────────────────────────────────────────────
+// ── DownloadReconButton ─────────────────────────────────────────────────────
+// Triggers a per-account reconciliation PDF download. Shown only on
+// approved rows (the parent gates with `status === "approved"`).
+// The PDF includes GL/Subledger/Variance, the full reconciling-items
+// build-up, prepared/approved trail, notes, and attachment list — an
+// audit-style working paper for the one account in this period.
+
+function DownloadReconButton({ qboAccountId, periodEnd, accountName }: {
+  qboAccountId: string
+  periodEnd: string
+  accountName: string
+}) {
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!error) return
+    const t = setTimeout(() => setError(null), 4_000)
+    return () => clearTimeout(t)
+  }, [error])
+
+  async function handleClick() {
+    if (pending) return
+    setPending(true)
+    setError(null)
+    try {
+      await reconsApi.downloadAccountPdf(qboAccountId, periodEnd, accountName)
+    } catch (e: unknown) {
+      setError((e as Error).message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={pending}
+      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+      style={{
+        color: error ? "#b91c1c" : "var(--green)",
+        border: `1px solid ${error ? "#fecaca" : "var(--green)"}`,
+        background: error ? "#fef2f2" : "var(--green-subtle)",
+        opacity: pending ? 0.6 : 1,
+        cursor: pending ? "wait" : "pointer",
+      }}
+      title={error ?? "Download the audit-ready reconciliation PDF for this account"}
+    >
+      <Download size={11} strokeWidth={1.8} />
+      {pending ? "…" : error ? "Failed" : "PDF"}
+    </button>
+  )
+}
+
+
 // Shows attachment count + lets the user download files directly from the
 // row without expanding it. Single attachment → one click downloads.
 // Multiple → tiny dropdown listing all files. Backed by the same signed-URL
