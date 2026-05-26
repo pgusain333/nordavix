@@ -1150,8 +1150,19 @@ async def compute_overview(
         ],
     }
 
-    # Period label is the user-friendly window description
-    if period_start is not None:
+    # Period label: month-year when the range is exactly one calendar
+    # month (so "January 2026" stays readable for Month-mode selections),
+    # otherwise a date-range string for true custom windows.
+    is_full_month = (
+        period_start is not None
+        and period_start.day == 1
+        and period_start.year == period_end.year
+        and period_start.month == period_end.month
+        and period_end == _last_day_of_month(period_end)
+    )
+    if is_full_month:
+        period_label = period_end.strftime("%B %Y")
+    elif period_start is not None:
         period_label = f"{period_start.strftime('%b %d, %Y')} – {period_end.strftime('%b %d, %Y')}"
     else:
         period_label = period_end.strftime("%B %Y")
@@ -1160,7 +1171,11 @@ async def compute_overview(
         "period_end":     period_end.isoformat(),
         "period_start":   period_start.isoformat() if period_start else None,
         "period_label":   period_label,
-        "custom_range":   period_start is not None,
+        # `custom_range` reflects whether this is a TRUE custom window
+        # (not aligned to a calendar month). Frontend uses this to decide
+        # whether to show the "custom-range fallback" banner.
+        "custom_range":   period_start is not None and not is_full_month,
+        "is_full_month":  is_full_month,
         "custom_pl_error": custom_pl_error,
         "liquidity":      liquidity,
         "receivables":    receivables,

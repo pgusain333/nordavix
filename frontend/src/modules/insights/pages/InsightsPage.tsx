@@ -113,27 +113,33 @@ export function InsightsPage() {
   })
 
   function generate() {
-    const payload: PendingPeriod = mode === "custom"
-      ? { mode, periodEnd, periodStart }
-      : { mode, periodEnd }
+    // Month mode used to send only period_end and let the backend compute
+    // monthly P&L via snapshot YTD diffs — which silently broke whenever a
+    // prior-month snapshot was missing or stale. Always send period_start
+    // too (1st of the chosen calendar month when in Month mode) so the
+    // backend runs the same live QBO P&L call as Custom range. One path,
+    // one source of truth.
+    const effectiveStart = mode === "custom" ? periodStart : defaultPeriodStart(periodEnd)
+    const payload: PendingPeriod = { mode, periodEnd, periodStart: effectiveStart }
     setPending(payload)
     const next = new URLSearchParams(searchParams)
     next.set("period_end", payload.periodEnd)
-    if (payload.periodStart) next.set("period_start", payload.periodStart)
-    else next.delete("period_start")
+    next.set("period_start", effectiveStart)
     next.delete("period")  // legacy key
     setSearchParams(next, { replace: true })
   }
 
   function jumpToMonth(periodEndISO: string) {
+    const start = defaultPeriodStart(periodEndISO)
     setMode("month")
     setPeriodEnd(periodEndISO)
-    setPeriodStart(defaultPeriodStart(periodEndISO))
-    const payload: PendingPeriod = { mode: "month", periodEnd: periodEndISO }
+    setPeriodStart(start)
+    const payload: PendingPeriod = { mode: "month", periodEnd: periodEndISO, periodStart: start }
     setPending(payload)
     const next = new URLSearchParams(searchParams)
     next.set("period_end", payload.periodEnd)
-    next.delete("period_start"); next.delete("period")
+    next.set("period_start", start)
+    next.delete("period")
     setSearchParams(next, { replace: true })
   }
 
