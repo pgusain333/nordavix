@@ -234,12 +234,25 @@ async def create_invitation(
     # is what the user just hit. Detect it up-front and tell them
     # the actual fix: create a workspace via the Companies page.
     if not tenant.clerk_org_id or tenant.clerk_org_id.startswith("user_"):
+        # Log enough to diagnose stale-JWT cases: the API saw `org_id`
+        # missing from the Clerk token even though the user may have a
+        # company workspace selected in the UI. Most often this means
+        # the JWT was issued before the org switch and Clerk's cache
+        # hasn't rolled it over yet.
+        logger.warning(
+            "Invite blocked — current request resolved to personal workspace "
+            "(tenant.clerk_org_id=%s, user.clerk_user_id=%s). "
+            "Either no active org or stale JWT cache.",
+            tenant.clerk_org_id, current_user.clerk_user_id,
+        )
         raise HTTPException(
             status_code=400,
             detail=(
-                "You're using a personal workspace which can't have team "
-                "members. Create a company workspace first from the "
-                "Companies page, then switch to it and invite from there."
+                "You're on a personal workspace right now, so invites can't be "
+                "sent. Click your company name in the top-left, choose 'Switch "
+                "company' to load a real workspace, then try the invite again. "
+                "If you just switched companies, a hard refresh (Ctrl+Shift+R) "
+                "will pick up the change."
             ),
         )
 

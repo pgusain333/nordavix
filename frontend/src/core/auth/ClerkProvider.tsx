@@ -31,6 +31,12 @@ export function ClerkApiWirer(): null {
   // active org. The first render initializes the ref without resetting;
   // subsequent changes (user switched company) wipe stale data so the next
   // render fetches fresh data scoped to the new tenant.
+  //
+  // Also force-refresh Clerk's session-token cache: Clerk's getToken() is
+  // cached per session, and although `setActive` invalidates it in theory,
+  // we've seen the next API call still carry a stale JWT (org_id from
+  // the previous workspace). Calling getToken({ skipCache: true }) here
+  // bakes the new org_id into the cache before any /api/* request fires.
   useEffect(() => {
     const currentOrgId = organization?.id ?? null
     if (previousOrgId.current === undefined) {
@@ -43,8 +49,14 @@ export function ClerkApiWirer(): null {
       // observers re-fetch with the new tenant scope on the next render.
       queryClient.removeQueries()
       previousOrgId.current = currentOrgId
+      // Force a fresh token so the new org_id reaches the backend on
+      // the very next request. Fire-and-forget; failures are harmless
+      // (the next request will fall through to a fresh getToken anyway).
+      if (session) {
+        session.getToken({ skipCache: true }).catch(() => {})
+      }
     }
-  }, [organization?.id, queryClient])
+  }, [organization?.id, queryClient, session])
 
   return null
 }
