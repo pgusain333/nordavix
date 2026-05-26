@@ -317,9 +317,10 @@ export function FluxDashboard() {
         className="flex flex-1 flex-col overflow-hidden min-w-0"
         style={{ background: "var(--bg)" }}
       >
-        {/* Header — gap shrinks on mobile so the icon-only action cluster
-            still fits next to the back/history/title on a 360px viewport. */}
-        <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-3.5 shrink-0"
+        {/* Header — compact (py-2 to match recon for visual parity); gap
+            shrinks on mobile so the icon-only action cluster still fits
+            next to the back/title on a 360px viewport. */}
+        <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2 shrink-0"
           style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
 
           {/* Back to the flux month-index (one step up — obeys URL

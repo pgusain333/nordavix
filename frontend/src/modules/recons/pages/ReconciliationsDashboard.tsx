@@ -728,49 +728,55 @@ export function ReconciliationsDashboard() {
         onStop={() => cancelAgenticMut.mutate()}
       />
 
-      {/* ── Header ──────────────────────────────────────────────────────── */}
+      {/* ── Header (compact: tighter padding, icon-only back, sized to
+              line up with the action buttons on the right) ─────────────── */}
       <div
-        className="px-4 sm:px-8 pt-5 sm:pt-7 pb-4"
+        className="px-4 sm:px-8 pt-3 sm:pt-4 pb-3"
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
       >
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="min-w-0">
-            {/* Back to the recons month-index (one step up — not all the
-                way to the app dashboard). Users were getting yanked out
-                of context; now the up-arrow obeys the URL hierarchy. */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Icon-only back — same affordance as Flux Dashboard for
+                visual parity across the two close-workflow pages. */}
             <button
               onClick={() => navigate("/app/reconciliations")}
-              className="inline-flex items-center gap-1 text-[11px] font-medium mb-2 transition-opacity hover:opacity-70"
+              className="flex items-center justify-center h-7 w-7 rounded-md transition-colors hover:bg-[var(--surface-2)]"
               style={{ color: "var(--text-muted)" }}
               title="Back to the month list"
+              aria-label="Back to reconciliations"
             >
-              <ArrowLeft size={12} strokeWidth={2} />
-              Back to reconciliations
+              <ArrowLeft size={15} strokeWidth={1.8} />
             </button>
-            <h1
-              style={{
-                fontSize: "clamp(22px, 5vw, 28px)",
-                fontWeight: 700,
-                lineHeight: 1.2,
-                letterSpacing: "-0.01em",
-                color: "var(--text)",
-                margin: 0,
-              }}
-            >
-              Reconciliations
-            </h1>
-            <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              Live snapshot of every balance-sheet account — pulled from QuickBooks at your chosen period end.
-            </p>
+            <div className="min-w-0">
+              <h1
+                style={{
+                  fontSize: "clamp(16px, 3vw, 20px)",
+                  fontWeight: 700,
+                  lineHeight: 1.15,
+                  letterSpacing: "-0.01em",
+                  color: "var(--text)",
+                  margin: 0,
+                }}
+              >
+                Reconciliations
+              </h1>
+              <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
+                Live snapshot of every BS account · pulled from QuickBooks at your chosen period end.
+              </p>
+            </div>
           </div>
 
-          <div className="flex items-end gap-2 flex-wrap w-full sm:w-auto">
-            <div className="flex flex-col flex-1 sm:flex-none min-w-[160px]">
-              <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
-                Period end
-              </span>
-              <DatePicker value={periodEnd} onChange={setPeriodEnd} disabled={!qbo} className="block w-full sm:w-auto" />
-            </div>
+          <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+            {/* DatePicker is sized via triggerClassName so its h-[26px]
+                lines up with size="sm" Button height — pre-existing
+                "Period end" label dropped to save vertical space. */}
+            <DatePicker
+              value={periodEnd}
+              onChange={setPeriodEnd}
+              disabled={!qbo}
+              className="inline-block"
+              triggerClassName="inline-flex items-center gap-1.5 h-[26px] px-2.5 text-xs rounded-md outline-none transition-colors hover:bg-[var(--surface)]"
+            />
             <Button
               size="sm"
               variant="outline"
@@ -902,7 +908,10 @@ export function ReconciliationsDashboard() {
         )}
       </AnimatePresence>
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
+      {/* Full-width content — the table is the star here, no need to
+          constrain to max-w-7xl. On ultra-wide displays this lets all
+          the variance columns breathe without horizontal scroll. */}
+      <div className="flex-1 px-4 sm:px-6 py-4 w-full space-y-4">
 
         {/* QBO required banner */}
         {!qbo && (
@@ -1344,7 +1353,7 @@ export function ReconciliationsDashboard() {
                         background: "var(--surface-2)",
                         borderBottom: "1px solid var(--border)",
                       }}>
-                        <th className="px-3 py-2.5 text-center" style={{ width: 32 }}>
+                        <th className="px-3 py-1.5 text-center" style={{ width: 32 }}>
                           <input
                             type="checkbox"
                             aria-label="Select all visible"
@@ -1382,7 +1391,7 @@ export function ReconciliationsDashboard() {
                         ].map((h, i) => (
                           <th
                             key={i}
-                            className="text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5 whitespace-nowrap"
+                            className="text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 whitespace-nowrap"
                             style={{
                               color: "var(--text-muted)",
                               textAlign: h.right ? "right" : h.center ? "center" : "left",
@@ -1426,7 +1435,7 @@ export function ReconciliationsDashboard() {
                               }
                             }}
                           >
-                            <td className="px-3 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                            <td className="px-3 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="checkbox"
                                 checked={isSelected}
@@ -1439,22 +1448,22 @@ export function ReconciliationsDashboard() {
                                 aria-label={`Select ${a.account_name}`}
                               />
                             </td>
-                            <td className="px-3 py-2.5 font-mono text-xs" style={{ color: "var(--text-2)" }}>
+                            <td className="px-3 py-1.5 font-mono text-xs" style={{ color: "var(--text-2)" }}>
                               {a.account_number || "—"}
                             </td>
-                            <td className="px-3 py-2.5">
+                            <td className="px-3 py-1.5">
                               <span className="text-sm font-medium text-theme">{a.account_name}</span>
                             </td>
-                            <td className="px-3 py-2.5">
+                            <td className="px-3 py-1.5">
                               <span className="inline-flex items-center gap-1 text-[11px] font-medium">
                                 <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
                                 <span style={{ color: "var(--text-2)" }}>{a.group_label}</span>
                               </span>
                             </td>
-                            <td className="px-3 py-2.5 text-right tabular-nums text-sm text-theme">
+                            <td className="px-3 py-1.5 text-right tabular-nums text-sm text-theme">
                               {fmtMoney(a.gl_balance)}
                             </td>
-                            <td className="px-3 py-2.5 text-right text-sm tabular-nums" style={{ color: "var(--text-2)" }}>
+                            <td className="px-3 py-1.5 text-right text-sm tabular-nums" style={{ color: "var(--text-2)" }}>
                               {fmtMoney(a.subledger_balance)}
                               {a.subledger_is_manual && (
                                 <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle"
@@ -1472,14 +1481,14 @@ export function ReconciliationsDashboard() {
                                 </span>
                               )}
                             </td>
-                            <td className="px-3 py-2.5 text-right tabular-nums text-sm font-medium"
+                            <td className="px-3 py-1.5 text-right tabular-nums text-sm font-medium"
                               style={{ color: hasVariance ? "#dc2626" : "var(--green)" }}>
                               {hasVariance ? fmtMoney(a.variance) : "—"}
                             </td>
-                            <td className="px-3 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                            <td className="px-3 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
                               <AttachmentsCell files={a.evidence_files ?? []} />
                             </td>
-                            <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                            <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                               <div className="inline-flex items-center gap-1.5">
                                 <StatusChip
                                   status={status}
@@ -1508,7 +1517,7 @@ export function ReconciliationsDashboard() {
                                 )}
                               </div>
                             </td>
-                            <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                            <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   onClick={() => openSubledger(a)}

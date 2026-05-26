@@ -343,7 +343,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                   <th
                     key={header.id}
                     className={cn(
-                      "px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide select-none whitespace-nowrap",
+                      "px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide select-none whitespace-nowrap",
                       header.column.getCanSort() && "cursor-pointer transition-colors"
                     )}
                     style={{
@@ -403,7 +403,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                       }
                     >
                       {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="px-3 py-2.5">
+                        <td key={cell.id} className="px-3 py-1.5">
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </td>
                       ))}
