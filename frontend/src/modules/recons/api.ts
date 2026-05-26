@@ -336,6 +336,55 @@ async function getOverview(periodEnd: string): Promise<Overview> {
   return data
 }
 
+// ── Agentic preparer ────────────────────────────────────────────────────────
+
+export interface AgenticAccountResult {
+  qbo_account_id:  string
+  account_name:    string
+  account_number:  string
+  action:          "prepared" | "analyzed" | "skipped"
+  reason:          string
+  items_added:     number
+  gap_before:      string
+  gap_after:       string
+}
+
+export interface AgenticResult {
+  period_end:   string
+  prepared:     number
+  analyzed:     number
+  skipped:      number
+  failed:       number
+  accounts:     AgenticAccountResult[]
+  duration_ms:  number
+  started_at:   string
+}
+
+/**
+ * Run the AI agentic preparer on every open account in the period.
+ * One-shot per click — the user explicitly triggered it. Server-side
+ * loops through accounts, ties subledger to GL where the math works
+ * (saves override + marks status=reviewed), and asks Claude to analyze
+ * the gap for accounts that don't tie.
+ *
+ * Synchronous response — typical 20-account period takes 5-15s. Caller
+ * should show a spinner and invalidate the overview query on success.
+ */
+async function runAgenticPrep(periodEnd: string): Promise<AgenticResult> {
+  const { data } = await apiClient.post<AgenticResult>(
+    "/api/reconciliations/agentic/run",
+    null,
+    {
+      params: { period_end: periodEnd },
+      // QBO + AI together can be slow on a big period. 5 min ceiling
+      // matches sync + PDF for consistency.
+      timeout: 5 * 60_000,
+    },
+  )
+  return data
+}
+
+
 /**
  * Explicit "Sync from QuickBooks" — fetches fresh TrialBalance, AR/AP
  * aging, and YTD net income from QBO and persists them as snapshots.
@@ -725,6 +774,7 @@ export const reconsApi = {
   getDashboard,
   getOverview,
   syncPeriod,
+  runAgenticPrep,
   downloadAccountPdf,
   getAccountSubledger,
   getAccountVariance,

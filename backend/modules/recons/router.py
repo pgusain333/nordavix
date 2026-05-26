@@ -173,6 +173,54 @@ async def get_overview(
     return overview
 
 
+@router.post("/agentic/run")
+async def run_agentic_endpoint(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end date YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Run the AI agentic preparer on every open account in the period.
+    See `modules.recons.agentic.run_agentic_prep` for the full
+    behavioral spec. Returns a structured result the UI uses to render
+    the post-run banner ("Prepared 5, AI-analyzed 3, skipped 2").
+
+    One-shot per click — the user explicitly triggered this run. No
+    background scheduling, no auto-re-run on future syncs.
+    """
+    from dataclasses import asdict
+
+    from datetime import date as _date
+
+    from modules.recons.agentic import run_agentic_prep
+
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    logger.info(
+        "Agentic prep run start: tenant=%s user=%s period=%s",
+        tenant_id, user.id, pe,
+    )
+    try:
+        result = await run_agentic_prep(db, tenant_id, user, pe)
+        # asdict converts the nested dataclasses → plain dict for JSON
+        return asdict(result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Agentic prep failed at top level for tenant=%s period=%s",
+            tenant_id, pe,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Agentic preparer failed: {type(exc).__name__}: {str(exc)[:200]}",
+        ) from exc
+
+
 @router.post("/sync")
 async def sync_overview_endpoint(
     tenant_id: CurrentTenantId,

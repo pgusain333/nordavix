@@ -244,6 +244,45 @@ export function ReconciliationsDashboard() {
     },
   })
 
+  // Agentic mode — AI runs as a preparer across every open account in
+  // the period. One-shot per click (no background scheduling). On
+  // success, invalidate the overview so the table reflects the new
+  // statuses and store the result for the post-run banner.
+  const [agenticResult, setAgenticResult] = useState<import("@/modules/recons/api").AgenticResult | null>(null)
+  const runAgenticMut = useMutation({
+    mutationFn: () => reconsApi.runAgenticPrep(periodEnd),
+    onSuccess: (data) => {
+      setAgenticResult(data)
+      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+      qc.invalidateQueries({ queryKey: ["period-tracker"] })
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Agentic preparer failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
+    },
+  })
+
+  async function handleAgenticRun() {
+    if (runAgenticMut.isPending) return
+    const ok = confirm(
+      `Run AI Agentic Preparer on every open account in ${periodEnd}?\n\n` +
+      "What it does:\n" +
+      "  • Pulls each open account's period transactions from QuickBooks.\n" +
+      "  • Ties subledger to GL where the math works (includes all period " +
+      "transactions and marks the account Prepared).\n" +
+      "  • For accounts that don't tie, asks Claude to write 2-3 likely " +
+      "reasons into the row's notes — leaves status unchanged.\n\n" +
+      "What it WON'T touch:\n" +
+      "  • Accounts already Approved.\n" +
+      "  • Accounts with a manual subledger override.\n\n" +
+      "Continue?",
+    )
+    if (!ok) return
+    setAgenticResult(null)
+    await runAgenticMut.mutateAsync().catch(() => { /* error handled in onError */ })
+  }
+
+
   // POST /sync mutation — pulls fresh data from QBO and persists snapshots.
   // On success we feed the returned overview straight into the query cache
   // so the table updates without a second GET roundtrip.
@@ -599,6 +638,13 @@ export function ReconciliationsDashboard() {
             >
               <span className="hidden sm:inline">{syncMut.isPending ? "Syncing…" : "Sync"}</span>
             </Button>
+            {/* Agentic Mode — AI acts as preparer on every open account.
+                One-shot per click; gated to a synced, unlocked period. */}
+            <AgenticModeToggle
+              running={runAgenticMut.isPending}
+              disabled={!qbo || !overview?.synced || isClosed || syncMut.isPending}
+              onClick={handleAgenticRun}
+            />
             {isAdmin && (
               isClosed ? (
                 <Button
@@ -680,6 +726,19 @@ export function ReconciliationsDashboard() {
             <CheckCircle2 size={12} strokeWidth={1.8} />
             <span className="flex-1">{syncMsg}</span>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Agentic run-result banner — appears after the AI preparer
+          finishes. Shows the prepared/analyzed/skipped counts and
+          lets the user dismiss. Stays until dismissed so they can
+          read what the AI did. */}
+      <AnimatePresence>
+        {agenticResult && (
+          <AgenticResultBanner
+            result={agenticResult}
+            onDismiss={() => setAgenticResult(null)}
+          />
         )}
       </AnimatePresence>
 
@@ -2282,6 +2341,177 @@ function SubledgerBuildup({
 }
 
 // ── Attachments cell ────────────────────────────────────────────────────────
+// ── AgenticModeToggle ───────────────────────────────────────────────────────
+// Visual toggle that triggers the AI agentic preparer for the focused
+// period. Renders like a pill switch (off → green when on) so the user
+// reads it as a "mode" rather than a plain action button — matching
+// the user's request. One-shot per click: while running, the pill
+// pulses; on completion, returns to the off state and the parent
+// shows a results banner.
+
+function AgenticModeToggle({ running, disabled, onClick }: {
+  running:  boolean
+  disabled: boolean
+  onClick:  () => void
+}) {
+  const label = running ? "Preparing…" : "Agentic Mode"
+  // Disabled tooltip text varies based on why it's disabled.
+  const title = running
+    ? "AI preparer is running — typical 5-15s per period"
+    : disabled
+      ? "Sync the period from QuickBooks first; AI runs on synced, unlocked periods only."
+      : "Run the AI agentic preparer on every open account in this period (one-shot)."
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || running}
+      title={title}
+      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all"
+      style={{
+        background: running ? "var(--green)" : disabled ? "var(--surface-2)" : "var(--surface)",
+        color:      running ? "#ffffff" : disabled ? "var(--text-muted)" : "var(--green)",
+        border:     `1.5px solid ${running ? "var(--green)" : disabled ? "var(--border-strong)" : "var(--green)"}`,
+        opacity:    disabled && !running ? 0.55 : 1,
+        cursor:     disabled || running ? "not-allowed" : "pointer",
+        boxShadow:  running ? "0 0 0 3px rgba(94, 176, 137, 0.15)" : "none",
+      }}
+    >
+      <Sparkles
+        size={12} strokeWidth={2}
+        className={running ? "animate-pulse" : undefined}
+      />
+      {label}
+    </button>
+  )
+}
+
+
+// ── AgenticResultBanner ─────────────────────────────────────────────────────
+// Post-run summary banner with counts + a per-account breakdown drawer.
+// Stays mounted until the user dismisses it so they can see exactly
+// what the AI did (and re-read it after refreshing the page in their
+// head). Click "View details" → expand the per-account list with
+// reasons / gap_before / gap_after.
+
+function AgenticResultBanner({ result, onDismiss }: {
+  result:    import("@/modules/recons/api").AgenticResult
+  onDismiss: () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const totalTouched = result.prepared + result.analyzed + result.skipped + result.failed
+  const isError = result.failed > 0 || (result.prepared === 0 && result.analyzed === 0 && result.skipped > 0)
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.22 }}
+      style={{
+        background: isError ? "#fef3c7" : "var(--green-subtle)",
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      <div className="px-4 sm:px-8 py-2.5">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Sparkles size={14} strokeWidth={1.8}
+            style={{ color: isError ? "#92400e" : "var(--green)" }} />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold"
+              style={{ color: isError ? "#92400e" : "var(--green)" }}>
+              Agentic Preparer · {totalTouched} account{totalTouched === 1 ? "" : "s"} reviewed
+            </p>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-2)" }}>
+              <b>{result.prepared}</b> auto-prepared
+              {" · "}<b>{result.analyzed}</b> AI-analyzed (needs human review)
+              {" · "}<b>{result.skipped}</b> skipped
+              {result.failed > 0 && (<> {" · "}<b style={{ color: "#b91c1c" }}>{result.failed} failed</b></>)}
+              {" · "}{(result.duration_ms / 1000).toFixed(1)}s
+            </p>
+          </div>
+          <button
+            onClick={() => setExpanded((x) => !x)}
+            className="text-[11px] font-semibold underline-offset-2 hover:underline"
+            style={{ color: isError ? "#92400e" : "var(--green)" }}
+          >
+            {expanded ? "Hide details" : "View details"}
+          </button>
+          <button
+            onClick={onDismiss}
+            className="h-5 w-5 inline-flex items-center justify-center rounded transition-opacity hover:opacity-70"
+            style={{ color: isError ? "#92400e" : "var(--green)" }}
+            title="Dismiss"
+          >
+            <X size={13} strokeWidth={2} />
+          </button>
+        </div>
+        <AnimatePresence>
+          {expanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.18 }}
+              className="overflow-hidden"
+            >
+              <div className="mt-3 rounded-lg overflow-hidden"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <table className="w-full text-[11px] min-w-[600px]">
+                  <thead>
+                    <tr style={{ background: "var(--surface-2)" }}>
+                      <th className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Account</th>
+                      <th className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Action</th>
+                      <th className="text-left px-3 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>What happened</th>
+                      <th className="text-right px-3 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Items</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.accounts.map((a) => {
+                      const tone = a.action === "prepared" ? "var(--green)"
+                                  : a.action === "analyzed" ? "#1d4ed8"
+                                  : "#92400e"
+                      const bg = a.action === "prepared" ? "var(--green-subtle)"
+                                : a.action === "analyzed" ? "#dbeafe"
+                                : "#fef3c7"
+                      return (
+                        <tr key={a.qbo_account_id + a.account_name}
+                          style={{ borderTop: "1px solid var(--border)" }}>
+                          <td className="px-3 py-2 text-theme">
+                            {a.account_number && (
+                              <span className="font-mono text-[10px] mr-1" style={{ color: "var(--text-muted)" }}>
+                                {a.account_number}
+                              </span>
+                            )}
+                            {a.account_name}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
+                              style={{ background: bg, color: tone }}>
+                              {a.action}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>
+                            {a.reason}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--text-muted)" }}>
+                            {a.items_added > 0 ? a.items_added : "—"}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  )
+}
+
+
 // ── DownloadReconButton ─────────────────────────────────────────────────────
 // Triggers a per-account reconciliation PDF download. Shown only on
 // approved rows (the parent gates with `status === "approved"`).
