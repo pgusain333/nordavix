@@ -114,22 +114,42 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     return "open"
   }
 
-  // Bulk approve — fires the per-row approve in a loop, patches the
-  // cache optimistically so the UI updates the instant the user clicks,
-  // and rolls back on error. Backend doesn't expose a bulk endpoint
-  // for flux yet; looping keeps the UX consistent without a schema
-  // change.
+  // Pulls a useful error message out of an axios-style rejection.
+  // Surfaces the backend's `detail` field when present (e.g. validation
+  // errors from FastAPI), otherwise the generic message — which is at
+  // least more informative than a silent no-op.
+  function extractErrorDetail(err: unknown): string | undefined {
+    const e = err as { response?: { data?: { detail?: unknown }; status?: number }; message?: string }
+    const d = e?.response?.data?.detail
+    if (typeof d === "string") return d
+    if (Array.isArray(d) && d.length > 0) return JSON.stringify(d[0])
+    if (e?.response?.status) return `HTTP ${e.response.status}: ${e.message ?? "Request failed"}`
+    return e?.message
+  }
+
+  // Bulk approve — fires per-row approves in PARALLEL so a 5-row
+  // operation finishes in 1 request-round-trip instead of 5. Uses
+  // Promise.allSettled so a single failure doesn't abort the batch.
+  // If EVERY id fails, throw so onError fires (rollback + visible
+  // error banner) instead of silently swallowing the failure.
   const bulkApprove = useMutation({
     mutationFn: async (ids: string[]) => {
-      // Track per-id success so we can report partial failures.
-      const failures: string[] = []
-      for (const id of ids) {
-        try {
-          await api.approveVariance(tbId, id)
-        } catch (err) {
-          console.warn("Bulk approve: variance failed", id, err)
-          failures.push(id)
-        }
+      const results = await Promise.allSettled(
+        ids.map((id) => api.approveVariance(tbId, id)),
+      )
+      const failures = results
+        .map((r, i) => (r.status === "rejected" ? { id: ids[i], reason: r.reason } : null))
+        .filter((x): x is { id: string; reason: unknown } => x !== null)
+      if (failures.length > 0) {
+        console.warn("Bulk approve failures:", failures)
+      }
+      if (failures.length === ids.length && ids.length > 0) {
+        // Every single request failed → bubble up so onError handles
+        // the optimistic rollback + visible error banner. Without
+        // this throw the mutation would silently "succeed" with
+        // failed=N and the user would see the row snap back to its
+        // original status with no explanation.
+        throw failures[0].reason
       }
       return { total: ids.length, failed: failures.length }
     },
@@ -150,42 +170,49 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     },
     onSuccess: ({ total, failed }) => {
       const moved = total - failed
-      if (moved > 0) {
-        onMessage?.({
-          kind: failed > 0 ? "info" : "ok",
-          text: failed > 0
-            ? `Approved ${moved} of ${total} — ${failed} failed`
-            : `Approved ${moved} variance${moved === 1 ? "" : "s"}`,
-        })
-        setFilter(bucketForStatus("approved"))
-      }
+      onMessage?.({
+        kind: failed > 0 ? "info" : "ok",
+        text: failed > 0
+          ? `Approved ${moved} of ${total} — ${failed} failed`
+          : `Approved ${moved} variance${moved === 1 ? "" : "s"}`,
+      })
+      if (moved > 0) setFilter(bucketForStatus("approved"))
       setSelected(new Set())
-      qc.invalidateQueries({ queryKey: ["variances", tbId] })
+      // refetchType:"active" forces an immediate refetch on the
+      // currently-mounted query — without it invalidateQueries just
+      // marks the cache stale and the user can sit looking at the
+      // optimistic state for the full staleTime window.
+      qc.invalidateQueries({ queryKey: ["variances", tbId], refetchType: "active" })
     },
     onError: (err: unknown, _ids, ctx) => {
       if (ctx?.prev) qc.setQueryData(["variances", tbId], ctx.prev)
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      onMessage?.({ kind: "err", text: detail ?? "Bulk approve failed. Try again." })
+      onMessage?.({ kind: "err", text: extractErrorDetail(err) ?? "Bulk approve failed. Try again." })
     },
   })
 
   // Bulk status flip — backs the Mark prepared / Flag / Reset to
-  // pending buttons. Same optimistic-then-confirm pattern as bulkApprove
-  // so the UI doesn't sit lying about the new status while the network
-  // request is in flight. Auto-switches the active filter tab to the
-  // bucket the affected rows now belong to, so the user immediately
-  // SEES where their rows landed instead of staring at a tab that
-  // looks empty.
+  // pending buttons. Same parallel-with-throw-on-total-failure pattern
+  // as bulkApprove so silent failures can't make the UI look frozen.
+  // Auto-switches the active filter tab to the bucket the affected rows
+  // now belong to, so the user immediately SEES where their rows
+  // landed instead of staring at a tab that looks empty.
   const bulkSetStatus = useMutation({
     mutationFn: async (vars: { ids: string[]; status: "pending" | "edited" | "flagged" }) => {
-      const failures: string[] = []
-      for (const id of vars.ids) {
-        try {
-          await api.setVarianceStatus(tbId, id, vars.status)
-        } catch (err) {
-          console.warn("Bulk status: variance failed", id, vars.status, err)
-          failures.push(id)
-        }
+      const results = await Promise.allSettled(
+        vars.ids.map((id) => api.setVarianceStatus(tbId, id, vars.status)),
+      )
+      const failures = results
+        .map((r, i) => (r.status === "rejected" ? { id: vars.ids[i], reason: r.reason } : null))
+        .filter((x): x is { id: string; reason: unknown } => x !== null)
+      if (failures.length > 0) {
+        console.warn(`Bulk ${vars.status} failures:`, failures)
+      }
+      if (failures.length === vars.ids.length && vars.ids.length > 0) {
+        // Every PATCH failed — surface to onError so we roll back the
+        // optimistic update and show the backend's actual error
+        // detail in the banner. This is the path the user was hitting
+        // before and it looked like the button did nothing.
+        throw failures[0].reason
       }
       return { total: vars.ids.length, failed: failures.length, status: vars.status }
     },
@@ -216,22 +243,19 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         edited:  "marked prepared",
         flagged: "flagged",
       }
-      if (moved > 0) {
-        onMessage?.({
-          kind: failed > 0 ? "info" : "ok",
-          text: failed > 0
-            ? `${labelMap[status]} ${moved} of ${total} — ${failed} failed`
-            : `Successfully ${labelMap[status]} ${moved} variance${moved === 1 ? "" : "s"}`,
-        })
-        setFilter(bucketForStatus(status))
-      }
+      onMessage?.({
+        kind: failed > 0 ? "info" : "ok",
+        text: failed > 0
+          ? `${labelMap[status]} ${moved} of ${total} — ${failed} failed`
+          : `Successfully ${labelMap[status]} ${moved} variance${moved === 1 ? "" : "s"}`,
+      })
+      if (moved > 0) setFilter(bucketForStatus(status))
       setSelected(new Set())
-      qc.invalidateQueries({ queryKey: ["variances", tbId] })
+      qc.invalidateQueries({ queryKey: ["variances", tbId], refetchType: "active" })
     },
     onError: (err: unknown, _vars, ctx) => {
       if (ctx?.prev) qc.setQueryData(["variances", tbId], ctx.prev)
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      onMessage?.({ kind: "err", text: detail ?? "Bulk update failed. Try again." })
+      onMessage?.({ kind: "err", text: extractErrorDetail(err) ?? "Bulk update failed. Try again." })
     },
   })
 

@@ -10,10 +10,12 @@ Endpoints:
   POST /trial-balances/{id}/run             enqueue AI narrative generation
   GET  /trial-balances/{id}/variances       list variances with account + narrative data
   POST /trial-balances/{id}/variances/{v}   /approve — mark approved
+  POST /trial-balances/{id}/variances/{v}   /status   — flip review status
   PUT  /trial-balances/{id}/variances/{v}   /narrative — manual edit
   GET  /trial-balances/{id}/export          Excel download
 """
 import io
+import logging
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -59,6 +61,15 @@ from modules.flux.variance_txns import pull_transactions_for_variance
 from modules.qbo.router import _get_valid_token  # type: ignore  # reuse existing helper
 
 router = APIRouter()
+
+# Module-level logger — referenced by /agentic/run, /agentic/cancel,
+# /status, etc. WAS missing entirely until this commit, which means
+# every code path that touched `logger.info(...)` raised
+# NameError: name 'logger' is not defined and FastAPI returned a 500.
+# The frontend's silent .catch on bulk operations masked the failure,
+# making clicks look like no-ops. Defining it here brings those
+# endpoints back to life — Fly logs will now show real progress.
+logger = logging.getLogger(__name__)
 
 
 # ── Trial Balances ──────────────────────────────────────────────────────────────
@@ -573,8 +584,16 @@ async def set_variance_status(
     Returning a row to "pending" clears approved_by + approved_at so the
     audit trail stays honest (the variance is no longer signed off).
     Other flips leave the approval stamps alone.
+
+    Logs every transition (with the previous and new status) at INFO so
+    Fly/Sentry has a clear signal when a flip fails or hangs — the
+    frontend's earlier silent-failure mode hid these from view.
     """
     if body.status not in _ALLOWED_STATUS_FLIPS:
+        logger.warning(
+            "set_variance_status: rejected unknown status=%r (tb=%s var=%s tenant=%s)",
+            body.status, tb_id, var_id, tenant_id,
+        )
         raise HTTPException(
             status_code=400,
             detail=f"status must be one of {sorted(_ALLOWED_STATUS_FLIPS)}",
@@ -583,6 +602,14 @@ async def set_variance_status(
     var_result = await db.execute(select(Variance).where(Variance.id == var_id))
     var = var_result.scalar_one_or_none()
     if var is None:
+        # Most likely cause: the variance belongs to a different tenant
+        # (the tenant filter listener silently drops it from the SELECT
+        # result, so we see None rather than getting back a foreign row).
+        logger.warning(
+            "set_variance_status: variance not found (tb=%s var=%s tenant=%s) — "
+            "possibly a tenant-scope miss",
+            tb_id, var_id, tenant_id,
+        )
         raise HTTPException(status_code=404, detail="Variance not found")
 
     previous = var.status
@@ -605,6 +632,10 @@ async def set_variance_status(
         },
     )
     await db.commit()
+    logger.info(
+        "set_variance_status: %s → %s (tb=%s var=%s user=%s)",
+        previous, body.status, tb_id, var_id, user.id,
+    )
     return {
         "id":     str(var_id),
         "status": body.status,
