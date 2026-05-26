@@ -264,38 +264,40 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     ["pending", "generating", "generated"].includes(r.status)
   ).length
 
+  // Filter buckets — same tab styling as the Reconciliations dashboard
+  // (colored background + colored text when active, transparent +
+  // muted otherwise). Inside a rounded-lg surface-2 group container.
+  const FILTER_BUCKETS = [
+    { key: "all",      label: "All",      fg: "var(--text)",  bg: "var(--surface)",    count: rows.length },
+    { key: "material", label: "Material", fg: "#b45309",      bg: "#fef3c7",           count: materialCount },
+    { key: "pending",  label: "Pending",  fg: "#b91c1c",      bg: "#fef2f2",           count: pendingCount },
+  ] as const
+
   return (
-    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
-      {/* Toolbar — wraps under 640px so the filter pills + Export don't
-          force horizontal overflow on small screens. */}
-      <div
-        className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-2.5 sm:py-3 flex-wrap"
-        style={{ borderBottom: "1px solid var(--border)", background: "var(--surface)" }}
-      >
-        <div
-          className="flex items-center gap-1 rounded-lg p-0.5"
-          style={{ background: "var(--surface-2)" }}
-        >
-          {(["all", "material", "pending"] as const).map((f) => (
-            <button
-              key={f}
-              className={cn(
-                "px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
-              )}
-              style={
-                filter === f
-                  ? { background: "var(--surface)", color: "var(--text)", boxShadow: "var(--card-shadow)" }
-                  : { color: "var(--text-muted)" }
-              }
-              onMouseEnter={(e) => { if (filter !== f) (e.currentTarget as HTMLElement).style.color = "var(--text)" }}
-              onMouseLeave={(e) => { if (filter !== f) (e.currentTarget as HTMLElement).style.color = "var(--text-muted)" }}
-              onClick={() => setFilter(f)}
-            >
-              {f === "all"      ? `All (${rows.length})` :
-               f === "material" ? `Material (${materialCount})` :
-                                  `Pending (${pendingCount})`}
-            </button>
-          ))}
+    <div className="flex flex-col h-full px-4 sm:px-6 py-4 gap-4" style={{ background: "var(--bg)" }}>
+      {/* Filters row — sits ABOVE the table card (like recon) instead of
+          being baked into the same container. Tabs match the recon
+          status-bucket style for visual parity. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap rounded-lg p-1"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", width: "fit-content" }}>
+          {FILTER_BUCKETS.map((b) => {
+            const active = filter === b.key
+            return (
+              <button
+                key={b.key}
+                onClick={() => setFilter(b.key)}
+                className="inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all"
+                style={{
+                  background: active ? b.bg   : "transparent",
+                  color:      active ? b.fg   : "var(--text-muted)",
+                }}
+              >
+                {b.label}
+                <span className="text-[10px] tabular-nums opacity-80">{b.count}</span>
+              </button>
+            )
+          })}
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Button
@@ -309,8 +311,11 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         </div>
       </div>
 
-      {/* Table */}
-      <div className="flex-1 overflow-auto" style={{ background: "var(--bg)" }}>
+      {/* Table card — same rounded-xl + surface + card-shadow chrome
+          as the recon accounts table so the two pages read as one. */}
+      <div className="flex-1 rounded-xl overflow-hidden flex flex-col min-h-0"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="flex-1 overflow-auto" style={{ background: "var(--surface)" }}>
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <div className="flex items-center gap-2 text-sm" style={{ color: "var(--text-muted)" }}>
@@ -450,15 +455,16 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       {/* Footer summary */}
       {!isLoading && rows.length > 0 && (
         <div
-          className="px-5 py-2.5"
-          style={{ borderTop: "1px solid var(--border)", background: "var(--surface)" }}
+          className="px-4 py-2"
+          style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}
         >
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
             {rows.filter((r) => r.status === "approved").length} of {rows.length} variances approved
             {materialCount > 0 && ` · ${materialCount} material`}
           </p>
         </div>
       )}
+      </div> {/* /table-card wrapper */}
     </div>
   )
 }
