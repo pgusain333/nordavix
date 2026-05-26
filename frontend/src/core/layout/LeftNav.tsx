@@ -85,7 +85,12 @@ export function LeftNav({ onClose }: Props) {
         >
           <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-10 w-10 shrink-0 dark:hidden" />
           <img src="/logo-mark-light.svg" alt="Nordavix" className="h-10 w-10 shrink-0 hidden dark:block" />
-          <span className="text-[32px] font-semibold tracking-tight text-theme truncate">
+          {/* Wordmark sized to read clearly without overflowing the 240px
+              sidebar — at 26px it sits comfortably next to the 40px mark
+              on both desktop and the mobile drawer (also 240px wide).
+              `truncate` is a safety net for very narrow viewports but
+              shouldn't trigger at default widths. */}
+          <span className="text-[26px] font-semibold tracking-tight text-theme leading-none truncate">
             nordavix<span style={{ color: "var(--green)" }}>.</span>
           </span>
         </button>

@@ -2277,7 +2277,7 @@ function SubledgerBuildup({
             Opening balance
             <span className="ml-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
               {prior
-                ? `Rolled forward from ${prior.period_end}${prior.subledger_source ? ` · ${prior.subledger_source}` : ""}`
+                ? `Rolled forward from ${prior.period_end}`
                 : "From dashboard (set books-start in onboarding to anchor properly)"}
             </span>
           </span>
