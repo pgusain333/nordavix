@@ -549,6 +549,60 @@ async def approve_variance(
     }
 
 
+@router.post("/trial-balances/{tb_id}/agentic/run")
+async def run_agentic_flux_endpoint(
+    tb_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Auto-generate AI commentary for every material variance on the TB
+    that doesn't already have one. Synchronous — caller blocks until
+    every variance has been processed (or the user hits Stop). Typical
+    TB with 20 material variances takes ~60-120s depending on the LLM.
+    """
+    from dataclasses import asdict
+    from modules.flux.agentic import run_agentic_flux
+
+    logger.info(
+        "Agentic flux run start: tenant=%s user=%s tb=%s",
+        tenant_id, user.id, tb_id,
+    )
+    try:
+        result = await run_agentic_flux(db, tenant_id, user, tb_id)
+        return asdict(result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Agentic flux failed at top level for tenant=%s tb=%s",
+            tenant_id, tb_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Agentic flux failed: {type(exc).__name__}: {str(exc)[:200]}",
+        ) from exc
+
+
+@router.post("/trial-balances/{tb_id}/agentic/cancel")
+async def cancel_agentic_flux_endpoint(
+    tb_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,  # noqa: ARG001
+) -> dict:
+    """
+    Signal an in-flight agentic-flux run to stop. Cooperative — the
+    worker finishes its current variance, commits cleanly, then exits
+    with everything-so-far in the result.
+    """
+    from modules.flux.agentic import request_cancel
+
+    request_cancel(tenant_id, tb_id)
+    logger.info("Agentic flux cancel requested: tenant=%s tb=%s", tenant_id, tb_id)
+    return {"cancelled": True, "tb_id": str(tb_id)}
+
+
 @router.post("/trial-balances/{tb_id}/approve", response_model=TrialBalanceResponse)
 async def approve_trial_balance(
     tb_id: uuid.UUID,

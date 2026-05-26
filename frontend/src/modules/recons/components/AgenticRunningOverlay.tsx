@@ -15,11 +15,15 @@ import { Spinner } from "@/core/ui/components"
 
 interface Props {
   open:          boolean
-  /** Optional period being processed — shown in the status text. */
+  /** Optional context string shown next to "AI is working" (e.g. period, TB name). */
   periodLabel?:  string | null
   /** Disables the Stop button (e.g. while the cancel request is in flight). */
   cancelling?:   boolean
   onStop:        () => void
+  /** Override the rotating status lines for non-reconciliation contexts. */
+  statusLines?:  string[]
+  /** Override the heading (defaults to "AI is working"). */
+  title?:        string
 }
 
 // Pre-computed positions for the orbiting sparkles around the logo —
@@ -35,7 +39,7 @@ const SPARKLE_POSITIONS = Array.from({ length: 8 }, (_, i) => {
   }
 })
 
-const STATUS_LINES = [
+const DEFAULT_STATUS_LINES = [
   "Reading period transactions from QuickBooks…",
   "Building subledger from opening + reconciling items…",
   "Checking which accounts tie out to the penny…",
@@ -44,7 +48,10 @@ const STATUS_LINES = [
   "Saving prepared work with audit trail…",
 ]
 
-export function AgenticRunningOverlay({ open, periodLabel, cancelling, onStop }: Props) {
+export function AgenticRunningOverlay({
+  open, periodLabel, cancelling, onStop, statusLines, title = "AI is working",
+}: Props) {
+  const lines = statusLines && statusLines.length > 0 ? statusLines : DEFAULT_STATUS_LINES
   // Cycle through status lines so the user feels progress even though
   // the actual backend run is one big request (no streaming).
   const [statusIdx, setStatusIdx] = useState(0)
@@ -52,10 +59,10 @@ export function AgenticRunningOverlay({ open, periodLabel, cancelling, onStop }:
     if (!open) return
     setStatusIdx(0)
     const id = setInterval(() => {
-      setStatusIdx((i) => (i + 1) % STATUS_LINES.length)
+      setStatusIdx((i) => (i + 1) % lines.length)
     }, 2400)
     return () => clearInterval(id)
-  }, [open])
+  }, [open, lines.length])
 
   return (
     <AnimatePresence>
@@ -130,7 +137,7 @@ export function AgenticRunningOverlay({ open, periodLabel, cancelling, onStop }:
 
             {/* Status text + cycling activity line */}
             <p className="text-base font-bold text-theme mb-1">
-              AI is working
+              {title}
               {periodLabel && (
                 <span className="font-normal" style={{ color: "var(--text-muted)" }}>
                   {" "}on {periodLabel}
@@ -148,7 +155,7 @@ export function AgenticRunningOverlay({ open, periodLabel, cancelling, onStop }:
                   className="text-[12px]"
                   style={{ color: "var(--text-muted)" }}
                 >
-                  {STATUS_LINES[statusIdx]}
+                  {lines[statusIdx]}
                 </motion.p>
               </AnimatePresence>
             </div>

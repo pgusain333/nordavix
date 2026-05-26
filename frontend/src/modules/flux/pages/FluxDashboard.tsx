@@ -39,6 +39,8 @@ import { UploadFlow } from "@/modules/flux/components/UploadFlow"
 import { VarianceTable } from "@/modules/flux/components/VarianceTable"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Button, Spinner } from "@/core/ui/components"
+import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
+import type { VarianceRow } from "@/modules/flux/api"
 
 // ── Status dot colours (inline styles — no Tailwind bg-* needed) ────────────
 
@@ -223,6 +225,34 @@ export function FluxDashboard() {
     onError: (e: unknown) => {
       const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setRunMsg({ kind: "err", text: detail ?? "Could not start AI analysis. Try again." })
+    },
+  })
+
+  // Agentic Flux — one click writes AI commentary for every material
+  // variance that doesn't have one yet. Runs synchronously; the
+  // AgenticRunningOverlay (mounted below) shows progress + Stop button.
+  const runAgenticFluxMut = useMutation({
+    mutationFn: () => api.runAgenticFlux(tbId!),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["variances", tbId] })
+      qc.invalidateQueries({ queryKey: ["trial-balances"] })
+      const total = data.processed + data.skipped + data.failed
+      const summary = `Wrote commentary on ${data.processed} of ${total} material variance${total === 1 ? "" : "s"}`
+        + (data.failed > 0 ? ` · ${data.failed} failed` : "")
+        + (data.skipped > 0 ? ` · ${data.skipped} skipped` : "")
+      setRunMsg({ kind: "ok", text: summary })
+    },
+    onError: (e: unknown) => {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setRunMsg({ kind: "err", text: detail ?? "Agentic flux failed. Try again." })
+    },
+  })
+
+  const cancelAgenticFluxMut = useMutation({
+    mutationFn: () => api.cancelAgenticFlux(tbId!),
+    onError: (e: unknown) => {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setRunMsg({ kind: "err", text: detail ?? "Could not signal stop." })
     },
   })
 
@@ -517,6 +547,16 @@ export function FluxDashboard() {
               )}
 
               {showVarianceTable && (
+                <div className="px-4 sm:px-6 pt-3">
+                  <FluxKpiStrip
+                    rows={variances}
+                    onRunAgentic={() => runAgenticFluxMut.mutate()}
+                    isRunning={runAgenticFluxMut.isPending}
+                  />
+                </div>
+              )}
+
+              {showVarianceTable && (
                 <VarianceTable
                   tbId={tbId!}
                   rows={variances}
@@ -526,6 +566,24 @@ export function FluxDashboard() {
                   periodPrior={selectedTb?.period_prior}
                 />
               )}
+
+              {/* AI-working overlay — appears while the agentic-flux
+                  run is in flight. Stop button signals cooperative
+                  cancel; the run exits after the current variance. */}
+              <AgenticRunningOverlay
+                open={runAgenticFluxMut.isPending}
+                periodLabel={selectedTb?.name ?? null}
+                cancelling={cancelAgenticFluxMut.isPending}
+                onStop={() => cancelAgenticFluxMut.mutate()}
+                title="AI is writing flux commentary"
+                statusLines={[
+                  "Reading the GL detail behind each material variance…",
+                  "Pulling transaction evidence from QuickBooks…",
+                  "Drafting drivers, one-offs, and normalized run-rate…",
+                  "Asking Claude for the most plausible explanation…",
+                  "Saving commentary with a confidence score…",
+                ]}
+              />
 
             </motion.div>
           </AnimatePresence>
@@ -968,4 +1026,111 @@ function FieldLabel({ label, children }: { label: string; children: React.ReactN
       {children}
     </label>
   )
+}
+
+// ── FluxKpiStrip ────────────────────────────────────────────────────────────
+//
+// Four cards above the variance table summarising the analysis at a
+// glance: material count, total |variance|, approval progress, AI
+// commentary coverage. Plus a Run-AI button that fires the agentic
+// flux runner (handler comes from the parent).
+
+function FluxKpiStrip({
+  rows, onRunAgentic, isRunning,
+}: { rows: VarianceRow[]; onRunAgentic: () => void; isRunning: boolean }) {
+  const total = rows.length
+  const material = rows.filter((r) => r.is_material)
+  const approved = material.filter((r) => r.status === "approved")
+  const withNarrative = material.filter((r) =>
+    r.status === "generated" || r.status === "edited" || r.status === "approved",
+  )
+  const totalAbsVar = rows.reduce((s, r) => s + Math.abs(parseFloat(r.dollar_variance) || 0), 0)
+  const approvalPct = material.length > 0
+    ? Math.round((approved.length / material.length) * 100)
+    : 0
+  const coveragePct = material.length > 0
+    ? Math.round((withNarrative.length / material.length) * 100)
+    : 0
+  const pendingMaterial = material.length - withNarrative.length
+
+  // Run-AI button label + style based on state
+  const runLabel = isRunning
+    ? "Running…"
+    : pendingMaterial > 0
+      ? `Run AI on ${pendingMaterial} pending`
+      : "All material commented"
+
+  return (
+    <div className="rounded-xl p-3 sm:p-4 mb-3"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+        <FluxKpi
+          label="Material variances"
+          value={String(material.length)}
+          sub={total > 0 ? `of ${total} total` : "no variances"}
+          tone={material.length > 0 ? "var(--text)" : "var(--text-muted)"} />
+        <FluxKpi
+          label="Total |variance|"
+          value={fmtMoneyShort(totalAbsVar)}
+          sub="sum of absolute movements"
+          tone="var(--text)" />
+        <FluxKpi
+          label="Approval"
+          value={`${approved.length} / ${material.length}`}
+          sub={material.length > 0 ? `${approvalPct}% of material` : "—"}
+          tone={approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+        <FluxKpi
+          label="AI coverage"
+          value={`${withNarrative.length} / ${material.length}`}
+          sub={material.length > 0 ? `${coveragePct}% commentary written` : "—"}
+          tone={coveragePct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+      </div>
+
+      {/* Agentic Mode CTA — bottom row of the KPI card */}
+      <div className="pt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+        style={{ borderTop: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-2">
+          <span className="h-7 w-7 rounded-md flex items-center justify-center shrink-0"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+            <Sparkles size={14} strokeWidth={1.8} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text)" }}>
+              Agentic Mode
+            </p>
+            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              AI writes commentary for every material variance — biggest movers first.
+            </p>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          loading={isRunning}
+          disabled={isRunning || pendingMaterial === 0}
+          icon={<Sparkles size={12} strokeWidth={1.8} />}
+          onClick={onRunAgentic}
+        >
+          {runLabel}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function FluxKpi({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
+  return (
+    <div className="rounded-lg p-3"
+      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>{label}</p>
+      <p className="text-lg sm:text-xl font-bold tabular-nums leading-tight" style={{ color: tone }}>{value}</p>
+      <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{sub}</p>
+    </div>
+  )
+}
+
+function fmtMoneyShort(n: number): string {
+  const abs = Math.abs(n)
+  if (abs >= 1_000_000) return `$${(abs / 1_000_000).toFixed(2)}M`
+  if (abs >= 1_000) return `$${(abs / 1_000).toFixed(1)}K`
+  return `$${abs.toFixed(0)}`
 }

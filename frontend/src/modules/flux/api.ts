@@ -183,6 +183,45 @@ async function regenerateNarrative(tbId: string, varId: string): Promise<{ id: s
   return data
 }
 
+// ── Agentic flux (auto-commentary for every material variance) ───────────────
+
+export interface AgenticFluxVarianceResult {
+  variance_id:    string
+  account_name:   string
+  account_number: string
+  action:         "generated" | "skipped" | "failed"
+  reason:         string
+}
+
+export interface AgenticFluxResult {
+  tb_id:        string
+  started_at:   string
+  finished_at:  string
+  processed:    number
+  skipped:      number
+  failed:       number
+  variances:    AgenticFluxVarianceResult[]
+}
+
+async function runAgenticFlux(tbId: string): Promise<AgenticFluxResult> {
+  const { data } = await apiClient.post<AgenticFluxResult>(
+    `/api/flux/trial-balances/${tbId}/agentic/run`,
+    null,
+    // Worst-case 20 variances × 15s = 5 min. Mirror the recons agentic ceiling.
+    { timeout: 5 * 60_000 },
+  )
+  return data
+}
+
+async function cancelAgenticFlux(tbId: string): Promise<{ cancelled: true; tb_id: string }> {
+  const { data } = await apiClient.post<{ cancelled: true; tb_id: string }>(
+    `/api/flux/trial-balances/${tbId}/agentic/cancel`,
+    null,
+    { timeout: 10_000 },
+  )
+  return data
+}
+
 // ── Variance transactions ────────────────────────────────────────────────────
 
 export interface VarianceTxn {
@@ -290,6 +329,9 @@ export const api = {
   approveVariance,
   updateNarrative,
   regenerateNarrative,
+  // Agentic
+  runAgenticFlux,
+  cancelAgenticFlux,
   getVarianceTransactions,
   toggleVarianceTransactionCheck,
   // Export
