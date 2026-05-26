@@ -55,11 +55,32 @@ class TenantMiddleware(BaseHTTPMiddleware):
         except jwt.PyJWTError:
             return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
 
+        # Clerk session tokens carry the active org id in different
+        # shapes depending on token version:
+        #   v1 / custom templates  → claims.org_id
+        #   v2 (current default)   → claims.o.id        (compact form)
+        # Read both so the backend works regardless of which token type
+        # the frontend SDK happens to issue.
         clerk_org_id: str | None = claims.get("org_id")  # type: ignore[assignment]
+        if not clerk_org_id:
+            o = claims.get("o") or {}
+            if isinstance(o, dict):
+                v = o.get("id")
+                if isinstance(v, str) and v:
+                    clerk_org_id = v
         clerk_user_id: str | None = claims.get("sub")  # type: ignore[assignment]
 
         if not clerk_user_id:
             return JSONResponse({"detail": "Invalid token: missing user ID"}, status_code=401)
+
+        if not clerk_org_id:
+            # Log the actual claim keys present so we can debug Clerk
+            # template misconfiguration. Don't log values (PII).
+            import logging as _logging
+            _logging.getLogger(__name__).info(
+                "No active org in Clerk JWT — claim keys present: %s",
+                sorted(claims.keys()),
+            )
 
         # Fall back to a user-scoped pseudo-org when no org is selected.
         # This lets solo users (no Clerk org) use the app — their tenant is keyed on their user ID.
