@@ -1463,23 +1463,29 @@ export function ReconciliationsDashboard() {
                             <td className="px-3 py-1.5 text-right tabular-nums text-sm text-theme">
                               {fmtMoney(a.gl_balance)}
                             </td>
-                            <td className="px-3 py-1.5 text-right text-sm tabular-nums" style={{ color: "var(--text-2)" }}>
-                              {fmtMoney(a.subledger_balance)}
-                              {a.subledger_is_manual && (
-                                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle"
-                                  style={{ background: "var(--green)" }}
-                                  title="Subledger saved for this period" />
-                              )}
-                              {!a.subledger_is_manual && a.subledger_is_rollforward && (
-                                <span className="ml-1.5 inline-flex items-center text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded align-middle"
-                                  style={{
-                                    background: "rgba(59, 130, 246, 0.15)",
-                                    color: "#1d4ed8",
-                                  }}
-                                  title={`Rolled forward from prior close subledger (${a.rollforward_from}). Open the row to tick reconciling items.`}>
-                                  Roll fwd
-                                </span>
-                              )}
+                            <td className="px-3 py-1.5 text-right text-sm tabular-nums whitespace-nowrap" style={{ color: "var(--text-2)" }}>
+                              {/* inline-flex keeps the Roll-fwd / manual pill
+                                  on the SAME line as the balance — without
+                                  it the pill wraps below on narrow columns
+                                  and doubles the row height. */}
+                              <span className="inline-flex items-center justify-end gap-1.5">
+                                <span>{fmtMoney(a.subledger_balance)}</span>
+                                {a.subledger_is_manual && (
+                                  <span className="inline-block h-1.5 w-1.5 rounded-full"
+                                    style={{ background: "var(--green)" }}
+                                    title="Subledger saved for this period" />
+                                )}
+                                {!a.subledger_is_manual && a.subledger_is_rollforward && (
+                                  <span className="inline-flex items-center text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded"
+                                    style={{
+                                      background: "rgba(59, 130, 246, 0.15)",
+                                      color: "#1d4ed8",
+                                    }}
+                                    title={`Rolled forward from prior close subledger (${a.rollforward_from}). Open the row to tick reconciling items.`}>
+                                    Roll fwd
+                                  </span>
+                                )}
+                              </span>
                             </td>
                             <td className="px-3 py-1.5 text-right tabular-nums text-sm font-medium"
                               style={{ color: hasVariance ? "#dc2626" : "var(--green)" }}>

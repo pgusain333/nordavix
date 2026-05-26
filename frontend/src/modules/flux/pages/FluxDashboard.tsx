@@ -1054,7 +1054,6 @@ function FluxKpiStrip({
     : 0
   const pendingMaterial = material.length - withNarrative.length
 
-  // Run-AI button label + style based on state
   const runLabel = isRunning
     ? "Running…"
     : pendingMaterial > 0
@@ -1062,9 +1061,11 @@ function FluxKpiStrip({
       : "All material commented"
 
   return (
-    <div className="rounded-xl p-3 sm:p-4 mb-3"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+    <>
+      {/* KPI grid — same chrome as the Reconciliations dashboard: each
+          tile is its own rounded-xl card with the standard card shadow
+          so the two pages read as one product. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <FluxKpi
           label="Material variances"
           value={String(material.length)}
@@ -1087,9 +1088,11 @@ function FluxKpiStrip({
           tone={coveragePct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
       </div>
 
-      {/* Agentic Mode CTA — bottom row of the KPI card */}
-      <div className="pt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
-        style={{ borderTop: "1px solid var(--border)" }}>
+      {/* Agentic Mode — its own slim card below the KPIs, mirroring the
+          way the recon dashboard separates the AgenticModeToggle from
+          its KPI strip. */}
+      <div className="rounded-xl mt-3 px-4 py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
         <div className="flex items-center gap-2">
           <span className="h-7 w-7 rounded-md flex items-center justify-center shrink-0"
             style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
@@ -1114,17 +1117,20 @@ function FluxKpiStrip({
           {runLabel}
         </Button>
       </div>
-    </div>
+    </>
   )
 }
 
+// Matches the Kpi component in ReconciliationsDashboard exactly — same
+// rounded-xl, padding, font sizes, and card shadow so the two pages
+// look like cousins not strangers.
 function FluxKpi({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
   return (
-    <div className="rounded-lg p-3"
-      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-      <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className="text-lg sm:text-xl font-bold tabular-nums leading-tight" style={{ color: tone }}>{value}</p>
-      <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{sub}</p>
+    <div className="rounded-xl p-4"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{label}</p>
+      <p className="text-xl sm:text-2xl font-bold tabular-nums mt-1" style={{ color: tone }}>{value}</p>
+      {sub && <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{sub}</p>}
     </div>
   )
 }
