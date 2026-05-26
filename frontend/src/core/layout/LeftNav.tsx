@@ -83,9 +83,9 @@ export function LeftNav({ onClose }: Props) {
           onClick={() => { navigate("/"); onClose?.() }}
           className="flex items-center gap-2.5 min-w-0 flex-1"
         >
-          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-14 w-14 shrink-0 dark:hidden" />
-          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-14 w-14 shrink-0 hidden dark:block" />
-          <span className="text-[22px] font-semibold tracking-tight text-theme truncate">
+          <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-10 w-10 shrink-0 dark:hidden" />
+          <img src="/logo-mark-light.svg" alt="Nordavix" className="h-10 w-10 shrink-0 hidden dark:block" />
+          <span className="text-[32px] font-semibold tracking-tight text-theme truncate">
             nordavix<span style={{ color: "var(--green)" }}>.</span>
           </span>
         </button>

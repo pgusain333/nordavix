@@ -645,6 +645,16 @@ async def update_account_review_status(
             row.prepared_at = now
         row.approved_by = user.id
         row.approved_at = now
+        # Freeze the displayed subledger value if one isn't already
+        # saved. Without this, an account can be approved with the
+        # dashboard's defaulted display value (rolled-forward or
+        # GL-match) but no subledger_total stored — which breaks the
+        # close-and-roll chain for downstream periods because the
+        # picker only looks at rows where subledger_total IS NOT NULL.
+        if row.subledger_total is None:
+            await _freeze_displayed_subledger(
+                db, tenant_id, qbo_account_id, pe, row, user,
+            )
 
     from core.audit.log import write_audit_event
     await write_audit_event(
@@ -739,6 +749,7 @@ async def bulk_update_account_review_status(
     # Same prep/approve stamping rule as the per-row endpoint:
     # promote-only, never clear, and approve cascades through prepare
     # if prepare hasn't happened yet.
+    rows_for_freeze: list[tuple[str, AccountReviewStatus]] = []
     for qid in ids:
         if qid in by_id:
             r = by_id[qid]
@@ -754,8 +765,9 @@ async def bulk_update_account_review_status(
                     r.prepared_at = now
                 r.approved_by = user.id
                 r.approved_at = now
+                rows_for_freeze.append((qid, r))
         else:
-            db.add(AccountReviewStatus(
+            r = AccountReviewStatus(
                 id=uuid.uuid4(),
                 tenant_id=tenant_id,
                 qbo_account_id=qid,
@@ -767,7 +779,21 @@ async def bulk_update_account_review_status(
                 prepared_at=now      if status_value in ("reviewed", "approved") else None,
                 approved_by=user.id if status_value == "approved" else None,
                 approved_at=now      if status_value == "approved" else None,
-            ))
+            )
+            db.add(r)
+            if status_value == "approved":
+                rows_for_freeze.append((qid, r))
+
+    # Freeze the dashboard's displayed subledger onto every row being
+    # approved that doesn't already have one — same close-and-roll
+    # safety net as the per-row endpoint. Without this, bulk-approving
+    # a batch of accounts leaves subledger_total NULL and the next
+    # period's opening fails to roll forward properly.
+    for qid, r in rows_for_freeze:
+        if r.subledger_total is None:
+            await _freeze_displayed_subledger(
+                db, tenant_id, qid, pe, r, user,
+            )
 
     from core.audit.log import write_audit_event
     await write_audit_event(
@@ -885,6 +911,132 @@ async def set_account_subledger_override(
         "subledger_source": source if total is not None else None,
         "is_manual":      total is not None,
     }
+
+
+# ── Freeze displayed subledger when approval lands ──────────────────────────
+
+# Account types that carry credit-natural balances. QBO returns their
+# transaction amounts positive even though the GL balance is negative —
+# we flip the sign so the close-and-roll math reads correctly. Same
+# list as overview / agentic / pdf modules.
+_CREDIT_NATURAL_ACCOUNT_TYPES = {
+    "Accounts Payable", "Credit Card",
+    "Other Current Liability", "Long Term Liability", "Equity",
+}
+
+
+async def _freeze_displayed_subledger(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+    period_end: date,
+    row,                # AccountReviewStatus — mutated in place
+    user,               # CurrentUser
+) -> None:
+    """
+    Save the dashboard's currently-displayed subledger value onto the
+    review row so the close-and-roll chain has data to roll forward.
+
+    Without this, an account approved against its DEFAULT displayed
+    subledger (no manual override entered) keeps subledger_total = NULL
+    — which makes the picker for the next period skip this row entirely
+    and roll from whatever older period DOES have a subledger_total.
+    The "Feb closed but April still rolls from Jan 30" bug.
+
+    Compute logic mirrors the dashboard:
+      1. If a manual override exists → already saved, nothing to do
+         (caller already checked this — we only get here when
+         subledger_total IS NULL).
+      2. Else opening = prior reconciled subledger ($0 if none).
+      3. Plus signed sum of this period's reconciling items.
+      4. If no prior + no items → fall back to GL balance (matches the
+         dashboard's default for Bank/Other accounts; AR/AP also OK as a
+         starting point, the user can override later if they need to
+         break it down via aging).
+    """
+    from models.gl_balance_snapshot import GlBalanceSnapshot
+
+    # Account meta for sign-flip
+    snap = (await db.execute(
+        select(GlBalanceSnapshot).where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.qbo_account_id == qbo_account_id,
+            GlBalanceSnapshot.period_end == period_end,
+        )
+    )).scalar_one_or_none()
+    if snap is None:
+        # No snapshot — nothing to freeze. Should be rare since approval
+        # implies the account showed up in the overview.
+        logger.warning(
+            "Freeze subledger: no GL snapshot for account %s @ %s — skipping",
+            qbo_account_id, period_end,
+        )
+        return
+
+    is_credit_natural = snap.account_type in _CREDIT_NATURAL_ACCOUNT_TYPES
+    flip = -1 if is_credit_natural else 1
+
+    # Prior reconciled subledger → opening
+    prior = (await db.execute(
+        select(AccountReviewStatus)
+        .where(
+            AccountReviewStatus.qbo_account_id == qbo_account_id,
+            AccountReviewStatus.period_end < period_end,
+            AccountReviewStatus.subledger_total.is_not(None),
+        )
+        .order_by(AccountReviewStatus.period_end.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    has_prior = prior is not None and prior.subledger_total is not None
+    opening = Decimal(prior.subledger_total) if has_prior else Decimal("0")
+
+    # Signed sum of any existing reconciling items
+    items = (row.reconciling_items if row else []) or []
+    items_sum = Decimal("0")
+    for it in items:
+        is_manual = str(it.get("txn_id", "")).startswith("manual-")
+        raw = Decimal(str(it.get("amount", "0") or "0"))
+        items_sum += raw if is_manual else flip * raw
+
+    # If we have neither a prior NOR items, fall back to GL — keeps
+    # the variance = 0 default behavior the dashboard already shows
+    # for Bank/Other accounts that are auto-matched to GL.
+    if not has_prior and not items:
+        frozen = Decimal(snap.balance)
+        source = "Auto-saved on approval (matches GL — no prior reconciliation on file)"
+    else:
+        frozen = opening + items_sum
+        if has_prior:
+            source = (
+                f"Auto-saved on approval: opening {_fmt_money_simple(opening)} "
+                f"(rolled from {prior.period_end.isoformat()}) + "
+                f"{len(items)} reconciling item{'' if len(items) == 1 else 's'} "
+                f"= {_fmt_money_simple(frozen)}"
+            )
+        else:
+            source = (
+                f"Auto-saved on approval: {len(items)} reconciling item"
+                f"{'' if len(items) == 1 else 's'} totaling "
+                f"{_fmt_money_simple(frozen)} (no prior period on file)"
+            )
+
+    now = datetime.now(UTC)
+    row.subledger_total = frozen.quantize(Decimal("0.01"))
+    row.subledger_source = source
+    row.subledger_entered_by = user.id
+    row.subledger_entered_at = now
+    logger.info(
+        "Froze subledger on approval: account=%s period=%s value=%s",
+        qbo_account_id, period_end, row.subledger_total,
+    )
+
+
+def _fmt_money_simple(v: Decimal) -> str:
+    """Compact $-format used in audit-trail source strings."""
+    sign = -1 if v < 0 else 1
+    n = f"{abs(v).quantize(Decimal('0.01')):,.2f}"
+    return f"$({n})" if sign < 0 else f"${n}"
 
 
 # ── Close / re-open period (lock the books) ─────────────────────────────────
@@ -1106,6 +1258,25 @@ async def close_period(
             ),
         )
 
+    # Backfill: freeze subledger_total on any approved row that still
+    # has NULL. This catches legacy data (rows approved before the
+    # auto-save-on-approval landed) and guarantees that every closed
+    # period contributes to the close-and-roll chain. Without this,
+    # downstream periods could skip a closed prior because its rows
+    # have approved status but no saved subledger value.
+    backfilled = 0
+    for r in status_rows:
+        if r.subledger_total is None:
+            await _freeze_displayed_subledger(
+                db, tenant_id, r.qbo_account_id, pe, r, user,
+            )
+            backfilled += 1
+    if backfilled:
+        logger.info(
+            "Close-period backfilled subledger_total on %d account(s) for %s",
+            backfilled, pe,
+        )
+
     row = ClosedPeriod(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
@@ -1121,9 +1292,11 @@ async def close_period(
         action="recon.period_closed",
         entity_type="closed_period", entity_id=row.id,
         metadata={
-            "summary":    f"Closed period {pe} ({len(status_rows)} accounts)",
+            "summary":    f"Closed period {pe} ({len(status_rows)} accounts, "
+                          f"{backfilled} subledger value(s) auto-saved)",
             "period_end": pe.isoformat(),
             "count":      len(status_rows),
+            "backfilled": backfilled,
         },
     )
     await db.commit()
