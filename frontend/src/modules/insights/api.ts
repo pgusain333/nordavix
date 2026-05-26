@@ -49,23 +49,26 @@ export interface Liquidity {
 }
 
 export interface Profitability {
-  revenue:              number
-  revenue_prior:        number
-  revenue_change_str:   string | null
-  cogs:                 number
-  gross_profit:         number
-  gross_margin_pct:     number | null
-  gross_margin_pct_prior: number | null
-  operating_expenses:   number
-  operating_income:     number
-  operating_margin_pct: number | null
-  other_income:         number
-  other_expense:        number
-  net_other:            number
-  net_income:           number
-  net_margin_pct:       number | null
-  history:              HistoryPoint[]
-  kpis:                 KpiRow[]
+  revenue:                  number
+  revenue_prior:            number
+  revenue_change_str:       string | null
+  cogs:                     number
+  direct_expenses_extra:    number   // Expense-type accounts classified as direct
+  direct_expenses_total:    number   // COGS + direct-in-OpEx
+  direct_expense_accounts:  { name: string; amount: number }[]
+  gross_profit:             number
+  gross_margin_pct:         number | null
+  gross_margin_pct_prior:   number | null
+  operating_expenses:       number   // indirect OpEx only (after pulling out direct)
+  operating_income:         number
+  operating_margin_pct:     number | null
+  other_income:             number
+  other_expense:            number
+  net_other:                number
+  net_income:               number
+  net_margin_pct:           number | null
+  history:                  HistoryPoint[]
+  kpis:                     KpiRow[]
 }
 
 export interface Receivables {

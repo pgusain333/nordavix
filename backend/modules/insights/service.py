@@ -48,6 +48,42 @@ OTHER_EXPENSE_TYPES  = {"Other Expense"}
 ALL_INCOME_TYPES = INCOME_TYPES | OTHER_INCOME_TYPES
 ALL_EXPENSE_TYPES = EXPENSE_TYPES | OTHER_EXPENSE_TYPES | COGS_TYPES
 
+# ── Direct-expense classification ────────────────────────────────────────────
+# QBO's account_type only distinguishes COGS from Expense — there's no native
+# tag for "direct" vs "indirect" inside the Expense bucket. We classify
+# Expense-typed accounts as 'direct' (and therefore part of GP) if EITHER:
+#   • the account_number starts with "5" (standard chart-of-accounts
+#     convention — 5xxx = direct costs, 6xxx+ = operating overhead), OR
+#   • the account_name contains an unambiguous direct-cost keyword.
+# COGS-typed accounts are always direct.
+
+_DIRECT_EXPENSE_KEYWORDS = (
+    "direct ", "labor", "production",
+    "raw material", "raw materials",
+    "freight", "shipping",
+    "merchant", "processing fee", "transaction fee",
+    "hosting", "infrastructure", "api cost", "platform fee",
+    "cost of sales", "cost of revenue", "cost of service",
+)
+
+
+def _is_direct_expense(
+    account_type: str,
+    account_name: str | None = None,
+    account_number: str | None = None,
+) -> bool:
+    """Decide whether a P&L account is a 'direct' cost for GP purposes."""
+    if account_type in COGS_TYPES:
+        return True
+    if account_type in EXPENSE_TYPES:
+        if account_number and account_number.strip().startswith("5"):
+            return True
+        if account_name:
+            nm = account_name.lower()
+            if any(k in nm for k in _DIRECT_EXPENSE_KEYWORDS):
+                return True
+    return False
+
 ASSET_TYPES = {"Bank", "Accounts Receivable", "Other Current Asset", "Fixed Asset", "Other Asset"}
 LIAB_TYPES  = {"Accounts Payable", "Credit Card", "Other Current Liability", "Long Term Liability"}
 EQUITY_TYPES = {"Equity"}
@@ -630,6 +666,45 @@ async def compute_overview(
     def other_expense_at(pe: date) -> Decimal:
         return _sum_by_types_presented(snaps_by_pe.get(pe, []), OTHER_EXPENSE_TYPES)
 
+    def direct_expense_in_opex_at(pe: date) -> Decimal:
+        """Sum of Expense-typed accounts that count as 'direct' (excludes COGS,
+        which is already a separate bucket). Used to peel direct costs out of
+        OpEx so GP can include them."""
+        total = ZERO
+        for r in snaps_by_pe.get(pe, []):
+            if r.account_type in EXPENSE_TYPES and _is_direct_expense(
+                r.account_type, r.account_name, r.account_number,
+            ):
+                total += _signed_presentation(r.account_type, r.balance)
+        return total
+
+    def direct_expense_accounts_at(pe: date) -> list[tuple[str, Decimal]]:
+        """For transparency: which Expense accounts are being treated as direct."""
+        out: list[tuple[str, Decimal]] = []
+        # We want the monthly delta, not YTD — find the prior period in the same year.
+        prior_p = None
+        for p in period_ends:
+            if p < pe and p.year == pe.year:
+                prior_p = p
+        prior_map: dict[str, Decimal] = {}
+        if prior_p:
+            for r in snaps_by_pe.get(prior_p, []):
+                if r.account_type in EXPENSE_TYPES and _is_direct_expense(
+                    r.account_type, r.account_name, r.account_number,
+                ):
+                    prior_map[r.account_name] = _signed_presentation(r.account_type, r.balance)
+        for r in snaps_by_pe.get(pe, []):
+            if r.account_type in EXPENSE_TYPES and _is_direct_expense(
+                r.account_type, r.account_name, r.account_number,
+            ):
+                ytd = _signed_presentation(r.account_type, r.balance)
+                prev = prior_map.get(r.account_name, ZERO) if pe.month != 1 else ZERO
+                monthly = ytd - prev
+                if monthly != 0:
+                    out.append((r.account_name, monthly))
+        out.sort(key=lambda x: abs(x[1]), reverse=True)
+        return out
+
     def monthly_metric(pe: date, ytd_func) -> Decimal:
         if pe.month == 1:
             return ytd_func(pe)
@@ -644,15 +719,30 @@ async def compute_overview(
     # P&L for the requested window. If period_start was provided AND the live
     # QBO call succeeded, use those exact numbers; otherwise fall back to the
     # snapshot-diff over the calendar month containing period_end.
+    direct_expense_accounts: list[dict] = []
+
     if custom_pl is not None:
         revenue_month = custom_pl["revenue"]
         cogs_month    = custom_pl["cogs"]
-        opex_month    = custom_pl["opex"]
-        gross_profit  = revenue_month - cogs_month
+        opex_total    = custom_pl["opex"]
+        # Classify each expense account from the live P&L. Account numbers
+        # aren't on the P&L report so we fall back to name keywords; if we
+        # have a snapshot at period_end we look the account_number up there.
+        snap_number_by_name: dict[str, str | None] = {}
+        for r in snaps_by_pe.get(period_end, []):
+            if r.account_type in EXPENSE_TYPES:
+                snap_number_by_name[r.account_name] = r.account_number
+        direct_in_opex = ZERO
+        for name, amt in custom_pl["expense_by_account"].items():
+            num = snap_number_by_name.get(name)
+            if _is_direct_expense("Expense", name, num):
+                direct_in_opex += amt
+                direct_expense_accounts.append({"name": name, "amount": _to_money(amt)})
+        opex_month    = opex_total - direct_in_opex  # indirect OpEx only
+        direct_expenses_month = cogs_month + direct_in_opex
+        gross_profit  = revenue_month - direct_expenses_month
         operating_inc = gross_profit - opex_month
-        # QBO's own NetIncome from the report already includes Other Income /
-        # Other Expense — trust it. Fall back to OI only if QBO didn't surface
-        # a NetIncome row.
+        # QBO's own NetIncome already includes Other Income / Other Expense
         net_income    = custom_pl["net_income"] or operating_inc
         other_income_month   = Decimal("0")
         other_expense_month  = Decimal("0")
@@ -660,14 +750,21 @@ async def compute_overview(
     else:
         revenue_month       = monthly_metric(period_end, revenue_at)
         cogs_month          = monthly_metric(period_end, cogs_at)
-        opex_month          = monthly_metric(period_end, opex_at)
+        opex_total          = monthly_metric(period_end, opex_at)
+        direct_in_opex      = monthly_metric(period_end, direct_expense_in_opex_at)
         other_income_month  = monthly_metric(period_end, other_income_at)
         other_expense_month = monthly_metric(period_end, other_expense_at)
-        gross_profit        = revenue_month - cogs_month
+        opex_month          = opex_total - direct_in_opex  # indirect OpEx only
+        direct_expenses_month = cogs_month + direct_in_opex
+        gross_profit        = revenue_month - direct_expenses_month
         operating_inc       = gross_profit - opex_month
         net_other           = other_income_month - other_expense_month
-        # GAAP: NI = Operating Income + Other Income - Other Expense
         net_income          = operating_inc + net_other
+        # Surface which Expense accounts got classified as direct
+        direct_expense_accounts = [
+            {"name": nm, "amount": _to_money(amt)}
+            for nm, amt in direct_expense_accounts_at(period_end)
+        ]
 
     gm_pct = _to_pct(gross_profit, revenue_month)
     op_pct = _to_pct(operating_inc, revenue_month)
@@ -703,6 +800,9 @@ async def compute_overview(
         "revenue_prior":        _to_money(revenue_prior),
         "revenue_change_str":   _change_str(_to_money(revenue_month), _to_money(revenue_prior)),
         "cogs":                 _to_money(cogs_month),
+        "direct_expenses_extra": _to_money(direct_in_opex),
+        "direct_expenses_total": _to_money(cogs_month + direct_in_opex),
+        "direct_expense_accounts": direct_expense_accounts,
         "gross_profit":         _to_money(gross_profit),
         "gross_margin_pct":     gm_pct,
         "gross_margin_pct_prior": gm_pct_prior,
@@ -726,15 +826,40 @@ async def compute_overview(
                 ),
             },
             {
+                "kpi":     "Direct expenses (COGS + direct costs)",
+                "value":   _money_str(cogs_month + direct_in_opex),
+                "risk":    "neutral",
+                "insight": (
+                    f"COGS {_money_str(cogs_month)} + "
+                    f"{len(direct_expense_accounts)} direct-cost account"
+                    f"{'s' if len(direct_expense_accounts) != 1 else ''} "
+                    f"from OpEx ({_money_str(direct_in_opex)}). "
+                    + (f"Direct accounts: {', '.join(a['name'] for a in direct_expense_accounts[:3])}"
+                       + (f' (+{len(direct_expense_accounts) - 3} more)' if len(direct_expense_accounts) > 3 else '')
+                       + ". Classification: account # 5xxx OR direct-cost keywords."
+                       if direct_expense_accounts else
+                       "No Expense accounts matched the direct-cost heuristic (5xxx number OR keywords).")
+                ),
+            },
+            {
                 "kpi":     "Gross profit",
                 "value":   _money_str(gross_profit),
                 "risk":    _risk_for("gross_margin", gm_pct) if gm_pct is not None else "neutral",
                 "insight": (
-                    f"Margin {gm_pct:.1f}%. "
+                    f"Margin {gm_pct:.1f}%. Revenue − (COGS + direct expenses). "
                     + ("Industry-healthy for most software/services." if (gm_pct or 0) >= 60
                        else "Watch input cost and discounting." if (gm_pct or 0) >= 30
                        else "Sub-30% margin — pricing or COGS efficiency needs review.")
                     if gm_pct is not None else "No revenue this period — margin not meaningful."
+                ),
+            },
+            {
+                "kpi":     "Operating expenses (indirect)",
+                "value":   _money_str(opex_month),
+                "risk":    "neutral",
+                "insight": (
+                    "Overhead expenses below the GP line — SG&A, rent, salaries "
+                    "not tied to specific revenue."
                 ),
             },
             {
