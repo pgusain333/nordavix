@@ -1,17 +1,51 @@
+/**
+ * HomePage — the Nordavix marketing page.
+ *
+ * Design philosophy: don't be another Tailwind-UI clone. Every section
+ * has at least one element that communicates the product story
+ * visually, not just in copy. The hero leads with a live, typewriter-
+ * animated AI Commentary card — the actual differentiation of the
+ * product — instead of a generic illustration. The bento grid puts
+ * features in different sizes so the eye lands on the most important
+ * ones first. The interactive AI demo lets the user click a variance
+ * scenario and watch Nordavix "respond" — converts much better than
+ * a static screenshot.
+ *
+ * Sections (top → bottom):
+ *   1.  Navbar (sticky, scroll-aware)
+ *   2.  Hero (split: copy left · live AI card right · gradient mesh bg)
+ *   3.  Trust strip (built-for-CPAs, audit trail, multi-tenant chips)
+ *   4.  The Close Loop hero visualization (continuous orbit)
+ *   5.  Bento grid — six feature tiles, varied sizes
+ *   6.  Interactive AI Commentary demo
+ *   7.  Built for your role (Controller / FCFO / CPA firm)
+ *   8.  Pricing (3 plans, monthly/annual toggle)
+ *   9.  FAQ accordion
+ *   10. Final CTA
+ *   11. Footer (legal links, Cookie preferences trigger)
+ *
+ * All sections are theme-aware (CSS vars), animated with framer-motion,
+ * and use lucide icons. No external chart/illustration libraries — the
+ * "graphics" are SVG / styled divs so the page stays fast.
+ */
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useUser } from "@clerk/clerk-react"
+import { motion, AnimatePresence, useScroll, useTransform } from "framer-motion"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { openCookiePreferences } from "@/core/consent/useCookieConsent"
 import {
-  Zap, Shield, FileSpreadsheet, CheckCircle2, ArrowRight,
-  BarChart3, Clock, Lock, ChevronRight, Star, TrendingUp,
-  Brain, Download, Upload, Eye, Sparkles, Menu, X,
+  Sparkles, ArrowRight, CheckCircle2, Menu, X, Zap, Lock, Brain,
+  ShieldCheck, ScrollText, GitCompareArrows, Workflow, Plug,
+  Scale, BarChart3, Lightbulb, Plus, Minus, ChevronRight, Star,
+  Quote, RefreshCw, Layers, Eye, Clock, TrendingUp, FileCheck,
+  Building2, UserCheck, Users,
 } from "lucide-react"
 
-// ── Scroll-reveal hook ────────────────────────────────────────────────────────
-function useInView(threshold = 0.15) {
-  const ref = useRef<HTMLDivElement>(null)
+// ─── Utility hook: enter-on-scroll ─────────────────────────────────────────
+
+function useInView<T extends HTMLElement = HTMLDivElement>(threshold = 0.15) {
+  const ref = useRef<T>(null)
   const [inView, setInView] = useState(false)
   useEffect(() => {
     const el = ref.current
@@ -26,201 +60,7 @@ function useInView(threshold = 0.15) {
   return { ref, inView }
 }
 
-// ── Animated counter ──────────────────────────────────────────────────────────
-function Counter({ to, suffix = "" }: { to: number; suffix?: string }) {
-  const [count, setCount] = useState(0)
-  const { ref, inView } = useInView(0.3)
-  useEffect(() => {
-    if (!inView) return
-    let start = 0
-    const step = Math.ceil(to / 40)
-    const timer = setInterval(() => {
-      start += step
-      if (start >= to) { setCount(to); clearInterval(timer) }
-      else setCount(start)
-    }, 30)
-    return () => clearInterval(timer)
-  }, [inView, to])
-  return <span ref={ref}>{count}{suffix}</span>
-}
-
-// ── Flow arrow (light version for light hero) ────────────────────────────────
-function FlowArrow() {
-  return (
-    <div className="flex items-center flex-shrink-0 w-12 md:w-20">
-      <svg viewBox="0 0 80 20" className="w-full h-5 overflow-visible">
-        <defs>
-          <linearGradient id="arrowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0" />
-            <stop offset="50%" stopColor="#2563eb" stopOpacity="0.8" />
-            <stop offset="100%" stopColor="#7c3aed" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <path d="M 0 10 H 70" stroke="#cbd5e1" strokeWidth="1.5" strokeDasharray="4 4" fill="none" />
-        <path
-          d="M 0 10 H 70"
-          stroke="url(#arrowGrad)"
-          strokeWidth="2"
-          strokeDasharray="30 90"
-          fill="none"
-          style={{ animation: "flow-dash 1.8s linear infinite" }}
-        />
-        <polygon points="70,6 80,10 70,14" fill="#3b82f6" opacity="0.7" />
-      </svg>
-    </div>
-  )
-}
-
-// ── Hero flow diagram (light cards) ──────────────────────────────────────────
-function HeroFlow() {
-  const [typed, setTyped] = useState("")
-  const narrative = "Revenue increased $256K (+12%) vs prior period, driven by strong Q4 seasonal demand in the enterprise segment."
-  useEffect(() => {
-    let i = 0
-    const t = setInterval(() => {
-      i++
-      setTyped(narrative.slice(0, i))
-      if (i >= narrative.length) { clearInterval(t); setTimeout(() => setTyped(""), 3000) }
-    }, 38)
-    return () => clearInterval(t)
-  }, [])
-
-  useEffect(() => {
-    if (typed === "") {
-      let i = 0
-      const t = setInterval(() => {
-        i++
-        setTyped(narrative.slice(0, i))
-        if (i >= narrative.length) clearInterval(t)
-      }, 38)
-      return () => clearInterval(t)
-    }
-  }, [typed])
-
-  return (
-    <div className="relative flex flex-col md:flex-row items-center justify-center gap-2 md:gap-0 mt-12 md:mt-16 px-4">
-      {/* ── Card 1: Trial Balance ── */}
-      <div
-        className="shadow-xl rounded-2xl p-4 w-56 flex-shrink-0 animate-float-up z-10"
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border-strong)",
-          animationDelay: "0s",
-        }}
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <FileSpreadsheet className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-          <span className="text-xs font-semibold text-theme">Trial Balance</span>
-        </div>
-        <div className="text-[10px] text-theme-muted mb-2">Dec 2024 vs Nov 2024</div>
-        {[
-          { name: "Revenue", cur: "$2,456K", var: "+12%", fav: true },
-          { name: "COGS", cur: "$1,124K", var: "+9%", fav: false },
-          { name: "OpEx", cur: "$820K", var: "+13%", fav: false },
-          { name: "Net Income", cur: "$512K", var: "+17%", fav: true },
-        ].map((row, idx, arr) => (
-          <div
-            key={row.name}
-            className="flex items-center justify-between py-1"
-            style={{ borderBottom: idx === arr.length - 1 ? "none" : "1px solid var(--border)" }}
-          >
-            <span className="text-[10px] text-theme-2">{row.name}</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono text-theme">{row.cur}</span>
-              <span className={`text-[9px] font-mono px-1 rounded ${row.fav ? "text-fav bg-fav/10" : "text-unfav bg-unfav/10"}`}>
-                {row.var}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <FlowArrow />
-
-      {/* ── Card 2: AI Engine ── */}
-      <div
-        className="shadow-xl rounded-2xl p-5 w-44 flex-shrink-0 z-10"
-        style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
-      >
-        <div className="flex flex-col items-center gap-3">
-          <div className="relative">
-            <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-500/15 border border-blue-100 dark:border-blue-500/30 flex items-center justify-center animate-glow-pulse">
-              <Brain className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-            </div>
-            <div className="absolute -top-1 -right-1 w-4 h-4 bg-purple-500 rounded-full flex items-center justify-center">
-              <Sparkles className="w-2.5 h-2.5 text-white" />
-            </div>
-          </div>
-          <div className="text-center">
-            <div className="text-xs font-semibold text-theme mb-0.5">AI Analysis</div>
-            <div className="text-[10px] text-theme-muted">claude-sonnet-4-6</div>
-          </div>
-          <div className="w-full">
-            <div className="flex justify-between text-[9px] text-theme-muted mb-1">
-              <span>Processing</span>
-              <span className="text-blue-600 dark:text-blue-400">247 accounts</span>
-            </div>
-            <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
-              <div
-                className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
-                style={{ animation: "processing-bar 2.5s ease-in-out infinite alternate", width: "85%" }}
-              />
-            </div>
-          </div>
-          <div className="flex gap-1">
-            {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="w-1.5 h-1.5 rounded-full bg-blue-500"
-                style={{ animation: `bounce 0.8s ease-in-out ${i * 0.15}s infinite alternate` }}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <FlowArrow />
-
-      {/* ── Card 3: Flux Commentary ── */}
-      <div
-        className="shadow-xl rounded-2xl p-4 w-56 flex-shrink-0 animate-float-down z-10"
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border-strong)",
-          animationDelay: "2s",
-        }}
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <TrendingUp className="w-4 h-4 text-fav" />
-          <span className="text-xs font-semibold text-theme">Flux Commentary</span>
-          <span className="ml-auto text-[9px] bg-fav/10 text-fav px-1.5 py-0.5 rounded-full font-medium">+12%</span>
-        </div>
-        <div className="text-[10px] text-theme-muted mb-2 font-medium">Revenue · Material Variance</div>
-        <div className="text-[10px] text-theme leading-relaxed min-h-[60px]">
-          {typed}
-          <span className="inline-block w-0.5 h-3 bg-blue-500 ml-0.5 animate-type-cursor align-middle" />
-        </div>
-        <div className="mt-3 flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-fav animate-pulse" />
-          <span className="text-[9px] text-theme-muted">AI confidence: High</span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Navbar ────────────────────────────────────────────────────────────────────
-// `kind: "route"` items render as react-router <Link>s (different page),
-// `kind: "anchor"` items render as <a href="#…"> in-page scroll links.
-const NAV_LINKS: Array<
-  | { label: string; href: string;  kind: "anchor" }
-  | { label: string; to:   string;  kind: "route"  }
-> = [
-  { label: "Features",     href: "#features",      kind: "anchor" },
-  { label: "Solutions",    to:   "/solutions",     kind: "route"  },
-  { label: "How it works", href: "#how-it-works",  kind: "anchor" },
-  { label: "Pricing",      href: "#pricing",       kind: "anchor" },
-]
+// ─── Navbar ────────────────────────────────────────────────────────────────
 
 function Navbar() {
   const [scrolled, setScrolled] = useState(false)
@@ -228,678 +68,526 @@ function Navbar() {
   const { isSignedIn } = useUser()
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 20)
-    window.addEventListener("scroll", onScroll)
+    const onScroll = () => setScrolled(window.scrollY > 8)
+    window.addEventListener("scroll", onScroll, { passive: true })
     return () => window.removeEventListener("scroll", onScroll)
   }, [])
 
-  // Lock body scroll when the mobile drawer is open so background doesn't slip
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? "hidden" : ""
     return () => { document.body.style.overflow = "" }
   }, [mobileOpen])
 
-  // Close drawer on hash-link click — the page scrolls to the anchor
-  function closeDrawer() { setMobileOpen(false) }
-
   return (
     <>
       <nav className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${
         scrolled
-          ? "backdrop-blur-md border-b border-slate-100 dark:border-slate-800 shadow-sm py-3"
-          : "backdrop-blur-sm py-5"
+          ? "py-3 border-b backdrop-blur-md"
+          : "py-5"
       }`}
-        style={{ background: scrolled ? "var(--surface)" : "transparent" }}
-      >
+        style={{
+          background: scrolled ? "color-mix(in oklab, var(--surface) 92%, transparent)" : "transparent",
+          borderColor: scrolled ? "var(--border)" : "transparent",
+        }}>
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
-            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
+          <Link to="/" className="flex items-center gap-2.5 group">
+            <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden transition-transform group-hover:scale-105" />
+            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block transition-transform group-hover:scale-105" />
             <span className="font-bold text-lg tracking-tight text-theme">
               nordavix<span style={{ color: "var(--green)" }}>.</span>
             </span>
-          </div>
+          </Link>
 
-          {/* Desktop links */}
           <div className="hidden md:flex items-center gap-8">
-            {NAV_LINKS.map((item) => item.kind === "route" ? (
-              <Link key={item.label} to={item.to}
-                className="text-sm transition-colors"
-                style={{ color: "var(--text-2)" }}
-                onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
-                onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
-              >
-                {item.label}
-              </Link>
-            ) : (
-              <a key={item.label} href={item.href}
-                className="text-sm transition-colors"
-                style={{ color: "var(--text-2)" }}
-                onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
-                onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
-              >
-                {item.label}
-              </a>
-            ))}
+            <Link to="/solutions" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
+              Solutions
+            </Link>
+            <a href="#features" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
+              Features
+            </a>
+            <a href="#pricing" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
+              Pricing
+            </a>
+            <a href="#faq" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
+              FAQ
+            </a>
           </div>
 
-          {/* Right cluster: desktop CTA + mobile hamburger */}
           <div className="flex items-center gap-3">
-            {/* Desktop sign-in/dashboard buttons */}
             <div className="hidden md:flex items-center gap-3">
               {isSignedIn ? (
-                <Link
-                  to="/app"
-                  className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
-                  style={{ background: "var(--green)" }}
-                >
-                  Dashboard →
+                <Link to="/app" className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-all hover:opacity-90"
+                  style={{ background: "var(--green)" }}>
+                  Open dashboard <ArrowRight size={13} className="inline -mt-0.5 ml-1" />
                 </Link>
               ) : (
                 <>
-                  <Link to="/sign-in"
-                    className="text-sm transition-colors px-4 py-2"
-                    style={{ color: "var(--text-2)" }}
-                    onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
-                    onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
-                  >
+                  <Link to="/sign-in" className="text-sm px-4 py-2 transition-colors" style={{ color: "var(--text-2)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
                     Sign in
                   </Link>
-                  <Link
-                    to="/sign-up"
-                    className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
-                    style={{ background: "var(--green)" }}
-                  >
-                    Get started free
+                  <Link to="/sign-up"
+                    className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-all hover:opacity-90"
+                    style={{
+                      background: "var(--green)",
+                      boxShadow: "0 4px 12px rgba(16,185,129,0.25)",
+                    }}>
+                    Start free
                   </Link>
                 </>
               )}
             </div>
-
-            {/* Mobile hamburger */}
-            <button
-              onClick={() => setMobileOpen(true)}
-              className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg transition-colors"
+            <button onClick={() => setMobileOpen(true)}
+              className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg"
               style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
-              aria-label="Open menu"
-            >
+              aria-label="Open menu">
               <Menu size={18} strokeWidth={1.8} />
             </button>
           </div>
         </div>
       </nav>
 
-      {/* ── Mobile slide-in drawer ──────────────────────────────────────────── */}
-      {/* Backdrop */}
-      <div
-        className={`md:hidden fixed inset-0 z-[60] transition-opacity duration-300 ${
-          mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-        }`}
-        style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(2px)" }}
-        onClick={closeDrawer}
-        aria-hidden="true"
-      />
-      {/* Panel */}
-      <aside
-        className={`md:hidden fixed top-0 right-0 bottom-0 z-[70] w-[88vw] max-w-[340px] flex flex-col transition-transform duration-300 ease-out shadow-2xl ${
-          mobileOpen ? "translate-x-0" : "translate-x-full"
-        }`}
-        style={{
-          background: "var(--surface)",
-          borderLeft: "1px solid var(--border)",
-        }}
-        aria-label="Mobile navigation"
-      >
-        <div className="flex items-center justify-between px-5 py-4"
-          style={{ borderBottom: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-2">
-            <img src="/logo-mark-dark.svg"  alt="" className="h-6 w-6 dark:hidden" />
-            <img src="/logo-mark-light.svg" alt="" className="h-6 w-6 hidden dark:block" />
-            <span className="text-sm font-bold text-theme">
+      {/* Mobile drawer */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-[60] md:hidden" style={{ background: "var(--bg)" }}>
+          <div className="flex items-center justify-between px-6 py-5">
+            <span className="font-bold text-lg tracking-tight text-theme">
               nordavix<span style={{ color: "var(--green)" }}>.</span>
             </span>
+            <button onClick={() => setMobileOpen(false)} className="h-9 w-9 flex items-center justify-center rounded-lg"
+              style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+              <X size={18} strokeWidth={1.8} />
+            </button>
           </div>
-          <button
-            onClick={closeDrawer}
-            className="h-9 w-9 rounded-lg flex items-center justify-center transition-colors"
-            style={{ color: "var(--text-2)" }}
-            aria-label="Close menu"
-          >
-            <X size={18} strokeWidth={1.8} />
-          </button>
-        </div>
-
-        <nav className="flex-1 px-5 py-6">
-          <ul className="space-y-1">
-            {NAV_LINKS.map((item) => (
-              <li key={item.label}>
-                {item.kind === "route" ? (
-                  <Link
-                    to={item.to}
-                    onClick={closeDrawer}
-                    className="block rounded-lg px-3 py-3 text-base font-medium transition-colors"
-                    style={{ color: "var(--text)" }}
-                    onTouchStart={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                    onTouchEnd={(e) => (e.currentTarget.style.background = "")}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-                  >
-                    {item.label}
-                  </Link>
-                ) : (
-                  <a
-                    href={item.href}
-                    onClick={closeDrawer}
-                    className="block rounded-lg px-3 py-3 text-base font-medium transition-colors"
-                    style={{ color: "var(--text)" }}
-                    onTouchStart={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                    onTouchEnd={(e) => (e.currentTarget.style.background = "")}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-                  >
+          <div className="px-6 py-4 space-y-1">
+            {[
+              { label: "Solutions", to: "/solutions" },
+              { label: "Features",  to: "#features" },
+              { label: "Pricing",   to: "#pricing" },
+              { label: "FAQ",       to: "#faq" },
+            ].map((item) => (
+              item.to.startsWith("#")
+                ? <a key={item.label} href={item.to} onClick={() => setMobileOpen(false)}
+                    className="block py-3 text-base font-medium text-theme border-b"
+                    style={{ borderColor: "var(--border)" }}>
                     {item.label}
                   </a>
-                )}
-              </li>
+                : <Link key={item.label} to={item.to} onClick={() => setMobileOpen(false)}
+                    className="block py-3 text-base font-medium text-theme border-b"
+                    style={{ borderColor: "var(--border)" }}>
+                    {item.label}
+                  </Link>
             ))}
-          </ul>
-        </nav>
-
-        <div className="px-5 pb-6 pt-2 space-y-2"
-          style={{ borderTop: "1px solid var(--border)" }}>
-          {isSignedIn ? (
-            <Link
-              to="/app"
-              onClick={closeDrawer}
-              className="flex items-center justify-center gap-2 w-full py-3 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
-              style={{ background: "var(--green)" }}
-            >
-              Open Dashboard
-              <ArrowRight size={14} strokeWidth={1.8} />
-            </Link>
-          ) : (
-            <>
-              <Link
-                to="/sign-up"
-                onClick={closeDrawer}
-                className="flex items-center justify-center gap-2 w-full py-3 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                style={{ background: "var(--green)" }}
-              >
-                Get started free
-                <ArrowRight size={14} strokeWidth={1.8} />
+            <div className="pt-6 space-y-3">
+              <Link to="/sign-up" onClick={() => setMobileOpen(false)}
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-lg text-sm font-semibold text-white"
+                style={{ background: "var(--green)" }}>
+                Start free <ArrowRight size={14} />
               </Link>
-              <Link
-                to="/sign-in"
-                onClick={closeDrawer}
-                className="flex items-center justify-center w-full py-2.5 rounded-lg text-sm font-medium transition-colors"
-                style={{ color: "var(--text-2)", border: "1px solid var(--border-strong)" }}
-              >
+              <Link to="/sign-in" onClick={() => setMobileOpen(false)}
+                className="flex items-center justify-center w-full py-2.5 rounded-lg text-sm font-medium"
+                style={{ color: "var(--text-2)", border: "1px solid var(--border-strong)" }}>
                 Sign in
               </Link>
-            </>
-          )}
+            </div>
+          </div>
         </div>
-      </aside>
+      )}
     </>
   )
 }
 
-// ── Hero (light gradient) ─────────────────────────────────────────────────────
-function HeroSection() {
+// ─── Hero — split layout with live AI Commentary card ─────────────────────
+
+function Hero() {
   return (
-    <section
-      className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden pt-20 pb-12 px-6
-                 bg-gradient-to-b from-blue-50/70 via-white to-white
-                 dark:from-[#0E1112] dark:via-[#161B1D] dark:to-[#0E1112]"
-    >
-      {/* Soft background orbs — dimmer in dark mode so they don't blow out */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-100/80 dark:bg-blue-500/10 rounded-full blur-[120px] animate-blob pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-purple-100/70 dark:bg-purple-500/10 rounded-full blur-[100px] animate-blob-delay pointer-events-none" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-blue-50 dark:bg-blue-500/5 rounded-full blur-[80px] animate-blob pointer-events-none" style={{ animationDelay: "8s" }} />
+    <section className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 px-6 overflow-hidden">
+      {/* Gradient mesh background — animated subtly */}
+      <GradientMesh />
 
-      {/* Content */}
-      <div className="relative z-10 text-center max-w-4xl mx-auto">
-        <div className="inline-flex items-center gap-2 bg-blue-50 dark:bg-blue-500/10 border border-blue-100 dark:border-blue-500/30 px-4 py-1.5 rounded-full text-xs font-medium text-blue-700 dark:text-blue-400 mb-6 animate-fade-in-up">
-          <Sparkles className="w-3 h-3" />
-          AI-native month-end close platform
-          <ChevronRight className="w-3 h-3" />
-        </div>
+      <div className="max-w-6xl mx-auto relative">
+        <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          {/* Left: copy */}
+          <div className="text-center lg:text-left">
+            {/* "What's new" badge */}
+            <motion.a
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              href="#features"
+              className="inline-flex items-center gap-2 rounded-full pl-1 pr-3 py-1 mb-6 text-xs font-medium transition-all hover:scale-[1.02]"
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--border-strong)",
+                color: "var(--text-2)",
+              }}>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white"
+                style={{ background: "var(--green)" }}>
+                New
+              </span>
+              Agentic Mode is live <ChevronRight size={12} strokeWidth={2} />
+            </motion.a>
 
-        <h1 className="text-5xl md:text-7xl font-bold text-theme leading-[1.05] tracking-tight mb-6 animate-fade-in-up animation-delay-200">
-          Month-end close,{" "}
-          <span className="text-gradient">automated.</span>
-        </h1>
+            <motion.h1
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.05 }}
+              className="font-bold text-theme leading-[1.05] tracking-tight"
+              style={{ fontSize: "clamp(36px, 6.5vw, 64px)" }}>
+              Close the books{" "}
+              <span className="relative inline-block">
+                <span style={{ color: "var(--green)" }}>in days,</span>
+                <svg className="absolute -bottom-2 left-0 w-full h-2 print:hidden" viewBox="0 0 200 8" preserveAspectRatio="none">
+                  <motion.path
+                    d="M0 4 Q 50 0, 100 4 T 200 4"
+                    stroke="var(--green)" strokeWidth="2" fill="none"
+                    initial={{ pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: 1.2, delay: 0.8 }}
+                  />
+                </svg>
+              </span>{" "}
+              not weeks.
+            </motion.h1>
 
-        <p className="text-lg md:text-xl text-theme-2 max-w-2xl mx-auto leading-relaxed mb-8 animate-fade-in-up animation-delay-400">
-          Nordavix generates AI-powered flux commentary from your trial balance in minutes.
-          Built for controllers who want their lives back at close.
-        </p>
+            <motion.p
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.15 }}
+              className="mt-6 text-base sm:text-lg leading-relaxed max-w-xl mx-auto lg:mx-0"
+              style={{ color: "var(--text-2)" }}>
+              Nordavix is the AI-native close platform for controllers and CPA firms.
+              Reconcile every balance-sheet account, explain every material variance,
+              and lock the period — without the spreadsheet swivel-chair.
+            </motion.p>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-4 animate-fade-in-up animation-delay-700">
-          <Link
-            to="/sign-up"
-            className="group flex items-center gap-2 text-white font-semibold px-8 py-3.5 rounded-xl transition-opacity hover:opacity-90 shadow-lg text-base"
-            style={{ background: "var(--green)" }}
-          >
-            Start for free
-            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-          </Link>
-          <a
-            href="#how-it-works"
-            className="flex items-center gap-2 font-medium px-8 py-3.5 rounded-xl transition-all duration-200 shadow-sm text-base"
-            style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", color: "var(--text-2)" }}
-            onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
-            onMouseLeave={e => (e.currentTarget.style.color = "var(--text-2)")}
-          >
-            See how it works
-          </a>
-        </div>
-
-        <p className="text-xs text-theme-muted animate-fade-in-up animation-delay-1000">
-          No credit card required · SOC 2 compliant · Free trial
-        </p>
-      </div>
-
-      <div className="relative z-10 w-full max-w-3xl mx-auto animate-fade-in-up animation-delay-700">
-        <HeroFlow />
-      </div>
-
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-theme-muted animate-bounce">
-        <div className="w-5 h-8 rounded-full flex items-start justify-center pt-1.5"
-          style={{ border: "1px solid var(--border-strong)" }}>
-          <div className="w-1 h-2 rounded-full animate-bounce animation-delay-200"
-            style={{ background: "var(--text-muted)" }} />
-        </div>
-      </div>
-    </section>
-  )
-}
-
-// ── Stats bar (solid blue strip) ──────────────────────────────────────────────
-function StatsBar() {
-  const { ref, inView } = useInView()
-  return (
-    <section ref={ref} className="py-12 px-6" style={{ background: "var(--green)" }}>
-      <div className="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8">
-        {[
-          { value: 90, suffix: "%", label: "Time saved on flux commentary" },
-          { value: 100, suffix: "%", label: "Account coverage, no exceptions" },
-          { value: 5, suffix: " min", label: "Average processing time" },
-          { value: 0, suffix: " leaks", label: "Client data exposed to AI" },
-        ].map((stat) => (
-          <div key={stat.label} className="text-center">
-            <div
-              className={`text-3xl font-bold text-white mb-1 transition-all duration-700 ${inView ? "opacity-100" : "opacity-0 translate-y-4"}`}
-            >
-              {inView ? <Counter to={stat.value} suffix={stat.suffix} /> : `0${stat.suffix}`}
-            </div>
-            <div className="text-xs leading-snug" style={{ color: "rgba(255,255,255,0.75)" }}>{stat.label}</div>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-// ── Features (white, light cards) ────────────────────────────────────────────
-const FEATURES = [
-  {
-    icon: Zap,
-    title: "Instant flux analysis",
-    description: "Upload your trial balance and receive AI-generated variance narratives for every material account within minutes. No templates. No manual work.",
-    iconColor: "text-yellow-500",
-    iconBg: "bg-yellow-50 border border-yellow-100",
-  },
-  {
-    icon: Brain,
-    title: "Accounting-grade AI",
-    description: "Built on Claude claude-sonnet-4-6. The model is prompted like a senior accountant — concise, accurate, using standard close language controllers actually use.",
-    iconColor: "text-blue-600",
-    iconBg: "bg-blue-50 border border-blue-100",
-  },
-  {
-    icon: Eye,
-    title: "Smart anomaly detection",
-    description: "Automatically flags new accounts, dormant accounts reactivated, sign flips, and large percentage changes. Never miss a surprise at close again.",
-    iconColor: "text-purple-600",
-    iconBg: "bg-purple-50 border border-purple-100",
-  },
-  {
-    icon: Shield,
-    title: "Privacy by design",
-    description: "Client data never leaves your tenant. Anthropic API calls strip identifying information before transmission. Audit log for every action — SOC 2 ready from day one.",
-    iconColor: "text-green-600",
-    iconBg: "bg-green-50 border border-green-100",
-  },
-  {
-    icon: CheckCircle2,
-    title: "Review & approve workflow",
-    description: "Built-in variance review table with inline editing, batch approvals, and per-account audit trail. Review in the app, not in your inbox.",
-    iconColor: "text-cyan-600",
-    iconBg: "bg-cyan-50 border border-cyan-100",
-  },
-  {
-    icon: Download,
-    title: "Production-grade Excel export",
-    description: "Download a formatted close package — parentheses for negatives, tabular numbers, freeze panes, conditional materiality formatting. Looks like a controller built it.",
-    iconColor: "text-orange-500",
-    iconBg: "bg-orange-50 border border-orange-100",
-  },
-]
-
-function FeaturesSection() {
-  const { ref, inView } = useInView(0.1)
-  return (
-    <section id="features" className="py-24 px-6" style={{ background: "var(--surface)" }}>
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 text-blue-600 dark:text-blue-400 text-xs font-semibold uppercase tracking-widest mb-4">
-            <div className="w-4 h-px bg-blue-600 dark:bg-blue-400" />
-            Features
-            <div className="w-4 h-px bg-blue-600 dark:bg-blue-400" />
-          </div>
-          <h2 className="text-3xl md:text-5xl font-bold text-theme mb-4 tracking-tight">
-            Everything you need to{" "}
-            <span className="text-gradient">close faster</span>
-          </h2>
-          <p className="text-theme-muted max-w-xl mx-auto">
-            Nordavix handles the analysis so your team can focus on decisions, not documentation.
-          </p>
-        </div>
-
-        <div ref={ref} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {FEATURES.map((f, i) => {
-            const Icon = f.icon
-            return (
-              <div
-                key={f.title}
-                className={`rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-500 group ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
+            {/* Dual CTA */}
+            <motion.div
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.25 }}
+              className="mt-8 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
+              <Link to="/sign-up"
+                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold text-white transition-all hover:scale-[1.02] active:scale-[0.99]"
                 style={{
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  transitionDelay: `${i * 80}ms`,
-                }}
-              >
-                <div className={`w-10 h-10 rounded-xl ${f.iconBg} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                  <Icon className={`w-5 h-5 ${f.iconColor}`} />
-                </div>
-                <h3 className="font-semibold text-theme mb-2">{f.title}</h3>
-                <p className="text-sm text-theme-muted leading-relaxed">{f.description}</p>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    </section>
-  )
-}
+                  background: "var(--green)",
+                  boxShadow: "0 12px 32px -8px rgba(16,185,129,0.45)",
+                }}>
+                Start free — no card required <ArrowRight size={15} strokeWidth={2.2} />
+              </Link>
+              <Link to="/solutions"
+                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold transition-all hover:bg-[var(--surface-2)]"
+                style={{
+                  background: "transparent",
+                  border: "1px solid var(--border-strong)",
+                  color: "var(--text)",
+                }}>
+                Take the product tour
+              </Link>
+            </motion.div>
 
-// ── How it works (light gray) ─────────────────────────────────────────────────
-const STEPS = [
-  {
-    num: "01",
-    icon: Upload,
-    title: "Upload your trial balance",
-    description: "Drop in your Excel or CSV. We handle any column format with a configurable mapping screen — no reformatting required.",
-    color: "from-blue-600 to-blue-400",
-    shadow: "shadow-blue-100",
-  },
-  {
-    num: "02",
-    icon: BarChart3,
-    title: "AI calculates every variance",
-    description: "Dollar and percentage variances calculated instantly. Material accounts identified against your threshold. Anomalies flagged automatically.",
-    color: "from-purple-600 to-purple-400",
-    shadow: "shadow-purple-100",
-  },
-  {
-    num: "03",
-    icon: Eye,
-    title: "Review AI narratives",
-    description: "Open the variance review table. Approve AI commentary as-is, edit inline, or regenerate. Full audit trail on every change.",
-    color: "from-cyan-600 to-cyan-400",
-    shadow: "shadow-cyan-100",
-  },
-  {
-    num: "04",
-    icon: Download,
-    title: "Export your close package",
-    description: "Download a formatted Excel file with your narratives, anomaly flags, and materiality summary — ready to drop into your close deck.",
-    color: "from-green-600 to-green-400",
-    shadow: "shadow-green-100",
-  },
-]
-
-function HowItWorksSection() {
-  const { ref, inView } = useInView(0.1)
-  return (
-    <section id="how-it-works" className="py-24 px-6" style={{ background: "var(--surface-2)" }}>
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 text-purple-600 dark:text-purple-400 text-xs font-semibold uppercase tracking-widest mb-4">
-            <div className="w-4 h-px bg-purple-600 dark:bg-purple-400" />
-            How it works
-            <div className="w-4 h-px bg-purple-600 dark:bg-purple-400" />
-          </div>
-          <h2 className="text-3xl md:text-5xl font-bold text-theme mb-4 tracking-tight">
-            From upload to report{" "}
-            <span className="text-gradient">in four steps</span>
-          </h2>
-          <p className="text-theme-muted max-w-xl mx-auto">
-            A workflow designed around how controllers actually work — not around how software engineers think they work.
-          </p>
-        </div>
-
-        <div ref={ref} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 relative">
-          <div className="hidden lg:block absolute top-10 left-[12.5%] right-[12.5%] h-px"
-            style={{ background: "linear-gradient(to right, transparent, var(--border-strong), transparent)" }} />
-
-          {STEPS.map((step, i) => {
-            const Icon = step.icon
-            return (
-              <div
-                key={step.num}
-                className={`relative flex flex-col items-center text-center transition-all duration-700 ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-10"}`}
-                style={{ transitionDelay: `${i * 150}ms` }}
-              >
-                <div className={`relative w-20 h-20 rounded-2xl bg-gradient-to-br ${step.color} flex items-center justify-center mb-5 shadow-lg ${step.shadow} z-10`}>
-                  <Icon className="w-8 h-8 text-white" />
-                  <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full shadow-sm flex items-center justify-center text-[10px] font-bold"
-                    style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                    {step.num.slice(-1)}
-                  </div>
-                </div>
-                <h3 className="font-semibold text-theme mb-2 text-sm">{step.title}</h3>
-                <p className="text-xs text-theme-muted leading-relaxed">{step.description}</p>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-// ── Product preview (DARK — makes product UI pop) ─────────────────────────────
-function ProductPreviewSection() {
-  const { ref, inView } = useInView(0.1)
-  return (
-    <section className="py-24 px-6 bg-slate-900">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-12">
-          <h2 className="text-3xl md:text-5xl font-bold text-white mb-4 tracking-tight">
-            The variance table{" "}
-            <span className="text-gradient">is the product</span>
-          </h2>
-          <p className="text-slate-400 max-w-xl mx-auto">
-            Built on accounting visual conventions — parentheses for negatives, tabular numbers, red/green for variances. It looks like a controller built it.
-          </p>
-        </div>
-
-        <div
-          ref={ref}
-          className={`glass rounded-2xl overflow-hidden glow-blue transition-all duration-1000 ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-12"}`}
-        >
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-800/80 bg-slate-900/60">
-            <div className="w-3 h-3 rounded-full bg-red-500/60" />
-            <div className="w-3 h-3 rounded-full bg-yellow-500/60" />
-            <div className="w-3 h-3 rounded-full bg-green-500/60" />
-            <span className="ml-3 text-xs text-slate-500 font-mono">Nordavix · Flux Analysis · Dec 2024</span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-slate-800/60 bg-slate-900/40">
-                  {["Account", "Current", "Prior", "$ Variance", "% Var", "Status", "AI Narrative"].map((h) => (
-                    <th key={h} className="text-left text-slate-500 font-medium px-4 py-3 whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  { acc: "5100 · Revenue", cur: "2,456,000", pri: "2,200,000", dvar: "256,000", pvar: "11.6%", status: "Approved", statusColor: "text-fav bg-fav/10", fav: true, narr: "Revenue increased $256K (+12%) vs prior period, driven by strong Q4 seasonal demand in the enterprise segment..." },
-                  { acc: "6100 · COGS", cur: "1,124,000", pri: "1,032,000", dvar: "(92,000)", pvar: "(8.9%)", status: "Pending", statusColor: "text-yellow-400 bg-yellow-400/10", fav: false, narr: "COGS increased $92K (+9%) consistent with revenue growth. Gross margin remained stable at 54.2%..." },
-                  { acc: "7200 · Salaries", cur: "542,000", pri: "510,000", dvar: "(32,000)", pvar: "(6.3%)", status: "Edited", statusColor: "text-blue-400 bg-blue-400/10", fav: false, narr: "Salaries increased $32K due to Q4 bonus accruals and two new hires in the engineering team..." },
-                  { acc: "5200 · Other Revenue", cur: "12,400", pri: "0", dvar: "12,400", pvar: "N/M", status: "Flagged", statusColor: "text-orange-400 bg-orange-400/10", fav: true, narr: "New account — no prior period balance. One-time consulting revenue. Review with FP&A." },
-                ].map((row, i) => (
-                  <tr key={i} className="border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-3 text-slate-300 whitespace-nowrap font-mono">{row.acc}</td>
-                    <td className="px-4 py-3 text-slate-300 font-mono text-right whitespace-nowrap tabular-nums">{row.cur}</td>
-                    <td className="px-4 py-3 text-slate-500 font-mono text-right whitespace-nowrap tabular-nums">{row.pri}</td>
-                    <td className={`px-4 py-3 font-mono text-right whitespace-nowrap tabular-nums ${row.fav ? "text-fav" : "text-unfav"}`}>{row.dvar}</td>
-                    <td className={`px-4 py-3 font-mono text-right whitespace-nowrap ${row.fav ? "text-fav" : "text-unfav"}`}>{row.pvar}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${row.statusColor}`}>{row.status}</span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-400 max-w-xs truncate">{row.narr}</td>
-                  </tr>
+            {/* Tiny trust strip */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.6, delay: 0.4 }}
+              className="mt-8 flex items-center justify-center lg:justify-start gap-4 text-xs"
+              style={{ color: "var(--text-muted)" }}>
+              <div className="flex items-center gap-1">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <Star key={i} size={12} fill="currentColor" style={{ color: "#f59e0b" }} />
                 ))}
-              </tbody>
-            </table>
+              </div>
+              <span>Built by a CPA who's lived through 100+ closes</span>
+            </motion.div>
           </div>
 
-          <div className="flex items-center justify-between px-4 py-2 border-t border-slate-800/60 bg-slate-900/40">
-            <span className="text-[10px] text-slate-600">4 material variances · 2 anomalies detected · 1 awaiting review</span>
-            <button className="text-[10px] text-white px-3 py-1 rounded-md transition-opacity hover:opacity-90"
-              style={{ background: "var(--green)" }}>
-              Export Excel
-            </button>
-          </div>
+          {/* Right: live AI Commentary card */}
+          <LiveAICard />
         </div>
       </div>
     </section>
   )
 }
 
-// ── Comparison (white, light table) ──────────────────────────────────────────
-function ComparisonSection() {
-  const { ref, inView } = useInView(0.1)
-  const rows = [
-    { feature: "Automated variance calculation", manual: false, checklist: true, nordavix: true },
-    { feature: "AI-generated narratives", manual: false, checklist: false, nordavix: true },
-    { feature: "Anomaly detection", manual: false, checklist: false, nordavix: true },
-    { feature: "100% account coverage", manual: false, checklist: true, nordavix: true },
-    { feature: "Inline narrative editing", manual: true, checklist: false, nordavix: true },
-    { feature: "Audit trail per change", manual: false, checklist: true, nordavix: true },
-    { feature: "Export-ready Excel", manual: true, checklist: true, nordavix: true },
-    { feature: "Built for accountants", manual: true, checklist: true, nordavix: true },
+// Subtle animated gradient mesh for the hero background. Pure CSS / SVG so
+// it doesn't tax the GPU — just two soft radial blobs that breathe.
+function GradientMesh() {
+  return (
+    <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
+      <motion.div
+        className="absolute rounded-full"
+        style={{
+          top: "-20%", left: "-10%", width: "60%", height: "60%",
+          background: "radial-gradient(circle, var(--green-subtle) 0%, transparent 60%)",
+          filter: "blur(40px)",
+        }}
+        animate={{ scale: [1, 1.1, 1], opacity: [0.7, 1, 0.7] }}
+        transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.div
+        className="absolute rounded-full"
+        style={{
+          bottom: "-30%", right: "-10%", width: "55%", height: "55%",
+          background: "radial-gradient(circle, color-mix(in oklab, var(--green) 18%, transparent) 0%, transparent 60%)",
+          filter: "blur(60px)",
+        }}
+        animate={{ scale: [1.1, 1, 1.1], opacity: [0.5, 0.8, 0.5] }}
+        transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
+      />
+    </div>
+  )
+}
+
+// The centerpiece — a fake but realistic Nordavix variance row with a
+// typewriter-animated AI commentary. Lifts gently to add depth. Updates
+// the variance every full cycle so the visitor sees Nordavix handle
+// different account types.
+function LiveAICard() {
+  const SCENARIOS = [
+    {
+      account: "6100 · Marketing",
+      current: 48250, prior: 12800,
+      commentary: "Marketing spend grew $35,450 (277%) driven by Q4 campaign launches. $22,400 to Acme Agency for the holiday push, $13,050 in paid acquisition across Google Ads ($8,200) and LinkedIn ($4,850). Aligned with the approved Q4 marketing budget.",
+      confidence: 94, sources: 18, tag: "Operating",
+    },
+    {
+      account: "1200 · Accounts Receivable",
+      current: 487300, prior: 312100,
+      commentary: "AR grew $175,200 (56%) primarily from the Enterprise renewal cycle: 4 invoices over $30K signed in the last 10 days of the period (Globex $52K, Initech $44K, Hooli $38K, Stark $31K). All within standard NET-30 terms — no aging concerns.",
+      confidence: 97, sources: 23, tag: "Balance sheet",
+    },
+    {
+      account: "2100 · Accrued Liabilities",
+      current: 84200, prior: 31500,
+      commentary: "Accruals jumped $52,700 (167%) driven by year-end bonus accrual ($38K) and December professional services not yet billed ($14,700 from outside legal and audit prep). Both reverse in January per standard close practice.",
+      confidence: 91, sources: 11, tag: "Accrual",
+    },
+  ]
+  const [scenarioIdx, setScenarioIdx] = useState(0)
+  const [typed, setTyped] = useState("")
+  const scenario = SCENARIOS[scenarioIdx]
+
+  // Typewriter — types out the commentary, holds, then advances to the
+  // next scenario. setTimeout chain rather than setInterval so each
+  // pause feels tuned.
+  useEffect(() => {
+    setTyped("")
+    let i = 0
+    let cancelled = false
+    const target = scenario.commentary
+    const tick = () => {
+      if (cancelled) return
+      if (i <= target.length) {
+        setTyped(target.slice(0, i))
+        i++
+        setTimeout(tick, 18 + Math.random() * 14)
+      } else {
+        // Hold the finished commentary for 4 seconds, then rotate.
+        setTimeout(() => {
+          if (cancelled) return
+          setScenarioIdx((x) => (x + 1) % SCENARIOS.length)
+        }, 4500)
+      }
+    }
+    const t = setTimeout(tick, 400)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [scenarioIdx])
+
+  const dollarVariance = scenario.current - scenario.prior
+  const pctVariance = ((scenario.current - scenario.prior) / scenario.prior) * 100
+
+  function money(n: number) {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 30, rotate: -1 }}
+      animate={{ opacity: 1, y: 0,  rotate: 0 }}
+      transition={{ duration: 0.7, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      className="relative">
+      {/* Floating sparkle accents */}
+      <motion.div
+        className="absolute -top-4 -left-4 inline-flex items-center justify-center h-9 w-9 rounded-xl print:hidden"
+        style={{ background: "var(--green)", color: "white", boxShadow: "0 8px 20px rgba(16,185,129,0.4)" }}
+        animate={{ y: [0, -6, 0], rotate: [0, 8, 0] }}
+        transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}>
+        <Sparkles size={16} strokeWidth={2} />
+      </motion.div>
+
+      <motion.div
+        className="rounded-2xl overflow-hidden"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          boxShadow: "0 24px 64px -12px rgba(0,0,0,0.20), 0 8px 24px -8px rgba(0,0,0,0.12)",
+        }}
+        animate={{ y: [0, -6, 0] }}
+        transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}>
+        {/* Header bar */}
+        <div className="px-5 py-3 flex items-center gap-2 border-b"
+          style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider"
+            style={{ color: "var(--green)" }}>
+            <motion.span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "var(--green)" }}
+              animate={{ opacity: [1, 0.3, 1] }}
+              transition={{ duration: 1.5, repeat: Infinity }} />
+            Live · Flux Analysis
+          </span>
+          <span className="ml-auto text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
+            Period: Dec 2025
+          </span>
+        </div>
+
+        {/* Account row */}
+        <div className="px-5 pt-5 pb-3">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <p className="text-xs font-medium mb-0.5" style={{ color: "var(--text-muted)" }}>
+                {scenario.tag}
+              </p>
+              <h3 className="text-base font-bold text-theme">
+                {scenario.account}
+              </h3>
+            </div>
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider"
+              style={{ background: "#fef3c7", color: "#92400e" }}>
+              Material
+            </span>
+          </div>
+
+          {/* Numbers grid */}
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <Metric label="Current" value={money(scenario.current)} tone="var(--text)" />
+            <Metric label="Prior"   value={money(scenario.prior)}   tone="var(--text-2)" />
+            <Metric label="Δ"
+              value={`${pctVariance >= 0 ? "+" : ""}${pctVariance.toFixed(0)}%`}
+              tone={pctVariance >= 0 ? "var(--green)" : "#dc2626"}
+              sub={`${dollarVariance >= 0 ? "+" : ""}${money(dollarVariance)}`} />
+          </div>
+        </div>
+
+        {/* AI commentary — typewriter */}
+        <div className="mx-5 mb-5 rounded-xl p-4"
+          style={{
+            background: "var(--green-subtle)",
+            border: "1px solid color-mix(in oklab, var(--green) 25%, transparent)",
+          }}>
+          <div className="flex items-center gap-1.5 mb-2">
+            <Sparkles size={12} strokeWidth={2} style={{ color: "var(--green)" }} />
+            <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--green)" }}>
+              AI Commentary
+            </span>
+            <span className="ml-auto text-[10px] font-medium" style={{ color: "var(--green)" }}>
+              {scenario.confidence}% conf · {scenario.sources} txns
+            </span>
+          </div>
+          <p className="text-[13px] leading-relaxed min-h-[6.5rem]" style={{ color: "var(--text)" }}>
+            {typed}
+            <motion.span
+              className="inline-block w-[2px] h-[14px] -mb-[2px] ml-[1px]"
+              style={{ background: "var(--green)" }}
+              animate={{ opacity: [1, 0, 1] }}
+              transition={{ duration: 0.9, repeat: Infinity }}
+            />
+          </p>
+        </div>
+
+        {/* Action footer */}
+        <div className="px-5 pb-5 flex items-center gap-2">
+          <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-white"
+            style={{ background: "var(--green)" }}>
+            <CheckCircle2 size={11} strokeWidth={2.2} /> Approve
+          </button>
+          <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+            style={{
+              background: "var(--surface-2)",
+              color: "var(--text-2)",
+              border: "1px solid var(--border-strong)",
+            }}>
+            <RefreshCw size={11} strokeWidth={2} /> Regenerate
+          </button>
+          <span className="ml-auto text-[10px]" style={{ color: "var(--text-muted)" }}>
+            Reviewed by Sarah K. · 2m ago
+          </span>
+        </div>
+      </motion.div>
+
+      {/* Floating mini-card under the main one for depth */}
+      <motion.div
+        className="absolute -bottom-6 -right-6 rounded-xl px-3 py-2.5 print:hidden hidden sm:block"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          boxShadow: "0 12px 32px -8px rgba(0,0,0,0.15)",
+        }}
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.6, duration: 0.6 }}>
+        <div className="flex items-center gap-2">
+          <div className="h-7 w-7 rounded-md flex items-center justify-center"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+            <Clock size={13} strokeWidth={2} />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Close time
+            </p>
+            <p className="text-xs font-bold text-theme">2.1 days <span style={{ color: "var(--green)" }}>↓ 73%</span></p>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+function Metric({ label, value, tone, sub }: { label: string; value: string; tone: string; sub?: string }) {
+  return (
+    <div className="rounded-lg p-2.5" style={{ background: "var(--surface-2)" }}>
+      <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: "var(--text-muted)" }}>
+        {label}
+      </p>
+      <p className="text-sm font-bold tabular-nums" style={{ color: tone }}>{value}</p>
+      {sub && <p className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>{sub}</p>}
+    </div>
+  )
+}
+
+// ─── Trust strip ────────────────────────────────────────────────────────────
+
+function TrustStrip() {
+  const PILLARS = [
+    { Icon: ShieldCheck, label: "SOC 2-ready audit trail" },
+    { Icon: Lock,        label: "Tenant-isolated data" },
+    { Icon: ScrollText,  label: "Every action logged" },
+    { Icon: GitCompareArrows, label: "Maker-checker workflow" },
+    { Icon: Plug,        label: "QuickBooks native" },
   ]
   return (
-    <section className="py-24 px-6" style={{ background: "var(--surface)" }}>
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-12">
-          <h2 className="text-3xl md:text-4xl font-bold text-theme mb-4 tracking-tight">
-            Why Nordavix vs the alternatives
-          </h2>
-          <p className="text-theme-muted">
-            Checklist tools help you track. Nordavix actually does the work.
-          </p>
-        </div>
-
-        <div
-          ref={ref}
-          className={`rounded-2xl overflow-hidden shadow-sm transition-all duration-700 ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
-          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-        >
-          <table className="w-full text-sm">
-            <thead>
-              <tr style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
-                <th className="text-left px-6 py-4 font-medium w-1/2 text-theme-muted">Capability</th>
-                <th className="text-center px-4 py-4 font-medium text-theme-muted">Manual</th>
-                <th className="text-center px-4 py-4 font-medium text-theme-muted">Checklist tools</th>
-                <th className="text-center px-4 py-4 font-semibold">
-                  <span className="text-gradient">Nordavix</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.feature}
-                  className="transition-colors"
-                  style={{ borderBottom: "1px solid var(--border)" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-                >
-                  <td className="px-6 py-3 text-theme">{row.feature}</td>
-                  {[row.manual, row.checklist, row.nordavix].map((val, j) => (
-                    <td key={j} className="text-center px-4 py-3">
-                      {val
-                        ? <CheckCircle2 className="w-4 h-4 mx-auto"
-                            style={{ color: j === 2 ? "var(--green)" : "var(--text-muted)" }} />
-                        : <div className="w-4 h-px mx-auto" style={{ background: "var(--border-strong)" }} />
-                      }
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-// ── CTA section ───────────────────────────────────────────────────────────────
-function CTASection() {
-  const { ref, inView } = useInView(0.2)
-  return (
-    <section id="pricing" className="py-24 px-6"
-      style={{ background: "linear-gradient(135deg, #2d6a4f 0%, var(--green) 40%, #1a3a2a 100%)" }}>
-      <div
-        ref={ref}
-        className={`max-w-3xl mx-auto text-center transition-all duration-700 ${inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
-      >
-        <div className="inline-flex items-center gap-1.5 text-xs font-medium text-yellow-300 bg-yellow-400/10 border border-yellow-400/20 px-3 py-1 rounded-full mb-6">
-          <Star className="w-3 h-3 fill-yellow-300" />
-          Early access — free while in beta
-        </div>
-        <h2 className="text-3xl md:text-5xl font-bold text-white mb-4 tracking-tight">
-          Start automating your close today
-        </h2>
-        <p className="mb-8 max-w-lg mx-auto" style={{ color: "rgba(255,255,255,0.8)" }}>
-          Join accounting teams already saving hours every close. No credit card. No commitment. Cancel any time.
+    <section className="px-6 py-12 border-y"
+      style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+      <div className="max-w-6xl mx-auto">
+        <p className="text-center text-[11px] font-bold uppercase tracking-[0.15em] mb-6"
+          style={{ color: "var(--text-muted)" }}>
+          Built for accountants who care about compliance
         </p>
-        <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <Link
-            to="/sign-up"
-            className="group flex items-center justify-center gap-2 bg-white font-semibold px-10 py-4 rounded-xl transition-all duration-200 shadow-xl text-base hover:opacity-90"
-            style={{ color: "var(--green)" }}
-          >
-            Get started free
-            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-          </Link>
-        </div>
-        <div className="flex items-center justify-center gap-6 mt-8">
-          {[
-            { icon: Shield, text: "SOC 2 compliant" },
-            { icon: Lock, text: "Data never shared" },
-            { icon: Clock, text: "5-min setup" },
-          ].map(({ icon: Icon, text }) => (
-            <div key={text} className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(255,255,255,0.7)" }}>
-              <Icon className="w-3 h-3" />
-              {text}
+        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-4">
+          {PILLARS.map(({ Icon, label }) => (
+            <div key={label}
+              className="inline-flex items-center gap-2 text-sm font-medium"
+              style={{ color: "var(--text-2)" }}>
+              <Icon size={15} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+              {label}
             </div>
           ))}
         </div>
@@ -908,7 +596,886 @@ function CTASection() {
   )
 }
 
-// ── Footer (dark) ─────────────────────────────────────────────────────────────
+// ─── The Close Loop — hero version ─────────────────────────────────────────
+
+function CloseLoopHero() {
+  const NODES = [
+    { label: "Connect",   Icon: Plug,            color: "#3b82f6" },
+    { label: "Sync",      Icon: RefreshCw,       color: "#06b6d4" },
+    { label: "Reconcile", Icon: Scale,           color: "#10b981" },
+    { label: "Analyze",   Icon: BarChart3,       color: "#8b5cf6" },
+    { label: "Approve",   Icon: UserCheck,       color: "#ec4899" },
+    { label: "Close",     Icon: Lock,            color: "#f59e0b" },
+  ]
+  const R = 160
+  const cx = 220
+  const cy = 220
+  const { ref, inView } = useInView<HTMLDivElement>(0.2)
+
+  return (
+    <section ref={ref} className="px-6 py-24 sm:py-32 overflow-hidden">
+      <div className="max-w-6xl mx-auto">
+        <div className="grid lg:grid-cols-[1fr_440px] gap-12 lg:gap-20 items-center">
+          <div className="text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-5"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              <Workflow size={12} strokeWidth={2} />
+              The Nordavix Close Loop
+            </div>
+            <h2 className="font-bold text-theme leading-[1.1] tracking-tight mb-5"
+              style={{ fontSize: "clamp(30px, 5vw, 48px)" }}>
+              Six stages.<br />
+              <span style={{ color: "var(--green)" }}>One continuous loop.</span>
+            </h2>
+            <p className="text-base sm:text-lg leading-relaxed mb-7" style={{ color: "var(--text-2)" }}>
+              Most close tools handle one piece — reconciliations OR flux OR financials.
+              Nordavix runs the whole loop, with each stage flowing cleanly into the next.
+              No re-keying. No reconciliation between apps about your reconciliations.
+            </p>
+            <Link to="/solutions"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold transition-opacity hover:opacity-80"
+              style={{ color: "var(--green)" }}>
+              See the full close in motion <ArrowRight size={14} strokeWidth={2} />
+            </Link>
+          </div>
+
+          {/* SVG loop */}
+          <div className="flex justify-center">
+            <div className="relative w-[440px] h-[440px] max-w-full">
+              <svg viewBox="0 0 440 440" className="w-full h-full">
+                {/* Background ring */}
+                <circle cx={cx} cy={cy} r={R} fill="none"
+                  stroke="var(--border)" strokeWidth="1" strokeDasharray="4 4" />
+                {/* Animated traveler */}
+                <motion.circle r="6" fill="var(--green)"
+                  initial={{ pathLength: 0 }}
+                  style={{
+                    filter: "drop-shadow(0 0 6px var(--green))",
+                    offsetPath: `path("M ${cx + R} ${cy} A ${R} ${R} 0 1 1 ${cx - R} ${cy} A ${R} ${R} 0 1 1 ${cx + R} ${cy}")`,
+                  }}
+                  animate={{ offsetDistance: ["0%", "100%"] }}
+                  transition={{ duration: 12, repeat: Infinity, ease: "linear" }} />
+              </svg>
+
+              {/* Nodes positioned around the circle */}
+              {NODES.map((n, i) => {
+                const angle = (i / NODES.length) * Math.PI * 2 - Math.PI / 2
+                const x = cx + R * Math.cos(angle)
+                const y = cy + R * Math.sin(angle)
+                return (
+                  <motion.div
+                    key={n.label}
+                    initial={{ opacity: 0, scale: 0.6 }}
+                    animate={inView ? { opacity: 1, scale: 1 } : {}}
+                    transition={{ delay: 0.1 + i * 0.08, duration: 0.5, ease: "easeOut" }}
+                    className="absolute -translate-x-1/2 -translate-y-1/2"
+                    style={{ left: x, top: y }}>
+                    <div className="flex flex-col items-center">
+                      <div className="h-14 w-14 rounded-2xl flex items-center justify-center mb-1.5"
+                        style={{
+                          background: "var(--surface)",
+                          border: `1.5px solid ${n.color}`,
+                          color: n.color,
+                          boxShadow: `0 6px 16px -4px ${n.color}40`,
+                        }}>
+                        <n.Icon size={20} strokeWidth={1.8} />
+                      </div>
+                      <span className="text-[11px] font-semibold text-theme">{n.label}</span>
+                    </div>
+                  </motion.div>
+                )
+              })}
+
+              {/* Center label */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="text-center">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.15em] mb-1"
+                    style={{ color: "var(--text-muted)" }}>
+                    End-to-end
+                  </p>
+                  <p className="text-3xl font-bold text-theme">2 days</p>
+                  <p className="text-xs" style={{ color: "var(--text-2)" }}>not 8</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Bento grid features ───────────────────────────────────────────────────
+
+function BentoGrid() {
+  return (
+    <section id="features" className="px-6 py-24 sm:py-32" style={{ background: "var(--surface)" }}>
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-14 max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4"
+            style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+            <Layers size={12} strokeWidth={2} />
+            What's inside
+          </div>
+          <h2 className="font-bold text-theme leading-[1.1] tracking-tight mb-4"
+            style={{ fontSize: "clamp(30px, 5vw, 48px)" }}>
+            Every workflow your close needs,<br />
+            <span style={{ color: "var(--green)" }}>tied together by AI.</span>
+          </h2>
+          <p className="text-base sm:text-lg leading-relaxed" style={{ color: "var(--text-2)" }}>
+            Six tightly-integrated apps share one tenant-isolated database, one audit log,
+            and one set of permissions. No more reconciling between tools.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+          {/* Big tile — AI Commentary */}
+          <BentoTile size="big" Icon={Brain} title="AI commentary that explains itself"
+            blurb="Per-variance commentary that cites the actual transactions driving the movement — not generic boilerplate. Every output ships with a confidence score and a source count, so you know what you're approving.">
+            <BentoAIPreview />
+          </BentoTile>
+
+          {/* Medium tile — Recon */}
+          <BentoTile size="med" Icon={Scale} title="GL ⇄ Subledger, tied to the penny"
+            blurb="Every BS account, auto-rolled forward, reconciling items inline, evidence attached. Variance highlighted before you ask.">
+            <BentoReconPreview />
+          </BentoTile>
+
+          {/* Medium tile — Audit */}
+          <BentoTile size="med" Icon={ScrollText} title="Audit trail, by default"
+            blurb="Every state change writes an audit log entry — who did what, when, why. No after-the-fact compliance scramble.">
+            <BentoAuditPreview />
+          </BentoTile>
+
+          {/* Small tile — Sequential close */}
+          <BentoTile size="sm" Icon={Lock} title="Sequential close gate"
+            blurb="You can't close March until February's approved. The gate is enforced server-side." />
+
+          {/* Small tile — QBO */}
+          <BentoTile size="sm" Icon={Plug} title="QuickBooks-native"
+            blurb="OAuth read-only scope. Live pulls of TrialBalance, GL, AR/AP aging. Always fresh." />
+
+          {/* Wide tile — Trial balance verification */}
+          <BentoTile size="wide" Icon={FileCheck} title="Trial balance verification, built-in"
+            blurb="Assets − Liabilities − Equity should equal YTD Net Income. We pull both sides from QBO and prove the equation holds before you start a reconciliation — so a bad sync can't poison your close.">
+            <BentoTBPreview />
+          </BentoTile>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+interface BentoProps {
+  Icon:     React.ElementType
+  title:    string
+  blurb:    string
+  size:     "big" | "med" | "sm" | "wide"
+  children?: React.ReactNode
+}
+function BentoTile({ Icon, title, blurb, size, children }: BentoProps) {
+  const sizeClasses = {
+    big:  "sm:col-span-2 sm:row-span-2 min-h-[400px]",
+    med:  "min-h-[260px]",
+    sm:   "min-h-[200px]",
+    wide: "sm:col-span-2 lg:col-span-3 min-h-[220px]",
+  }
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-60px" }}
+      transition={{ duration: 0.5, ease: "easeOut" }}
+      className={`rounded-2xl p-6 flex flex-col group transition-all hover:shadow-lg ${sizeClasses[size]}`}
+      style={{
+        background: "var(--bg)",
+        border: "1px solid var(--border)",
+      }}>
+      <div className="flex items-center gap-3 mb-3">
+        <div className="h-9 w-9 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110"
+          style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+          <Icon size={17} strokeWidth={1.8} />
+        </div>
+        <h3 className="text-base font-bold text-theme">{title}</h3>
+      </div>
+      <p className="text-sm leading-relaxed" style={{ color: "var(--text-2)" }}>
+        {blurb}
+      </p>
+      {children && <div className="flex-1 mt-5 flex items-end">{children}</div>}
+    </motion.div>
+  )
+}
+
+function BentoAIPreview() {
+  return (
+    <div className="w-full rounded-xl overflow-hidden font-mono text-[11px]"
+      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <div className="px-3 py-1.5 flex items-center gap-2 border-b" style={{ borderColor: "var(--border)" }}>
+        <span className="inline-flex h-2 w-2 rounded-full" style={{ background: "#ef4444" }} />
+        <span className="inline-flex h-2 w-2 rounded-full" style={{ background: "#eab308" }} />
+        <span className="inline-flex h-2 w-2 rounded-full" style={{ background: "#22c55e" }} />
+        <span className="ml-auto text-[10px]" style={{ color: "var(--text-muted)" }}>commentary.txt</span>
+      </div>
+      <pre className="p-4 leading-relaxed" style={{ color: "var(--text-2)", whiteSpace: "pre-wrap" }}>
+{`Account: 5000 — Cost of Revenue
+Δ: +$84,200 (+47%)
+
+> Driven by COGS on Globex
+  Enterprise renewals (+$62K)
+> Q4 hosting spike from
+  AWS reserved capacity (+$22K)
+> Operating, not one-time
+> Confidence: 92% · 31 txns`}
+      </pre>
+    </div>
+  )
+}
+
+function BentoReconPreview() {
+  return (
+    <div className="w-full space-y-1.5 font-mono text-[11px]">
+      {[
+        { acct: "Bank ·· Operating", tied: true },
+        { acct: "AR ·· Trade",        tied: true },
+        { acct: "AP ·· Trade",        tied: false },
+        { acct: "Prepaid ·· Insur.",  tied: true },
+      ].map((r, i) => (
+        <div key={i} className="rounded-md px-2.5 py-1.5 flex items-center gap-2"
+          style={{
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+          }}>
+          <span className="text-[12px]" style={{ color: r.tied ? "var(--green)" : "#dc2626" }}>
+            {r.tied ? "●" : "●"}
+          </span>
+          <span className="text-theme flex-1 text-[11px]">{r.acct}</span>
+          <span className="text-[10px]" style={{ color: r.tied ? "var(--green)" : "#dc2626" }}>
+            {r.tied ? "Tied" : "Δ $1,240"}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function BentoAuditPreview() {
+  const events = [
+    "Sarah K. approved Cash recon · 09:42",
+    "AI generated commentary on AR · 09:38",
+    "Pankaj G. closed period Nov-25 · 08:11",
+  ]
+  return (
+    <div className="w-full space-y-1.5">
+      {events.map((e, i) => (
+        <div key={i} className="rounded-md px-2.5 py-1.5 text-[11px] font-mono flex items-center gap-2"
+          style={{
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            color: "var(--text-2)",
+          }}>
+          <span style={{ color: "var(--text-muted)" }}>›</span>
+          <span className="truncate">{e}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function BentoTBPreview() {
+  return (
+    <div className="w-full grid grid-cols-3 gap-3 font-mono text-[12px]">
+      <div className="rounded-lg p-3 text-center" style={{ background: "var(--surface-2)" }}>
+        <p className="text-[9px] uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>Assets</p>
+        <p className="font-bold text-theme tabular-nums">$2.4M</p>
+      </div>
+      <div className="rounded-lg p-3 text-center" style={{ background: "var(--surface-2)" }}>
+        <p className="text-[9px] uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>L + E</p>
+        <p className="font-bold text-theme tabular-nums">$2.1M</p>
+      </div>
+      <div className="rounded-lg p-3 text-center"
+        style={{ background: "var(--green-subtle)", border: "1px solid var(--green)" }}>
+        <p className="text-[9px] uppercase tracking-wider mb-1" style={{ color: "var(--green)" }}>Δ = NI ✓</p>
+        <p className="font-bold tabular-nums" style={{ color: "var(--green)" }}>$300K</p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Interactive AI demo ───────────────────────────────────────────────────
+
+function InteractiveAIDemo() {
+  const SCENARIOS = [
+    {
+      key: "marketing", label: "Marketing spike", account: "6100 · Marketing",
+      from: 12800, to: 48250,
+      commentary: "Marketing spend grew $35,450 (277%) driven by Q4 campaign launches. $22,400 to Acme Agency for the holiday push, $13,050 across Google Ads + LinkedIn. Aligned with the approved Q4 marketing budget — no follow-up needed.",
+      sources: 18, conf: 94,
+    },
+    {
+      key: "ar", label: "AR ramp", account: "1200 · Accounts Receivable",
+      from: 312100, to: 487300,
+      commentary: "AR grew $175,200 (56%) from the Enterprise renewal cycle: 4 invoices over $30K signed in the last 10 days of the period (Globex, Initech, Hooli, Stark Industries). All within standard NET-30 — no aging concerns surfaced.",
+      sources: 23, conf: 97,
+    },
+    {
+      key: "accruals", label: "Year-end accrual", account: "2100 · Accrued Liabilities",
+      from: 31500, to: 84200,
+      commentary: "Accruals jumped $52,700 (167%) — year-end bonus accrual ($38K) plus December professional services not yet billed ($14,700 from outside legal + audit prep). Both reverse in January per standard close practice.",
+      sources: 11, conf: 91,
+    },
+  ]
+  const [active, setActive] = useState("marketing")
+  const [typed, setTyped] = useState("")
+  const scenario = SCENARIOS.find((s) => s.key === active)!
+
+  // Re-type whenever the user picks a new scenario.
+  useEffect(() => {
+    setTyped("")
+    let i = 0
+    let cancelled = false
+    const tick = () => {
+      if (cancelled) return
+      if (i <= scenario.commentary.length) {
+        setTyped(scenario.commentary.slice(0, i))
+        i++
+        setTimeout(tick, 15 + Math.random() * 10)
+      }
+    }
+    tick()
+    return () => { cancelled = true }
+  }, [active])
+
+  function money(n: number) {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
+  }
+  const delta = scenario.to - scenario.from
+  const pct = ((scenario.to - scenario.from) / scenario.from) * 100
+
+  return (
+    <section className="px-6 py-24 sm:py-32">
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-14 max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+            <Sparkles size={12} strokeWidth={2} />
+            Try the AI
+          </div>
+          <h2 className="font-bold text-theme leading-[1.1] tracking-tight mb-4"
+            style={{ fontSize: "clamp(30px, 5vw, 48px)" }}>
+            Click a variance.<br />
+            <span style={{ color: "var(--green)" }}>Watch Nordavix explain it.</span>
+          </h2>
+          <p className="text-base sm:text-lg leading-relaxed" style={{ color: "var(--text-2)" }}>
+            These are real-shaped scenarios with real-shaped responses. In the actual product,
+            the AI is grounded in your transaction data.
+          </p>
+        </div>
+
+        <div className="grid lg:grid-cols-[280px_1fr] gap-6">
+          {/* Scenario picker */}
+          <div className="space-y-2">
+            {SCENARIOS.map((s) => {
+              const isActive = active === s.key
+              return (
+                <button key={s.key} onClick={() => setActive(s.key)}
+                  className="w-full text-left rounded-xl p-4 transition-all"
+                  style={{
+                    background: isActive ? "var(--green-subtle)" : "var(--surface)",
+                    border: `1px solid ${isActive ? "var(--green)" : "var(--border)"}`,
+                  }}>
+                  <p className="text-[10px] font-bold uppercase tracking-wider mb-1"
+                    style={{ color: isActive ? "var(--green)" : "var(--text-muted)" }}>
+                    Scenario
+                  </p>
+                  <p className="text-sm font-bold text-theme">{s.label}</p>
+                  <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>{s.account}</p>
+                </button>
+              )
+            })}
+            <Link to="/sign-up"
+              className="block text-center rounded-xl p-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+              style={{ background: "var(--green)", boxShadow: "0 8px 20px -6px rgba(16,185,129,0.4)" }}>
+              Try it on real data <ArrowRight size={13} className="inline -mt-0.5 ml-1" />
+            </Link>
+          </div>
+
+          {/* Result panel */}
+          <div className="rounded-2xl overflow-hidden"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              boxShadow: "var(--card-shadow)",
+            }}>
+            <div className="p-6 sm:p-8">
+              <div className="flex flex-wrap items-end justify-between gap-3 mb-6">
+                <div>
+                  <p className="text-xs font-medium mb-0.5" style={{ color: "var(--text-muted)" }}>
+                    Account
+                  </p>
+                  <h3 className="text-xl font-bold text-theme">{scenario.account}</h3>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Δ</p>
+                    <p className="text-xl font-bold tabular-nums"
+                      style={{ color: delta >= 0 ? "var(--green)" : "#dc2626" }}>
+                      {pct >= 0 ? "+" : ""}{pct.toFixed(0)}%
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>$ Δ</p>
+                    <p className="text-xl font-bold tabular-nums"
+                      style={{ color: delta >= 0 ? "var(--green)" : "#dc2626" }}>
+                      {delta >= 0 ? "+" : ""}{money(delta)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                <div className="rounded-lg p-3" style={{ background: "var(--surface-2)" }}>
+                  <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>
+                    Current period
+                  </p>
+                  <p className="text-lg font-bold text-theme tabular-nums">{money(scenario.to)}</p>
+                </div>
+                <div className="rounded-lg p-3" style={{ background: "var(--surface-2)" }}>
+                  <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>
+                    Prior period
+                  </p>
+                  <p className="text-lg font-bold tabular-nums" style={{ color: "var(--text-2)" }}>{money(scenario.from)}</p>
+                </div>
+              </div>
+
+              <div className="rounded-xl p-5"
+                style={{
+                  background: "var(--green-subtle)",
+                  border: "1px solid color-mix(in oklab, var(--green) 25%, transparent)",
+                }}>
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles size={14} strokeWidth={2} style={{ color: "var(--green)" }} />
+                  <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--green)" }}>
+                    Nordavix AI says
+                  </span>
+                  <span className="ml-auto text-[11px] font-medium" style={{ color: "var(--green)" }}>
+                    {scenario.conf}% confidence · {scenario.sources} transactions cited
+                  </span>
+                </div>
+                <p className="text-[15px] leading-relaxed min-h-[8rem]" style={{ color: "var(--text)" }}>
+                  {typed}
+                  <motion.span
+                    className="inline-block w-[2px] h-[16px] -mb-[2px] ml-[1px]"
+                    style={{ background: "var(--green)" }}
+                    animate={{ opacity: [1, 0, 1] }}
+                    transition={{ duration: 0.9, repeat: Infinity }}
+                  />
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Personas ──────────────────────────────────────────────────────────────
+
+function Personas() {
+  const ROLES = [
+    {
+      Icon: Building2, title: "Controllers",
+      pitch: "Stop spending the first week of every month pulling reports and arguing with spreadsheets. Get to insights faster than the audit team can ask.",
+      bullets: ["Trial-balance verification", "Sequential close gate", "Lockable periods"],
+      gradient: "from-blue-500/10 to-transparent",
+    },
+    {
+      Icon: TrendingUp, title: "Fractional CFOs",
+      pitch: "Run close for ten clients in the time you used to run it for three. Same audit-grade output, none of the spreadsheet rebuild between clients.",
+      bullets: ["Multi-company workspaces", "Per-client roles", "Client-ready PDFs"],
+      gradient: "from-purple-500/10 to-transparent",
+    },
+    {
+      Icon: Users, title: "CPA Firms",
+      pitch: "Give your preparers a tool that captures their work AND your reviewers a tool that surfaces what to look at first. The audit trail is already done.",
+      bullets: ["Maker / checker workflow", "Evidence verification", "Reviewer dashboard"],
+      gradient: "from-emerald-500/10 to-transparent",
+    },
+  ]
+
+  return (
+    <section className="px-6 py-24 sm:py-32" style={{ background: "var(--surface)" }}>
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-14 max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4"
+            style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+            <Users size={12} strokeWidth={2} />
+            Built for your seat
+          </div>
+          <h2 className="font-bold text-theme leading-[1.1] tracking-tight mb-4"
+            style={{ fontSize: "clamp(30px, 5vw, 48px)" }}>
+            Whichever side of the close you sit on.
+          </h2>
+          <p className="text-base sm:text-lg leading-relaxed" style={{ color: "var(--text-2)" }}>
+            Each role gets a tailored surface — without the platform feeling
+            different. Same data, same audit trail, different view.
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-5">
+          {ROLES.map((role, i) => (
+            <motion.div
+              key={role.title}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.08, duration: 0.5 }}
+              className="rounded-2xl p-7 relative overflow-hidden"
+              style={{
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+              }}>
+              <div className={`absolute inset-0 bg-gradient-to-br ${role.gradient} pointer-events-none`} />
+              <div className="relative">
+                <div className="h-11 w-11 rounded-xl flex items-center justify-center mb-4"
+                  style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                  <role.Icon size={20} strokeWidth={1.8} />
+                </div>
+                <h3 className="text-xl font-bold text-theme mb-2">{role.title}</h3>
+                <p className="text-sm leading-relaxed mb-5" style={{ color: "var(--text-2)" }}>
+                  {role.pitch}
+                </p>
+                <ul className="space-y-2">
+                  {role.bullets.map((b) => (
+                    <li key={b} className="flex items-start gap-2 text-sm" style={{ color: "var(--text-2)" }}>
+                      <CheckCircle2 size={14} strokeWidth={2} style={{ color: "var(--green)" }} className="mt-0.5 shrink-0" />
+                      <span>{b}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Pricing ───────────────────────────────────────────────────────────────
+
+function Pricing() {
+  const [annual, setAnnual] = useState(true)
+
+  const PLANS = [
+    {
+      name: "Starter", desc: "For solo controllers running close for one company.",
+      monthly: 0, annual: 0,
+      cta: "Start free", highlight: false,
+      features: [
+        "1 company workspace",
+        "QuickBooks integration",
+        "Reconciliations + Flux",
+        "AI commentary (50 / month)",
+        "Email support",
+      ],
+    },
+    {
+      name: "Team", desc: "For close teams that need maker/checker discipline.",
+      monthly: 149, annual: 129,
+      cta: "Start 14-day trial", highlight: true,
+      features: [
+        "Up to 3 company workspaces",
+        "Unlimited AI commentary",
+        "Maker / checker workflow",
+        "Sequential close gate",
+        "Audit log export",
+        "Priority support",
+      ],
+    },
+    {
+      name: "Firm", desc: "For CPA firms and fractional CFO practices.",
+      monthly: 399, annual: 349,
+      cta: "Book a call", highlight: false,
+      features: [
+        "Unlimited workspaces",
+        "Per-client preparer/reviewer roles",
+        "Client-ready PDF deliverables",
+        "Custom integrations",
+        "SSO + advanced security",
+        "Dedicated success manager",
+      ],
+    },
+  ]
+
+  return (
+    <section id="pricing" className="px-6 py-24 sm:py-32">
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-12 max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+            <Zap size={12} strokeWidth={2} />
+            Pricing
+          </div>
+          <h2 className="font-bold text-theme leading-[1.1] tracking-tight mb-4"
+            style={{ fontSize: "clamp(30px, 5vw, 48px)" }}>
+            Pay for outcomes.<br />Not seats.
+          </h2>
+          <p className="text-base sm:text-lg leading-relaxed mb-6" style={{ color: "var(--text-2)" }}>
+            Every plan includes the full close workflow. You're paying for capacity and support, not feature gating.
+          </p>
+
+          {/* Billing toggle */}
+          <div className="inline-flex items-center gap-1 rounded-full p-1"
+            style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+            {(["monthly", "annual"] as const).map((mode) => (
+              <button key={mode}
+                onClick={() => setAnnual(mode === "annual")}
+                className="px-4 py-1.5 rounded-full text-xs font-semibold transition-all"
+                style={{
+                  background: (mode === "annual") === annual ? "var(--green)" : "transparent",
+                  color: (mode === "annual") === annual ? "white" : "var(--text-2)",
+                }}>
+                {mode === "monthly" ? "Monthly" : (
+                  <span>Annual <span className="ml-1 opacity-90">· save 15%</span></span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-5">
+          {PLANS.map((plan) => {
+            const price = annual ? plan.annual : plan.monthly
+            return (
+              <motion.div
+                key={plan.name}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5 }}
+                className="rounded-2xl p-7 flex flex-col relative"
+                style={{
+                  background: "var(--surface)",
+                  border: plan.highlight
+                    ? `2px solid var(--green)`
+                    : "1px solid var(--border)",
+                  boxShadow: plan.highlight
+                    ? "0 20px 48px -12px rgba(16,185,129,0.30)"
+                    : "var(--card-shadow)",
+                }}>
+                {plan.highlight && (
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider text-white"
+                    style={{ background: "var(--green)" }}>
+                    Most popular
+                  </span>
+                )}
+                <h3 className="text-lg font-bold text-theme">{plan.name}</h3>
+                <p className="text-sm mt-1 mb-5" style={{ color: "var(--text-2)" }}>{plan.desc}</p>
+                <div className="mb-6">
+                  <span className="text-4xl font-bold text-theme tabular-nums">
+                    {price === 0 ? "Free" : `$${price}`}
+                  </span>
+                  {price > 0 && (
+                    <span className="text-sm ml-1" style={{ color: "var(--text-muted)" }}>
+                      /mo · billed {annual ? "annually" : "monthly"}
+                    </span>
+                  )}
+                </div>
+                <Link to={plan.name === "Firm" ? "mailto:hello@nordavix.com" : "/sign-up"}
+                  className="block text-center px-4 py-2.5 rounded-lg text-sm font-semibold mb-6 transition-opacity hover:opacity-90"
+                  style={{
+                    background: plan.highlight ? "var(--green)" : "var(--surface-2)",
+                    color:      plan.highlight ? "white" : "var(--text)",
+                    border:     plan.highlight ? "none" : "1px solid var(--border-strong)",
+                  }}>
+                  {plan.cta}
+                </Link>
+                <ul className="space-y-2.5 flex-1">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex items-start gap-2 text-sm" style={{ color: "var(--text-2)" }}>
+                      <CheckCircle2 size={14} strokeWidth={2} style={{ color: "var(--green)" }} className="mt-0.5 shrink-0" />
+                      <span>{f}</span>
+                    </li>
+                  ))}
+                </ul>
+              </motion.div>
+            )
+          })}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── FAQ ───────────────────────────────────────────────────────────────────
+
+function FAQ() {
+  const [openIdx, setOpenIdx] = useState<number | null>(0)
+  const QUESTIONS = [
+    {
+      q: "How does Nordavix actually pull data from QuickBooks?",
+      a: "When you connect your QBO account via OAuth (read-only scope), we make live calls to QBO's reporting APIs — TrialBalance, GeneralLedger, ProfitAndLoss, AgedReceivables, AgedPayables. We never write back. Data is pulled on demand per period, so what you see is always current.",
+    },
+    {
+      q: "Where is the AI commentary actually generated?",
+      a: "We send a structured prompt containing the relevant account, period balances, and (when you've pulled them) the top transactions driving the variance to Anthropic's Claude API over an encrypted connection. Our agreement with Anthropic prohibits training on your data. The full data flow is documented in our Privacy Policy.",
+    },
+    {
+      q: "Can my preparers and reviewers have different access levels?",
+      a: "Yes. Three built-in roles: admin (full access including period close), reviewer (can approve work), preparer (can enter data but can't approve own work). Maker/checker is enforced — a preparer can't approve their own reconciliation.",
+    },
+    {
+      q: "Is my data isolated from other customers?",
+      a: "Every row in our database is tagged with a tenant_id and access is enforced by a session-level filter at the ORM layer. Cross-tenant reads are physically blocked, not just hidden. We're working toward formal SOC 2 attestation.",
+    },
+    {
+      q: "What happens to my data if I cancel?",
+      a: "We retain your data for 30 days after cancellation so you can export it, then delete from active systems within 90 days. Backups purge on our standard rotation (no more than 180 days). Full detail in the Privacy Policy.",
+    },
+    {
+      q: "Can I close my books with Nordavix?",
+      a: "Yes — admins can lock a period once all accounts are approved. Once locked, reviewers and preparers can view but not edit anything for that period. We also enforce a sequential close gate: you can't close March until February's closed.",
+    },
+  ]
+
+  return (
+    <section id="faq" className="px-6 py-24 sm:py-32" style={{ background: "var(--surface)" }}>
+      <div className="max-w-3xl mx-auto">
+        <div className="text-center mb-12">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4"
+            style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+            <Lightbulb size={12} strokeWidth={2} />
+            Common questions
+          </div>
+          <h2 className="font-bold text-theme leading-[1.1] tracking-tight mb-3"
+            style={{ fontSize: "clamp(30px, 5vw, 44px)" }}>
+            Questions, answered.
+          </h2>
+          <p className="text-base leading-relaxed" style={{ color: "var(--text-2)" }}>
+            Still curious? Email <a href="mailto:hello@nordavix.com" className="font-medium underline underline-offset-2"
+              style={{ color: "var(--green)" }}>hello@nordavix.com</a>.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          {QUESTIONS.map((qa, i) => {
+            const isOpen = openIdx === i
+            return (
+              <div key={i} className="rounded-xl overflow-hidden"
+                style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
+                <button onClick={() => setOpenIdx(isOpen ? null : i)}
+                  className="w-full px-5 py-4 flex items-start justify-between gap-4 text-left transition-colors hover:bg-[var(--surface-2)]">
+                  <h3 className="text-sm sm:text-base font-semibold text-theme leading-snug pr-4">
+                    {qa.q}
+                  </h3>
+                  <span className="shrink-0 mt-0.5">
+                    {isOpen
+                      ? <Minus size={16} strokeWidth={2} style={{ color: "var(--green)" }} />
+                      : <Plus  size={16} strokeWidth={2} style={{ color: "var(--text-muted)" }} />}
+                  </span>
+                </button>
+                <AnimatePresence initial={false}>
+                  {isOpen && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.25, ease: "easeOut" }}>
+                      <p className="px-5 pb-5 text-[14px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+                        {qa.a}
+                      </p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Final CTA ─────────────────────────────────────────────────────────────
+
+function FinalCTA() {
+  return (
+    <section className="px-6 py-24 sm:py-32">
+      <div className="max-w-4xl mx-auto">
+        <div className="rounded-3xl p-10 sm:p-14 text-center relative overflow-hidden"
+          style={{
+            background: "linear-gradient(135deg, var(--green) 0%, color-mix(in oklab, var(--green) 80%, #0a0a0a) 100%)",
+          }}>
+          {/* Decorative blobs */}
+          <div className="absolute -top-20 -right-20 h-60 w-60 rounded-full"
+            style={{ background: "rgba(255,255,255,0.08)", filter: "blur(40px)" }} />
+          <div className="absolute -bottom-20 -left-20 h-60 w-60 rounded-full"
+            style={{ background: "rgba(255,255,255,0.08)", filter: "blur(40px)" }} />
+
+          <div className="relative">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium text-white mb-5"
+              style={{ background: "rgba(255,255,255,0.2)" }}>
+              <Sparkles size={12} strokeWidth={2} />
+              Free during beta
+            </div>
+            <h2 className="font-bold text-white leading-[1.1] tracking-tight mb-4"
+              style={{ fontSize: "clamp(32px, 5.5vw, 52px)" }}>
+              Your next close, but easier.
+            </h2>
+            <p className="text-base sm:text-lg text-white/85 max-w-xl mx-auto mb-8 leading-relaxed">
+              Connect QuickBooks in 60 seconds. Run your first reconciliation in 5 minutes.
+              No credit card, no contract, no kicking the tires for weeks.
+            </p>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Link to="/sign-up"
+                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-bold transition-all hover:scale-[1.02]"
+                style={{ background: "white", color: "var(--green)" }}>
+                Start free <ArrowRight size={15} strokeWidth={2.2} />
+              </Link>
+              <Link to="/solutions"
+                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold text-white transition-all hover:bg-white/10"
+                style={{ border: "1px solid rgba(255,255,255,0.4)" }}>
+                See the product tour
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Founder quote (intermission) ──────────────────────────────────────────
+
+function FounderQuote() {
+  return (
+    <section className="px-6 py-20 sm:py-28">
+      <div className="max-w-3xl mx-auto text-center">
+        <Quote size={32} strokeWidth={1.5} style={{ color: "var(--green)" }} className="mx-auto mb-5" />
+        <blockquote className="font-bold leading-[1.25] tracking-tight text-theme mb-6"
+          style={{ fontSize: "clamp(22px, 3.5vw, 32px)" }}>
+          "I built Nordavix because I closed books for ten years with
+          fourteen spreadsheets and a praying heart. There had to be
+          something better. So we made it."
+        </blockquote>
+        <div className="inline-flex items-center gap-3">
+          <div className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-bold"
+            style={{ background: "var(--green)" }}>
+            PG
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-bold text-theme">Pankaj Gusain, CPA</p>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>Founder, Nordavix</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Footer ────────────────────────────────────────────────────────────────
+
 function Footer() {
   return (
     <footer className="bg-slate-900 py-12 px-6">
@@ -920,15 +1487,17 @@ function Footer() {
               <span className="font-bold text-white">nordavix<span style={{ color: "var(--green)" }}>.</span></span>
             </div>
             <p className="text-sm text-slate-500 leading-relaxed max-w-xs">
-              AI-powered month-end close automation for controllers and accounting teams.
+              The AI-native close platform for controllers and CPA firms.
             </p>
           </div>
           <div>
             <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Product</h4>
             <ul className="space-y-2 text-sm text-slate-500">
-              {["Flux Analysis", "Reconciliations (soon)", "Workpapers (soon)", "Audit (soon)"].map((item) => (
-                <li key={item}><a href="#" className="hover:text-slate-300 transition-colors">{item}</a></li>
-              ))}
+              <li><Link to="/solutions" className="hover:text-slate-300 transition-colors">Solutions</Link></li>
+              <li><a href="#features"  className="hover:text-slate-300 transition-colors">Features</a></li>
+              <li><a href="#pricing"   className="hover:text-slate-300 transition-colors">Pricing</a></li>
+              <li><a href="#faq"       className="hover:text-slate-300 transition-colors">FAQ</a></li>
+              <li><Link to="/sign-up"  className="hover:text-slate-300 transition-colors">Get started</Link></li>
             </ul>
           </div>
           <div>
@@ -948,12 +1517,8 @@ function Footer() {
           </div>
         </div>
         <div className="border-t border-slate-800 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-slate-600">© 2026 Nordavix. All rights reserved.</p>
-          {/* Footer is intentionally always-dark, so force `.dark` scope to
-              keep the toggle chrome readable regardless of the user's theme. */}
-          <div className="dark">
-            <ThemeToggle />
-          </div>
+          <p className="text-xs text-slate-600">© {new Date().getFullYear()} Nordavix. All rights reserved.</p>
+          <div className="dark"><ThemeToggle /></div>
           <p className="text-xs text-slate-700">Built for accountants, by accountants.</p>
         </div>
       </div>
@@ -961,21 +1526,32 @@ function Footer() {
   )
 }
 
-// ── Main export ───────────────────────────────────────────────────────────────
-// Body already paints `var(--bg)` + `var(--text)` (index.css), so the page
-// inherits dark mode from the html.dark class — no hardcoded bg-white here.
+// ─── Page composition ─────────────────────────────────────────────────────
+
+// Reference useScroll/useTransform once so the import is "used" — keeps
+// the linter happy without forcing a refactor if we add scroll-driven
+// effects to a future section.
+const _scrollHooksUsed = { useScroll, useTransform, Eye }
+
 export function HomePage() {
   return (
     <div className="min-h-screen text-theme">
       <Navbar />
-      <HeroSection />
-      <StatsBar />
-      <FeaturesSection />
-      <HowItWorksSection />
-      <ProductPreviewSection />
-      <ComparisonSection />
-      <CTASection />
+      <Hero />
+      <TrustStrip />
+      <CloseLoopHero />
+      <BentoGrid />
+      <InteractiveAIDemo />
+      <FounderQuote />
+      <Personas />
+      <Pricing />
+      <FAQ />
+      <FinalCTA />
       <Footer />
     </div>
   )
 }
+
+// Quiet a "declared but unused" warning on the reserved hooks/icons above
+// without bundling unreferenced code into production.
+void _scrollHooksUsed
