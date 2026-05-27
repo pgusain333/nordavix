@@ -25,8 +25,8 @@
  *   - Books not seeded      → CTA to /app/setup/books
  *   - Seeded but no flux    → friendly placeholder + New Analysis CTA
  */
-import { useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import {
@@ -98,7 +98,13 @@ interface MonthRow {
 
 export function FluxMonthIndex() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [search, setSearch] = useState("")
+  // Period passed in from the Dashboard's "Open Flux Analysis" tile.
+  // We use it for two things: scroll the matching month row into view
+  // and visually highlight it so the user sees "you came from there".
+  const focusedPeriod = searchParams.get("period")
+  const focusedRowRef = useRef<HTMLLIElement | null>(null)
 
   const { data: qbo, isLoading: qboLoading } = useQboConnection()
 
@@ -197,18 +203,34 @@ export function FluxMonthIndex() {
 
   const loading = qboLoading || booksLoading || tbsLoading
 
-  // Click → land in FluxDashboard scoped to this month. FluxDashboard
-  // reads ?period= from search params, scrolls to that month group, and
-  // highlights it. If the month has no flux yet, the new-analysis wizard
-  // is what the user sees by default.
+  // Click → land in FluxDashboard scoped to this month.
+  // - One analysis: deep-link to it
+  // - Zero analyses: open the new-analysis wizard with the period
+  //   pre-filled (?new=1 prevents FluxDashboard's auto-select-most-
+  //   recent effect from hijacking the navigation to some unrelated
+  //   month's analysis the user has lying around)
+  // - Multiple: drop on the main flux page scoped to this period;
+  //   user picks from the sidebar list
   function openMonth(r: MonthRow) {
-    // If exactly one complete analysis exists, deep-link straight to it.
     if (r.tbs.length === 1) {
       navigate(`/app/flux/${r.tbs[0].id}`)
       return
     }
+    if (r.tbs.length === 0) {
+      navigate(`/app/flux/analyses?new=1&period=${r.periodEnd}`)
+      return
+    }
     navigate(`/app/flux/analyses?period=${r.periodEnd}`)
   }
+
+  // Scroll the focused-period row into view + flash a brief outline
+  // so the user lands oriented when they come from the dashboard tile.
+  useEffect(() => {
+    if (!focusedPeriod) return
+    const el = focusedRowRef.current
+    if (!el) return
+    el.scrollIntoView({ behavior: "smooth", block: "center" })
+  }, [focusedPeriod, filteredRows.length])
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
@@ -344,11 +366,19 @@ export function FluxMonthIndex() {
                     : null
                   const statusCounts: Record<string, number> = {}
                   for (const tb of r.tbs) statusCounts[tb.status] = (statusCounts[tb.status] || 0) + 1
+                  // Did the user come here from the dashboard tile?
+                  // If yes, highlight + scroll their row into view.
+                  const isFocused = focusedPeriod === r.periodEnd
                   return (
                     <motion.li
                       key={r.periodEnd}
+                      ref={isFocused ? focusedRowRef : null}
                       initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.18, delay: Math.min(idx * 0.015, 0.18) }}
+                      style={isFocused ? {
+                        background: "var(--green-subtle)",
+                        boxShadow: "inset 3px 0 0 var(--green)",
+                      } : undefined}
                     >
                       <button
                         onClick={() => openMonth(r)}

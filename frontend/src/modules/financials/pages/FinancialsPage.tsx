@@ -43,6 +43,7 @@ import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { financialsApi, type Statement, type FinancialRow, type FinancialSource } from "@/modules/financials/api"
 import { useQboConnection } from "@/modules/flux/hooks"
+import { reconsApi } from "@/modules/recons/api"
 
 type Tab = "is" | "bs" | "cf"
 
@@ -210,13 +211,26 @@ export function FinancialsPage() {
   })
 
   // Executive Report — single AI-narrated, multi-page board package.
-  // Only callable when books are closed (server-enforced); UI hides
-  // the section until is_closed=true on the loaded statement.
+  // Only callable when books are closed (server-enforced); UI shows
+  // the card whenever the selected period_end maps to a closed
+  // period (not just when stmt.is_closed) so it's visible BEFORE
+  // the user clicks Load. The user had no way to find this — it
+  // was buried inside the post-Load tab area.
   const execReportMut = useMutation({
     mutationFn: () => financialsApi.exportExecutiveReport(periodEnd),
     onMutate: () => setExecError(null),
     onError: (e: Error) => setExecError(e.message),
   })
+
+  // Closed-periods feed — drives the Exec Report card visibility
+  // pre-Load. Cached + cheap (it's a small DB scan), reused from the
+  // recons API. period_end matches are exact strings (YYYY-MM-DD).
+  const { data: closedPeriods = [] } = useQuery({
+    queryKey: ["closed-periods"],
+    queryFn:  reconsApi.listClosedPeriods,
+    staleTime: 60_000,
+  })
+  const isPeriodClosed = closedPeriods.some((c) => c.period_end === periodEnd)
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
@@ -433,6 +447,23 @@ export function FinancialsPage() {
           </div>
         )}
 
+        {/* Executive Report — surfaced pre-Load so the user actually
+            finds it. Only shown for closed periods; uses the closed-
+            periods query (cached, ~one DB scan) so no statement
+            Load is required first. Same card component as below. */}
+        {isPeriodClosed && (
+          <ExecutiveReportCard
+            periodLabel={(() => {
+              try { return new Date(periodEnd + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }) }
+              catch { return periodEnd }
+            })()}
+            onGenerate={() => execReportMut.mutate()}
+            loading={execReportMut.isPending}
+            error={execError}
+            onDismissError={() => setExecError(null)}
+          />
+        )}
+
         {/* Initial gate — explicit Load before any QBO pull */}
         {!hasLoaded ? (
           <div className="rounded-xl p-10 text-center"
@@ -525,25 +556,9 @@ export function FinancialsPage() {
               <StatementView stmt={stmt} />
             ) : null}
 
-            {/* ── Executive Report — the USP card ───────────────
-                Bottom-of-page CTA per the user's spec ("keep in
-                attached at the bottom like before"). Only renders
-                when books are closed for the selected period — the
-                report only makes sense as a final close deliverable.
-                Generation takes ~10-30s (live QBO + AI call) so the
-                button shows a loading state with explanatory copy. */}
-            {stmt?.is_closed && (
-              <ExecutiveReportCard
-                periodLabel={(() => {
-                  try { return new Date(periodEnd + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }) }
-                  catch { return periodEnd }
-                })()}
-                onGenerate={() => execReportMut.mutate()}
-                loading={execReportMut.isPending}
-                error={execError}
-                onDismissError={() => setExecError(null)}
-              />
-            )}
+            {/* (Executive Report card moved above the Load gate so
+                it's visible immediately when the user lands on a
+                closed period — no need to Load financials first.) */}
           </>
         )}
       </div>

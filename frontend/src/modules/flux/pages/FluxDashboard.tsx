@@ -32,6 +32,8 @@ import {
   CheckCircle2,
   Upload,
   ArrowLeft,
+  Lock,
+  Unlock,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
@@ -40,7 +42,9 @@ import { VarianceTable } from "@/modules/flux/components/VarianceTable"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Button, Spinner } from "@/core/ui/components"
 import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
+import { reconsApi } from "@/modules/recons/api"
 import { workspaceApi } from "@/modules/workspace/api"
+import { useUserNames } from "@/modules/workspace/hooks"
 import type { VarianceRow } from "@/modules/flux/api"
 
 // ── Status dot colours (inline styles — no Tailwind bg-* needed) ────────────
@@ -231,6 +235,52 @@ export function FluxDashboard() {
     staleTime: 5 * 60_000,
   })
   const canSignOff = me?.role === "admin" || me?.role === "reviewer"
+  const isAdmin    = me?.role === "admin"
+
+  // Books-closed lookup — same source as the recons banner. When the
+  // current TB's period_current falls in a closed period, the entire
+  // analysis goes read-only. Mirrors the recons UX: big amber banner
+  // + bulk actions and sign-off buttons hidden + Reopen for admin.
+  const { data: closedPeriods = [] } = useQuery({
+    queryKey: ["closed-periods"],
+    queryFn:  reconsApi.listClosedPeriods,
+    staleTime: 60_000,
+  })
+  const closedEntry = useMemo(() => {
+    if (!selectedTb?.period_current) return null
+    // Match by month — close-period dates are calendar-month-ends,
+    // flux period_current is typically the same. Compare exact match
+    // first; if the TB period happens to fall WITHIN a closed month
+    // (different day in the same month), also count that as closed
+    // since the month-end close locks the whole month.
+    const pc = selectedTb.period_current.slice(0, 10)
+    const ym = pc.slice(0, 7)
+    return closedPeriods.find((c) =>
+      c.period_end === pc || c.period_end.slice(0, 7) === ym,
+    ) ?? null
+  }, [selectedTb, closedPeriods])
+  const isClosed = closedEntry !== null
+  const closedByName = useUserNames([closedEntry?.closed_by])[closedEntry?.closed_by ?? ""]
+
+  // Reopen — admin-only escape hatch (mirrors recons). Lets the admin
+  // unlock the period from inside the flux page without bouncing back
+  // to the reconciliations dashboard.
+  const reopenMut = useMutation({
+    mutationFn: () => {
+      if (!closedEntry) throw new Error("Period isn't closed")
+      return reconsApi.reopenPeriod(closedEntry.period_end)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["closed-periods"] })
+      qc.invalidateQueries({ queryKey: ["period-tracker"] })
+      qc.invalidateQueries({ queryKey: ["recons-overview"] })
+      setRunMsg({ kind: "ok", text: `Period ${closedEntry?.period_end} reopened.` })
+    },
+    onError: (e: unknown) => {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setRunMsg({ kind: "err", text: detail ?? "Could not reopen the period." })
+    },
+  })
 
   const approveTbMut = useMutation({
     mutationFn: (id: string) => api.approveTrialBalance(id),
@@ -475,13 +525,15 @@ export function FluxDashboard() {
                 <Button
                   size="sm"
                   loading={isPending}
-                  disabled={isPending}
+                  disabled={isPending || isClosed}
                   icon={<Sparkles size={14} strokeWidth={1.8} />}
                   onClick={() => runAgenticFluxMut.mutate()}
                   title={
-                    nothingPending
-                      ? "Every material variance already has AI commentary — click to re-check (use per-row Regenerate to refresh a specific one)"
-                      : `Run AI on ${pendingMat} material variance${pendingMat === 1 ? "" : "s"} without commentary — biggest movers first`
+                    isClosed
+                      ? "Books are closed for this period — reopen to run AI."
+                      : nothingPending
+                        ? "Every material variance already has AI commentary — click to re-check (use per-row Regenerate to refresh a specific one)"
+                        : `Run AI on ${pendingMat} material variance${pendingMat === 1 ? "" : "s"} without commentary — biggest movers first`
                   }
                   // Dimmed when there's nothing pending so the
                   // visual hierarchy still tells the user "this is
@@ -508,8 +560,10 @@ export function FluxDashboard() {
                 "I sign off on the whole analysis" step that the
                 month-end close gate requires. Visible only to admin
                 + reviewer; preparers see the badge if already signed
-                off but never the action button. */}
-            {showVarianceTable && selectedTb && (
+                off but never the action button. Hidden when the
+                period is closed — the period lock already provides
+                the same guarantee. */}
+            {showVarianceTable && selectedTb && !isClosed && (
               selectedTb.approved_at ? (
                 <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
                   style={{ background: "var(--green-subtle)", color: "var(--green)" }}
@@ -520,11 +574,6 @@ export function FluxDashboard() {
                 </span>
               ) : canSignOff ? (
                 (() => {
-                  // Enable only when every material variance has been
-                  // approved at the row level — that's the same rule
-                  // we display in the KPI strip (Approved / Material).
-                  // Allowing TB sign-off before line approvals defeats
-                  // the maker/checker pattern.
                   const material = variances.filter((v) => v.is_material)
                   const linesApproved = material.filter((v) => v.status === "approved")
                   const allLinesDone = material.length > 0 && linesApproved.length === material.length
@@ -551,6 +600,24 @@ export function FluxDashboard() {
                   )
                 })()
               ) : null
+            )}
+
+            {/* Reopen — admin escape hatch when books are closed.
+                Same pattern as recons: unlocks the period from
+                inside the locked surface so the admin doesn't have
+                to navigate back to the dashboard. */}
+            {showVarianceTable && isClosed && isAdmin && (
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<Unlock size={14} strokeWidth={1.8} />}
+                loading={reopenMut.isPending}
+                onClick={() => reopenMut.mutate()}
+                style={{ borderColor: "#f59e0b", color: "#b45309" }}
+                title="Reopen the books for this period — admins can edit again"
+              >
+                <span className="hidden sm:inline">Reopen books</span>
+              </Button>
             )}
             {showVarianceTable && (
               <Button variant="outline" size="sm" icon={<Download size={14} strokeWidth={1.6} />} onClick={handleExport}>
@@ -616,6 +683,65 @@ export function FluxDashboard() {
                 <FluxKpiStrip rows={variances} compact={isKpiCompact} />
               </div>
 
+              {/* Books-closed banner — mirrors the recons UX so a
+                  closed period looks the same across both surfaces.
+                  Big amber stripe, locked icon, closed-by attribution,
+                  Reopen button for admins. The VarianceTable below
+                  goes read-only (readOnly prop) so approve/edit
+                  buttons disappear. */}
+              {isClosed && (
+                <div className="mx-4 sm:mx-6 mb-3 rounded-xl overflow-hidden"
+                  style={{
+                    background: "linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)",
+                    border: "1px solid var(--border-strong)",
+                    boxShadow: "var(--card-shadow)",
+                  }}>
+                  <div className="flex items-center gap-4 p-5">
+                    <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
+                      style={{
+                        background: "rgba(245, 158, 11, 0.15)",
+                        border: "2px solid #f59e0b",
+                      }}>
+                      <Lock size={20} strokeWidth={2} style={{ color: "#b45309" }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5"
+                        style={{ color: "#b45309" }}>
+                        Books closed
+                      </p>
+                      <h3 className="text-lg sm:text-xl font-bold text-theme leading-tight">
+                        Period {closedEntry?.period_end} is locked
+                      </h3>
+                      <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
+                        Closed by <span className="font-semibold text-theme">{closedByName || "an admin"}</span>
+                        {closedEntry?.closed_at && (
+                          <> on {new Date(closedEntry.closed_at).toLocaleDateString(undefined, {
+                            year: "numeric", month: "long", day: "numeric",
+                          })}</>
+                        )}.
+                        This flux analysis is frozen — reviewers and preparers can view but not edit.
+                      </p>
+                      {closedEntry?.notes && (
+                        <p className="text-xs mt-1.5 italic" style={{ color: "var(--text-muted)" }}>
+                          &quot;{closedEntry.notes}&quot;
+                        </p>
+                      )}
+                    </div>
+                    {isAdmin && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        icon={<Unlock size={12} strokeWidth={1.8} />}
+                        loading={reopenMut.isPending}
+                        onClick={() => reopenMut.mutate()}
+                        style={{ borderColor: "#f59e0b", color: "#b45309" }}>
+                        Reopen
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <VarianceTable
                 tbId={tbId!}
                 rows={variances}
@@ -624,6 +750,7 @@ export function FluxDashboard() {
                 periodCurrent={selectedTb?.period_current}
                 periodPrior={selectedTb?.period_prior}
                 onMessage={setRunMsg}
+                readOnly={isClosed}
               />
             </div>
           ) : (
