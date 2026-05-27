@@ -1036,11 +1036,16 @@ function NarrativePanel({
 
       {/* Transactions drill-in — shown on every row now (materiality
           dropped). Pull-from-QBO is the canonical way to evidence
-          any variance, big or small. */}
+          any variance, big or small. fs_category piped through so the
+          footer can sign-flip QBO's natural-debit amounts for
+          credit-natural accounts (CC, AP, Equity, Revenue) — without
+          this a $765 credit-card charge sums to -765 and the footer
+          shows a $1,530 "unreconciled" gap when it's actually $0. */}
       <VarianceTxnsSection
         tbId={tbId}
         varianceId={row.id}
         expectedVariance={row.dollar_variance}
+        fsCategory={row.fs_category}
       />
     </div>
   )
@@ -1179,9 +1184,28 @@ function AiCommentaryPanel({ commentary }: { commentary: AiCommentaryShape }) {
 // flip on the server. The footer totals the pulled txns and reconciles them
 // to the expected GL variance so the reviewer can spot missing activity.
 
-function VarianceTxnsSection({ tbId, varianceId, expectedVariance }:
-  { tbId: string; varianceId: string; expectedVariance: string }
+/**
+ * Credit-natural account categories. QBO returns GL transactions in
+ * their natural debit-positive sign — so for accounts whose natural
+ * side is credit, a "normal" activity comes back as a NEGATIVE amount.
+ * Example: a $765 charge on a Mastercard increases liability by 765
+ * but appears as `-765` on the GL report (credit posting).
+ *
+ * Without normalizing this, the footer computes
+ *   diff = sum(-765) - variance(+765) = -1,530
+ * and flags a non-existent reconciliation gap. With the flip,
+ *   diff = variance(+765) - flippedSum(+765) = 0.
+ *
+ * Mirrors the recons-side CREDIT_NATURAL_GROUPS but uses the broader
+ * fs_category buckets the flux module emits (Liabilities | Equity |
+ * Revenue rather than account-type groups like "Credit Card" or "AP").
+ */
+const CREDIT_NATURAL_CATEGORIES = new Set(["Liabilities", "Equity", "Revenue"])
+
+function VarianceTxnsSection({ tbId, varianceId, expectedVariance, fsCategory }:
+  { tbId: string; varianceId: string; expectedVariance: string; fsCategory: string | null }
 ) {
+  const isCreditNatural = fsCategory ? CREDIT_NATURAL_CATEGORIES.has(fsCategory) : false
   const qc = useQueryClient()
   const [enabled, setEnabled] = useState(false)
   /** Set of currently-selected transaction IDs for bulk actions */
@@ -1448,19 +1472,40 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance }:
               })}
             </tbody>
             {/* Reconciliation footer: sum of pulled txns vs the GL variance.
-                The amounts will match within rounding for QBO-sourced
-                analyses; any gap reveals txns we didn't pull (very old,
-                voided, or outside the date window). */}
+                For credit-natural accounts (CC, AP, Equity, Revenue)
+                QBO returns activity in its debit-positive natural sign
+                — a credit posting comes back as a NEGATIVE amount — so
+                we sign-flip the sum before comparing, otherwise an
+                account that perfectly reconciles shows a $2x gap.
+                The matched-amount line shows the positive magnitude
+                that ties out (or the gap when it doesn't). */}
             {data && data.transactions.length > 0 && (
               <tfoot>
                 {(() => {
-                  const sum = data.transactions.reduce(
+                  const sumRaw = data.transactions.reduce(
                     (n, t) => n + (parseFloat(t.amount) || 0),
                     0,
                   )
+                  // Sign-flip for credit-natural accounts so the
+                  // comparison happens in the same direction as the
+                  // GL variance.
+                  const sumNormalized = isCreditNatural ? -sumRaw : sumRaw
                   const variance = parseFloat(expectedVariance) || 0
-                  const diff = sum - variance
+                  const diff = variance - sumNormalized
                   const inSync = Math.abs(diff) < 1
+                  // When in sync, the matched amount is the variance
+                  // itself (or equivalently the absolute sum). When
+                  // not, we still show the amount that DID match
+                  // (the smaller of the two by magnitude, capped at
+                  // zero from below) so the user sees "we explained
+                  // X of Y" rather than just a gap.
+                  const matchedAmount = inSync
+                    ? variance
+                    : Math.sign(sumNormalized) === Math.sign(variance)
+                      ? (Math.abs(sumNormalized) < Math.abs(variance)
+                          ? sumNormalized
+                          : variance)
+                      : 0
                   return (
                     <>
                       <tr style={{
@@ -1472,7 +1517,12 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance }:
                           Sum of pulled transactions
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums font-bold text-theme">
-                          {formatAccounting(sum, 0)}
+                          {formatAccounting(sumRaw, 0)}
+                          {isCreditNatural && (
+                            <span className="ml-1.5 text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
+                              → {formatAccounting(sumNormalized, 0)} on the {fsCategory?.toLowerCase()} side
+                            </span>
+                          )}
                         </td>
                         <td colSpan={2} />
                       </tr>
@@ -1495,16 +1545,19 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance }:
                         <td className="px-3 py-2 text-center" colSpan={4} />
                         <td className="px-3 py-2 text-right text-xs font-semibold"
                           style={{ color: inSync ? "var(--green)" : "#b91c1c" }}>
-                          {inSync
-                            ? "Reconciles to GL variance"
-                            : "Unreconciled difference"}
+                          Matched Amount
+                          {!inSync && (
+                            <span className="ml-1.5 font-normal" style={{ color: "#b91c1c" }}>
+                              · gap {formatAccounting(diff, 0)}
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums font-bold"
                           style={{ color: inSync ? "var(--green)" : "#b91c1c" }}>
-                          {inSync
-                            ? <CheckCircle2 size={14} strokeWidth={2} className="inline" />
-                            : formatAccounting(diff, 0)
-                          }
+                          {formatAccounting(matchedAmount, 0)}
+                          {inSync && (
+                            <CheckCircle2 size={14} strokeWidth={2} className="inline ml-1.5" />
+                          )}
                         </td>
                         <td colSpan={2} />
                       </tr>
