@@ -1,5 +1,5 @@
 /**
- * Nordavix SOP / Help content — single source of truth.
+ * Nordavix Help content — single source of truth.
  *
  * Rendered in TWO places:
  *   • In-app at /app/help (HelpPage)

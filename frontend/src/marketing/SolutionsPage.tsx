@@ -29,7 +29,7 @@ import {
   CheckSquare, Users, Workflow, Brain, FileText, ShieldCheck, Zap,
   TrendingUp, ChevronRight,
 } from "lucide-react"
-import { ThemeToggle } from "@/core/theme/ThemeToggle"
+import { MarketingFooter } from "@/marketing/MarketingFooter"
 
 // ── Close Loop node registry ─────────────────────────────────────────────────
 
@@ -997,25 +997,7 @@ export function SolutionsPage() {
         </div>
       </section>
 
-      <footer className="border-t px-6 py-8" style={{ borderColor: "var(--border)" }}>
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <img src="/logo-mark-dark.svg"  alt="" className="h-6 w-6 dark:hidden" />
-            <img src="/logo-mark-light.svg" alt="" className="h-6 w-6 hidden dark:block" />
-            <span className="font-bold text-sm tracking-tight text-theme">
-              nordavix<span style={{ color: "var(--green)" }}>.</span>
-            </span>
-            <span className="text-[11px] ml-2" style={{ color: "var(--text-muted)" }}>
-              © {new Date().getFullYear()}
-            </span>
-          </div>
-          <div className="flex items-center gap-4 text-[11px]" style={{ color: "var(--text-muted)" }}>
-            <Link to="/">Home</Link>
-            <a href="/#pricing">Pricing</a>
-            <ThemeToggle />
-          </div>
-        </div>
-      </footer>
+      <MarketingFooter />
     </div>
   )
 }

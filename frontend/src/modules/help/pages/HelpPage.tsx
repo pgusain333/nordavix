@@ -34,13 +34,13 @@ export function HelpPage() {
                 fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 700,
                 letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
               }}>
-                Help & SOP
+                Help
               </h1>
             </div>
             <p className="text-xs sm:text-sm" style={{ color: "var(--text-muted)" }}>
-              Standard operating procedure for the Nordavix close platform — every
-              workflow, every screen, in order. Reference it anytime; share section
-              links with teammates.
+              Step-by-step guide to the Nordavix close platform — every workflow,
+              every screen, in order. Reference it anytime; share section links
+              with teammates.
             </p>
           </div>
           {/* Open public version in new tab — useful when the user
