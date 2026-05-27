@@ -77,7 +77,15 @@ export function LeftNav({ onClose }: Props) {
 
   return (
     <aside
-      className="flex h-screen w-60 shrink-0 flex-col"
+      // h-screen + overflow-y-auto on the aside itself (not just the inner
+      // <nav>) so on short mobile viewports the user can scroll all the way
+      // down to the account section + theme toggle. The previous layout
+      // pinned the bottom of the aside to the screen edge, which on iOS
+      // Safari + small Android phones often hid the account row behind
+      // the browser chrome — leaving no way for users to reach Settings,
+      // Send feedback, or switch theme. min-h-0 on flex children stops
+      // the inner <nav>'s overflow-y-auto from fighting the outer scroll.
+      className="flex h-screen w-60 shrink-0 flex-col overflow-y-auto"
       style={{ background: "var(--nav-bg)", borderRight: "1px solid var(--nav-border)" }}
     >
       {/* Brand */}
@@ -115,8 +123,13 @@ export function LeftNav({ onClose }: Props) {
         <OrgNameInline organizationName={organization.name} onRename={(n) => organization.update({ name: n })} />
       )}
 
-      {/* Navigation */}
-      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+      {/* Navigation. flex-shrink-0 (not flex-1) so it doesn't try to
+          fill the aside — outer aside scroll handles overflow. The nav
+          takes its natural content height; bottom sections sit right
+          below it on small viewports, which the outer scroll then
+          reveals when needed. On desktop the aside is tall enough that
+          everything fits without scrolling. */}
+      <nav className="shrink-0 px-2 py-3 space-y-0.5">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon
 

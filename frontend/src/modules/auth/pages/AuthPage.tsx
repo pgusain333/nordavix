@@ -216,7 +216,10 @@ export function AuthPage({ mode }: Props) {
         {/* Top nav — back to marketing + theme-aware mode pill */}
         <div className="px-6 py-5 flex items-center justify-between"
           style={{ borderBottom: "1px solid var(--border)" }}>
-          <Link to="/" className="inline-flex items-center gap-1.5 text-xs hover:underline"
+          {/* "Back to home" only on desktop — on mobile the logo (rendered
+              next to this) already provides a back-to-marketing tap target,
+              so showing both is visual clutter on a narrow viewport. */}
+          <Link to="/" className="hidden lg:inline-flex items-center gap-1.5 text-xs hover:underline"
             style={{ color: "var(--text-muted)" }}>
             <ArrowLeft size={12} strokeWidth={2} />
             Back to home
