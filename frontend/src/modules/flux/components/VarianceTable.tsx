@@ -1194,12 +1194,24 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance }:
     staleTime: 60_000,
   })
 
+  // Surface the backend's `detail` field on failure so the user sees
+  // WHY the pull failed (e.g. "Excel-uploaded TB — re-run from QBO
+  // first"). Previously the mutation had no onError handler which
+  // silently swallowed every failure — clicking Pull just appeared
+  // to do nothing. React Query exposes the error via the `error`
+  // field too but the mutation wasn't reading it.
+  const [refreshError, setRefreshError] = useState<string | null>(null)
   const refresh = useMutation({
     mutationFn: () => api.getVarianceTransactions(tbId, varianceId, true),
+    onMutate: () => setRefreshError(null),
     onSuccess: (fresh) => {
       qc.setQueryData(["variance-txns", tbId, varianceId], fresh)
       setEnabled(true)
       setSelected(new Set())
+    },
+    onError: (err: unknown) => {
+      const e = err as { response?: { data?: { detail?: string } }; message?: string }
+      setRefreshError(e?.response?.data?.detail ?? e?.message ?? "Could not pull transactions.")
     },
   })
 
@@ -1300,11 +1312,21 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance }:
         </Button>
       </div>
 
-      {errMsg && (
+      {/* Show the refresh-mutation error first (it's the user's most
+          recent action), then fall back to any background-query error.
+          Either gives the user a clear "why" instead of a silent fail. */}
+      {(refreshError || errMsg) && (
         <div className="px-4 py-2 text-[11px] flex items-start gap-1.5"
           style={{ color: "#b91c1c", background: "#fef2f2" }}>
           <AlertTriangle size={11} strokeWidth={1.8} className="mt-0.5 shrink-0" />
-          {errMsg}
+          <span className="flex-1">{refreshError ?? errMsg}</span>
+          {refreshError && (
+            <button onClick={() => setRefreshError(null)}
+              className="text-[10px] font-medium hover:underline"
+              style={{ color: "#b91c1c" }}>
+              Dismiss
+            </button>
+          )}
         </div>
       )}
 
