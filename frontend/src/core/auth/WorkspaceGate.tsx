@@ -1,5 +1,12 @@
 /**
- * WorkspaceGate — checks just one thing now: signed in WITH an active org.
+ * WorkspaceGate — checks two things in order:
+ *   1. Signed-in user has both first + last name set (NameGate)
+ *   2. Signed in WITH an active org (this file)
+ *
+ * If either is missing, the user sees the appropriate prompt before
+ * any app content renders. Order matters: collect the name first so
+ * that company creation + every audit log entry from this session
+ * onwards is attributed to a real person rather than just an email.
  *
  * Books-seeded redirects have been REMOVED. Earlier versions bounced users
  * from /app/reconciliations and /app/flux to the books wizard when they
@@ -10,6 +17,7 @@
  */
 import { useOrganization } from "@clerk/clerk-react"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
+import { NameGate } from "./NameGate"
 
 interface Props {
   children: React.ReactNode
@@ -21,8 +29,13 @@ export function WorkspaceGate({ children }: Props) {
   // Loading — avoid flashing either UI
   if (!isLoaded) return null
 
-  // Signed in but no active company → force them through company setup
-  if (!organization) return <CompaniesPanel />
-
-  return <>{children}</>
+  // Wrap everything in NameGate so the "what should we call you?" prompt
+  // shows BEFORE companies panel — picking a company and creating audit
+  // entries with a nameless user produces ugly "prepared by foo@bar.com"
+  // attribution that's hard to clean up later.
+  return (
+    <NameGate>
+      {!organization ? <CompaniesPanel /> : <>{children}</>}
+    </NameGate>
+  )
 }
