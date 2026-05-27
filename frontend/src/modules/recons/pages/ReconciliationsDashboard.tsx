@@ -1303,6 +1303,17 @@ export function ReconciliationsDashboard() {
                       <span className="text-[11px] font-semibold" style={{ color: "var(--green)" }}>
                         {selected.size} selected
                       </span>
+                      {/* Mark prepared — open to all roles. Preparers'
+                          actual workflow IS marking accounts prepared
+                          (maker side of maker/checker). Backend role
+                          gate matches: reviewed is open, approved +
+                          flagged stay reviewer/admin only. */}
+                      <Button size="sm" variant="outline" icon={<Eye size={11} strokeWidth={1.8} />}
+                        loading={bulkStatusMut.isPending}
+                        onClick={() => bulkStatusMut.mutate("reviewed")}
+                      >
+                        Mark prepared
+                      </Button>
                       {canReview && (
                         <>
                           <Button size="sm" icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
@@ -1310,12 +1321,6 @@ export function ReconciliationsDashboard() {
                             onClick={() => bulkStatusMut.mutate("approved")}
                           >
                             Approve
-                          </Button>
-                          <Button size="sm" variant="outline" icon={<Eye size={11} strokeWidth={1.8} />}
-                            loading={bulkStatusMut.isPending}
-                            onClick={() => bulkStatusMut.mutate("reviewed")}
-                          >
-                            Mark prepared
                           </Button>
                           <Button size="sm" variant="outline" icon={<AlertTriangle size={11} strokeWidth={1.8} />}
                             loading={bulkStatusMut.isPending}
@@ -1328,7 +1333,7 @@ export function ReconciliationsDashboard() {
                       )}
                       {!canReview && (
                         <span className="text-[11px] italic" style={{ color: "var(--text-muted)" }}>
-                          Ask a reviewer to approve / flag selected accounts.
+                          A reviewer needs to approve or flag selected accounts.
                         </span>
                       )}
                       <Button size="sm" variant="ghost"

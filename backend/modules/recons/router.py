@@ -754,9 +754,13 @@ async def update_account_review_status(
         raise HTTPException(status_code=400, detail="Invalid status value.")
     await _block_if_closed(db, pe)
 
-    # Role gate: only reviewer+ can flip to reviewed/approved/flagged.
-    # Preparers can only reset to pending (un-do their own work).
-    if status_value in ("reviewed", "approved", "flagged"):
+    # Role gate. Preparers' workflow IS marking accounts prepared —
+    # that's the maker side of maker/checker — so "reviewed" is open
+    # to everyone with workspace access. Only the reviewer-side
+    # actions ("approved", "flagged") stay gated to reviewer+.
+    # "pending" is open to everyone (preparers reset their own work,
+    # reviewers reset anything).
+    if status_value in ("approved", "flagged"):
         if ROLE_ORDER.get(user.role or "preparer", 0) < ROLE_ORDER["reviewer"]:
             raise HTTPException(
                 status_code=403,
@@ -902,8 +906,10 @@ async def bulk_update_account_review_status(
         raise HTTPException(status_code=400, detail="qbo_account_ids required.")
     await _block_if_closed(db, pe)
 
-    # Role gate — same rules as the per-row endpoint.
-    if status_value in ("reviewed", "approved", "flagged"):
+    # Role gate — same rules as the per-row endpoint. Preparers
+    # can bulk-mark prepared (their workflow); only Approve + Flag
+    # remain reviewer/admin only.
+    if status_value in ("approved", "flagged"):
         if ROLE_ORDER.get(user.role or "preparer", 0) < ROLE_ORDER["reviewer"]:
             raise HTTPException(
                 status_code=403,
