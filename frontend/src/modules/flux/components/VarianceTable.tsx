@@ -288,9 +288,50 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     },
   })
 
-  // (Removed: regenerate mutation — backed the per-variance Find
-  // reason / Regenerate button, which was dropped in favor of
-  // Agentic Mode in the header.)
+  // Per-row Agentic — runs the deeper analysis on ONE variance.
+  // Pulls QBO transactions for the change window + asks Claude for
+  // structured commentary (narrative + risk_level + justified +
+  // key_entities + recommendations). Returns immediately with the
+  // commentary so we can patch the row optimistically — no need to
+  // wait for a full list refetch. Confirms before overwriting any
+  // existing commentary.
+  const rowAgentic = useMutation({
+    mutationFn: async (varId: string) => api.runAgenticOnVariance(tbId, varId),
+    onSuccess: (data) => {
+      // Patch the cached variances list so the new ai_commentary
+      // renders without a network roundtrip.
+      const prev = qc.getQueryData<VarianceRow[]>(["variances", tbId])
+      if (prev) {
+        qc.setQueryData<VarianceRow[]>(["variances", tbId],
+          prev.map((r) => r.id === data.variance_id
+            ? { ...r, ai_commentary: data.ai_commentary, status: r.status === "pending" || r.status === "flagged" ? "generated" : r.status }
+            : r,
+          ),
+        )
+      }
+      onMessage?.({
+        kind: "ok",
+        text: `AI analysis done — risk: ${data.ai_commentary.risk_level}, justified: ${data.ai_commentary.justified}.`,
+      })
+    },
+    onError: (err: unknown) => {
+      onMessage?.({ kind: "err", text: extractErrorDetail(err) ?? "Per-row AI failed. Try again." })
+    },
+  })
+
+  function triggerRowAgentic(row: VarianceRow) {
+    // Confirm before overwriting existing commentary (per user spec).
+    if (row.ai_commentary) {
+      const ok = window.confirm(
+        `${row.account_name} already has AI commentary (risk: ${row.ai_commentary.risk_level}, ` +
+        `justified: ${row.ai_commentary.justified}).\n\n` +
+        "Re-running will pull fresh transactions from QuickBooks and overwrite " +
+        "the existing analysis with a new one.\n\nContinue?",
+      )
+      if (!ok) return
+    }
+    rowAgentic.mutate(row.id)
+  }
 
   // ── Filter data ────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -456,8 +497,36 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       size:   100,
       cell:   ({ row }) => {
         const r = row.original
+        const agenticPendingForThisRow =
+          rowAgentic.isPending && rowAgentic.variables === r.id
         return (
           <div className="flex items-center gap-1.5 justify-end">
+            {/* Per-row Agentic — open to all workspace members.
+                Pulls QBO txns + runs the deeper structured analysis
+                on just this row. Visible only on material variances
+                (non-material rows aren't analyzed). Hidden on locked
+                periods. Spinner replaces icon while running. */}
+            {r.is_material && !readOnly && (
+              <Button
+                size="icon-sm"
+                variant="outline"
+                title={r.ai_commentary
+                  ? "Re-run AI on this row (overwrites existing analysis)"
+                  : "Run AI on this row (pulls QBO transactions + structured analysis)"}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  triggerRowAgentic(r)
+                }}
+                disabled={agenticPendingForThisRow}
+                style={r.ai_commentary
+                  ? { borderColor: "var(--green)", color: "var(--green)" }
+                  : undefined}
+              >
+                {agenticPendingForThisRow
+                  ? <Spinner className="h-3 w-3" />
+                  : <Sparkles size={14} strokeWidth={1.6} />}
+              </Button>
+            )}
             {/* Approve check icon — admin / reviewer only and only
                 when the period isn't locked. Preparers still get the
                 Edit button so they can write commentary + mark
@@ -909,23 +978,31 @@ function NarrativePanel({
           </div>
         ) : (
           <div className="space-y-2">
-            <div className="flex items-start gap-2">
-              <p
-                className="text-sm leading-relaxed flex-1"
-                style={{
-                  color: row.narrative ? "var(--text)" : "var(--text-muted)",
-                  fontStyle: row.narrative ? "normal" : "italic",
-                }}
-              >
-                {row.narrative
-                  ? row.narrative
-                  : row.status === "generating"
-                    ? "AI commentary is being generated…"
-                    : row.status === "pending"
-                      ? "AI commentary will be generated for material variances."
-                      : "No commentary yet. Click edit to add your own."}
-              </p>
-            </div>
+            {/* Structured AI commentary panel — only renders when the
+                deeper Agentic Mode produced ai_commentary. Falls back
+                to plain `narrative` prose below for rows that only
+                have the legacy text. */}
+            {row.ai_commentary ? (
+              <AiCommentaryPanel commentary={row.ai_commentary} />
+            ) : (
+              <div className="flex items-start gap-2">
+                <p
+                  className="text-sm leading-relaxed flex-1"
+                  style={{
+                    color: row.narrative ? "var(--text)" : "var(--text-muted)",
+                    fontStyle: row.narrative ? "normal" : "italic",
+                  }}
+                >
+                  {row.narrative
+                    ? row.narrative
+                    : row.status === "generating"
+                      ? "AI commentary is being generated…"
+                      : row.status === "pending"
+                        ? "AI commentary will be generated for material variances."
+                        : "No commentary yet. Click edit to add your own."}
+                </p>
+              </div>
+            )}
             {/* Approver stamp — only shown once this variance has been signed off */}
             {row.approved_at && (
               <p className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--green)" }}>
@@ -963,6 +1040,131 @@ function NarrativePanel({
     </div>
   )
 }
+
+// ── AiCommentaryPanel ─────────────────────────────────────────────────────
+//
+// Renders the STRUCTURED AI commentary produced by the deeper Agentic
+// Mode. Shape:
+//   { narrative, risk_level, justified, key_entities[], recommendations[], confidence }
+//
+// Visual hierarchy:
+//   1. Narrative as the lead (4-6 sentence prose)
+//   2. Three chips: risk level, justified, confidence (color-coded)
+//   3. Key entities row (customer/vendor names + amounts)
+//   4. Recommendations bullets
+
+type AiCommentaryShape = NonNullable<VarianceRow["ai_commentary"]>
+
+function AiCommentaryPanel({ commentary }: { commentary: AiCommentaryShape }) {
+  // Risk color: red=high, amber=medium, green=low
+  const riskMeta = {
+    high:   { fg: "#dc2626", bg: "#fef2f2", border: "#fecaca", label: "High risk" },
+    medium: { fg: "#b45309", bg: "#fef3c7", border: "#fcd34d", label: "Medium risk" },
+    low:    { fg: "var(--green)", bg: "var(--green-subtle)", border: "var(--green)", label: "Low risk" },
+  }[commentary.risk_level] ?? {
+    fg: "var(--text-muted)", bg: "var(--surface-2)", border: "var(--border)", label: "Risk —",
+  }
+  // Justified color: green=yes, red=no, amber=needs_review
+  const justifiedMeta = {
+    yes:           { fg: "var(--green)", bg: "var(--green-subtle)", label: "Justified" },
+    no:            { fg: "#dc2626", bg: "#fef2f2", label: "Not justified" },
+    needs_review:  { fg: "#b45309", bg: "#fef3c7", label: "Needs review" },
+  }[commentary.justified] ?? {
+    fg: "var(--text-muted)", bg: "var(--surface-2)", label: "Unknown",
+  }
+  // Confidence: monochrome chip
+  const confLabel = commentary.confidence === "high" ? "High confidence"
+                  : commentary.confidence === "low"  ? "Low confidence"
+                  : "Medium confidence"
+
+  return (
+    <div className="space-y-3">
+      {/* Narrative — leads the panel */}
+      <p className="text-sm leading-relaxed text-theme whitespace-pre-wrap">
+        {commentary.narrative || "(AI did not return a narrative for this variance.)"}
+      </p>
+
+      {/* Risk + Justified + Confidence chips */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+          style={{ background: riskMeta.bg, color: riskMeta.fg, border: `1px solid ${riskMeta.border}` }}>
+          {riskMeta.label}
+        </span>
+        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+          style={{ background: justifiedMeta.bg, color: justifiedMeta.fg, border: "1px solid var(--border)" }}>
+          {justifiedMeta.label}
+        </span>
+        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-medium"
+          style={{ background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+          {confLabel}
+        </span>
+      </div>
+
+      {/* Key entities */}
+      {commentary.key_entities && commentary.key_entities.length > 0 && (
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider mb-1.5"
+            style={{ color: "var(--text-muted)" }}>
+            Key entities
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {commentary.key_entities.map((e, i) => (
+              <span key={i}
+                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]"
+                style={{
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text)",
+                }}
+              >
+                <span className="font-medium">{e.name}</span>
+                {e.type !== "other" && (
+                  <span className="text-[9px] uppercase tracking-wide px-1 rounded"
+                    style={{
+                      background: e.type === "customer" ? "#dbeafe" : "#fef3c7",
+                      color: e.type === "customer" ? "#1d4ed8" : "#b45309",
+                    }}>
+                    {e.type}
+                  </span>
+                )}
+                {e.amount && (
+                  <span className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
+                    ${e.amount}
+                  </span>
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recommendations */}
+      {commentary.recommendations && commentary.recommendations.length > 0 && (
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider mb-1.5"
+            style={{ color: "var(--text-muted)" }}>
+            Recommended next steps
+          </p>
+          <ul className="space-y-1">
+            {commentary.recommendations.map((rec, i) => (
+              <li key={i} className="flex items-start gap-2 text-[12px] leading-snug">
+                <span className="text-[10px] mt-0.5" style={{ color: "var(--green)" }}>▸</span>
+                <span style={{ color: "var(--text)" }}>{rec}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+        Generated {commentary.generated_at
+          ? new Date(commentary.generated_at).toLocaleString()
+          : "(unknown)"}
+      </p>
+    </div>
+  )
+}
+
 
 // ── VarianceTxnsSection ───────────────────────────────────────────────────────
 // Lists the QBO transactions hitting this variance's account in the period.

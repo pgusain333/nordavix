@@ -301,6 +301,59 @@ async def run_agentic_endpoint(
         ) from exc
 
 
+@router.post("/agentic/run-one")
+async def run_agentic_on_one_account_endpoint(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    qbo_account_id: str = Query(..., description="QBO Account.Id of the row to analyze"),
+    period_end: str = Query(..., description="Period end date YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Run the AI agentic preparer on ONE account row.
+
+    Same engine as the bulk runner — it just filters the candidate set
+    to a single account. Open to all workspace members (preparers can
+    trigger AI generation; only approve actions are role-gated).
+
+    Use case: user clicked the per-row "Run AI" button on a single
+    account in the recons table. Clicking is idempotent — re-running
+    re-pulls QBO transactions + regenerates the AI commentary.
+
+    ~5-15s typical latency. The frontend shows a per-row spinner.
+    """
+    from dataclasses import asdict
+    from datetime import date as _date
+
+    from modules.recons.agentic import run_agentic_prep_for_account
+
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    logger.info(
+        "Per-account agentic start: tenant=%s user=%s period=%s qbo_account=%s",
+        tenant_id, user.id, pe, qbo_account_id,
+    )
+    try:
+        result = await run_agentic_prep_for_account(
+            db, tenant_id, user, pe, qbo_account_id,
+        )
+        return asdict(result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Per-account agentic failed at top level for tenant=%s period=%s qbo=%s",
+            tenant_id, pe, qbo_account_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Per-row agentic failed: {type(exc).__name__}: {str(exc)[:200]}",
+        ) from exc
+
+
 @router.post("/agentic/cancel")
 async def cancel_agentic_endpoint(
     tenant_id: CurrentTenantId,

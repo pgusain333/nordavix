@@ -291,6 +291,44 @@ export function ReconciliationsDashboard() {
     },
   })
 
+  // Per-row Agentic — runs the same engine on ONE account. Used
+  // by the per-row "Run AI" button. Variables (= qbo_account_id)
+  // double as the row identity for disabling the button while
+  // its own request is in flight (rowAgenticMut.variables === a.qbo_id).
+  const rowAgenticMut = useMutation({
+    mutationFn: async (qboAccountId: string) =>
+      reconsApi.runAgenticPrepForAccount(periodEnd, qboAccountId),
+    onSuccess: (data) => {
+      // Patch the overview cache so the new ai_commentary shows
+      // up immediately without waiting for a refetch. The result
+      // shape mirrors the bulk runner so we surface the same
+      // banner text.
+      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+      const account = data.accounts[0]
+      if (account) {
+        setSyncMsg(`AI ${account.action} on ${account.account_name}. ${account.reason}`)
+      }
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Per-row AI failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
+    },
+  })
+
+  function triggerRowAgentic(a: OverviewAccount) {
+    // Confirm before overwriting existing AI commentary, per user spec.
+    if (a.ai_commentary) {
+      const ok = window.confirm(
+        `${a.account_name} already has AI analysis.\n\n` +
+        "Re-running will pull fresh QuickBooks transactions and overwrite " +
+        "the existing commentary with a new one. Existing manual reconciling " +
+        "items and the prepared/approved status are NOT affected.\n\nContinue?",
+      )
+      if (!ok) return
+    }
+    rowAgenticMut.mutate(a.qbo_id)
+  }
+
   // Cooperative cancel: signals the backend to stop after its current
   // account, commits cleanly, and returns the partial result via the
   // already-pending runAgenticMut. The original request resolves
@@ -1488,6 +1526,32 @@ export function ReconciliationsDashboard() {
                             </td>
                             <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-1.5">
+                                {/* Per-row Agentic — open to all roles.
+                                    Hidden when period is closed (no edits
+                                    possible). Confirms before overwriting
+                                    existing ai_commentary. */}
+                                {!isClosed && (
+                                  <button
+                                    onClick={() => triggerRowAgentic(a)}
+                                    disabled={rowAgenticMut.isPending && rowAgenticMut.variables === a.qbo_id}
+                                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+                                    style={{
+                                      color: a.ai_commentary ? "var(--green)" : "var(--text-2)",
+                                      border: `1px solid ${a.ai_commentary ? "var(--green)" : "var(--border-strong)"}`,
+                                      background: a.ai_commentary ? "var(--green-subtle)" : "var(--surface)",
+                                    }}
+                                    title={a.ai_commentary
+                                      ? "Re-run AI on this account (overwrites existing analysis)"
+                                      : "Run AI on this account: pulls QBO transactions + structured analysis"}
+                                  >
+                                    {rowAgenticMut.isPending && rowAgenticMut.variables === a.qbo_id ? (
+                                      <Spinner className="h-3 w-3" />
+                                    ) : (
+                                      <Sparkles size={11} strokeWidth={1.8} />
+                                    )}
+                                    Run AI
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => openSubledger(a)}
                                   className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"

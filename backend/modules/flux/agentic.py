@@ -22,7 +22,7 @@ from models.account import Account
 from models.trial_balance import TrialBalance
 from models.user import User
 from models.variance import Variance
-from modules.flux.tasks import generate_narrative_async
+from modules.flux.deep_agentic import run_deep_agentic_for_variance
 
 logger = logging.getLogger(__name__)
 
@@ -167,26 +167,23 @@ async def run_agentic_flux(
             result.skipped += 1
             break
         try:
-            outcome = await generate_narrative_async(str(v.id), str(tenant_id))
-            ok = outcome.get("status") in ("generated", "ok") or outcome.get("status") != "error"
-            if ok:
-                result.processed += 1
-                result.variances.append(VarianceResult(
-                    variance_id=str(v.id),
-                    account_name=acct.account_name or "",
-                    account_number=acct.account_number or "",
-                    action="generated",
-                    reason="Narrative drafted from transaction evidence.",
-                ))
-            else:
-                result.failed += 1
-                result.variances.append(VarianceResult(
-                    variance_id=str(v.id),
-                    account_name=acct.account_name or "",
-                    account_number=acct.account_number or "",
-                    action="failed",
-                    reason=str(outcome.get("error") or "Anthropic call failed."),
-                ))
+            # Deeper agentic — auto-pulls QBO transactions, runs the
+            # structured-output prompt, persists both ai_commentary
+            # (structured) and Narrative.content (legacy prose).
+            commentary = await run_deep_agentic_for_variance(
+                db=db, tenant_id=tenant_id, variance_id=v.id,
+            )
+            await db.commit()  # commit per variance so cancel mid-run preserves work
+            risk = commentary.get("risk_level", "medium")
+            justified = commentary.get("justified", "needs_review")
+            result.processed += 1
+            result.variances.append(VarianceResult(
+                variance_id=str(v.id),
+                account_name=acct.account_name or "",
+                account_number=acct.account_number or "",
+                action="generated",
+                reason=f"Risk {risk}; justified: {justified}.",
+            ))
         except Exception as exc:
             logger.exception(
                 "Agentic flux failed on variance %s (%s)",
