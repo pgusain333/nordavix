@@ -1522,7 +1522,7 @@ async def get_books_status(
     }
 
 
-@router.get("/setup/seed-preview")
+@router.get("/setup/seed-preview", dependencies=[Depends(require_role("admin"))])
 async def get_seed_preview(
     tenant_id: CurrentTenantId,
     books_start: str = Query(..., description="Books start date YYYY-MM-DD (first period the company reconciles)"),
@@ -1533,6 +1533,11 @@ async def get_seed_preview(
     row per balance-sheet account with the GL balance as the proposed
     opening subledger. The frontend wizard lets the user edit each row
     before committing via POST /seed.
+
+    Admin-only — preview is part of the one-time onboarding flow that
+    seeds opening balances for the entire workspace. The corresponding
+    commit endpoint (/setup/seed) is already admin-gated; gating the
+    preview too keeps the whole wizard behind the admin check.
     """
     from datetime import date as _date
     from datetime import timedelta as _td

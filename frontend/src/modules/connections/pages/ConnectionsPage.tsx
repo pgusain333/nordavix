@@ -10,7 +10,7 @@
  */
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Zap,
@@ -22,11 +22,13 @@ import {
   Plus,
   AlertCircle,
   ChevronUp,
+  ShieldAlert,
 } from "lucide-react"
 import { api, type TrialBalance } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
 import { Button, Spinner } from "@/core/ui/components"
+import { workspaceApi } from "@/modules/workspace/api"
 
 export function ConnectionsPage() {
   const navigate = useNavigate()
@@ -37,6 +39,35 @@ export function ConnectionsPage() {
 
   // QBO connection status — localStorage-cached for instant render on refresh.
   const { data: qbo, isLoading: qboLoadingQuery } = useQboConnection()
+
+  // Current user's role — used to gate the "Connect QuickBooks" + "Reconnect"
+  // buttons. Non-admins still see the connection STATUS (so they know whether
+  // their company is wired up), but can't initiate or change the connection.
+  // Backend enforces the same rule via require_role("admin") on the
+  // /connect-url and /oauth/connect endpoints, so even if someone bypassed
+  // the UI gate the API would 403 them.
+  const { data: me } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 60_000,
+  })
+  const isAdmin = me?.role === "admin"
+
+  // The admins list — surfaced in the non-admin "ask your admin" callout so
+  // the user knows exactly who to ping in Slack/email. Only loaded for
+  // non-admins to avoid an extra request when admin is viewing.
+  // listMembers() unwraps the {members: [...]} response server-side and
+  // returns the array directly — so we filter on `members` not
+  // `members.members`. (Local `tsc --noEmit` missed this; the production
+  // `tsc -b` build in CI caught it because it ignores tsbuildinfo
+  // shortcuts and re-typechecks from scratch.)
+  const { data: members = [] } = useQuery({
+    queryKey: ["workspace-members"],
+    queryFn:  workspaceApi.listMembers,
+    staleTime: 60_000,
+    enabled: !!me && !isAdmin,
+  })
+  const admins = members.filter((m) => m.role === "admin")
 
   async function connectQbo() {
     setQboError(null)
@@ -139,7 +170,10 @@ export function ConnectionsPage() {
             </div>
 
             <div className="shrink-0 flex items-center gap-2">
-              {qbo ? (
+              {/* Connect / Reconnect actions are admin-only — these flows
+                  authorize Nordavix to read the entire company's books.
+                  Non-admins see only a connection-status indicator. */}
+              {isAdmin && (qbo ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -159,11 +193,72 @@ export function ConnectionsPage() {
                 >
                   Connect QuickBooks
                 </Button>
-              )}
+              ))}
             </div>
           </div>
 
-          {qbo && (
+          {/* Non-admin + not-connected: "ask your admin" callout with the
+              actual admin name(s) so the user knows who to contact. */}
+          {!isAdmin && !qbo && !qboLoadingQuery && (
+            <div className="px-5 py-4 flex items-start gap-3"
+              style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              <ShieldAlert size={16} strokeWidth={1.8}
+                className="mt-0.5 shrink-0" style={{ color: "#b45309" }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-theme mb-0.5">
+                  QuickBooks isn't connected yet
+                </p>
+                <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+                  Connecting QBO grants Nordavix permission to read your
+                  company's books, so only an admin can set it up.{" "}
+                  {admins.length > 0 ? (
+                    <>Reach out to{" "}
+                      {admins.slice(0, 3).map((a, i) => (
+                        <span key={a.id}>
+                          <a href={`mailto:${a.email}`}
+                            className="font-medium underline underline-offset-2"
+                            style={{ color: "var(--green)" }}>
+                            {a.display_name || a.email}
+                          </a>
+                          {i < Math.min(admins.length, 3) - 1 ? ", " : ""}
+                          {i === Math.min(admins.length, 3) - 2 && admins.length <= 3 ? " or " : ""}
+                        </span>
+                      ))}
+                      {admins.length > 3 ? ` (and ${admins.length - 3} other admin${admins.length - 3 === 1 ? "" : "s"})` : ""}
+                      {" "}to set it up.
+                    </>
+                  ) : (
+                    <>Ask the admin on your workspace to set it up.</>
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Non-admin + connected: read-only confirmation, no actions. */}
+          {!isAdmin && qbo && (
+            <div className="px-5 py-3 flex items-center gap-2 flex-wrap"
+              style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              <CheckCircle2 size={12} strokeWidth={2} style={{ color: "var(--green)" }} />
+              <span className="text-[11px]" style={{ color: "var(--text-2)" }}>
+                Your workspace is connected to QuickBooks. Ready to{" "}
+                <button onClick={() => navigate("/app/reconciliations")}
+                  className="font-medium underline underline-offset-2"
+                  style={{ color: "var(--green)" }}>
+                  start a reconciliation
+                </button>
+                {" "}or{" "}
+                <button onClick={() => navigate("/app/flux")}
+                  className="font-medium underline underline-offset-2"
+                  style={{ color: "var(--green)" }}>
+                  run a flux analysis
+                </button>.
+              </span>
+            </div>
+          )}
+
+          {/* Admin + connected: same call-to-action footer as before. */}
+          {isAdmin && qbo && (
             <div className="px-5 py-3 flex items-center gap-2 flex-wrap"
               style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
               <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>

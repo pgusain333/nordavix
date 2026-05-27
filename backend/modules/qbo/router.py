@@ -24,7 +24,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.auth.dependencies import CurrentTenantId
+from core.auth.dependencies import CurrentTenantId, require_role
 from core.config import settings
 from core.db.base import current_tenant_id as _current_tenant_id
 from core.db.session import AsyncSessionLocal, get_db
@@ -56,11 +56,16 @@ def _decode_state(state: str) -> uuid.UUID | None:
 
 # ── OAuth flow ─────────────────────────────────────────────────────────────────
 
-@oauth_router.get("/connect")
+@oauth_router.get("/connect", dependencies=[Depends(require_role("admin"))])
 async def qbo_connect(
     tenant_id: CurrentTenantId,
 ) -> RedirectResponse:
-    """Redirect browser to QBO's OAuth2 authorization page. Encodes tenant_id in state."""
+    """
+    Redirect browser to QBO's OAuth2 authorization page. Admin-only —
+    connecting QBO shares the entire company's books with Nordavix, so
+    only the workspace admin should be able to start that flow.
+    Encodes tenant_id in state.
+    """
     if not settings.qbo_enabled:
         raise HTTPException(
             status_code=503,
@@ -191,14 +196,18 @@ async def qbo_callback(
 
 # ── QBO API endpoints (auth required) ─────────────────────────────────────────
 
-@qbo_router.get("/connect-url")
+@qbo_router.get("/connect-url", dependencies=[Depends(require_role("admin"))])
 async def get_qbo_connect_url(
     tenant_id: CurrentTenantId,
 ) -> dict:
     """
-    Return the Intuit OAuth2 authorization URL as JSON.
-    The frontend calls this with its auth token, then redirects the browser to the returned URL.
-    This avoids the browser navigating directly to /connect without a JWT.
+    Return the Intuit OAuth2 authorization URL as JSON. Admin-only —
+    connecting QBO shares the entire company's books with Nordavix, so
+    only the workspace admin should be able to start that flow.
+
+    The frontend calls this with its auth token, then redirects the browser
+    to the returned URL. This avoids the browser navigating directly to
+    /connect without a JWT.
     """
     if not settings.qbo_enabled:
         raise HTTPException(
