@@ -23,6 +23,8 @@ import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
 import { CreateCompanyPage } from "@/modules/onboarding/pages/CreateCompanyPage"
 import { AuthPage } from "@/modules/auth/pages/AuthPage"
 import { SolutionsPage } from "@/marketing/SolutionsPage"
+import { TermsPage } from "@/marketing/TermsPage"
+import { PrivacyPage } from "@/marketing/PrivacyPage"
 import { SettingsPage } from "@/modules/settings/pages/SettingsPage"
 import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
 import { TopProgressBar } from "@/core/ui/TopProgressBar"
@@ -90,6 +92,11 @@ export default function App() {
       {/* Public marketing pages */}
       <Route path="/" element={<HomePage />} />
       <Route path="/solutions" element={<SolutionsPage />} />
+      {/* Legal pages — public, no auth required. Required URLs for the
+          Google OAuth consent screen (Branding section needs both
+          Privacy Policy and Terms of Service URLs). */}
+      <Route path="/terms"   element={<TermsPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
 
       {/* Custom-branded auth surface — replaces Clerk's hosted page.
           The trailing /* lets Clerk handle its own sub-routes
