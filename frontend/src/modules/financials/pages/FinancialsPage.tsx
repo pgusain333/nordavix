@@ -30,6 +30,11 @@ import {
   FileText,
   Lock,
   AlertCircle,
+  BarChart3,
+  Scale,
+  TrendingUp,
+  Layers,
+  Calendar,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -41,6 +46,38 @@ type Tab = "is" | "bs" | "cf"
 function defaultPeriodEnd(): string {
   const d = new Date(); d.setDate(0)
   return d.toISOString().slice(0, 10)
+}
+
+/** Last-day-of-month helper for the quick-period chips. */
+function lastDayOfMonth(year: number, month: number): string {
+  // month is 1-12; new Date(y, m, 0) returns day 0 of next month = last of current
+  const d = new Date(year, month, 0)
+  return d.toISOString().slice(0, 10)
+}
+
+/** Quick-period options driven off "today" — match the period selector
+ *  to the most common accounting cuts. */
+function quickPeriods(): { key: string; label: string; period: string }[] {
+  const today = new Date()
+  const y = today.getFullYear()
+  const m = today.getMonth() + 1  // 1-12
+  // Last completed month
+  const lastMonth = m === 1
+    ? { y: y - 1, m: 12 }
+    : { y, m: m - 1 }
+  // Last completed quarter
+  const quarterEndMonth = (Math.floor((m - 1) / 3)) * 3   // 0, 3, 6, 9
+  const lastQuarter = quarterEndMonth === 0
+    ? { y: y - 1, m: 12 }
+    : { y, m: quarterEndMonth }
+  // YTD = end of last completed month within the current fiscal year
+  // (treat calendar year for simplicity — most SMBs run on calendar)
+  return [
+    { key: "lm",  label: "Last month",   period: lastDayOfMonth(lastMonth.y, lastMonth.m) },
+    { key: "lq",  label: "Last quarter", period: lastDayOfMonth(lastQuarter.y, lastQuarter.m) },
+    { key: "ytd", label: "YTD",          period: lastDayOfMonth(lastMonth.y, lastMonth.m) },
+    { key: "ly",  label: "Last year",    period: lastDayOfMonth(y - 1, 12) },
+  ]
 }
 
 function fmtMoney(s: string | null | undefined, withDollar = false): string {
@@ -57,6 +94,18 @@ const TAB_LABEL: Record<Tab, string> = {
   is: "Income Statement",
   bs: "Balance Sheet",
   cf: "Cash Flow",
+}
+
+const TAB_ICON: Record<Tab, typeof BarChart3> = {
+  is: TrendingUp,
+  bs: Scale,
+  cf: BarChart3,
+}
+
+const TAB_SUB: Record<Tab, string> = {
+  is: "Revenue · COGS · OpEx · Net Income",
+  bs: "Assets · Liabilities · Equity",
+  cf: "Operating · Investing · Financing",
 }
 
 export function FinancialsPage() {
@@ -176,6 +225,36 @@ export function FinancialsPage() {
             )}
           </div>
         </div>
+
+        {/* Quick-period chips — one-click presets so the user doesn't
+            have to click into the date picker for the most common
+            cuts (last month / quarter / YTD / last year). Period
+            highlights when it matches the selected date. */}
+        <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+          <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mr-1"
+            style={{ color: "var(--text-muted)" }}>
+            <Calendar size={10} strokeWidth={1.8} />
+            Quick
+          </span>
+          {quickPeriods().map((q) => {
+            const active = q.period === periodEnd
+            return (
+              <button
+                key={q.key}
+                onClick={() => setPeriodEnd(q.period)}
+                className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors"
+                style={{
+                  background: active ? "var(--green-subtle)" : "var(--surface-2)",
+                  color:      active ? "var(--green)"        : "var(--text-2)",
+                  border:     `1px solid ${active ? "var(--green)" : "var(--border)"}`,
+                }}
+                title={`Set period to ${q.period}`}
+              >
+                {q.label}
+              </button>
+            )
+          })}
+        </div>
       </motion.div>
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-5xl w-full mx-auto space-y-4">
@@ -233,33 +312,61 @@ export function FinancialsPage() {
           </div>
         ) : (
           <>
-            {/* Tabs */}
-            <div className="flex items-center gap-1 flex-wrap rounded-lg p-1 w-fit"
-              style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-              {(Object.entries(TAB_LABEL) as [Tab, string][]).map(([key, label]) => {
-                const active = tab === key
-                return (
-                  <button key={key} onClick={() => setTab(key)}
-                    className="rounded-md px-3 py-1 text-xs font-medium transition-all"
-                    style={{
-                      background: active ? "var(--surface)" : "transparent",
-                      color:      active ? "var(--text)"    : "var(--text-muted)",
-                      border:     active ? "1px solid var(--border-strong)" : "1px solid transparent",
-                    }}>
-                    {label}
-                  </button>
-                )
-              })}
-            </div>
-
-            {/* Closed pill */}
-            {stmt?.is_closed && (
-              <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold"
-                style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
-                <Lock size={11} strokeWidth={2} />
-                Books closed for {periodEnd} — final PDF export available
+            {/* Sticky statement switcher — sits at the top of the
+                scroll area so the user always sees which statement is
+                active + can flip between IS/BS/CF without scrolling
+                back. Bigger touch targets than the previous pill tabs,
+                each with a subtitle that previews the contents. */}
+            <div className="sticky top-0 z-20 -mx-4 sm:-mx-8 px-4 sm:px-8 pt-1 pb-3"
+              style={{ background: "var(--bg)" }}>
+              <div className="rounded-xl overflow-hidden grid grid-cols-3"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+                {(Object.entries(TAB_LABEL) as [Tab, string][]).map(([key, label]) => {
+                  const active = tab === key
+                  const Icon = TAB_ICON[key]
+                  return (
+                    <button key={key} onClick={() => setTab(key)}
+                      className="px-4 py-3 text-left transition-all relative"
+                      style={{
+                        background: active ? "var(--green-subtle)" : "var(--surface)",
+                        borderRight: key !== "cf" ? "1px solid var(--border)" : undefined,
+                        cursor: "pointer",
+                      }}
+                      onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                      onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--surface)" }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Icon size={14} strokeWidth={1.8}
+                          style={{ color: active ? "var(--green)" : "var(--text-muted)" }} />
+                        <span className="text-sm font-semibold"
+                          style={{ color: active ? "var(--green)" : "var(--text)" }}>
+                          {label}
+                        </span>
+                      </div>
+                      <p className="text-[10px] mt-0.5 hidden sm:block"
+                        style={{ color: "var(--text-muted)" }}>
+                        {TAB_SUB[key]}
+                      </p>
+                      {/* Active underline */}
+                      {active && (
+                        <span className="absolute left-0 right-0 bottom-0 h-0.5"
+                          style={{ background: "var(--green)" }} />
+                      )}
+                    </button>
+                  )
+                })}
               </div>
-            )}
+
+              {/* Closed pill — relocated under the tabs so it stays
+                  visible with them while scrolling. */}
+              {stmt?.is_closed && (
+                <div className="mt-2 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold"
+                  style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
+                  <Lock size={11} strokeWidth={2} />
+                  Books closed for {periodEnd} — final PDF export available
+                </div>
+              )}
+            </div>
 
             {/* Statement body */}
             {isLoading ? (
@@ -471,6 +578,11 @@ function ExportButton({ isClosed, onExport, loading }: {
     document.addEventListener("mousedown", h)
     return () => document.removeEventListener("mousedown", h)
   }, [open])
+
+  const stampLabel = isClosed ? "FINAL" : "DRAFT"
+  const stampColor = isClosed ? "var(--green)" : "#b45309"
+  const stampBg    = isClosed ? "var(--green-subtle)" : "rgba(245, 158, 11, 0.12)"
+
   return (
     <div ref={ref} className="relative">
       <Button size="sm" onClick={() => setOpen(!open)}
@@ -485,38 +597,90 @@ function ExportButton({ isClosed, onExport, loading }: {
             animate={{ opacity: 1, y: 0,  scale: 1 }}
             exit={{ opacity: 0, y: -4, scale: 0.96 }}
             transition={{ duration: 0.12, ease: "easeOut" }}
-            className="absolute right-0 top-full mt-1.5 z-20 rounded-lg py-1 min-w-[220px] origin-top-right"
+            className="absolute right-0 top-full mt-1.5 z-20 rounded-xl overflow-hidden min-w-[280px] origin-top-right"
             style={{
               background: "var(--surface)",
               border: "1px solid var(--border-strong)",
-              boxShadow: "0 6px 24px -8px rgba(0,0,0,0.25), 0 2px 6px -2px rgba(0,0,0,0.10)",
+              boxShadow: "0 12px 32px -8px rgba(0,0,0,0.30), 0 2px 6px -2px rgba(0,0,0,0.10)",
             }}>
-            <div className="px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wide"
-              style={{ color: "var(--text-muted)" }}>
-              {isClosed ? "Final · books closed" : "Draft · books not closed"}
+            {/* Header — explicit Draft vs Final framing with a
+                visible stamp so the user knows what they're about
+                to download. */}
+            <div className="px-4 py-2.5 flex items-center justify-between"
+              style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider"
+                  style={{ color: "var(--text-muted)" }}>
+                  Download
+                </p>
+                <p className="text-xs font-semibold text-theme mt-0.5">
+                  {isClosed ? "Audit-final PDF" : "Working draft PDF"}
+                </p>
+              </div>
+              <span className="inline-flex items-center rounded px-2 py-0.5 text-[9px] font-bold tracking-widest"
+                style={{ background: stampBg, color: stampColor }}>
+                {stampLabel}
+              </span>
             </div>
-            {[
-              { key: "full", label: "Full package" },
-              { key: "is",   label: "Income Statement" },
-              { key: "bs",   label: "Balance Sheet" },
-              { key: "cf",   label: "Cash Flow" },
-            ].map((opt) => (
+
+            {/* Primary action — full package, prominent */}
+            <button
+              onClick={() => { onExport("full", !isClosed); setOpen(false) }}
+              className="w-full text-left px-4 py-3 transition-colors flex items-start gap-3"
+              style={{ background: "transparent" }}
+              onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "var(--green-subtle)"}
+              onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "transparent"}
+            >
+              <span className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                <Layers size={15} strokeWidth={1.8} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-theme">Full financial package</p>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  All 3 statements bundled into one PDF
+                </p>
+              </div>
+              <Download size={12} strokeWidth={1.8}
+                style={{ color: "var(--text-muted)" }} className="shrink-0 mt-1.5" />
+            </button>
+
+            {/* Section divider */}
+            <div className="px-4 py-1.5 text-[9px] font-bold uppercase tracking-wider"
+              style={{ background: "var(--surface-2)", color: "var(--text-muted)", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)" }}>
+              Or download one statement
+            </div>
+
+            {/* Individual statements */}
+            {([
+              { key: "is", label: "Income Statement", sub: TAB_SUB.is, Icon: TrendingUp },
+              { key: "bs", label: "Balance Sheet",    sub: TAB_SUB.bs, Icon: Scale },
+              { key: "cf", label: "Cash Flow",        sub: TAB_SUB.cf, Icon: BarChart3 },
+            ] as const).map((opt) => (
               <button key={opt.key}
-                onClick={() => { onExport(opt.key as "is" | "bs" | "cf" | "full", !isClosed); setOpen(false) }}
-                className="w-full text-left px-2.5 py-1 text-[11px] transition-colors hover:bg-[var(--surface-2)] inline-flex items-center gap-2"
-                style={{ color: "var(--text)" }}>
-                <FileText size={11} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-                {opt.label}
+                onClick={() => { onExport(opt.key, !isClosed); setOpen(false) }}
+                className="w-full text-left px-4 py-2.5 transition-colors flex items-center gap-3"
+                style={{ background: "transparent" }}
+                onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"}
+                onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "transparent"}
+              >
+                <opt.Icon size={13} strokeWidth={1.8}
+                  style={{ color: "var(--text-muted)" }} className="shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium text-theme">{opt.label}</p>
+                  <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                    {opt.sub}
+                  </p>
+                </div>
               </button>
             ))}
+
+            {/* Draft note */}
             {!isClosed && (
-              <>
-                <div className="mx-2 my-1 h-px" style={{ background: "var(--border)" }} />
-                <p className="px-2.5 py-1 text-[9px] italic"
-                  style={{ color: "var(--text-muted)" }}>
-                  Draft PDFs carry a watermark. Close the period to remove it.
-                </p>
-              </>
+              <p className="px-4 py-2 text-[10px] italic"
+                style={{ color: "var(--text-muted)", background: "var(--surface-2)", borderTop: "1px solid var(--border)" }}>
+                Draft PDFs carry a DRAFT watermark. Close the books for this period to download finals.
+              </p>
             )}
           </motion.div>
         )}

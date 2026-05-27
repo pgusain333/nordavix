@@ -15,7 +15,7 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { useUser } from "@clerk/clerk-react"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import {
@@ -79,6 +79,7 @@ function timeAgo(iso: string | null | undefined): string {
 export function DashboardHome() {
   const { user } = useUser()
   const navigate = useNavigate()
+  const qc       = useQueryClient()
   // Selected month drives every KPI + action card on this page. Changing it
   // refetches the recons overview and re-derives the flux summary, so the
   // dashboard is always showing one month at a time. Click "Open" on either
@@ -90,6 +91,23 @@ export function DashboardHome() {
   // message instead of refocusing. Cleared automatically after a few
   // seconds OR when the user clicks a valid tile.
   const [blockMsg, setBlockMsg] = useState<string | null>(null)
+  // Inline confirmation banner for the Close-books action, kept simple
+  // (success ✓ / error ✕). 4-second auto-dismiss like blockMsg.
+  const [closeMsg, setCloseMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
+  useEffect(() => {
+    if (!closeMsg) return
+    const t = setTimeout(() => setCloseMsg(null), 4_000)
+    return () => clearTimeout(t)
+  }, [closeMsg])
+
+  // Current user's role — gates the Close-books button on the
+  // close-progress card to admins only.
+  const { data: me } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 5 * 60_000,
+  })
+  const isAdmin = me?.role === "admin"
 
   // QBO connection — uses the localStorage-cached hook so refreshes
   // don't flash the "not connected" banner while the verify-fetch
@@ -223,6 +241,33 @@ export function DashboardHome() {
     const t = setTimeout(() => setBlockMsg(null), 4_000)
     return () => clearTimeout(t)
   }, [blockMsg])
+
+  // Close-books mutation. Lives here (not on the reconciliations
+  // dashboard) so the Close action sits next to the month-end tracker
+  // tiles where the user decides a month is finished. Reopen still
+  // lives on the recons page so an admin can unlock a closed period
+  // without leaving it.
+  const closeMut = useMutation({
+    mutationFn: () => reconsApi.closePeriod(period),
+    onSuccess: () => {
+      setCloseMsg({ kind: "ok", text: `Books closed for ${monthLabel}.` })
+      qc.invalidateQueries({ queryKey: ["period-tracker"] })
+      qc.invalidateQueries({ queryKey: ["books-status"] })
+      qc.invalidateQueries({ queryKey: ["recons-overview", period] })
+      qc.invalidateQueries({ queryKey: ["closed-periods"] })
+      qc.invalidateQueries({ queryKey: ["tasks"] })
+      qc.invalidateQueries({ queryKey: ["dashboard-audit"] })
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setCloseMsg({ kind: "err", text: ex.response?.data?.detail ?? ex.message ?? "Could not close period" })
+    },
+  })
+
+  function handleCloseBooks() {
+    if (!confirm(`Close the books for ${monthLabel}? Once locked, reviewers and preparers can't edit anything for this period.`)) return
+    closeMut.mutate()
+  }
 
   // Recons buckets — open / reviewed / approved counts derived from the overview.
   // Used by the KPI strip ("Open in <month>" + "Variance"). NOT used by the
@@ -589,12 +634,19 @@ export function DashboardHome() {
             Updates whenever the user clicks a tile in the tracker.
             Surfaces where we are in the close cycle for the focused
             month: % approved, status breakdown, days vs target close
-            (period_end + 15 days, same as the Tasks default due). */}
+            (period_end + 15 days, same as the Tasks default due).
+            Hosts the Close Books button for admins when the month is
+            fully approved and not blocked by an earlier open month. */}
         <CloseProgressCard
           monthLabel={monthLabel}
           period={period}
           trackerEntry={trackerEntry}
           onOpen={() => navigate(`/app/reconciliations/period/${period}`)}
+          isAdmin={isAdmin}
+          blocker={blockedBy.get(period) ?? null}
+          onCloseBooks={handleCloseBooks}
+          closing={closeMut.isPending}
+          closeMsg={closeMsg}
         />
 
         {/* ── Two big "Open" action cards ────────────────────────
@@ -857,7 +909,10 @@ export function DashboardHome() {
  *   • Not started (no AccountReviewStatus rows yet) → friendly nudge
  *     to start the close
  */
-function CloseProgressCard({ monthLabel, period, trackerEntry, onOpen }: {
+function CloseProgressCard({
+  monthLabel, period, trackerEntry, onOpen,
+  isAdmin, blocker, onCloseBooks, closing, closeMsg,
+}: {
   monthLabel: string
   period: string
   // All counts/status come from the lightweight tracker payload (one
@@ -876,6 +931,15 @@ function CloseProgressCard({ monthLabel, period, trackerEntry, onOpen }: {
     counts: { pending: number; reviewed: number; approved: number; flagged: number }
   }
   onOpen: () => void
+  // Close-books wiring — surfaces a Ready-to-close CTA inside State 3
+  // (in-progress) when every account is approved AND no earlier month
+  // is blocking. Admin-only; preparers/reviewers see the progress bar
+  // but no action.
+  isAdmin: boolean
+  blocker: { label: string; period_end: string; unapproved: number } | null
+  onCloseBooks: () => void
+  closing: boolean
+  closeMsg: { kind: "ok" | "err"; text: string } | null
 }) {
   // Parse period for date math
   const periodEnd = (() => {
@@ -1021,6 +1085,69 @@ function CloseProgressCard({ monthLabel, period, trackerEntry, onOpen }: {
           </span>
         </div>
       </div>
+
+      {/* ── Ready-to-close CTA bar (only when 100% approved) ────
+          Admin-only call to lock the books. Hidden when an earlier
+          month is still open — sequential close is enforced server-
+          side too, but we hide the button so the admin doesn't even
+          see a tease. Non-admins just see the celebration line. */}
+      {pct === 100 && (
+        <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2"
+          style={{
+            borderTop: "1px solid var(--border)",
+            background: "var(--green-subtle)",
+          }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <CheckCircle2 size={14} strokeWidth={2} style={{ color: "var(--green)" }} className="shrink-0" />
+            <span className="text-xs font-semibold" style={{ color: "var(--green)" }}>
+              {monthLabel} is reconciled — every account approved.
+            </span>
+          </div>
+          {isAdmin && (
+            blocker ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: "#b45309" }}>
+                <Lock size={11} strokeWidth={2} />
+                Close {blocker.label} first
+              </span>
+            ) : (
+              <Button
+                size="sm"
+                icon={<Lock size={12} strokeWidth={1.8} />}
+                loading={closing}
+                onClick={onCloseBooks}
+                title="Lock the books for this period — preparers + reviewers will no longer be able to edit"
+              >
+                Close month-end books
+              </Button>
+            )
+          )}
+        </div>
+      )}
+
+      {/* Inline confirmation banner — success or error from the
+          close-books mutation. Sits at the very bottom so it doesn't
+          shift the layout above. Auto-clears via parent's timer. */}
+      <AnimatePresence>
+        {closeMsg && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="px-5 py-2 flex items-start gap-2 text-xs"
+            style={{
+              background: closeMsg.kind === "ok" ? "var(--green-subtle)" : "#fef2f2",
+              color:      closeMsg.kind === "ok" ? "var(--green)" : "#b91c1c",
+              borderTop:  "1px solid var(--border)",
+              overflow:   "hidden",
+            }}>
+            {closeMsg.kind === "ok"
+              ? <CheckCircle2 size={12} strokeWidth={2} className="shrink-0 mt-0.5" />
+              : <Lock size={12} strokeWidth={2} className="shrink-0 mt-0.5" />}
+            <span className="flex-1">{closeMsg.text}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

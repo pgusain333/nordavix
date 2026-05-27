@@ -388,7 +388,10 @@ function ProfileSection() {
     >
       <div className="flex items-start gap-4 mb-6">
         <div className="shrink-0">
-          <UserButton appearance={{ elements: { avatarBox: "h-14 w-14" } }} />
+          <UserButton
+            afterSignOutUrl="/sign-in"
+            appearance={{ elements: { avatarBox: "h-14 w-14" } }}
+          />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-base font-bold text-theme">{displayName}</p>

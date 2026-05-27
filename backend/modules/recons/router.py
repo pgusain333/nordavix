@@ -546,21 +546,27 @@ async def export_account_pdf(
             )).scalars().all())
             backfill_dirty = False
             for u in user_rows:
-                # Prefer the local email — fast path. When it's missing
-                # (Clerk JWT didn't carry an `email` claim at sign-up
-                # time, leaving the row with `email=""`), resolve from
-                # Clerk's REST API so the PDF shows "First Last" or
-                # the real email instead of a UUID prefix.
-                display: str | None = u.email or None
-                if not display and u.clerk_user_id:
+                # Always prefer "First Last" from Clerk over the local
+                # email — the PDF is a controller-grade working paper,
+                # so a real human name on Prepared/Approved By reads
+                # better than an email handle. Clerk lookups are
+                # TTL-cached (~5 min) so this is cheap on hot paths.
+                # Fallback chain: Clerk first+last → Clerk email →
+                # local email → UUID stub.
+                display: str | None = None
+                if u.clerk_user_id:
                     cu = await get_clerk_user(u.clerk_user_id)
                     if cu:
+                        # _format_display_name returns "First Last",
+                        # else Clerk-side email, else clerk id.
                         display = _format_display_name(cu)
-                        # Opportunistically backfill the email so the
-                        # next render skips the Clerk hop.
+                        # Opportunistically backfill the local email
+                        # if Clerk has one we don't.
                         if cu.get("email") and not u.email:
                             u.email = cu["email"]
                             backfill_dirty = True
+                if not display:
+                    display = u.email or None
                 names_by_id[u.id] = display or f"User {str(u.id)[:8]}"
             if backfill_dirty:
                 try:

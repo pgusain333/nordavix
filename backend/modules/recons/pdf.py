@@ -320,14 +320,39 @@ def _reconciliation_table(data: dict) -> Table:
     header = ["Date", "Type", "Ref #", "Memo / Description", "Amount"]
     rows: list[list[Any]] = [header]
 
-    # 1. Opening — clean label; source goes in a smaller note line in
-    # the memo column instead of being concatenated onto the label.
-    opening_subnote = data.get("opening_source") or ""
+    # Paragraph style used for any Memo / Description cell that might
+    # be longer than the column width — ReportLab Tables don't wrap
+    # raw strings, so anything that overflows just spills into the
+    # next column. Wrapping these as Paragraphs lets the engine break
+    # at word boundaries inside the cell.
+    memo_style = ParagraphStyle(
+        "recon_memo", fontName="Helvetica", fontSize=9,
+        leading=11, textColor=GREY_DARK,
+    )
+    memo_bold = ParagraphStyle(
+        "recon_memo_bold", fontName="Helvetica-Bold", fontSize=9.5,
+        leading=12, textColor=GREY_DARK,
+    )
+    memo_total = ParagraphStyle(
+        "recon_memo_total", fontName="Helvetica-Bold", fontSize=10,
+        leading=12.5, textColor=GREY_DARK,
+    )
+
+    # 1. Opening — clean label; source rendered as a small secondary
+    # line beneath the label, all wrapped in a Paragraph so long
+    # rollforward strings ("Rolled forward from 2026-01-30") don't
+    # overflow into the Amount column. Previous version used raw
+    # string concatenation which spilled visibly on long subnotes.
+    opening_subnote = (data.get("opening_source") or "").strip()
+    opening_label_html = "Opening Subledger Balance"
+    if opening_subnote:
+        opening_label_html += (
+            f"<br/><font size='8' color='{GREY_MID.hexval()}'>"
+            f"{opening_subnote}</font>"
+        )
     rows.append([
         "", "", "",
-        "Opening Subledger Balance" + (
-            f"  ({opening_subnote})" if opening_subnote and len(opening_subnote) < 60 else ""
-        ),
+        Paragraph(opening_label_html, memo_bold),
         _fmt_money(opening),
     ])
     opening_row_idx = len(rows) - 1
@@ -340,7 +365,11 @@ def _reconciliation_table(data: dict) -> Table:
         raw_amt = Decimal(str(it.get("amount", "0") or "0"))
         signed = raw_amt if is_manual else (flip * raw_amt)
         items_sum += signed
-        memo = (it.get("memo") or "")[:60]
+        # Memo is the most variable-length field — wrap as a Paragraph
+        # so long descriptions break cleanly inside the cell. Bumped
+        # the hard cap from 60 → 200 chars since we no longer need to
+        # truncate aggressively for layout.
+        memo_text = (it.get("memo") or "")[:200]
         if is_manual and "Manual" not in (it.get("txn_type") or ""):
             type_label = ((it.get("txn_type") or "Manual")[:18]) + " · Manual"
         else:
@@ -349,25 +378,44 @@ def _reconciliation_table(data: dict) -> Table:
             _fmt_date(it.get("txn_date") or ""),
             type_label,
             (it.get("txn_number") or "")[:14],
-            memo,
+            Paragraph(memo_text, memo_style) if memo_text else "",
             _fmt_money(signed),
         ])
     items_end_idx = len(rows) - 1
 
     # 3. Closing Subledger Balance (= opening + items)
     closing = opening + items_sum
-    rows.append(["", "", "", "Closing Subledger Balance", _fmt_money(closing)])
+    rows.append([
+        "", "", "",
+        Paragraph("Closing Subledger Balance", memo_total),
+        _fmt_money(closing),
+    ])
     closing_row_idx = len(rows) - 1
 
     # 4. GL Balance (the target the subledger should match)
-    rows.append(["", "", "", "General Ledger Balance", _fmt_money(gl_balance)])
+    rows.append([
+        "", "", "",
+        Paragraph("General Ledger Balance", memo_total),
+        _fmt_money(gl_balance),
+    ])
     gl_row_idx = len(rows) - 1
 
     # 5. Variance — should be $0.00 on a reconciled account
     variance = gl_balance - closing
     tied_out = abs(variance) < Decimal("1.00")
     variance_display = _fmt_money(Decimal("0")) if tied_out else _fmt_money(variance)
-    rows.append(["", "", "", "Variance (GL − Subledger)", variance_display])
+    # Inline the color in the Paragraph — TEXTCOLOR on a TableStyle
+    # only applies to raw-string cells, not Paragraph cells, so the
+    # label color has to come from an HTML font tag inside.
+    var_color_hex = GREEN.hexval() if tied_out else RED.hexval()
+    rows.append([
+        "", "", "",
+        Paragraph(
+            f"<font color='{var_color_hex}'>Variance (GL − Subledger)</font>",
+            memo_total,
+        ),
+        variance_display,
+    ])
     var_row_idx = len(rows) - 1
 
     tbl = Table(
