@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useUser } from "@clerk/clerk-react"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
+import { openCookiePreferences } from "@/core/consent/useCookieConsent"
 import {
   Zap, Shield, FileSpreadsheet, CheckCircle2, ArrowRight,
   BarChart3, Clock, Lock, ChevronRight, Star, TrendingUp,
@@ -936,6 +937,12 @@ function Footer() {
               <li><a href="mailto:hello@nordavix.com" className="hover:text-slate-300 transition-colors">About</a></li>
               <li><Link to="/privacy"  className="hover:text-slate-300 transition-colors">Privacy Policy</Link></li>
               <li><Link to="/terms"    className="hover:text-slate-300 transition-colors">Terms of Service</Link></li>
+              <li>
+                <button onClick={openCookiePreferences}
+                  className="hover:text-slate-300 transition-colors text-left">
+                  Cookie preferences
+                </button>
+              </li>
               <li><a href="mailto:security@nordavix.com" className="hover:text-slate-300 transition-colors">Security</a></li>
             </ul>
           </div>

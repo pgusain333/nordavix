@@ -26,6 +26,7 @@ import {
   Mail, ChevronDown,
 } from "lucide-react"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
+import { openCookiePreferences } from "@/core/consent/useCookieConsent"
 
 export interface LegalSection {
   /** Lowercased URL-friendly hash, e.g. "data-retention" */
@@ -617,6 +618,12 @@ function MarketingFooter() {
               <li><Link to="/terms" className="hover:text-slate-300 transition-colors inline-flex items-center gap-1.5">
                 <FileText size={11} /> Terms of Service
               </Link></li>
+              <li>
+                <button onClick={openCookiePreferences}
+                  className="hover:text-slate-300 transition-colors text-left">
+                  Cookie preferences
+                </button>
+              </li>
               <li><a href="mailto:legal@nordavix.com" className="hover:text-slate-300 transition-colors">Contact legal</a></li>
             </ul>
           </div>

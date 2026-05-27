@@ -28,6 +28,7 @@ import { PrivacyPage } from "@/marketing/PrivacyPage"
 import { SettingsPage } from "@/modules/settings/pages/SettingsPage"
 import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
 import { TopProgressBar } from "@/core/ui/TopProgressBar"
+import { CookieBanner } from "@/core/consent/CookieBanner"
 
 /**
  * Route-level transition wrapper.
@@ -88,6 +89,11 @@ export default function App() {
     <>
     {/* Global top progress bar — lights up on any in-flight query/mutation. */}
     <TopProgressBar />
+    {/* Cookie consent — single mount, persisted via localStorage. Only
+        renders the banner on first visit; afterwards it's invisible
+        until the user clicks "Cookie preferences" in a footer (or the
+        policy version is bumped). */}
+    <CookieBanner />
     <Routes>
       {/* Public marketing pages */}
       <Route path="/" element={<HomePage />} />
