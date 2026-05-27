@@ -10,7 +10,7 @@ export interface WorkspaceMember {
   display_name:  string
   email:         string | null
   image_url:     string | null
-  clerk_role:    string | null   // Clerk's org role ('org:admin' / 'org:basic_member')
+  clerk_role:    string | null   // Clerk's org role ('org:admin' / 'org:member')
   role:          NordavixRole    // Our 3-tier role
 }
 
