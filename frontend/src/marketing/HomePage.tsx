@@ -607,23 +607,30 @@ function CloseLoopHero() {
     { label: "Approve",   Icon: UserCheck,       color: "#ec4899" },
     { label: "Close",     Icon: Lock,            color: "#f59e0b" },
   ]
-  const R = 160
-  const cx = 220
-  const cy = 220
+  // Geometry expressed as percentages of the container, so the loop
+  // and every node scale together with whatever width the parent gives
+  // us. The previous version positioned nodes at pixel offsets
+  // computed against a fixed 440px canvas — on mobile the SVG shrank
+  // but the absolute-positioned divs stayed at the 440px coordinates,
+  // pushing them off-canvas. Percentages fix that.
+  const CX_PCT = 50   // center x as % of container
+  const CY_PCT = 50   // center y as % of container
+  const R_PCT  = 36   // ring radius as % of container (leaves room
+                      // for the node card width + label below)
   const { ref, inView } = useInView<HTMLDivElement>(0.2)
 
   return (
-    <section ref={ref} className="px-6 py-24 sm:py-32 overflow-hidden">
+    <section ref={ref} className="px-6 py-20 sm:py-28 lg:py-32 overflow-hidden">
       <div className="max-w-6xl mx-auto">
-        <div className="grid lg:grid-cols-[1fr_440px] gap-12 lg:gap-20 items-center">
-          <div className="text-center lg:text-left">
+        <div className="grid lg:grid-cols-[1fr_minmax(0,440px)] gap-10 sm:gap-12 lg:gap-20 items-center">
+          <div className="text-center lg:text-left order-2 lg:order-1">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-5"
               style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
               <Workflow size={12} strokeWidth={2} />
               The Nordavix Close Loop
             </div>
             <h2 className="font-bold text-theme leading-[1.1] tracking-tight mb-5"
-              style={{ fontSize: "clamp(30px, 5vw, 48px)" }}>
+              style={{ fontSize: "clamp(28px, 5vw, 48px)" }}>
               Six stages.<br />
               <span style={{ color: "var(--green)" }}>One continuous loop.</span>
             </h2>
@@ -639,29 +646,31 @@ function CloseLoopHero() {
             </Link>
           </div>
 
-          {/* SVG loop */}
-          <div className="flex justify-center">
-            <div className="relative w-[440px] h-[440px] max-w-full">
-              <svg viewBox="0 0 440 440" className="w-full h-full">
-                {/* Background ring */}
-                <circle cx={cx} cy={cy} r={R} fill="none"
+          {/* Loop visualization — order-1 so it shows ABOVE the copy on
+              mobile (better visual hook), then flips to the right on
+              desktop via order-2. */}
+          <div className="flex justify-center order-1 lg:order-2">
+            <div className="relative w-full max-w-[360px] sm:max-w-[420px] lg:max-w-[440px] aspect-square mx-auto">
+              {/* SVG ring + orbiting particle. ViewBox is fixed 440x440
+                  but the SVG element fills its container — the viewBox
+                  scaling handles everything. */}
+              <svg viewBox="0 0 440 440" className="w-full h-full" preserveAspectRatio="xMidYMid meet">
+                <circle cx={220} cy={220} r={160} fill="none"
                   stroke="var(--border)" strokeWidth="1" strokeDasharray="4 4" />
-                {/* Animated traveler */}
                 <motion.circle r="6" fill="var(--green)"
-                  initial={{ pathLength: 0 }}
                   style={{
                     filter: "drop-shadow(0 0 6px var(--green))",
-                    offsetPath: `path("M ${cx + R} ${cy} A ${R} ${R} 0 1 1 ${cx - R} ${cy} A ${R} ${R} 0 1 1 ${cx + R} ${cy}")`,
+                    offsetPath: `path("M 380 220 A 160 160 0 1 1 60 220 A 160 160 0 1 1 380 220")`,
                   }}
                   animate={{ offsetDistance: ["0%", "100%"] }}
                   transition={{ duration: 12, repeat: Infinity, ease: "linear" }} />
               </svg>
 
-              {/* Nodes positioned around the circle */}
+              {/* Nodes positioned in % of the container so they scale */}
               {NODES.map((n, i) => {
                 const angle = (i / NODES.length) * Math.PI * 2 - Math.PI / 2
-                const x = cx + R * Math.cos(angle)
-                const y = cy + R * Math.sin(angle)
+                const leftPct = CX_PCT + R_PCT * Math.cos(angle)
+                const topPct  = CY_PCT + R_PCT * Math.sin(angle)
                 return (
                   <motion.div
                     key={n.label}
@@ -669,32 +678,34 @@ function CloseLoopHero() {
                     animate={inView ? { opacity: 1, scale: 1 } : {}}
                     transition={{ delay: 0.1 + i * 0.08, duration: 0.5, ease: "easeOut" }}
                     className="absolute -translate-x-1/2 -translate-y-1/2"
-                    style={{ left: x, top: y }}>
+                    style={{ left: `${leftPct}%`, top: `${topPct}%` }}>
                     <div className="flex flex-col items-center">
-                      <div className="h-14 w-14 rounded-2xl flex items-center justify-center mb-1.5"
+                      <div className="h-11 w-11 sm:h-12 sm:w-12 lg:h-14 lg:w-14 rounded-2xl flex items-center justify-center mb-1 sm:mb-1.5"
                         style={{
                           background: "var(--surface)",
                           border: `1.5px solid ${n.color}`,
                           color: n.color,
                           boxShadow: `0 6px 16px -4px ${n.color}40`,
                         }}>
-                        <n.Icon size={20} strokeWidth={1.8} />
+                        <n.Icon size={18} strokeWidth={1.8} />
                       </div>
-                      <span className="text-[11px] font-semibold text-theme">{n.label}</span>
+                      <span className="text-[10px] sm:text-[11px] font-semibold text-theme whitespace-nowrap">
+                        {n.label}
+                      </span>
                     </div>
                   </motion.div>
                 )
               })}
 
-              {/* Center label */}
+              {/* Center label — also responsive */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="text-center">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.15em] mb-1"
+                  <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] mb-0.5 sm:mb-1"
                     style={{ color: "var(--text-muted)" }}>
                     End-to-end
                   </p>
-                  <p className="text-3xl font-bold text-theme">2 days</p>
-                  <p className="text-xs" style={{ color: "var(--text-2)" }}>not 8</p>
+                  <p className="text-2xl sm:text-3xl font-bold text-theme">2 days</p>
+                  <p className="text-[11px] sm:text-xs" style={{ color: "var(--text-2)" }}>not 8</p>
                 </div>
               </div>
             </div>
@@ -862,7 +873,7 @@ function BentoAuditPreview() {
   const events = [
     "Sarah K. approved Cash recon · 09:42",
     "AI generated commentary on AR · 09:38",
-    "Pankaj G. closed period Nov-25 · 08:11",
+    "Period Nov-25 locked by admin · 08:11",
   ]
   return (
     <div className="w-full space-y-1.5">
@@ -1455,18 +1466,28 @@ function FounderQuote() {
         <Quote size={32} strokeWidth={1.5} style={{ color: "var(--green)" }} className="mx-auto mb-5" />
         <blockquote className="font-bold leading-[1.25] tracking-tight text-theme mb-6"
           style={{ fontSize: "clamp(22px, 3.5vw, 32px)" }}>
-          "I built Nordavix because I closed books for ten years with
-          fourteen spreadsheets and a praying heart. There had to be
-          something better. So we made it."
+          "I closed books for ten years with fourteen spreadsheets
+          and a praying heart. There had to be something better.
+          So I built it."
         </blockquote>
+        {/* Attribution — no name on purpose. The credential is the point:
+            a practicing CPA who's been on the wrong end of every close
+            you've ever lived through. Logo doubles as the avatar so the
+            brand mark is what the eye lands on. */}
         <div className="inline-flex items-center gap-3">
-          <div className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-bold"
-            style={{ background: "var(--green)" }}>
-            PG
+          <div className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0"
+            style={{
+              background: "var(--green-subtle)",
+              border: "1.5px solid color-mix(in oklab, var(--green) 40%, transparent)",
+            }}>
+            <img src="/logo-mark-dark.svg"  alt="" className="h-6 w-6 dark:hidden" />
+            <img src="/logo-mark-light.svg" alt="" className="h-6 w-6 hidden dark:block" />
           </div>
           <div className="text-left">
-            <p className="text-sm font-bold text-theme">Pankaj Gusain, CPA</p>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>Founder, Nordavix</p>
+            <p className="text-sm font-bold text-theme">The Founding CPA</p>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Built Nordavix from inside a real close team
+            </p>
           </div>
         </div>
       </div>
