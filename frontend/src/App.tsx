@@ -106,8 +106,8 @@ export default function App() {
           Privacy Policy and Terms of Service URLs). */}
       <Route path="/terms"   element={<TermsPage />} />
       <Route path="/privacy" element={<PrivacyPage />} />
-      {/* Public Help / SOP — same content as /app/help, hosted at
-          the marketing root so it's shareable + indexable. */}
+      {/* Public Help — same content as /app/help, hosted at the
+          marketing root so it's shareable + indexable. */}
       <Route path="/help"    element={<PublicHelpPage />} />
 
       {/* Custom-branded auth surface — replaces Clerk's hosted page.

@@ -1,10 +1,10 @@
 /**
- * Renders the Nordavix SOP / Help content from the shared content module.
+ * Renders the Nordavix Help content from the shared content module.
  *
  * Both wrappers (in-app /app/help and public /help) use this same
  * component — they only differ in the page chrome around it
  * (sidebar / footer / theme handling). Keeping the rendering here
- * means the SOP layout stays consistent in both surfaces.
+ * means the layout stays consistent in both surfaces.
  *
  * Layout: sticky left TOC + scrollable content area on the right.
  * Active section in the TOC tracks the user's scroll position via
@@ -116,7 +116,7 @@ export function HelpContent({ publicMode = false }: Props) {
             <BookOpen size={14} strokeWidth={1.8} style={{ color: "var(--green)" }} />
             <h2 className="text-[10px] font-bold uppercase tracking-wider"
               style={{ color: "var(--text-muted)" }}>
-              Standard Operating Procedure
+              Contents
             </h2>
           </div>
           <nav className="space-y-0.5">

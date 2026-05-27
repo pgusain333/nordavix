@@ -1,9 +1,10 @@
 /**
  * Public help page at /help — no login required.
  *
- * Same SOP content as /app/help, wrapped in the marketing site chrome
- * (header with logo + nav, footer with legal links). Hostable on the
- * public internet, indexed by search engines, shareable with anyone.
+ * Same help content as /app/help, wrapped in the marketing site chrome
+ * (marketing header with logo + nav, shared MarketingFooter). Hostable
+ * on the public internet, indexed by search engines, shareable with
+ * anyone.
  *
  * The shared <HelpContent /> component does the heavy lifting; this
  * file is just the layout shell.
@@ -14,6 +15,7 @@ import { ArrowRight, BookOpen, ExternalLink } from "lucide-react"
 
 import { HelpContent } from "@/modules/help/HelpContent"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
+import { MarketingFooter } from "@/marketing/MarketingFooter"
 
 export function PublicHelpPage() {
   return (
@@ -61,11 +63,11 @@ export function PublicHelpPage() {
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-4"
             style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
             <BookOpen size={12} strokeWidth={2.2} />
-            Standard Operating Procedure
+            Help center
           </div>
           <h1 className="font-bold text-theme leading-[1.1] tracking-tight mb-3"
             style={{ fontSize: "clamp(28px, 5vw, 44px)" }}>
-            Nordavix Help &amp; SOP
+            Nordavix Help
           </h1>
           <p className="text-base sm:text-lg max-w-3xl leading-relaxed"
             style={{ color: "var(--text-2)" }}>
@@ -93,22 +95,7 @@ export function PublicHelpPage() {
       </main>
 
       {/* ── Footer ── */}
-      <footer className="border-t mt-12"
-        style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-            © {new Date().getFullYear()} Nordavix. Built by a CPA, for accountants.
-          </div>
-          <div className="flex items-center gap-4 text-xs">
-            <Link to="/terms" style={{ color: "var(--text-muted)" }}
-              className="hover:underline">Terms</Link>
-            <Link to="/privacy" style={{ color: "var(--text-muted)" }}
-              className="hover:underline">Privacy</Link>
-            <a href="mailto:hello@nordavix.com" style={{ color: "var(--text-muted)" }}
-              className="hover:underline">Contact</a>
-          </div>
-        </div>
-      </footer>
+      <MarketingFooter />
     </div>
   )
 }

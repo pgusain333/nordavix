@@ -238,10 +238,10 @@ export function LeftNav({ onClose }: Props) {
             color: isActive ? "var(--green)" : "var(--nav-text)",
             background: isActive ? "var(--green-subtle)" : "transparent",
           })}
-          title="Standard operating procedure — every workflow, every screen"
+          title="Step-by-step guide — every workflow, every screen"
         >
           <LifeBuoy size={16} strokeWidth={1.8} className="shrink-0" />
-          <span className="flex-1 text-left">Help &amp; SOP</span>
+          <span className="flex-1 text-left">Help</span>
         </NavLink>
         <button
           type="button"
