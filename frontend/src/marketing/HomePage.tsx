@@ -622,8 +622,14 @@ function CloseLoopHero() {
   return (
     <section ref={ref} className="px-6 py-20 sm:py-28 lg:py-32 overflow-hidden">
       <div className="max-w-6xl mx-auto">
-        <div className="grid lg:grid-cols-[1fr_minmax(0,440px)] gap-10 sm:gap-12 lg:gap-20 items-center">
-          <div className="text-center lg:text-left order-2 lg:order-1">
+        {/* place-items-center forces both grid cells to center their content
+            horizontally on mobile (single-column layout). Without this the
+            text column was technically center-aligned via text-center, but
+            the loop visualization sat in a wider column that defaulted to
+            stretch — making the loop's container span full width and visually
+            drift left. items-center handles vertical alignment on desktop. */}
+        <div className="grid lg:grid-cols-[1fr_minmax(0,440px)] gap-10 sm:gap-12 lg:gap-20 items-center place-items-center lg:place-items-stretch">
+          <div className="text-center lg:text-left order-2 lg:order-1 max-w-xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-5"
               style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
               <Workflow size={12} strokeWidth={2} />
