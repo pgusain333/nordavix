@@ -163,6 +163,18 @@ export function DashboardHome() {
     })
   }, [trialBalances, period])
 
+  // Flux readiness for the close gate. Mirrors the server-side rule:
+  // at least one flux analysis must exist for the month AND all must
+  // be approved. Drives the Close-books CTA on the progress card.
+  const fluxStatus = useMemo(() => {
+    const unapproved = monthlyFlux.filter((tb) => !tb.approved_by)
+    return {
+      total:           monthlyFlux.length,
+      unapprovedCount: unapproved.length,
+      allApproved:     monthlyFlux.length > 0 && unapproved.length === 0,
+    }
+  }, [monthlyFlux])
+
   // Friendly label for the selected month (e.g. "April 2026")
   const monthLabel = useMemo(() => {
     if (!period) return ""
@@ -647,6 +659,8 @@ export function DashboardHome() {
           onCloseBooks={handleCloseBooks}
           closing={closeMut.isPending}
           closeMsg={closeMsg}
+          fluxStatus={fluxStatus}
+          onOpenFlux={() => navigate(`/app/flux/analyses?period=${period}`)}
         />
 
         {/* ── Two big "Open" action cards ────────────────────────
@@ -912,6 +926,7 @@ export function DashboardHome() {
 function CloseProgressCard({
   monthLabel, period, trackerEntry, onOpen,
   isAdmin, blocker, onCloseBooks, closing, closeMsg,
+  fluxStatus, onOpenFlux,
 }: {
   monthLabel: string
   period: string
@@ -940,6 +955,11 @@ function CloseProgressCard({
   onCloseBooks: () => void
   closing: boolean
   closeMsg: { kind: "ok" | "err"; text: string } | null
+  // Flux gate state — the server also requires every flux analysis for
+  // the month to be approved before closing. Surface this in the UI so
+  // the admin knows why the Close button is disabled.
+  fluxStatus: { total: number; unapprovedCount: number; allApproved: boolean }
+  onOpenFlux: () => void
 }) {
   // Parse period for date math
   const periodEnd = (() => {
@@ -1086,22 +1106,46 @@ function CloseProgressCard({
         </div>
       </div>
 
-      {/* ── Ready-to-close CTA bar (only when 100% approved) ────
-          Admin-only call to lock the books. Hidden when an earlier
-          month is still open — sequential close is enforced server-
-          side too, but we hide the button so the admin doesn't even
-          see a tease. Non-admins just see the celebration line. */}
+      {/* ── Ready-to-close CTA bar ─────────────────────────────
+          Two-gate close: every recon account approved (pct === 100)
+          AND every flux analysis for the month approved (fluxStatus.allApproved).
+          Tone of the bar shifts based on which gates pass:
+            • Both pass → green "ready to close" + admin Close button.
+            • Recons done, flux not → amber "still need flux approvals"
+              + link to the Flux page (no Close button).
+            • Recons not done → strip hidden (the progress bar tells
+              that story already).
+          The server-side close gate enforces both rules either way; we
+          mirror them here so the admin doesn't click the button only
+          to bounce off a 409. */}
       {pct === 100 && (
         <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2"
           style={{
             borderTop: "1px solid var(--border)",
-            background: "var(--green-subtle)",
+            background: fluxStatus.allApproved ? "var(--green-subtle)" : "rgba(245, 158, 11, 0.10)",
           }}>
           <div className="flex items-center gap-2 min-w-0">
-            <CheckCircle2 size={14} strokeWidth={2} style={{ color: "var(--green)" }} className="shrink-0" />
-            <span className="text-xs font-semibold" style={{ color: "var(--green)" }}>
-              {monthLabel} is reconciled — every account approved.
-            </span>
+            {fluxStatus.allApproved ? (
+              <>
+                <CheckCircle2 size={14} strokeWidth={2} style={{ color: "var(--green)" }} className="shrink-0" />
+                <span className="text-xs font-semibold" style={{ color: "var(--green)" }}>
+                  {monthLabel} is reconciled — every account
+                  {fluxStatus.total > 0
+                    ? ` and ${fluxStatus.total} flux analysis${fluxStatus.total === 1 ? "" : "es"}`
+                    : ""} approved.
+                </span>
+              </>
+            ) : (
+              <>
+                <Lock size={14} strokeWidth={2} style={{ color: "#b45309" }} className="shrink-0" />
+                <span className="text-xs font-semibold" style={{ color: "#b45309" }}>
+                  {fluxStatus.total === 0
+                    ? `Flux analysis required for ${monthLabel}.`
+                    : `${fluxStatus.unapprovedCount} flux analysis${fluxStatus.unapprovedCount === 1 ? "" : "es"} still need approval.`
+                  }
+                </span>
+              </>
+            )}
           </div>
           {isAdmin && (
             blocker ? (
@@ -1109,6 +1153,20 @@ function CloseProgressCard({
                 <Lock size={11} strokeWidth={2} />
                 Close {blocker.label} first
               </span>
+            ) : !fluxStatus.allApproved ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onOpenFlux}
+                icon={<BarChart3 size={12} strokeWidth={1.8} />}
+                title={fluxStatus.total === 0
+                  ? "Open Flux Analysis to create one for this month"
+                  : "Open Flux Analysis to approve the pending analyses"
+                }
+                style={{ borderColor: "#f59e0b", color: "#b45309" }}
+              >
+                {fluxStatus.total === 0 ? "Start flux" : "Approve flux"}
+              </Button>
             ) : (
               <Button
                 size="sm"

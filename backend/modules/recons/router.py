@@ -1417,6 +1417,43 @@ async def close_period(
             ),
         )
 
+    # Flux gate — every flux analysis whose `period_current` falls in
+    # the closing month must be approved. AND there must be at least
+    # one flux analysis for the month. Matches the user-side close
+    # ceremony: variance analysis is a required part of every month-
+    # end close, not an optional add-on. Without this, an admin could
+    # lock the books while a P&L variance review was still pending
+    # sign-off, defeating the audit trail.
+    from models.trial_balance import TrialBalance
+    _first = pe.replace(day=1)
+    flux_rows = list((await db.execute(
+        select(TrialBalance).where(
+            TrialBalance.period_current >= _first,
+            TrialBalance.period_current <= pe,
+        )
+    )).scalars().all())
+    if not flux_rows:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"No flux analysis has been run for {pe.strftime('%b %Y')}. "
+                "Open Flux Analysis, generate one for this month, and approve "
+                "it before closing the books."
+            ),
+        )
+    unapproved_flux = [tb for tb in flux_rows if tb.approved_by is None]
+    if unapproved_flux:
+        names = ", ".join((tb.name or f"Analysis {str(tb.id)[:8]}") for tb in unapproved_flux[:5])
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot close — {len(unapproved_flux)} flux analysis"
+                f"{'es' if len(unapproved_flux) != 1 else ''} for "
+                f"{pe.strftime('%b %Y')} still need approval: {names}"
+                + ("…" if len(unapproved_flux) > 5 else "")
+            ),
+        )
+
     # Backfill: freeze subledger_total on any approved row that still
     # has NULL. This catches legacy data (rows approved before the
     # auto-save-on-approval landed) and guarantees that every closed
