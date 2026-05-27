@@ -56,13 +56,18 @@ export function ConnectionsPage() {
   // The admins list — surfaced in the non-admin "ask your admin" callout so
   // the user knows exactly who to ping in Slack/email. Only loaded for
   // non-admins to avoid an extra request when admin is viewing.
-  const { data: membersData } = useQuery({
+  // listMembers() unwraps the {members: [...]} response server-side and
+  // returns the array directly — so we filter on `members` not
+  // `members.members`. (Local `tsc --noEmit` missed this; the production
+  // `tsc -b` build in CI caught it because it ignores tsbuildinfo
+  // shortcuts and re-typechecks from scratch.)
+  const { data: members = [] } = useQuery({
     queryKey: ["workspace-members"],
     queryFn:  workspaceApi.listMembers,
     staleTime: 60_000,
     enabled: !!me && !isAdmin,
   })
-  const admins = (membersData?.members ?? []).filter((m) => m.role === "admin")
+  const admins = members.filter((m) => m.role === "admin")
 
   async function connectQbo() {
     setQboError(null)
