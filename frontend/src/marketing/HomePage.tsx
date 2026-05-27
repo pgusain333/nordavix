@@ -112,7 +112,7 @@ function Navbar() {
             <a href="#pricing" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
-              Pricing
+              Beta
             </a>
             <a href="#faq" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
@@ -172,7 +172,7 @@ function Navbar() {
             {[
               { label: "Solutions", to: "/solutions" },
               { label: "Features",  to: "#features" },
-              { label: "Pricing",   to: "#pricing" },
+              { label: "Beta",      to: "#pricing" },
               { label: "FAQ",       to: "#faq" },
             ].map((item) => (
               item.to.startsWith("#")
@@ -1179,147 +1179,84 @@ function Personas() {
   )
 }
 
-// ─── Pricing ───────────────────────────────────────────────────────────────
+// ─── Beta phase callout (replaces the previous pricing section while
+//      we're in invite-only beta — pricing isn't finalized yet, and
+//      committing to specific numbers on a public marketing page lowers
+//      our flexibility when we do set the tiers). ─────────────────────
 
 function Pricing() {
-  const [annual, setAnnual] = useState(true)
-
-  const PLANS = [
-    {
-      name: "Starter", desc: "For solo controllers running close for one company.",
-      monthly: 0, annual: 0,
-      cta: "Start free", highlight: false,
-      features: [
-        "1 company workspace",
-        "QuickBooks integration",
-        "Reconciliations + Flux",
-        "AI commentary (50 / month)",
-        "Email support",
-      ],
-    },
-    {
-      name: "Team", desc: "For close teams that need maker/checker discipline.",
-      monthly: 149, annual: 129,
-      cta: "Start 14-day trial", highlight: true,
-      features: [
-        "Up to 3 company workspaces",
-        "Unlimited AI commentary",
-        "Maker / checker workflow",
-        "Sequential close gate",
-        "Audit log export",
-        "Priority support",
-      ],
-    },
-    {
-      name: "Firm", desc: "For CPA firms and fractional CFO practices.",
-      monthly: 399, annual: 349,
-      cta: "Book a call", highlight: false,
-      features: [
-        "Unlimited workspaces",
-        "Per-client preparer/reviewer roles",
-        "Client-ready PDF deliverables",
-        "Custom integrations",
-        "SSO + advanced security",
-        "Dedicated success manager",
-      ],
-    },
-  ]
-
+  // Keeps the id="pricing" anchor so the existing navbar link still
+  // scrolls here — the section's content just changed.
   return (
     <section id="pricing" className="px-6 py-24 sm:py-32">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-12 max-w-2xl mx-auto">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-            <Zap size={12} strokeWidth={2} />
-            Pricing
-          </div>
-          <h2 className="font-bold text-theme leading-[1.1] tracking-tight mb-4"
-            style={{ fontSize: "clamp(30px, 5vw, 48px)" }}>
-            Pay for outcomes.<br />Not seats.
-          </h2>
-          <p className="text-base sm:text-lg leading-relaxed mb-6" style={{ color: "var(--text-2)" }}>
-            Every plan includes the full close workflow. You're paying for capacity and support, not feature gating.
-          </p>
-
-          {/* Billing toggle */}
-          <div className="inline-flex items-center gap-1 rounded-full p-1"
-            style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-            {(["monthly", "annual"] as const).map((mode) => (
-              <button key={mode}
-                onClick={() => setAnnual(mode === "annual")}
-                className="px-4 py-1.5 rounded-full text-xs font-semibold transition-all"
-                style={{
-                  background: (mode === "annual") === annual ? "var(--green)" : "transparent",
-                  color: (mode === "annual") === annual ? "white" : "var(--text-2)",
-                }}>
-                {mode === "monthly" ? "Monthly" : (
-                  <span>Annual <span className="ml-1 opacity-90">· save 15%</span></span>
-                )}
-              </button>
-            ))}
-          </div>
+      <div className="max-w-3xl mx-auto text-center">
+        {/* Kicker */}
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-5"
+          style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+          <Zap size={12} strokeWidth={2.4} />
+          Currently in private Beta
         </div>
 
-        <div className="grid md:grid-cols-3 gap-5">
-          {PLANS.map((plan) => {
-            const price = annual ? plan.annual : plan.monthly
-            return (
-              <motion.div
-                key={plan.name}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.5 }}
-                className="rounded-2xl p-7 flex flex-col relative"
-                style={{
-                  background: "var(--surface)",
-                  border: plan.highlight
-                    ? `2px solid var(--green)`
-                    : "1px solid var(--border)",
-                  boxShadow: plan.highlight
-                    ? "0 20px 48px -12px rgba(16,185,129,0.30)"
-                    : "var(--card-shadow)",
-                }}>
-                {plan.highlight && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider text-white"
-                    style={{ background: "var(--green)" }}>
-                    Most popular
-                  </span>
-                )}
-                <h3 className="text-lg font-bold text-theme">{plan.name}</h3>
-                <p className="text-sm mt-1 mb-5" style={{ color: "var(--text-2)" }}>{plan.desc}</p>
-                <div className="mb-6">
-                  <span className="text-4xl font-bold text-theme tabular-nums">
-                    {price === 0 ? "Free" : `$${price}`}
-                  </span>
-                  {price > 0 && (
-                    <span className="text-sm ml-1" style={{ color: "var(--text-muted)" }}>
-                      /mo · billed {annual ? "annually" : "monthly"}
-                    </span>
-                  )}
-                </div>
-                <Link to={plan.name === "Firm" ? "mailto:hello@nordavix.com" : "/sign-up"}
-                  className="block text-center px-4 py-2.5 rounded-lg text-sm font-semibold mb-6 transition-opacity hover:opacity-90"
-                  style={{
-                    background: plan.highlight ? "var(--green)" : "var(--surface-2)",
-                    color:      plan.highlight ? "white" : "var(--text)",
-                    border:     plan.highlight ? "none" : "1px solid var(--border-strong)",
-                  }}>
-                  {plan.cta}
-                </Link>
-                <ul className="space-y-2.5 flex-1">
-                  {plan.features.map((f) => (
-                    <li key={f} className="flex items-start gap-2 text-sm" style={{ color: "var(--text-2)" }}>
-                      <CheckCircle2 size={14} strokeWidth={2} style={{ color: "var(--green)" }} className="mt-0.5 shrink-0" />
-                      <span>{f}</span>
-                    </li>
-                  ))}
-                </ul>
-              </motion.div>
-            )
-          })}
+        <h2 className="font-bold text-theme leading-[1.1] tracking-tight mb-5"
+          style={{ fontSize: "clamp(30px, 5vw, 48px)" }}>
+          Pricing coming soon.<br />Early access is open.
+        </h2>
+
+        <p className="text-base sm:text-lg leading-relaxed mb-8 max-w-2xl mx-auto"
+          style={{ color: "var(--text-2)" }}>
+          Nordavix is in beta with a small group of CPA firms and controllers
+          shaping the product. Pricing tiers will be published when we exit
+          beta. Until then, beta workspaces use the full feature set at no
+          charge — in exchange for honest feedback.
+        </p>
+
+        {/* Beta benefits — three short pills */}
+        <div className="grid sm:grid-cols-3 gap-3 max-w-2xl mx-auto mb-10">
+          {[
+            { label: "Full feature set", sub: "Recons, Flux, Insights, Reports" },
+            { label: "No card required", sub: "Free during beta" },
+            { label: "Direct line to founders", sub: "We ship what you need" },
+          ].map((b) => (
+            <div key={b.label}
+              className="rounded-xl p-4 text-left"
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                boxShadow: "var(--card-shadow)",
+              }}>
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle2 size={14} strokeWidth={2.2} style={{ color: "var(--green)" }} />
+                <p className="text-sm font-semibold text-theme">{b.label}</p>
+              </div>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>{b.sub}</p>
+            </div>
+          ))}
         </div>
+
+        {/* Primary CTA — request beta access (sign-up flow); secondary
+            — email founders for firm-level conversations. */}
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          <Link to="/sign-up"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
+            style={{ background: "var(--green)" }}>
+            Request beta access
+            <ArrowRight size={14} strokeWidth={2.2} />
+          </Link>
+          <a href="mailto:hello@nordavix.com?subject=Nordavix%20beta%20%E2%80%94%20firm%20enquiry"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold transition-colors"
+            style={{
+              background: "var(--surface)",
+              color: "var(--text)",
+              border: "1px solid var(--border-strong)",
+            }}>
+            Talk to a founder
+          </a>
+        </div>
+
+        <p className="text-xs mt-8" style={{ color: "var(--text-muted)" }}>
+          Beta cohorts are small. We'll be in touch within 1-2 business days
+          to set up your workspace.
+        </p>
       </div>
     </section>
   )

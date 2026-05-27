@@ -21,6 +21,7 @@ import {
   type SortingState,
 } from "@tanstack/react-table"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { AnimatePresence, motion } from "framer-motion"
 import {
   CheckCircle2,
   Check,
@@ -102,7 +103,9 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   })
   const canApprove = me?.role === "admin" || me?.role === "reviewer"
   const [sorting,    setSorting]   = useState<SortingState>([
-    { id: "is_material", desc: true },
+    // Sort by absolute dollar variance desc so the biggest movers
+    // surface first (formerly sorted by is_material; column is gone).
+    { id: "dollar_variance", desc: true },
   ])
   // Status buckets mirror Reconciliations exactly:
   //   open      = needs work (pending / generating / flagged)
@@ -474,16 +477,9 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         )
       },
     }),
-    col.accessor("is_material", {
-      header: "Material",
-      size:   80,
-      sortingFn: (a, b) =>
-        (b.original.is_material ? 1 : 0) - (a.original.is_material ? 1 : 0),
-      cell: (c) =>
-        c.getValue() ? (
-          <Badge variant="material" dot>Material</Badge>
-        ) : null,
-    }),
+    // (Material column removed — materiality feature dropped per
+    // user direction. Every variance row now gets the same Pull-
+    // QBO / Run-AI affordances regardless of materiality.)
     col.accessor("status", {
       header: "Status",
       size:   120,
@@ -503,10 +499,10 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
           <div className="flex items-center gap-1.5 justify-end">
             {/* Per-row Agentic — open to all workspace members.
                 Pulls QBO txns + runs the deeper structured analysis
-                on just this row. Visible only on material variances
-                (non-material rows aren't analyzed). Hidden on locked
-                periods. Spinner replaces icon while running. */}
-            {r.is_material && !readOnly && (
+                on this row. Shown on every row (materiality removed).
+                Hidden on locked periods. Spinner replaces icon while
+                running. */}
+            {!readOnly && (
               <Button
                 size="icon-sm"
                 variant="outline"
@@ -580,7 +576,6 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   })
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  const materialCount = rows.filter((r) => r.is_material).length
 
   // Filter buckets — match the Reconciliations status buckets EXACTLY:
   // Open (red) / Prepared (blue) / Approved (green) / All (neutral).
@@ -787,34 +782,21 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
               {table.getRowModel().rows.map((row) => {
                 const isExpanded = expandedRow === row.original.id
                 const isEditing  = editingRow === row.original.id
-                const isMaterial = row.original.is_material
                 return (
                   <Fragment key={row.id}>
                     <tr
                       className="cursor-pointer transition-colors"
                       style={{
-                        // Material rows get a subtle amber tint that works in both themes;
-                        // expanded rows pick up the secondary surface color.
-                        background: isExpanded
-                          ? "var(--surface-2)"
-                          : isMaterial
-                            ? "rgba(245, 158, 11, 0.08)"
-                            : "var(--surface)",
+                        // Expanded rows pick up the secondary surface color;
+                        // all other rows render plain (materiality removed).
+                        background: isExpanded ? "var(--surface-2)" : "var(--surface)",
                         borderBottom: "1px solid var(--border)",
                       }}
                       onMouseEnter={(e) => {
-                        if (!isExpanded) {
-                          (e.currentTarget as HTMLElement).style.background = isMaterial
-                            ? "rgba(245, 158, 11, 0.14)"
-                            : "var(--surface-2)"
-                        }
+                        if (!isExpanded) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"
                       }}
                       onMouseLeave={(e) => {
-                        if (!isExpanded) {
-                          (e.currentTarget as HTMLElement).style.background = isMaterial
-                            ? "rgba(245, 158, 11, 0.08)"
-                            : "var(--surface)"
-                        }
+                        if (!isExpanded) (e.currentTarget as HTMLElement).style.background = "var(--surface)"
                       }}
                       onClick={() =>
                         setExpanded((p) => p === row.original.id ? null : row.original.id)
@@ -827,34 +809,58 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                       ))}
                     </tr>
 
-                    {/* Expanded narrative row */}
-                    {isExpanded && (
-                      <tr style={{ background: "var(--surface-2)" }}>
-                        <td
-                          colSpan={columns.length}
-                          className="px-5 py-4"
-                          style={{ borderBottom: "1px solid var(--border)" }}
+                    {/* Expanded narrative row — wrapped in motion.tr
+                        so the height + opacity animate when the user
+                        toggles a row. Previously a hard if-render which
+                        snapped open/closed. Height auto + a short
+                        cubic ease keeps the table feeling responsive
+                        without being slow. */}
+                    <AnimatePresence>
+                      {isExpanded && (
+                        <motion.tr
+                          key={`${row.id}-exp`}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.18, ease: [0.32, 0.72, 0, 1] }}
+                          style={{ background: "var(--surface-2)" }}
                         >
-                          <NarrativePanel
-                            row={row.original}
-                            tbId={tbId}
-                            isEditing={isEditing}
-                            editContent={editContent}
-                            onEditContent={setEditContent}
-                            onEdit={() => {
-                              setEditing(row.original.id)
-                              setEditContent(row.original.narrative ?? "")
-                            }}
-                            onSave={() => editNarrative.mutate({
-                              varId: row.original.id,
-                              content: editContent
-                            })}
-                            onCancel={() => setEditing(null)}
-                            isSaving={editNarrative.isPending}
-                          />
-                        </td>
-                      </tr>
-                    )}
+                          <td
+                            colSpan={columns.length}
+                            className="px-5"
+                            style={{ borderBottom: "1px solid var(--border)", padding: 0 }}
+                          >
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: "auto", opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
+                              style={{ overflow: "hidden" }}
+                            >
+                              <div className="px-5 py-4">
+                                <NarrativePanel
+                                  row={row.original}
+                                  tbId={tbId}
+                                  isEditing={isEditing}
+                                  editContent={editContent}
+                                  onEditContent={setEditContent}
+                                  onEdit={() => {
+                                    setEditing(row.original.id)
+                                    setEditContent(row.original.narrative ?? "")
+                                  }}
+                                  onSave={() => editNarrative.mutate({
+                                    varId: row.original.id,
+                                    content: editContent
+                                  })}
+                                  onCancel={() => setEditing(null)}
+                                  isSaving={editNarrative.isPending}
+                                />
+                              </div>
+                            </motion.div>
+                          </td>
+                        </motion.tr>
+                      )}
+                    </AnimatePresence>
                   </Fragment>
                 )
               })}
@@ -872,7 +878,6 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         >
           <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
             {rows.filter((r) => r.status === "approved").length} of {rows.length} variances approved
-            {materialCount > 0 && ` · ${materialCount} material`}
           </p>
         </div>
       )}
@@ -1029,14 +1034,14 @@ function NarrativePanel({
         )}
       </div>
 
-      {/* Transactions drill-in — only for material variances */}
-      {row.is_material && (
-        <VarianceTxnsSection
-          tbId={tbId}
-          varianceId={row.id}
-          expectedVariance={row.dollar_variance}
-        />
-      )}
+      {/* Transactions drill-in — shown on every row now (materiality
+          dropped). Pull-from-QBO is the canonical way to evidence
+          any variance, big or small. */}
+      <VarianceTxnsSection
+        tbId={tbId}
+        varianceId={row.id}
+        expectedVariance={row.dollar_variance}
+      />
     </div>
   )
 }

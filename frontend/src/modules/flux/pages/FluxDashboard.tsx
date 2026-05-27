@@ -510,8 +510,9 @@ export function FluxDashboard() {
                 agentic toggle), only disabled while a run is
                 in-flight. */}
             {showVarianceTable && (() => {
-              const matVars = variances.filter((r) => r.is_material)
-              const pendingMat = matVars.filter((r) =>
+              // Materiality dropped — Agentic now runs across EVERY
+              // variance, biggest movers first (handled server-side).
+              const pendingMat = variances.filter((r) =>
                 !["generated", "edited", "approved"].includes(r.status),
               ).length
               const isPending = runAgenticFluxMut.isPending
@@ -574,10 +575,11 @@ export function FluxDashboard() {
                 </span>
               ) : canSignOff ? (
                 (() => {
-                  const material = variances.filter((v) => v.is_material)
-                  const linesApproved = material.filter((v) => v.status === "approved")
-                  const allLinesDone = material.length > 0 && linesApproved.length === material.length
-                  const remaining = material.length - linesApproved.length
+                  // Sign-off rule: every variance row approved (materiality
+                  // dropped — was previously a subset filter on is_material).
+                  const linesApproved = variances.filter((v) => v.status === "approved")
+                  const allLinesDone = variances.length > 0 && linesApproved.length === variances.length
+                  const remaining = variances.length - linesApproved.length
                   return (
                     <Button
                       size="sm"
@@ -586,10 +588,10 @@ export function FluxDashboard() {
                       disabled={!allLinesDone}
                       onClick={() => tbId && approveTbMut.mutate(tbId)}
                       title={
-                        material.length === 0
-                          ? "No material variances yet — generate flux or lower the materiality threshold."
+                        variances.length === 0
+                          ? "No variances yet — generate the analysis first."
                           : !allLinesDone
-                            ? `Approve all ${material.length} material variance${material.length === 1 ? "" : "s"} first (${remaining} remaining).`
+                            ? `Approve all ${variances.length} variance${variances.length === 1 ? "" : "s"} first (${remaining} remaining).`
                             : "Sign off on this analysis — required before the books can be closed for this month."
                       }
                     >
@@ -1285,19 +1287,18 @@ function FieldLabel({ label, children }: { label: string; children: React.ReactN
 // flux runner (handler comes from the parent).
 
 function FluxKpiStrip({ rows, compact }: { rows: VarianceRow[]; compact: boolean }) {
+  // Materiality dropped — all KPIs now compute across every variance,
+  // not just material ones. Approval progress + AI coverage reflect
+  // the whole set so the workflow is "review everything", not
+  // "review the big ones".
   const total = rows.length
-  const material = rows.filter((r) => r.is_material)
-  const approved = material.filter((r) => r.status === "approved")
-  const withNarrative = material.filter((r) =>
+  const approved = rows.filter((r) => r.status === "approved")
+  const withNarrative = rows.filter((r) =>
     r.status === "generated" || r.status === "edited" || r.status === "approved",
   )
   const totalAbsVar = rows.reduce((s, r) => s + Math.abs(parseFloat(r.dollar_variance) || 0), 0)
-  const approvalPct = material.length > 0
-    ? Math.round((approved.length / material.length) * 100)
-    : 0
-  const coveragePct = material.length > 0
-    ? Math.round((withNarrative.length / material.length) * 100)
-    : 0
+  const approvalPct = total > 0 ? Math.round((approved.length / total) * 100) : 0
+  const coveragePct = total > 0 ? Math.round((withNarrative.length / total) * 100) : 0
 
   // Same compact/full KPI swap pattern as the Reconciliations dashboard:
   //   · compact = pinned horizontal bar with inline metric pills + an
@@ -1322,28 +1323,28 @@ function FluxKpiStrip({ rows, compact }: { rows: VarianceRow[]; compact: boolean
             boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
           }}>
           <KpiInline
-            label="Mat"
-            value={String(material.length)}
-            tone={material.length > 0 ? "var(--text)" : "var(--text-muted)"} />
+            label="Rows"
+            value={String(total)}
+            tone={total > 0 ? "var(--text)" : "var(--text-muted)"} />
           <KpiInline
             label="Var"
             value={fmtMoneyShort(totalAbsVar)}
             tone="var(--text)" />
           <KpiInline
             label="AI"
-            value={`${withNarrative.length}/${material.length}`}
-            tone={coveragePct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+            value={`${withNarrative.length}/${total}`}
+            tone={coveragePct === 100 && total > 0 ? "var(--green)" : "var(--text)"} />
           <div className="ml-auto flex items-center gap-2 shrink-0">
             <span className="text-[11px] font-semibold tabular-nums"
-              style={{ color: approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text)" }}>
-              {approved.length}/{material.length}
+              style={{ color: approvalPct === 100 && total > 0 ? "var(--green)" : "var(--text)" }}>
+              {approved.length}/{total}
             </span>
             <div className="h-1.5 w-20 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
               <motion.div className="h-full"
                 initial={{ width: 0 }}
                 animate={{ width: `${approvalPct}%` }}
                 transition={{ duration: 0.4, ease: "easeOut" }}
-                style={{ background: approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text-muted)" }} />
+                style={{ background: approvalPct === 100 && total > 0 ? "var(--green)" : "var(--text-muted)" }} />
             </div>
             <span className="text-[10px] hidden sm:inline" style={{ color: "var(--text-muted)" }}>
               {approvalPct}%
@@ -1359,10 +1360,10 @@ function FluxKpiStrip({ rows, compact }: { rows: VarianceRow[]; compact: boolean
           transition={{ duration: 0.16, ease: "easeOut" }}
           className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <FluxKpi
-            label="Material variances"
-            value={String(material.length)}
-            sub={total > 0 ? `of ${total} total` : "no variances"}
-            tone={material.length > 0 ? "var(--text)" : "var(--text-muted)"} />
+            label="Variance rows"
+            value={String(total)}
+            sub={total > 0 ? `across all accounts` : "no variances"}
+            tone={total > 0 ? "var(--text)" : "var(--text-muted)"} />
           <FluxKpi
             label="Total |variance|"
             value={fmtMoneyShort(totalAbsVar)}
@@ -1370,14 +1371,14 @@ function FluxKpiStrip({ rows, compact }: { rows: VarianceRow[]; compact: boolean
             tone="var(--text)" />
           <FluxKpi
             label="Approval"
-            value={`${approved.length} / ${material.length}`}
-            sub={material.length > 0 ? `${approvalPct}% of material` : "—"}
-            tone={approvalPct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+            value={`${approved.length} / ${total}`}
+            sub={total > 0 ? `${approvalPct}% approved` : "—"}
+            tone={approvalPct === 100 && total > 0 ? "var(--green)" : "var(--text)"} />
           <FluxKpi
             label="AI coverage"
-            value={`${withNarrative.length} / ${material.length}`}
-            sub={material.length > 0 ? `${coveragePct}% commentary written` : "—"}
-            tone={coveragePct === 100 && material.length > 0 ? "var(--green)" : "var(--text)"} />
+            value={`${withNarrative.length} / ${total}`}
+            sub={total > 0 ? `${coveragePct}% commentary written` : "—"}
+            tone={coveragePct === 100 && total > 0 ? "var(--green)" : "var(--text)"} />
         </motion.div>
       )}
     </AnimatePresence>
