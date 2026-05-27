@@ -35,6 +35,9 @@ import {
   TrendingUp,
   Layers,
   Calendar,
+  Sparkles,
+  CheckCircle2,
+  Briefcase,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -56,27 +59,44 @@ function lastDayOfMonth(year: number, month: number): string {
 }
 
 /** Quick-period options driven off "today" — match the period selector
- *  to the most common accounting cuts. */
-function quickPeriods(): { key: string; label: string; period: string }[] {
+ *  to the most common accounting cuts. Each preset returns BOTH a
+ *  period_end AND a mode/start, so clicking "Last month" puts the page
+ *  in a state where the Income Statement shows just that one month
+ *  (not the full YTD ending in that month). */
+function quickPeriods(): { key: string; label: string; periodEnd: string; mode: "ytd" | "custom"; periodStart?: string }[] {
   const today = new Date()
   const y = today.getFullYear()
   const m = today.getMonth() + 1  // 1-12
   // Last completed month
-  const lastMonth = m === 1
-    ? { y: y - 1, m: 12 }
-    : { y, m: m - 1 }
+  const lastMonth = m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 }
   // Last completed quarter
   const quarterEndMonth = (Math.floor((m - 1) / 3)) * 3   // 0, 3, 6, 9
-  const lastQuarter = quarterEndMonth === 0
-    ? { y: y - 1, m: 12 }
-    : { y, m: quarterEndMonth }
-  // YTD = end of last completed month within the current fiscal year
-  // (treat calendar year for simplicity — most SMBs run on calendar)
+  const lastQuarter = quarterEndMonth === 0 ? { y: y - 1, m: 12 } : { y, m: quarterEndMonth }
+  const quarterStartMonth = lastQuarter.m - 2
   return [
-    { key: "lm",  label: "Last month",   period: lastDayOfMonth(lastMonth.y, lastMonth.m) },
-    { key: "lq",  label: "Last quarter", period: lastDayOfMonth(lastQuarter.y, lastQuarter.m) },
-    { key: "ytd", label: "YTD",          period: lastDayOfMonth(lastMonth.y, lastMonth.m) },
-    { key: "ly",  label: "Last year",    period: lastDayOfMonth(y - 1, 12) },
+    {
+      key: "lm", label: "Last month",
+      periodEnd: lastDayOfMonth(lastMonth.y, lastMonth.m),
+      mode: "custom",
+      periodStart: new Date(lastMonth.y, lastMonth.m - 1, 1).toISOString().slice(0, 10),
+    },
+    {
+      key: "lq", label: "Last quarter",
+      periodEnd: lastDayOfMonth(lastQuarter.y, lastQuarter.m),
+      mode: "custom",
+      periodStart: new Date(lastQuarter.y, quarterStartMonth - 1, 1).toISOString().slice(0, 10),
+    },
+    {
+      key: "ytd", label: "YTD",
+      periodEnd: lastDayOfMonth(lastMonth.y, lastMonth.m),
+      mode: "ytd",
+    },
+    {
+      key: "ly", label: "Last year",
+      periodEnd: lastDayOfMonth(y - 1, 12),
+      mode: "custom",
+      periodStart: new Date(y - 1, 0, 1).toISOString().slice(0, 10),
+    },
   ]
 }
 
@@ -108,16 +128,45 @@ const TAB_SUB: Record<Tab, string> = {
   cf: "Operating · Investing · Financing",
 }
 
+/** First-day-of-month helper for the "Custom range" default. */
+function firstDayOfMonth(periodEnd: string): string {
+  try {
+    const d = new Date(periodEnd + "T00:00:00")
+    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
+  } catch {
+    return periodEnd
+  }
+}
+
+/** First-day-of-year (calendar-year YTD). */
+function firstDayOfYear(periodEnd: string): string {
+  try {
+    const d = new Date(periodEnd + "T00:00:00")
+    return new Date(d.getFullYear(), 0, 1).toISOString().slice(0, 10)
+  } catch {
+    return periodEnd
+  }
+}
+
+type PeriodMode = "ytd" | "custom"
+
 export function FinancialsPage() {
   const navigate = useNavigate()
   const [tab, setTab]                 = useState<Tab>("is")
   const [periodEnd, setPeriodEnd]     = useState<string>(defaultPeriodEnd())
+  // Period type — YTD (default) calculates start as Jan 1 server-side.
+  // "Custom" exposes a Period Start picker so the user can drive an
+  // arbitrary range (single month, quarter, custom window). Only
+  // affects IS + CF; BS is point-in-time and ignores it.
+  const [periodMode, setPeriodMode]   = useState<PeriodMode>("ytd")
+  const [periodStart, setPeriodStart] = useState<string>(firstDayOfMonth(defaultPeriodEnd()))
   const [comparative, setComparative] = useState<boolean>(true)
   // Default to Nordavix synced data — works offline + respects the
   // user's manual reconciliation overrides. Users can flip back to
   // Live QuickBooks if they want to verify against QBO's own reports.
   const [source, setSource]           = useState<FinancialSource>("nordavix")
   const [exportError, setExportError] = useState<string | null>(null)
+  const [execError, setExecError]     = useState<string | null>(null)
   // Don't auto-fetch on mount — financial-statement pulls are
   // expensive (multiple QBO API calls) and the user typically wants
   // to pick the period first. Once they click Load, subsequent tab
@@ -132,12 +181,19 @@ export function FinancialsPage() {
   // CF tab transparently uses QBO.
   const effectiveSource: FinancialSource = tab === "cf" ? "quickbooks" : source
 
+  // Period_start is only sent when the user explicitly picked Custom
+  // AND we're on a period-based statement (IS or CF). BS is point-in-
+  // time so it's always undefined for that tab.
+  const isPeriodBased = tab === "is" || tab === "cf"
+  const effectivePeriodStart: string | undefined =
+    isPeriodBased && periodMode === "custom" ? periodStart : undefined
+
   const { data: stmt, isLoading, error, refetch } = useQuery({
-    queryKey: ["financial-statement", tab, periodEnd, comparative, effectiveSource],
+    queryKey: ["financial-statement", tab, periodEnd, comparative, effectiveSource, effectivePeriodStart],
     queryFn:  () => {
-      if (tab === "is") return financialsApi.getIncomeStatement(periodEnd, comparative, effectiveSource)
+      if (tab === "is") return financialsApi.getIncomeStatement(periodEnd, comparative, effectiveSource, effectivePeriodStart)
       if (tab === "bs") return financialsApi.getBalanceSheet(periodEnd, comparative, effectiveSource)
-      return financialsApi.getCashFlow(periodEnd, comparative, effectiveSource)
+      return financialsApi.getCashFlow(periodEnd, comparative, effectiveSource, effectivePeriodStart)
     },
     // Nordavix mode reads from our DB so QBO connection isn't strictly
     // required (snapshot may exist from past syncs even after disconnect).
@@ -151,6 +207,15 @@ export function FinancialsPage() {
       financialsApi.exportPdf(kind, periodEnd, comparative, draft, source),
     onMutate: () => setExportError(null),
     onError: (e: Error) => setExportError(e.message),
+  })
+
+  // Executive Report — single AI-narrated, multi-page board package.
+  // Only callable when books are closed (server-enforced); UI hides
+  // the section until is_closed=true on the loaded statement.
+  const execReportMut = useMutation({
+    mutationFn: () => financialsApi.exportExecutiveReport(periodEnd),
+    onMutate: () => setExecError(null),
+    onError: (e: Error) => setExecError(e.message),
   })
 
   return (
@@ -181,12 +246,56 @@ export function FinancialsPage() {
             </p>
           </div>
           <div className="flex items-end gap-2 flex-wrap">
+            {/* Period mode — controls whether IS / CF show YTD or a
+                custom range. Hidden when on BS (point-in-time). */}
+            {isPeriodBased && (
+              <label className="flex flex-col">
+                <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
+                  Period type
+                </span>
+                <select value={periodMode}
+                  onChange={(e) => {
+                    const next = e.target.value as PeriodMode
+                    setPeriodMode(next)
+                    // When flipping to Custom for the first time, seed
+                    // the start date with the first-of-current-month so
+                    // the most common case (single month P&L) is one
+                    // click away from working.
+                    if (next === "custom" && !periodStart) {
+                      setPeriodStart(firstDayOfMonth(periodEnd))
+                    }
+                  }}
+                  className="rounded-lg px-3 py-1.5 text-sm outline-none"
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+                  title="YTD = calendar year-to-date through the end date. Custom = explicit from/to range."
+                >
+                  <option value="ytd">YTD</option>
+                  <option value="custom">Custom range</option>
+                </select>
+              </label>
+            )}
+
+            {/* Period START — only shown when Custom mode + IS/CF tab.
+                For BS this stays hidden because a balance sheet is
+                as-of a single date, not a range. */}
+            {isPeriodBased && periodMode === "custom" && (
+              <div className="flex flex-col">
+                <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
+                  From
+                </span>
+                <DatePicker value={periodStart} onChange={setPeriodStart} />
+              </div>
+            )}
+
             <div className="flex flex-col">
               <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
-                As of
+                {tab === "bs"
+                  ? "As of"
+                  : (periodMode === "custom" ? "To" : "As of")}
               </span>
               <DatePicker value={periodEnd} onChange={setPeriodEnd} />
             </div>
+
             <label className="flex flex-col">
               <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
                 Source
@@ -227,9 +336,11 @@ export function FinancialsPage() {
         </div>
 
         {/* Quick-period chips — one-click presets so the user doesn't
-            have to click into the date picker for the most common
-            cuts (last month / quarter / YTD / last year). Period
-            highlights when it matches the selected date. */}
+            have to click into the date pickers for the most common
+            cuts (last month / quarter / YTD / last year). Each chip
+            sets BOTH the period type AND the date(s), so "Last month"
+            puts the Income Statement on that exact month, not on YTD
+            ending in that month. */}
         <div className="mt-3 flex items-center gap-1.5 flex-wrap">
           <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mr-1"
             style={{ color: "var(--text-muted)" }}>
@@ -237,23 +348,49 @@ export function FinancialsPage() {
             Quick
           </span>
           {quickPeriods().map((q) => {
-            const active = q.period === periodEnd
+            const active =
+              q.periodEnd === periodEnd &&
+              q.mode === periodMode &&
+              (q.mode === "ytd" || q.periodStart === periodStart)
             return (
               <button
                 key={q.key}
-                onClick={() => setPeriodEnd(q.period)}
+                onClick={() => {
+                  setPeriodEnd(q.periodEnd)
+                  setPeriodMode(q.mode)
+                  if (q.periodStart) setPeriodStart(q.periodStart)
+                }}
                 className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors"
                 style={{
                   background: active ? "var(--green-subtle)" : "var(--surface-2)",
                   color:      active ? "var(--green)"        : "var(--text-2)",
                   border:     `1px solid ${active ? "var(--green)" : "var(--border)"}`,
                 }}
-                title={`Set period to ${q.period}`}
+                title={q.mode === "ytd"
+                  ? `Set to YTD through ${q.periodEnd}`
+                  : `Set range to ${q.periodStart} – ${q.periodEnd}`}
               >
                 {q.label}
               </button>
             )
           })}
+          {/* Quick "Jan 1 — period end" YTD start for explicit YTD start
+              entry — useful when the user has Custom mode on but wants
+              calendar-YTD. Hidden when YTD mode covers it. */}
+          {isPeriodBased && periodMode === "custom" && periodStart !== firstDayOfYear(periodEnd) && (
+            <button
+              onClick={() => setPeriodStart(firstDayOfYear(periodEnd))}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors"
+              style={{
+                background: "var(--surface-2)",
+                color: "var(--text-2)",
+                border: "1px dashed var(--border)",
+              }}
+              title="Set From to January 1 of the same year"
+            >
+              ← Jan 1
+            </button>
+          )}
         </div>
       </motion.div>
 
@@ -383,10 +520,162 @@ export function FinancialsPage() {
             ) : stmt ? (
               <StatementView stmt={stmt} />
             ) : null}
+
+            {/* ── Executive Report — the USP card ───────────────
+                Bottom-of-page CTA per the user's spec ("keep in
+                attached at the bottom like before"). Only renders
+                when books are closed for the selected period — the
+                report only makes sense as a final close deliverable.
+                Generation takes ~10-30s (live QBO + AI call) so the
+                button shows a loading state with explanatory copy. */}
+            {stmt?.is_closed && (
+              <ExecutiveReportCard
+                periodLabel={(() => {
+                  try { return new Date(periodEnd + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }) }
+                  catch { return periodEnd }
+                })()}
+                onGenerate={() => execReportMut.mutate()}
+                loading={execReportMut.isPending}
+                error={execError}
+                onDismissError={() => setExecError(null)}
+              />
+            )}
           </>
         )}
       </div>
     </div>
+  )
+}
+
+// ── ExecutiveReportCard ──────────────────────────────────────────────────
+//
+// Prominent bottom-of-page CTA for the AI-narrated executive report.
+// Only mounted when the period is closed. Two states: idle (big "Generate"
+// button + explainer) and loading (spinner + reassuring copy). Surfaces
+// errors inline with a dismiss action.
+
+function ExecutiveReportCard({
+  periodLabel, onGenerate, loading, error, onDismissError,
+}: {
+  periodLabel: string
+  onGenerate: () => void
+  loading: boolean
+  error: string | null
+  onDismissError: () => void
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+      className="rounded-2xl overflow-hidden mt-4"
+      style={{
+        background: "linear-gradient(135deg, rgba(62,143,102,0.10) 0%, var(--surface) 60%)",
+        border: "1px solid var(--green)",
+        boxShadow: "var(--card-shadow)",
+      }}
+    >
+      <div className="px-5 sm:px-6 py-5 flex items-start gap-4 flex-wrap">
+        <div className="h-12 w-12 rounded-xl flex items-center justify-center shrink-0"
+          style={{ background: "var(--green)", color: "white" }}>
+          <Sparkles size={20} strokeWidth={1.8} />
+        </div>
+        <div className="flex-1 min-w-[240px]">
+          <p className="text-[10px] font-bold uppercase tracking-wider"
+            style={{ color: "var(--green)" }}>
+            Executive Report · AI-Narrated
+          </p>
+          <h3 className="text-lg sm:text-xl font-bold text-theme leading-tight mt-0.5">
+            One PDF for the boardroom — {periodLabel}
+          </h3>
+          <p className="text-xs sm:text-sm mt-1.5 max-w-xl" style={{ color: "var(--text-2)" }}>
+            A 10+ page close package: the full financial statements, key
+            insights with charts, reconciliation summary, flux highlights,
+            plus AI-written executive summary, risks, recommendations, and
+            forward outlook. Designed to read at a board meeting without
+            edits.
+          </p>
+          <div className="flex items-center gap-3 flex-wrap mt-3 text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span className="inline-flex items-center gap-1">
+              <Briefcase size={11} strokeWidth={1.8} /> Financials
+            </span>
+            <span>·</span>
+            <span className="inline-flex items-center gap-1">
+              <TrendingUp size={11} strokeWidth={1.8} /> Insights + charts
+            </span>
+            <span>·</span>
+            <span className="inline-flex items-center gap-1">
+              <Scale size={11} strokeWidth={1.8} /> Recon summary
+            </span>
+            <span>·</span>
+            <span className="inline-flex items-center gap-1">
+              <BarChart3 size={11} strokeWidth={1.8} /> Flux highlights
+            </span>
+            <span>·</span>
+            <span className="inline-flex items-center gap-1">
+              <Sparkles size={11} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+              AI narrative
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1.5 ml-auto">
+          <Button
+            size="sm"
+            icon={<Download size={14} strokeWidth={1.8} />}
+            loading={loading}
+            onClick={onGenerate}
+            title="Generate the executive report PDF — typically takes 10–30 seconds"
+          >
+            {loading ? "Generating…" : "Generate report"}
+          </Button>
+          {loading && (
+            <p className="text-[10px] italic max-w-[180px] text-right"
+              style={{ color: "var(--text-muted)" }}>
+              Pulling financials + insights + flux, then asking Claude for
+              the narrative. About 10–30 seconds.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Books-closed confirmation stamp */}
+      <div className="px-5 sm:px-6 py-2 flex items-center gap-2 text-[11px] flex-wrap"
+        style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+        <CheckCircle2 size={12} strokeWidth={2} style={{ color: "var(--green)" }} />
+        <span style={{ color: "var(--text-muted)" }}>
+          Books are closed for {periodLabel} — final report available
+          (executive reports are only generated for closed periods).
+        </span>
+      </div>
+
+      {/* Error banner — sits inside the card so it's clearly tied to
+          this action. Auto-cleared on next generate attempt. */}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="px-5 sm:px-6 py-3 flex items-start gap-2"
+            style={{
+              background: "#fef2f2", borderTop: "1px solid #fecaca",
+              color: "#991b1b", overflow: "hidden",
+            }}
+          >
+            <AlertCircle size={13} strokeWidth={1.8} className="shrink-0 mt-0.5" />
+            <div className="flex-1 text-xs">
+              <p className="font-semibold mb-0.5">Couldn&apos;t generate the report</p>
+              <p>{error}</p>
+            </div>
+            <button onClick={onDismissError}
+              className="text-[11px] font-medium hover:underline">
+              Dismiss
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }
 

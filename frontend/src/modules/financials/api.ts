@@ -39,21 +39,37 @@ export interface Statement {
 
 export type FinancialSource = "quickbooks" | "nordavix"
 
-async function getIncomeStatement(periodEnd: string, comparative = true, source: FinancialSource = "quickbooks"): Promise<Statement> {
+async function getIncomeStatement(
+  periodEnd: string, comparative = true, source: FinancialSource = "quickbooks",
+  periodStart?: string,
+): Promise<Statement> {
   const { data } = await apiClient.get<Statement>("/api/financials/income-statement", {
-    params: { period_end: periodEnd, comparative, source },
+    params: {
+      period_end: periodEnd,
+      ...(periodStart ? { period_start: periodStart } : {}),
+      comparative, source,
+    },
   })
   return data
 }
 async function getBalanceSheet(periodEnd: string, comparative = true, source: FinancialSource = "quickbooks"): Promise<Statement> {
+  // Balance Sheet is point-in-time — period_start would be ignored
+  // server-side, so we don't accept it here.
   const { data } = await apiClient.get<Statement>("/api/financials/balance-sheet", {
     params: { period_end: periodEnd, comparative, source },
   })
   return data
 }
-async function getCashFlow(periodEnd: string, comparative = true, source: FinancialSource = "quickbooks"): Promise<Statement> {
+async function getCashFlow(
+  periodEnd: string, comparative = true, source: FinancialSource = "quickbooks",
+  periodStart?: string,
+): Promise<Statement> {
   const { data } = await apiClient.get<Statement>("/api/financials/cash-flow", {
-    params: { period_end: periodEnd, comparative, source },
+    params: {
+      period_end: periodEnd,
+      ...(periodStart ? { period_start: periodStart } : {}),
+      comparative, source,
+    },
   })
   return data
 }
@@ -113,9 +129,59 @@ async function exportPdf(
   }
 }
 
+/**
+ * Build + download the Executive Financial Report PDF. This is the
+ * AI-narrated, multi-page board package — only available when books
+ * are closed for the period. Generation takes 10–30 seconds because
+ * of live QBO pulls + the Claude call; UI should show a spinner.
+ *
+ * Error handling mirrors `exportPdf` — axios with blob responseType
+ * returns errors as a Blob, so we read the JSON body back manually.
+ */
+async function exportExecutiveReport(periodEnd: string): Promise<void> {
+  try {
+    const resp = await apiClient.get("/api/financials/executive-report", {
+      params:       { period_end: periodEnd },
+      responseType: "blob",
+      timeout:      5 * 60_000,   // AI + multi-call backend; generous ceiling.
+    })
+    if (!resp.data || (resp.data as Blob).size === 0) {
+      throw new Error("Server returned an empty PDF. Try again.")
+    }
+    const url  = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }))
+    const a    = document.createElement("a")
+    a.href     = url
+    // Use the server-provided filename when available (preserves the
+    // ExecutiveReport_{company}_{month}-{year}.pdf pattern).
+    const cd = resp.headers["content-disposition"] as string | undefined
+    const match = cd?.match(/filename="?([^";]+)/)
+    a.download = match?.[1] ?? `ExecutiveReport-${periodEnd}.pdf`
+    document.body.appendChild(a); a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: Blob; status?: number }; message?: string; code?: string }
+    if (err.code === "ECONNABORTED") {
+      throw new Error("Executive report timed out. The AI step can be slow — please try again.")
+    }
+    if (err.response?.data instanceof Blob) {
+      try {
+        const txt = await err.response.data.text()
+        const parsed = JSON.parse(txt) as { detail?: string }
+        throw new Error(parsed.detail ?? `HTTP ${err.response.status}`)
+      } catch (parseErr) {
+        if (parseErr instanceof Error && parseErr.message.startsWith("HTTP")) throw parseErr
+        throw new Error(err.message ?? "Executive report failed")
+      }
+    }
+    throw new Error(err.message ?? "Executive report failed — check your network and try again.")
+  }
+}
+
 export const financialsApi = {
   getIncomeStatement,
   getBalanceSheet,
   getCashFlow,
   exportPdf,
+  exportExecutiveReport,
 }

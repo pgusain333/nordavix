@@ -395,8 +395,10 @@ async def _qbo_connection(db: AsyncSession, tenant_id) -> QboConnection:
     return conn
 
 
-async def _fetch_pl(conn: QboConnection, db: AsyncSession, pe: date) -> list[_ParsedRow]:
-    start = _ytd_start(pe)
+async def _fetch_pl(conn: QboConnection, db: AsyncSession, pe: date,
+                    ps: date | None = None) -> list[_ParsedRow]:
+    """Pull P&L for [ps..pe]. If ps is None, defaults to YTD (Jan 1)."""
+    start = ps or _ytd_start(pe)
     report = await _qbo_get(conn, db, "/reports/ProfitAndLoss", params={
         "start_date":        start.isoformat(),
         "end_date":          pe.isoformat(),
@@ -407,6 +409,7 @@ async def _fetch_pl(conn: QboConnection, db: AsyncSession, pe: date) -> list[_Pa
 
 
 async def _fetch_bs(conn: QboConnection, db: AsyncSession, pe: date) -> list[_ParsedRow]:
+    """Balance Sheet is point-in-time — only end_date matters."""
     report = await _qbo_get(conn, db, "/reports/BalanceSheet", params={
         "end_date":          pe.isoformat(),
         "accounting_method": "Accrual",
@@ -415,8 +418,10 @@ async def _fetch_bs(conn: QboConnection, db: AsyncSession, pe: date) -> list[_Pa
     return _parse_qbo_report(report)
 
 
-async def _fetch_cf(conn: QboConnection, db: AsyncSession, pe: date) -> list[_ParsedRow]:
-    start = _ytd_start(pe)
+async def _fetch_cf(conn: QboConnection, db: AsyncSession, pe: date,
+                    ps: date | None = None) -> list[_ParsedRow]:
+    """Pull Cash Flow for [ps..pe]. If ps is None, defaults to YTD (Jan 1)."""
+    start = ps or _ytd_start(pe)
     report = await _qbo_get(conn, db, "/reports/CashFlow", params={
         "start_date":        start.isoformat(),
         "end_date":          pe.isoformat(),
@@ -426,9 +431,20 @@ async def _fetch_cf(conn: QboConnection, db: AsyncSession, pe: date) -> list[_Pa
     return _parse_qbo_report(report)
 
 
+def _prior_year_range(ps: date, pe: date) -> tuple[date, date]:
+    """Mirror a custom date range to the prior calendar year for comparatives.
+    Same month + day on both ends, year - 1. Handles Feb 29 by snapping
+    to Feb 28 in non-leap years."""
+    def _shift(d: date) -> date:
+        yr = d.year - 1
+        last = monthrange(yr, d.month)[1]
+        return date(yr, d.month, min(d.day, last))
+    return _shift(ps), _shift(pe)
+
+
 async def _build_statement(
     tenant_id, db, pe: date, statement_kind: str, comparative: bool,
-    source: str = "quickbooks",
+    source: str = "quickbooks", period_start: date | None = None,
 ) -> StatementOut:
     """
     `source` controls where the underlying data comes from:
@@ -451,21 +467,52 @@ async def _build_statement(
         await _refresh_token_if_needed(conn, db)
         company = await _company_name(db, tenant_id, conn)
 
+    # Period labelling — Income Statement and Cash Flow are "for a period
+    # of time" (a range from period_start to period_end). Balance Sheet
+    # is "as of a date" (single point in time). When the caller passes
+    # an explicit period_start for IS/CF, we honor it; otherwise we
+    # default to YTD (Jan 1). BS ignores period_start entirely.
+    is_period_based = statement_kind in ("income_statement", "cash_flow")
+    effective_ps: date | None = period_start if is_period_based else None
+    if is_period_based and effective_ps is None:
+        effective_ps = _ytd_start(pe)
+
     if statement_kind == "income_statement":
         title = "Income Statement"
-        subtitle = f"For the Year-to-Date Ended {pe.strftime('%B %d, %Y')}"
-        period_label = f"YTD {pe.strftime('%b %Y')}"
+        if period_start is not None:
+            subtitle = (
+                f"For the Period from {effective_ps.strftime('%B %d, %Y')} "
+                f"to {pe.strftime('%B %d, %Y')}"
+            )
+            period_label = f"{effective_ps.strftime('%b %d')} – {pe.strftime('%b %d, %Y')}"
+        else:
+            subtitle = f"For the Year-to-Date Ended {pe.strftime('%B %d, %Y')}"
+            period_label = f"YTD {pe.strftime('%b %Y')}"
     elif statement_kind == "balance_sheet":
         title = "Balance Sheet"
         subtitle = f"As of {pe.strftime('%B %d, %Y')}"
         period_label = pe.strftime("%b %d, %Y")
     elif statement_kind == "cash_flow":
         title = "Statement of Cash Flows"
-        subtitle = f"For the Year-to-Date Ended {pe.strftime('%B %d, %Y')}"
-        period_label = f"YTD {pe.strftime('%b %Y')}"
+        if period_start is not None:
+            subtitle = (
+                f"For the Period from {effective_ps.strftime('%B %d, %Y')} "
+                f"to {pe.strftime('%B %d, %Y')}"
+            )
+            period_label = f"{effective_ps.strftime('%b %d')} – {pe.strftime('%b %d, %Y')}"
+        else:
+            subtitle = f"For the Year-to-Date Ended {pe.strftime('%B %d, %Y')}"
+            period_label = f"YTD {pe.strftime('%b %Y')}"
     else:
         raise HTTPException(400, f"Unknown statement: {statement_kind}")
-    prior_pe = _prior_year_period(pe)
+    # Prior-period mapping for the comparative column. For custom ranges,
+    # mirror the EXACT range to the prior calendar year; for YTD, use
+    # the prior YTD (same month-end last year).
+    if period_start is not None and is_period_based:
+        prior_ps, prior_pe = _prior_year_range(effective_ps, pe)
+    else:
+        prior_pe = _prior_year_period(pe)
+        prior_ps = None  # YTD computes from Jan 1 of prior year automatically
 
     notes: list[str] = []
 
@@ -512,27 +559,43 @@ async def _build_statement(
         )
 
     # ── QuickBooks source (live API) ─────────────────────────────────
-    if statement_kind == "income_statement":
-        fetch_fn = _fetch_pl
-    elif statement_kind == "balance_sheet":
-        fetch_fn = _fetch_bs
-    else:
-        fetch_fn = _fetch_cf
-
+    # period_start is honored for IS / CF (P&L-style reports) and
+    # ignored for BS (point-in-time).
     cur_rows: list[_ParsedRow] = []
     prior_rows: list[_ParsedRow] = []
     try:
-        cur_rows = await fetch_fn(conn, db, pe)
+        if statement_kind == "income_statement":
+            cur_rows = await _fetch_pl(conn, db, pe, effective_ps)
+        elif statement_kind == "balance_sheet":
+            cur_rows = await _fetch_bs(conn, db, pe)
+        else:
+            cur_rows = await _fetch_cf(conn, db, pe, effective_ps)
     except Exception as e:
         logger.exception("Current fetch failed for %s @ %s", statement_kind, pe)
         raise HTTPException(502, "Could not pull statement data from QuickBooks. Try again.") from e
     if comparative:
         try:
-            prior_rows = await fetch_fn(conn, db, prior_pe)
+            if statement_kind == "income_statement":
+                prior_rows = await _fetch_pl(conn, db, prior_pe, prior_ps)
+            elif statement_kind == "balance_sheet":
+                prior_rows = await _fetch_bs(conn, db, prior_pe)
+            else:
+                prior_rows = await _fetch_cf(conn, db, prior_pe, prior_ps)
         except Exception:
             logger.warning("Comparative fetch failed for %s @ %s — continuing without it",
                             statement_kind, prior_pe)
             notes.append("Prior-year comparative could not be loaded.")
+
+    # Comparative header label — point-in-time for BS, range-aware for
+    # IS / CF.
+    if not comparative:
+        comparative_label = None
+    elif statement_kind == "balance_sheet":
+        comparative_label = prior_pe.strftime("%b %d, %Y")
+    elif period_start is not None and prior_ps is not None:
+        comparative_label = f"{prior_ps.strftime('%b %d')} – {prior_pe.strftime('%b %d, %Y')}"
+    else:
+        comparative_label = f"YTD {prior_pe.strftime('%b %Y')}"
 
     merged = _merge_periods(cur_rows, prior_rows)
     closed = await _is_period_closed(db, pe)
@@ -542,8 +605,7 @@ async def _build_statement(
         subtitle=subtitle,
         company=company,
         period_label=period_label,
-        comparative_label=(prior_pe.strftime("%b %d, %Y") if comparative else None) if statement_kind == "balance_sheet"
-                          else (f"YTD {prior_pe.strftime('%b %Y')}" if comparative else None),
+        comparative_label=comparative_label,
         period_end=pe.isoformat(),
         comparative_end=prior_pe.isoformat() if comparative else None,
         rows=merged,
@@ -555,17 +617,38 @@ async def _build_statement(
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
+def _parse_period_start(
+    period_start: str | None, pe: date,
+) -> date | None:
+    """Validate an optional custom period_start. Returns parsed date or
+    None for "use YTD default". Raises 400 on bad input."""
+    if not period_start:
+        return None
+    try:
+        ps = date.fromisoformat(period_start)
+    except ValueError:
+        raise HTTPException(400, "period_start must be YYYY-MM-DD.")
+    if ps > pe:
+        raise HTTPException(400, "period_start must be on or before period_end.")
+    return ps
+
+
 @router.get("/income-statement", response_model=StatementOut)
 async def get_income_statement(
     tenant_id: CurrentTenantId,
-    period_end: str = Query(...),
-    comparative: bool = Query(True),
-    source: str = Query("quickbooks", description="quickbooks | nordavix"),
+    period_end:   str        = Query(...),
+    period_start: str | None = Query(None, description="Optional custom start date (defaults to YTD)"),
+    comparative:  bool       = Query(True),
+    source:       str        = Query("quickbooks", description="quickbooks | nordavix"),
     db: AsyncSession = Depends(get_db),
 ) -> StatementOut:
     try: pe = date.fromisoformat(period_end)
     except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
-    return await _build_statement(tenant_id, db, pe, "income_statement", comparative, source=source)
+    ps = _parse_period_start(period_start, pe)
+    return await _build_statement(
+        tenant_id, db, pe, "income_statement", comparative,
+        source=source, period_start=ps,
+    )
 
 
 @router.get("/balance-sheet", response_model=StatementOut)
@@ -576,6 +659,9 @@ async def get_balance_sheet(
     source: str = Query("quickbooks", description="quickbooks | nordavix"),
     db: AsyncSession = Depends(get_db),
 ) -> StatementOut:
+    # Balance Sheet is point-in-time — no period_start. Anyone passing
+    # one gets it silently ignored (no error — keeps the URL ergonomics
+    # consistent when the same UI submits all three together).
     try: pe = date.fromisoformat(period_end)
     except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
     return await _build_statement(tenant_id, db, pe, "balance_sheet", comparative, source=source)
@@ -584,14 +670,19 @@ async def get_balance_sheet(
 @router.get("/cash-flow", response_model=StatementOut)
 async def get_cash_flow(
     tenant_id: CurrentTenantId,
-    period_end: str = Query(...),
-    comparative: bool = Query(True),
-    source: str = Query("quickbooks", description="quickbooks | nordavix"),
+    period_end:   str        = Query(...),
+    period_start: str | None = Query(None, description="Optional custom start date (defaults to YTD)"),
+    comparative:  bool       = Query(True),
+    source:       str        = Query("quickbooks", description="quickbooks | nordavix"),
     db: AsyncSession = Depends(get_db),
 ) -> StatementOut:
     try: pe = date.fromisoformat(period_end)
     except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
-    return await _build_statement(tenant_id, db, pe, "cash_flow", comparative, source=source)
+    ps = _parse_period_start(period_start, pe)
+    return await _build_statement(
+        tenant_id, db, pe, "cash_flow", comparative,
+        source=source, period_start=ps,
+    )
 
 
 @router.get("/pdf")
@@ -677,4 +768,69 @@ async def export_pdf(
         raise HTTPException(
             status_code=500,
             detail=f"PDF generation failed: {type(exc).__name__}: {str(exc)[:200]}",
+        ) from exc
+
+
+@router.get("/executive-report")
+async def export_executive_report(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,           # noqa: ARG001 — currently unused, here for auth + future audit log
+    period_end: str = Query(..., description="Period end YYYY-MM-DD (books must be closed)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Build and stream the **Executive Financial Report** PDF for a closed
+    period. Pulls every workspace surface — financials, insights, recons,
+    flux — runs a single Claude call for the narrative sections, and
+    renders a multi-page, board-ready document.
+
+    Gates:
+      • Period must be CLOSED (books locked). If not closed, returns 403
+        — the report is meant as a final close deliverable, not a draft.
+      • Generation typically takes 10–30 seconds because of the live QBO
+        pulls + AI call. Frontend should show a spinner.
+
+    The endpoint is NOT admin-only — anyone who can see the workspace can
+    download the report. The audit trail is on the *close* action; the
+    report itself is read-only.
+    """
+    try: pe = date.fromisoformat(period_end)
+    except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
+
+    closed = await _is_period_closed(db, pe)
+    if closed is None:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Executive report is only available after books are closed for the period. "
+                "Close them on the dashboard's Month-End Close Progress card first."
+            ),
+        )
+
+    logger.info("Executive report build start: tenant=%s period=%s", tenant_id, pe)
+    try:
+        from modules.financials.exec_pdf import build_executive_pdf
+        from modules.financials.exec_report import gather_report_data
+
+        data = await gather_report_data(tenant_id=tenant_id, db=db, period_end=pe)
+
+        buf = io.BytesIO()
+        build_executive_pdf(buf, data=data)
+        buf.seek(0)
+        # Clean filename: ExecutiveReport_Acme-Corp_April-2026.pdf
+        safe_co = "".join(c if c.isalnum() else "-" for c in data.company)[:40].strip("-") or "Company"
+        fname = f"ExecutiveReport_{safe_co}_{pe.strftime('%B-%Y')}.pdf"
+        logger.info("Executive report done: %d bytes for tenant=%s period=%s",
+                    buf.getbuffer().nbytes, tenant_id, pe)
+        return StreamingResponse(
+            buf, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Executive report failed for tenant=%s period=%s", tenant_id, pe)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Executive report failed: {type(exc).__name__}: {str(exc)[:240]}",
         ) from exc
