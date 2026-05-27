@@ -27,7 +27,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit.log import write_audit_event
-from core.auth.dependencies import CurrentTenantId, CurrentUser
+from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.config import settings
 from core.db.session import get_db
 from models.account import Account
@@ -529,7 +529,10 @@ async def _maybe_mark_complete(
         pass
 
 
-@router.post("/trial-balances/{tb_id}/variances/{var_id}/approve")
+@router.post(
+    "/trial-balances/{tb_id}/variances/{var_id}/approve",
+    dependencies=[Depends(require_role("reviewer"))],
+)
 async def approve_variance(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
@@ -537,7 +540,13 @@ async def approve_variance(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Mark a variance as approved + stamp who approved it and when."""
+    """
+    Mark a variance as approved + stamp who approved it and when.
+
+    Reviewer or admin only — preparers can flag/prepare but the sign-off
+    has to come from a separate role to keep the maker/checker pattern
+    intact. 403 if a preparer hits this endpoint directly.
+    """
     var_result = await db.execute(select(Variance).where(Variance.id == var_id))
     var = var_result.scalar_one_or_none()
     if var is None:
@@ -697,7 +706,11 @@ async def cancel_agentic_flux_endpoint(
     return {"cancelled": True, "tb_id": str(tb_id)}
 
 
-@router.post("/trial-balances/{tb_id}/approve", response_model=TrialBalanceResponse)
+@router.post(
+    "/trial-balances/{tb_id}/approve",
+    response_model=TrialBalanceResponse,
+    dependencies=[Depends(require_role("reviewer"))],
+)
 async def approve_trial_balance(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
@@ -706,9 +719,11 @@ async def approve_trial_balance(
 ) -> TrialBalance:
     """
     Sign off on the entire flux analysis. Stamps approved_by + approved_at and
-    moves status to 'complete'. Per-line approvals (variances) are separate and
-    don't have to all be approved first — the controller can sign off the run
-    even with some variances still pending if they accept that.
+    moves status to 'complete'.
+
+    Reviewer or admin only — preparers can prepare/edit/flag but the
+    workspace-level sign-off (which gates the month-end close) has to
+    come from a separate role.
     """
     tb = (await db.execute(
         select(TrialBalance).where(TrialBalance.id == tb_id)
