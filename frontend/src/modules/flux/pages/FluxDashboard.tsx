@@ -245,23 +245,10 @@ export function FluxDashboard() {
     },
   })
 
-  // Run AI analysis on all material+pending variances
-  const runFluxMut = useMutation({
-    mutationFn: (id: string) => api.runFlux(id),
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["trial-balances"] })
-      qc.invalidateQueries({ queryKey: ["variances", tbId] })
-      if (data.status === "queued") {
-        setRunMsg({ kind: "ok", text: data.message ?? "AI analysis started." })
-      } else {
-        setRunMsg({ kind: "info", text: data.message ?? "All variances already have AI commentary." })
-      }
-    },
-    onError: (e: unknown) => {
-      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setRunMsg({ kind: "err", text: detail ?? "Could not start AI analysis. Try again." })
-    },
-  })
+  // (Removed: runFluxMut — the Find-reasons button it backed was
+  // dropped in favor of Agentic Mode, which has a better UX and
+  // covers the same flow. api.runFlux is still called from
+  // UploadFlow's "Generate" step at the end of the wizard.)
 
   // Agentic Flux — one click writes AI commentary for every material
   // variance that doesn't have one yet. Runs synchronously; the
@@ -512,20 +499,10 @@ export function FluxDashboard() {
               )
             })()}
 
-            {/* Find reasons: kicks off the AI variance-explanation pass.
-                Only meaningful when we have variances to explain. */}
-            {showVarianceTable && (
-              <Button
-                size="sm"
-                variant="outline"
-                icon={<Sparkles size={14} strokeWidth={1.8} />}
-                loading={runFluxMut.isPending}
-                onClick={() => tbId && runFluxMut.mutate(tbId)}
-                title="Have the AI re-analyze every material variance"
-              >
-                <span className="hidden sm:inline">Find reasons</span>
-              </Button>
-            )}
+            {/* (Find reasons button removed — Agentic Mode covers the
+                same flow with better UX. Users who want to regenerate
+                a single variance can click Regenerate inside the
+                expanded row.) */}
             {/* TB-level sign-off. Per-variance approvals stay in the
                 row check icon / bulk action bar; THIS is the final
                 "I sign off on the whole analysis" step that the

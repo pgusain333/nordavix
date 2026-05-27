@@ -36,6 +36,7 @@ import {
 import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
+import { useBooksStatus } from "@/modules/recons/hooks"
 import { workspaceApi } from "@/modules/workspace/api"
 import { Button, Spinner } from "@/core/ui/components"
 import { humanize } from "@/core/ui/utils"
@@ -114,12 +115,12 @@ export function DashboardHome() {
   // round-trips.
   const { data: qbo, isLoading: qboLoading } = useQboConnection()
 
-  // Books status — needed for setup checklist
-  const { data: books } = useQuery({
-    queryKey: ["books-status"],
-    queryFn:  reconsApi.getBooksStatus,
-    staleTime: 5 * 60_000,
-  })
+  // Books status — localStorage-cached hook so we don't flash the
+  // "Welcome — finish the setup below" hero + the "Set up books to
+  // enable the tracker" CTA for 200–2500ms on every refresh.
+  // Once seeded, the cache survives reloads and the page renders
+  // in the seeded state instantly while a background fetch verifies.
+  const { data: books } = useBooksStatus()
 
   // Recons overview — drives recon KPIs and the status panel
   const { data: overview } = useQuery({
@@ -796,15 +797,27 @@ export function DashboardHome() {
                 </div>
               ) : (
                 <ul>
-                  {monthlyFlux.slice(0, 4).map((tb) => (
-                    <li key={tb.id} className="flex items-center gap-2 py-1.5 text-xs"
-                      onClick={(e) => { e.stopPropagation(); navigate(`/app/flux/${tb.id}`) }}>
-                      <span className="h-1.5 w-1.5 rounded-full"
-                        style={{ background: tb.status === "completed" ? "var(--green)" : "var(--text-muted)" }} />
-                      <span className="flex-1 truncate text-theme">{tb.name || `Period ${tb.period_current}`}</span>
-                      <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{humanize(tb.status, { ready_for_review: "In review" })}</span>
-                    </li>
-                  ))}
+                  {monthlyFlux.slice(0, 4).map((tb) => {
+                    // Approval lives on tb.approved_by / approved_at —
+                    // tb.status itself stays as the lifecycle state
+                    // ("complete", "ready_for_review") even after sign-
+                    // off. So "Approved" wins the label race when
+                    // approved_at is set; otherwise we humanize the
+                    // raw status.
+                    const approved = !!tb.approved_at
+                    return (
+                      <li key={tb.id} className="flex items-center gap-2 py-1.5 text-xs"
+                        onClick={(e) => { e.stopPropagation(); navigate(`/app/flux/${tb.id}`) }}>
+                        <span className="h-1.5 w-1.5 rounded-full"
+                          style={{ background: approved ? "var(--green)" : "var(--text-muted)" }} />
+                        <span className="flex-1 truncate text-theme">{tb.name || `Period ${tb.period_current}`}</span>
+                        <span className="text-[10px]"
+                          style={{ color: approved ? "var(--green)" : "var(--text-muted)" }}>
+                          {approved ? "Approved" : humanize(tb.status, { ready_for_review: "In review" })}
+                        </span>
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
             </div>

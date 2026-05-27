@@ -40,6 +40,7 @@ import {
 import { api, type VarianceRow, type VarianceTransactionsResponse } from "@/modules/flux/api"
 import { Button, Badge, StatusBadge, Spinner } from "@/core/ui/components"
 import { cn, formatAccounting, formatPct } from "@/core/ui/utils"
+import { workspaceApi } from "@/modules/workspace/api"
 
 interface Props {
   tbId:      string
@@ -82,6 +83,17 @@ const STATUS_ORDER: Record<string, number> = {
 
 export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, periodPrior, onMessage }: Props) {
   const qc = useQueryClient()
+  // Role-aware approve buttons. Backend now 403s preparers on the
+  // /approve endpoints, so we hide the buttons here too — clicking
+  // a button only to be told "you can't" is a worse experience than
+  // never seeing the button. Preparers see prepare / flag / edit
+  // (their actual workflow), reviewers + admins see approve as well.
+  const { data: me } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 5 * 60_000,
+  })
+  const canApprove = me?.role === "admin" || me?.role === "reviewer"
   const [sorting,    setSorting]   = useState<SortingState>([
     { id: "is_material", desc: true },
   ])
@@ -269,11 +281,9 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     },
   })
 
-  // ── Regenerate (per-variance AI rerun) ────────────────────────────────────
-  const regenerate = useMutation({
-    mutationFn: (varId: string) => api.regenerateNarrative(tbId, varId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["variances", tbId] }),
-  })
+  // (Removed: regenerate mutation — backed the per-variance Find
+  // reason / Regenerate button, which was dropped in favor of
+  // Agentic Mode in the header.)
 
   // ── Filter data ────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -441,7 +451,10 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         const r = row.original
         return (
           <div className="flex items-center gap-1.5 justify-end">
-            {r.status !== "approved" && (
+            {/* Approve check icon — admin / reviewer only. Preparers
+                still get the Edit button so they can write commentary
+                + mark prepared via the bulk-action bar. */}
+            {r.status !== "approved" && canApprove && (
               <Button
                 size="icon-sm"
                 variant="outline"
@@ -596,18 +609,23 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                 <span className="text-[11px] font-semibold" style={{ color: "var(--green)" }}>
                   {selected.size} selected
                 </span>
-                <Button
-                  size="sm"
-                  icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
-                  loading={bulkApprove.isPending}
-                  disabled={bulkSetStatus.isPending || selectedApprovable.length === 0}
-                  onClick={() => bulkApprove.mutate(selectedApprovable)}
-                  title={selectedApprovable.length === 0
-                    ? "Every selected variance is already approved"
-                    : `Approve ${selectedApprovable.length} variance${selectedApprovable.length === 1 ? "" : "s"}`}
-                >
-                  Approve
-                </Button>
+                {/* Bulk Approve — admin / reviewer only.
+                    Preparers still see Mark prepared / Flag / Reset
+                    in the same toolbar (their actual workflow). */}
+                {canApprove && (
+                  <Button
+                    size="sm"
+                    icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
+                    loading={bulkApprove.isPending}
+                    disabled={bulkSetStatus.isPending || selectedApprovable.length === 0}
+                    onClick={() => bulkApprove.mutate(selectedApprovable)}
+                    title={selectedApprovable.length === 0
+                      ? "Every selected variance is already approved"
+                      : `Approve ${selectedApprovable.length} variance${selectedApprovable.length === 1 ? "" : "s"}`}
+                  >
+                    Approve
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -755,8 +773,6 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                             })}
                             onCancel={() => setEditing(null)}
                             isSaving={editNarrative.isPending}
-                            onRegenerate={() => regenerate.mutate(row.original.id)}
-                            isRegenerating={regenerate.isPending && regenerate.variables === row.original.id}
                           />
                         </td>
                       </tr>
@@ -799,14 +815,14 @@ interface NarrativePanelProps {
   onSave:        () => void
   onCancel:      () => void
   isSaving:      boolean
-  onRegenerate:  () => void
-  isRegenerating:boolean
+  // onRegenerate + isRegenerating dropped along with the
+  // Find-reason / Regenerate button. AI generation now goes through
+  // Agentic Mode in the header.
 }
 
 function NarrativePanel({
   row, tbId, isEditing, editContent, onEditContent,
   onEdit, onSave, onCancel, isSaving,
-  onRegenerate, isRegenerating,
 }: NarrativePanelProps) {
   const anomalyLabels: Record<string, string> = {
     new_account:        "No prior balance",
@@ -909,16 +925,10 @@ function NarrativePanel({
               </p>
             )}
             <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onRegenerate}
-                loading={isRegenerating}
-                icon={!isRegenerating ? <Sparkles size={12} strokeWidth={1.8} /> : undefined}
-                title="Have the AI re-analyze this variance from scratch"
-              >
-                {row.narrative ? "Regenerate" : "Find reason"}
-              </Button>
+              {/* (Find reason / Regenerate button removed — Agentic
+                  Mode in the header covers AI generation for every
+                  material variance at once. Manual edits via the Edit
+                  button below.) */}
               <Button
                 size="sm"
                 variant="ghost"
