@@ -8,7 +8,7 @@ import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
-  MessageSquare, Settings, Lightbulb, type LucideIcon,
+  MessageSquare, Settings, Lightbulb, LifeBuoy, type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { cn } from "@/core/ui/utils"
@@ -224,6 +224,24 @@ export function LeftNav({ onClose }: Props) {
         >
           <Settings size={16} strokeWidth={1.8} className="shrink-0" />
           <span className="flex-1 text-left">Settings</span>
+        </NavLink>
+        <NavLink
+          to="/app/help"
+          onClick={onClose}
+          className={({ isActive }) =>
+            cn(
+              "w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              isActive ? "" : "hover:opacity-90",
+            )
+          }
+          style={({ isActive }) => ({
+            color: isActive ? "var(--green)" : "var(--nav-text)",
+            background: isActive ? "var(--green-subtle)" : "transparent",
+          })}
+          title="Standard operating procedure — every workflow, every screen"
+        >
+          <LifeBuoy size={16} strokeWidth={1.8} className="shrink-0" />
+          <span className="flex-1 text-left">Help &amp; SOP</span>
         </NavLink>
         <button
           type="button"

@@ -1461,6 +1461,7 @@ function Footer() {
               <li><a href="#features"  className="hover:text-slate-300 transition-colors">Features</a></li>
               <li><a href="#pricing"   className="hover:text-slate-300 transition-colors">Pricing</a></li>
               <li><a href="#faq"       className="hover:text-slate-300 transition-colors">FAQ</a></li>
+              <li><Link to="/help"     className="hover:text-slate-300 transition-colors">Help &amp; SOP</Link></li>
               <li><Link to="/sign-up"  className="hover:text-slate-300 transition-colors">Get started</Link></li>
             </ul>
           </div>
