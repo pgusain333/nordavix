@@ -532,10 +532,25 @@ async def compute_overview(
 
     # Custom range: pull a live P&L for the exact window. Overrides the
     # snapshot-diff P&L numbers (which always span calendar months).
+    #
+    # We ALSO pull a comparable prior-period P&L (same length, immediately
+    # preceding the custom range) so the "vs prior" KPI insights stay
+    # meaningful. Without this second pull, the code falls back to the
+    # last calendar-month snapshot — which is the wrong length AND often
+    # doesn't exist for custom ranges, so the UI showed "First period —
+    # no prior comparison available" even when QBO had the data.
     custom_pl: dict | None = None
+    custom_pl_prior: dict | None = None
     custom_pl_error: str | None = None
     if period_start is not None:
         custom_pl, custom_pl_error = await _fetch_pl_summary(qbo_conn, db, period_start, period_end)
+        # Same-length window immediately preceding. (period_end - period_start)
+        # gives days-between; we add 1 to get inclusive day count, then mirror
+        # that span backwards from the day before period_start.
+        custom_span_days = (period_end - period_start).days
+        custom_prior_end   = period_start - timedelta(days=1)
+        custom_prior_start = custom_prior_end - timedelta(days=custom_span_days)
+        custom_pl_prior, _ = await _fetch_pl_summary(qbo_conn, db, custom_prior_start, custom_prior_end)
 
     # ── Liquidity ───────────────────────────────────────────────────────────
     def cash_at(pe: date) -> Decimal:
@@ -770,9 +785,17 @@ async def compute_overview(
     op_pct = _to_pct(operating_inc, revenue_month)
     nm_pct = _to_pct(net_income, revenue_month)
 
-    revenue_prior = monthly_metric(prior_pe, revenue_at) if prior_pe else ZERO
-    gp_prior      = monthly_metric(prior_pe, revenue_at) - monthly_metric(prior_pe, cogs_at) if prior_pe else ZERO
-    gm_pct_prior  = _to_pct(gp_prior, revenue_prior) if prior_pe else None
+    # Prior-period comparison.
+    #   - Custom range  → use the same-length window from QBO (apples-to-apples).
+    #   - Standard month → fall back to the prior calendar month from snapshots.
+    if custom_pl_prior is not None:
+        revenue_prior = custom_pl_prior["revenue"]
+        gp_prior      = custom_pl_prior["revenue"] - custom_pl_prior["cogs"]
+        gm_pct_prior  = _to_pct(gp_prior, revenue_prior) if revenue_prior else None
+    else:
+        revenue_prior = monthly_metric(prior_pe, revenue_at) if prior_pe else ZERO
+        gp_prior      = monthly_metric(prior_pe, revenue_at) - monthly_metric(prior_pe, cogs_at) if prior_pe else ZERO
+        gm_pct_prior  = _to_pct(gp_prior, revenue_prior) if prior_pe else None
 
     # Pre-compute per-period monthly P&L so the history sparkline is consistent
     # and we don't recompute the same diffs four times per row.
@@ -821,7 +844,11 @@ async def compute_overview(
                 "value":   _money_str(revenue_month),
                 "risk":    "neutral",
                 "insight": (
-                    f"{_change_str(_to_money(revenue_month), _to_money(revenue_prior))} vs prior month."
+                    # Custom range comparisons are vs the same-length window
+                    # immediately preceding; standard month comparisons are
+                    # vs the prior calendar month. Phrase accordingly.
+                    f"{_change_str(_to_money(revenue_month), _to_money(revenue_prior))} "
+                    f"vs prior {'period' if custom_pl is not None else 'month'}."
                     if revenue_prior else "First period — no prior comparison available."
                 ),
             },
