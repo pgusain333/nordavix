@@ -105,8 +105,36 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 session.add(tenant)
                 await session.flush()
 
+            # Look up the User row PER (clerk_user_id, tenant_id), not by
+            # clerk_user_id alone.
+            #
+            # The original lookup ignored tenant — which meant a user who
+            # joined two workspaces shared a single User row across both,
+            # and the role from the first one bled into the second. The
+            # damage:
+            #   - Founder pixelhouse signed in via Google -> Clerk auto-
+            #     created a personal org -> User row created with
+            #     tenant_id = personal-org, role = admin.
+            #   - Later they created the real workspace "Apple Inc" ->
+            #     when they signed into Apple Inc, middleware found the
+            #     SAME User row (still tied to the personal org!) and
+            #     reported role=admin. require_role("admin") passed in
+            #     Apple Inc even though they had no membership record
+            #     scoped to that tenant.
+            #   - Worse: when a real preparer was invited and signed in,
+            #     the "first user in tenant" check (existing_users == [])
+            #     fired falsely (because the founder's row was bound to a
+            #     different tenant) and the preparer got auto-promoted
+            #     to admin of Apple Inc.
+            #
+            # Filtering by (clerk_user_id, tenant_id) gives each
+            # workspace its own User row with its own role. Cross-org
+            # role bleeding stops.
             user_result = await session.execute(
-                select(User).where(User.clerk_user_id == clerk_user_id),
+                select(User).where(
+                    User.clerk_user_id == clerk_user_id,
+                    User.tenant_id == tenant.id,
+                ),
                 execution_options=skip,
             )
             user = user_result.scalar_one_or_none()
