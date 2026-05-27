@@ -57,6 +57,13 @@ interface Props {
    * banner inside the table card.
    */
   onMessage?:   (msg: { kind: "ok" | "info" | "err"; text: string }) => void
+  /**
+   * When true (books closed for the analysis's period), the table goes
+   * view-only: per-row Approve/Edit icons hide, bulk action toolbar
+   * is suppressed, narrative edit is read-only. Mirrors the recons
+   * lock-down on closed periods.
+   */
+  readOnly?:    boolean
 }
 
 function _formatHeaderDate(iso?: string, suffix?: string): string {
@@ -81,7 +88,7 @@ const STATUS_ORDER: Record<string, number> = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, periodPrior, onMessage }: Props) {
+export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, periodPrior, onMessage, readOnly = false }: Props) {
   const qc = useQueryClient()
   // Role-aware approve buttons. Backend now 403s preparers on the
   // /approve endpoints, so we hide the buttons here too — clicking
@@ -451,10 +458,11 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         const r = row.original
         return (
           <div className="flex items-center gap-1.5 justify-end">
-            {/* Approve check icon — admin / reviewer only. Preparers
-                still get the Edit button so they can write commentary
-                + mark prepared via the bulk-action bar. */}
-            {r.status !== "approved" && canApprove && (
+            {/* Approve check icon — admin / reviewer only and only
+                when the period isn't locked. Preparers still get the
+                Edit button so they can write commentary + mark
+                prepared via the bulk-action bar. */}
+            {r.status !== "approved" && canApprove && !readOnly && (
               <Button
                 size="icon-sm"
                 variant="outline"
@@ -602,8 +610,9 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                 label), same icon set, same colour treatment on Flag
                 (red outline). Click any action and the loading state
                 covers every button in the row so the user can't
-                double-fire. */}
-            {selected.size > 0 && (
+                double-fire. Hidden entirely when the period is
+                closed — readOnly mode. */}
+            {selected.size > 0 && !readOnly && (
               <div className="px-4 py-2 flex items-center gap-2 flex-wrap"
                 style={{ background: "var(--green-subtle)", borderBottom: "1px solid var(--border)" }}>
                 <span className="text-[11px] font-semibold" style={{ color: "var(--green)" }}>

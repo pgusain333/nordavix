@@ -32,6 +32,7 @@ import {
   Circle,
   CalendarCheck,
   Lightbulb,
+  Sparkles,
 } from "lucide-react"
 import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
@@ -764,13 +765,26 @@ export function DashboardHome() {
             )
           })()}
 
-          {/* Open Flux Analysis — drops the user straight into the
-              new-analysis picker with the period pre-filled, so all they
-              have to do is hit "Pull from QuickBooks". ?new=1 keeps the
-              FluxDashboard's auto-redirect-to-most-recent-TB effect from
-              hijacking the navigation. */}
+          {/* Open Flux Analysis — mirrors the recons tile behavior.
+              When the month already has analyses, jump straight to
+              the most-recent one (deep link to its detail page so the
+              user can review/approve). When it doesn't, drop them on
+              the flux month index page with ?period= so the Start
+              CTA pre-fills the period — same shape as the recons
+              "Start month-end close" flow. We deliberately do NOT
+              pass ?new=1 anymore — it auto-opened the wizard, which
+              the user found jarring. They wanted a confirm + sync
+              step, not an instant upload picker. */}
           <button
-            onClick={() => navigate(`/app/flux/analyses?new=1&period=${period}`)}
+            onClick={() => {
+              if (monthlyFlux.length > 0) {
+                // Most recent analysis for the month
+                navigate(`/app/flux/${monthlyFlux[0].id}`)
+              } else {
+                // Month index with period pre-loaded
+                navigate(`/app/flux?period=${period}`)
+              }
+            }}
             className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
             <div className="px-4 py-3 flex items-center justify-between"
@@ -1002,26 +1016,14 @@ function CloseProgressCard({
       ? new Date(trackerEntry.closed_at).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
       : ""
     return (
-      <div className="rounded-xl overflow-hidden"
-        style={{ background: "var(--green-subtle)", border: "1px solid var(--green)", boxShadow: "var(--card-shadow)" }}>
-        <div className="px-5 py-4 flex items-center gap-4">
-          <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
-            style={{ background: "var(--green)", color: "white" }}>
-            <Lock size={20} strokeWidth={2} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: "var(--green)" }}>
-              Month-end close complete
-            </p>
-            <h3 className="text-lg font-bold text-theme leading-tight">{monthLabel} books closed</h3>
-            <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
-              {closedAt && <>Closed on {closedAt} · </>}
-              {counts.approved} of {total} account{total === 1 ? "" : "s"} approved
-            </p>
-          </div>
-          <Button size="sm" variant="outline" onClick={onOpen}>View</Button>
-        </div>
-      </div>
+      <ClosedStateCard
+        monthLabel={monthLabel}
+        period={period}
+        closedAt={closedAt}
+        approvedCount={counts.approved}
+        total={total}
+        onOpen={onOpen}
+      />
     )
   }
 
@@ -1220,6 +1222,107 @@ function CloseProgressCard({
         )}
       </AnimatePresence>
     </div>
+  )
+}
+
+// ── ClosedStateCard ──────────────────────────────────────────────────────
+//
+// Subcomponent for the "books closed" state of CloseProgressCard.
+// Pulled out because it owns its own mutation (executive report
+// download) and was getting cluttered inline. Surfaces a primary
+// "Download executive report" button right where the user is — the
+// previous flow buried it at the bottom of Financial Package and
+// the user couldn't find it.
+
+function ClosedStateCard({
+  monthLabel, period, closedAt, approvedCount, total, onOpen,
+}: {
+  monthLabel: string
+  period: string
+  closedAt: string
+  approvedCount: number
+  total: number
+  onOpen: () => void
+}) {
+  const [execError, setExecError] = useState<string | null>(null)
+  const execMut = useMutation({
+    mutationFn: async () => {
+      const { financialsApi } = await import("@/modules/financials/api")
+      return financialsApi.exportExecutiveReport(period)
+    },
+    onMutate: () => setExecError(null),
+    onError: (e: Error) => setExecError(e.message),
+  })
+  // Auto-dismiss errors so the card doesn't carry a permanent failure
+  // message after the user retries.
+  useEffect(() => {
+    if (!execError) return
+    const t = setTimeout(() => setExecError(null), 6_000)
+    return () => clearTimeout(t)
+  }, [execError])
+
+  return (
+    <div className="rounded-xl overflow-hidden"
+      style={{ background: "var(--green-subtle)", border: "1px solid var(--green)", boxShadow: "var(--card-shadow)" }}>
+      <div className="px-5 py-4 flex items-center gap-4 flex-wrap">
+        <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
+          style={{ background: "var(--green)", color: "white" }}>
+          <Lock size={20} strokeWidth={2} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: "var(--green)" }}>
+            Month-end close complete
+          </p>
+          <h3 className="text-lg font-bold text-theme leading-tight">{monthLabel} books closed</h3>
+          <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
+            {closedAt && <>Closed on {closedAt} · </>}
+            {approvedCount} of {total} account{total === 1 ? "" : "s"} approved
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button size="sm" variant="outline" onClick={onOpen}>
+            View
+          </Button>
+          {/* Executive Report — board-ready AI-narrated PDF.
+              Lives here because the user kept asking "where do I
+              generate the executive report" — burying it inside the
+              Financial Package tab (where it requires Load + scroll)
+              made it invisible. The dashboard is the natural place
+              once books are closed. */}
+          <Button
+            size="sm"
+            icon={<Sparkles size={12} strokeWidth={1.8} />}
+            loading={execMut.isPending}
+            onClick={() => execMut.mutate()}
+            title="Download the AI-narrated executive report (10+ page board package)"
+          >
+            {execMut.isPending ? "Generating…" : "Download executive report"}
+          </Button>
+        </div>
+      </div>
+      {execError && (
+        <div className="px-5 py-2 text-xs flex items-start gap-2"
+          style={{ background: "#fef2f2", color: "#991b1b", borderTop: "1px solid #fecaca" }}>
+          <AlertCircleIcon /> <span className="flex-1">{execError}</span>
+        </div>
+      )}
+      {execMut.isPending && (
+        <div className="px-5 py-2 text-[11px] italic" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--border)" }}>
+          Pulling financials + insights + flux, then asking Claude for the narrative. About 10–30 seconds.
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Tiny inline alert icon so we don't haul lucide-react's AlertCircle
+// out for a one-off error stripe inside this card.
+function AlertCircleIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5">
+      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
   )
 }
 
