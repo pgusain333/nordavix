@@ -756,9 +756,14 @@ async def list_variance_transactions(
     """
     Return the stored evidence transactions for this variance.
 
-    Pass ?refresh=true to re-pull from QBO (wipes prior rows). Pulls are
-    only allowed for MATERIAL variances and TBs that were sourced from QBO
-    (we need the qbo_account_id to drill in).
+    Pass ?refresh=true to re-pull from QBO (wipes prior rows). Pulls
+    require the TB to have been sourced from QBO (we need the
+    qbo_account_id to drill in); Excel-uploaded TBs return 409.
+
+    Materiality is NOT a gate here — every variance, big or small,
+    can pull its transactions. The Material concept was removed
+    from the UI; this endpoint was the last place that still
+    enforced it and was silently 409-ing the Pull button.
     """
     # Fetch variance + account in one query so we can validate + use both
     row = (await db.execute(
@@ -770,11 +775,6 @@ async def list_variance_transactions(
     var, acct = row
 
     if refresh:
-        if not var.is_material:
-            raise HTTPException(
-                status_code=409,
-                detail="Transaction drill-in is only available for material variances.",
-            )
         if not acct.qbo_account_id:
             raise HTTPException(
                 status_code=409,
