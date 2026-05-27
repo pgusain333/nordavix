@@ -261,7 +261,10 @@ export function LeftNav({ onClose }: Props) {
           <ThemeToggle />
         </div>
         <div className="flex items-center gap-2 px-1">
-          <UserButton appearance={{ elements: { avatarBox: "h-7 w-7" } }} />
+          <UserButton
+            afterSignOutUrl="/sign-in"
+            appearance={{ elements: { avatarBox: "h-7 w-7" } }}
+          />
           <div className="min-w-0 flex-1">
             <p className="text-xs truncate" style={{ color: "var(--nav-text)" }}>
               {user?.primaryEmailAddress?.emailAddress ?? "Account"}

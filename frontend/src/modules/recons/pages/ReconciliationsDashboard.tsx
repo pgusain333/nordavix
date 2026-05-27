@@ -227,14 +227,11 @@ export function ReconciliationsDashboard() {
   // inline forms collapsed, banner shown.
   const isClosed = overview?.is_closed === true
   const closedByName = useUserNames([overview?.closed_by])[overview?.closed_by ?? ""]
-  const allApproved = !!overview && overview.accounts.length > 0
-    && overview.accounts.every((a) => a.review_status === "approved")
 
   // Sequential-close gate (mirrored on the backend in /admin/close-period).
-  // Pull the same tracker the main dashboard uses, then look for any prior
-  // periods that block the close: open work AND not yet closed. We disable
-  // the Close button and surface the list inline so the admin doesn't have
-  // to click and read the error to learn what's blocking.
+  // Pull the same tracker the main dashboard uses to surface earlier
+  // unclosed months as blockers (the whole dashboard goes read-only
+  // when any prior month is still open).
   const { data: tracker } = useQuery({
     queryKey: ["period-tracker"],
     queryFn:  reconsApi.listPeriodTracker,
@@ -251,36 +248,20 @@ export function ReconciliationsDashboard() {
         return { label: p.label, period_end: p.period_end, unapproved }
       })
   }, [tracker, periodEnd])
-  const canCloseNow = allApproved && priorBlockers.length === 0
 
-  const closeMut = useMutation({
-    mutationFn: () => reconsApi.closePeriod(periodEnd),
-    onSuccess: () => {
-      setSyncMsg(`Period ${periodEnd} closed. Books are now locked.`)
-      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
-      qc.invalidateQueries({ queryKey: ["closed-periods"] })
-      // Dashboard tiles + side nav badges read from these — invalidate
-      // so the month-end close progress card flips green immediately
-      // instead of staying stale until the next manual refresh.
-      qc.invalidateQueries({ queryKey: ["period-tracker"] })
-      qc.invalidateQueries({ queryKey: ["books-status"] })
-      qc.invalidateQueries({ queryKey: ["tasks"] })
-      qc.invalidateQueries({ queryKey: ["dashboard-audit"] })
-    },
-    onError: (err: unknown) => {
-      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
-      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Could not close period"}`)
-    },
-  })
-
+  // Close-period mutation lives on the main dashboard now (the
+  // Close-Books button moved out of this header). Reopen stays here
+  // because an admin should be able to unlock the period from inside
+  // the closed-state banner without navigating back to the dashboard.
   const reopenMut = useMutation({
     mutationFn: () => reconsApi.reopenPeriod(periodEnd),
     onSuccess: () => {
       setSyncMsg(`Period ${periodEnd} reopened.`)
       qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
       qc.invalidateQueries({ queryKey: ["closed-periods"] })
-      // Same set as closeMut so the dashboard tiles re-light when a
-      // previously-closed period is reopened.
+      // The dashboard tiles + side nav badges read from these —
+      // invalidate so the month-end close progress card re-lights when
+      // a previously-closed period is reopened.
       qc.invalidateQueries({ queryKey: ["period-tracker"] })
       qc.invalidateQueries({ queryKey: ["books-status"] })
       qc.invalidateQueries({ queryKey: ["tasks"] })
@@ -811,42 +792,24 @@ export function ReconciliationsDashboard() {
                 <span className="hidden sm:inline">{resetAgenticMut.isPending ? "Resetting…" : "Reset AI"}</span>
               </Button>
             )}
-            {isAdmin && (
-              isClosed ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  icon={<Unlock size={14} strokeWidth={1.8} />}
-                  loading={reopenMut.isPending}
-                  onClick={() => reopenMut.mutate()}
-                  style={{ borderColor: "#f59e0b", color: "#b45309" }}
-                  title="Reopen the books for this period — admins can edit again"
-                >
-                  <span className="hidden sm:inline">Reopen books</span>
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  icon={<Lock size={14} strokeWidth={1.8} />}
-                  loading={closeMut.isPending}
-                  disabled={!canCloseNow}
-                  onClick={() => {
-                    if (confirm(`Close the books for ${periodEnd}? Once locked, reviewers and preparers can't edit anything for this period.`)) {
-                      closeMut.mutate()
-                    }
-                  }}
-                  title={
-                    !allApproved
-                      ? "All accounts must be approved before you can close the period."
-                      : priorBlockers.length > 0
-                        ? `Earlier periods are still open — close them first: ${priorBlockers.map((b) => b.label).join(", ")}.`
-                        : "Lock the period so nobody can edit it anymore."
-                  }
-                >
-                  <span className="hidden sm:inline">Close period</span>
-                </Button>
-              )
+            {/* Close-books action moved to the main dashboard's
+                Month-End Close Progress card — it lives next to the
+                month tracker where you decide a month is finished.
+                Reopen stays here so an admin can unlock from inside
+                the closed-period banner without bouncing back to the
+                dashboard. */}
+            {isAdmin && isClosed && (
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<Unlock size={14} strokeWidth={1.8} />}
+                loading={reopenMut.isPending}
+                onClick={() => reopenMut.mutate()}
+                style={{ borderColor: "#f59e0b", color: "#b45309" }}
+                title="Reopen the books for this period — admins can edit again"
+              >
+                <span className="hidden sm:inline">Reopen books</span>
+              </Button>
             )}
             <Button
               size="sm"

@@ -72,7 +72,10 @@ export function CompaniesPanel() {
           <span className="hidden sm:inline text-xs" style={{ color: "var(--text-muted)" }}>
             {user?.primaryEmailAddress?.emailAddress}
           </span>
-          <UserButton appearance={{ elements: { avatarBox: "h-7 w-7" } }} />
+          <UserButton
+            afterSignOutUrl="/sign-in"
+            appearance={{ elements: { avatarBox: "h-7 w-7" } }}
+          />
         </div>
       </header>
 
