@@ -419,6 +419,26 @@ async function runAgenticPrep(periodEnd: string): Promise<AgenticResult> {
   return data
 }
 
+/**
+ * Per-row Agentic — run the same engine on ONE account. Used by the
+ * per-row "Run AI" button in the recons table. Returns the same
+ * AgenticResult shape (with `accounts: [...]` of length 1) so the UI
+ * can reuse the bulk banner renderer for feedback.
+ */
+async function runAgenticPrepForAccount(
+  periodEnd: string, qboAccountId: string,
+): Promise<AgenticResult> {
+  const { data } = await apiClient.post<AgenticResult>(
+    "/api/reconciliations/agentic/run-one",
+    null,
+    {
+      params: { period_end: periodEnd, qbo_account_id: qboAccountId },
+      timeout: 60_000,   // ~5-15s typical; 60s ceiling for slow QBO
+    },
+  )
+  return data
+}
+
 export interface AgenticResetResult {
   reset:      number
   period_end: string
@@ -846,6 +866,7 @@ export const reconsApi = {
   getOverview,
   syncPeriod,
   runAgenticPrep,
+  runAgenticPrepForAccount,
   resetAgenticPrep,
   cancelAgenticPrep,
   downloadAccountPdf,

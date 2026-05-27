@@ -80,6 +80,10 @@ class VarianceResponse(BaseModel):
     confidence_score: Decimal | None
     approved_by: uuid.UUID | None = None
     approved_at: datetime | None = None
+    # Structured AI commentary from the deeper Agentic Mode.
+    # Schema documented in migration 021. NULL for variances that
+    # only have the legacy Narrative.content prose.
+    ai_commentary: dict | None = None
 
     @field_serializer("dollar_variance", "current_balance", "prior_balance",
                       "pct_variance", "confidence_score")

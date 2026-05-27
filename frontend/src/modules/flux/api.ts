@@ -59,6 +59,21 @@ export interface ParseResult {
   material_count:   number
 }
 
+/**
+ * Structured AI commentary from the deeper Agentic Mode.
+ * Schema matches backend modules.flux.deep_agentic.run_deep_agentic_for_variance.
+ * NULL on rows that only have legacy prose in `narrative`.
+ */
+export interface AICommentary {
+  generated_at:    string
+  narrative:       string
+  risk_level:      "low" | "medium" | "high"
+  justified:       "yes" | "no" | "needs_review"
+  key_entities:    { name: string; type: "customer" | "vendor" | "other"; amount: string }[]
+  recommendations: string[]
+  confidence:      "low" | "medium" | "high"
+}
+
 export interface VarianceRow {
   id:               string
   account_id:       string
@@ -76,6 +91,7 @@ export interface VarianceRow {
   confidence_score: string | null
   approved_by?:     string | null
   approved_at?:     string | null
+  ai_commentary?:   AICommentary | null
 }
 
 export interface QboConnection {
@@ -241,6 +257,26 @@ async function cancelAgenticFlux(tbId: string): Promise<{ cancelled: true; tb_id
   return data
 }
 
+/**
+ * Run the deeper Agentic analysis on ONE variance.
+ *
+ * Auto-pulls QBO transactions for the variance's change window, asks
+ * Claude for a structured analysis (narrative + risk_level + justified
+ * + key_entities + recommendations), and persists the result on
+ * Variance.ai_commentary. Returns the structured commentary so the UI
+ * can render it immediately without waiting for a list refetch.
+ */
+async function runAgenticOnVariance(
+  tbId: string, varId: string,
+): Promise<{ variance_id: string; ai_commentary: AICommentary }> {
+  const { data } = await apiClient.post<{ variance_id: string; ai_commentary: AICommentary }>(
+    `/api/flux/trial-balances/${tbId}/variances/${varId}/agentic/run`,
+    null,
+    { timeout: 60_000 },   // ~10-15s typical; 60s ceiling for slow QBO
+  )
+  return data
+}
+
 // ── Variance transactions ────────────────────────────────────────────────────
 
 export interface VarianceTxn {
@@ -352,6 +388,7 @@ export const api = {
   // Agentic
   runAgenticFlux,
   cancelAgenticFlux,
+  runAgenticOnVariance,
   getVarianceTransactions,
   toggleVarianceTransactionCheck,
   // Export

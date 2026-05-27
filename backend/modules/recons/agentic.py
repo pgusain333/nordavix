@@ -111,16 +111,41 @@ class AgenticResult:
 # ── Main entry point ───────────────────────────────────────────────────────
 
 
+async def run_agentic_prep_for_account(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    user: User,
+    period_end: date,
+    qbo_account_id: str,
+) -> AgenticResult:
+    """Single-account variant of run_agentic_prep. Reuses the same engine
+    by passing through an `only_qbo_id` filter — the bulk runner's loop
+    skips every other account when this is set.
+
+    Powers the per-row "Run AI" button on the recons dashboard. Same
+    behavior contract (auto-pulls txns + builds structured AI commentary),
+    just scoped to one row."""
+    return await run_agentic_prep(
+        db, tenant_id, user, period_end, only_qbo_id=qbo_account_id,
+    )
+
+
 async def run_agentic_prep(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     user: User,
     period_end: date,
+    only_qbo_id: str | None = None,
 ) -> AgenticResult:
     """Iterate every reconcilable account for the period and apply the
     agentic preparer logic. Synchronous — caller blocks until done.
     Typical 20-account period takes ~5-15s depending on QBO latency
-    and how many accounts need AI analysis."""
+    and how many accounts need AI analysis.
+
+    `only_qbo_id`: when set, restricts the run to just that account.
+    Used by the per-row "Run AI" button (via run_agentic_prep_for_account).
+    Skips the cancel-flag plumbing because a single-row run finishes too
+    fast to bother."""
     start_dt = datetime.now(UTC)
     result = AgenticResult(period_end=period_end.isoformat(), started_at=start_dt.isoformat())
 
@@ -171,6 +196,23 @@ async def run_agentic_prep(
         )
     )).scalars().all())
     snap_rows = [s for s in snap_rows if s.account_type in ACCOUNT_TYPE_GROUPS]
+    # Per-row mode: filter the candidate set to one account. Everything
+    # else falls out and the loop processes a single iteration.
+    if only_qbo_id:
+        snap_rows = [s for s in snap_rows if s.qbo_account_id == only_qbo_id]
+        if not snap_rows:
+            result.skipped = 1
+            result.accounts.append(AccountResult(
+                qbo_account_id=only_qbo_id,
+                account_name="(account not found in snapshot)",
+                account_number="",
+                action="skipped",
+                reason=(
+                    "This account isn't in the current period's GL snapshot. "
+                    "Sync the period from QuickBooks first."
+                ),
+            ))
+            return result
     if not snap_rows:
         result.skipped = 1
         result.accounts.append(AccountResult(

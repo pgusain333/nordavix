@@ -33,6 +33,11 @@ class Variance(TenantBase):
     # Per-line sign-off: which user approved this specific variance, and when
     approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Structured AI analysis from the deeper Agentic Mode:
+    #   narrative + risk_level + justified + key_entities + recommendations.
+    # NULL for variances that only have the legacy Narrative.content
+    # prose. Schema documented in migration 021.
+    ai_commentary: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

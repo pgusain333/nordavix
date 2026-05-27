@@ -496,6 +496,7 @@ async def list_variances(
                 confidence_score=narr.confidence_score if narr else None,
                 approved_by=var.approved_by,
                 approved_at=var.approved_at,
+                ai_commentary=var.ai_commentary,
             )
         )
 
@@ -704,6 +705,55 @@ async def cancel_agentic_flux_endpoint(
     request_cancel(tenant_id, tb_id)
     logger.info("Agentic flux cancel requested: tenant=%s tb=%s", tenant_id, tb_id)
     return {"cancelled": True, "tb_id": str(tb_id)}
+
+
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/agentic/run")
+async def run_deep_agentic_on_variance(
+    tb_id: uuid.UUID,
+    var_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,  # noqa: ARG001 — used implicitly for tenant scoping
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Run the deeper Agentic analysis on ONE variance.
+
+    Auto-pulls QBO transactions for the change window, asks Claude
+    for a structured analysis (narrative + risk_level + justified +
+    key_entities + recommendations), and persists the result on
+    Variance.ai_commentary. Returns the structured commentary so the
+    UI can render it immediately.
+
+    Open to all workspace members (preparers can trigger AI; only
+    approve actions are role-gated). Idempotent: clicking again
+    re-pulls transactions + reruns the analysis (the cache key
+    includes len(txns) so a re-pull breaks the cache).
+
+    ~10-15s typical latency. The frontend shows a per-row spinner.
+    """
+    # Confirm the variance belongs to this TB (defensive check —
+    # tenant filter already gates cross-tenant access).
+    row = (await db.execute(
+        select(Variance, Account).join(Account, Variance.account_id == Account.id)
+        .where(Variance.id == var_id, Account.trial_balance_id == tb_id)
+    )).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Variance not found in this analysis.")
+
+    from modules.flux.deep_agentic import run_deep_agentic_for_variance
+    try:
+        commentary = await run_deep_agentic_for_variance(
+            db=db, tenant_id=tenant_id, variance_id=var_id,
+            force_refresh_txns=True,
+        )
+        await db.commit()
+    except Exception as e:
+        logger.exception("Per-row deep agentic failed for variance %s", var_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Agentic run failed: {type(e).__name__}: {str(e)[:200]}",
+        ) from e
+    return {"variance_id": str(var_id), "ai_commentary": commentary}
 
 
 @router.post(
