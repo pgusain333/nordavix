@@ -25,8 +25,10 @@ import { AuthPage } from "@/modules/auth/pages/AuthPage"
 import { SolutionsPage } from "@/marketing/SolutionsPage"
 import { TermsPage } from "@/marketing/TermsPage"
 import { PrivacyPage } from "@/marketing/PrivacyPage"
+import { PublicHelpPage } from "@/marketing/PublicHelpPage"
 import { SettingsPage } from "@/modules/settings/pages/SettingsPage"
 import { ConnectionsPage } from "@/modules/connections/pages/ConnectionsPage"
+import { HelpPage } from "@/modules/help/pages/HelpPage"
 import { TopProgressBar } from "@/core/ui/TopProgressBar"
 import { CookieBanner } from "@/core/consent/CookieBanner"
 
@@ -60,6 +62,7 @@ function AppRoutes() {
           <Route path="settings"     element={<SettingsPage />} />
           <Route path="team"         element={<TeamPage />} />
           <Route path="connections"  element={<ConnectionsPage />} />
+          <Route path="help"         element={<HelpPage />} />
           <Route path="tasks"        element={<TasksPage />} />
           <Route path="intercompany" element={<IntercompanyPage />} />
           <Route path="financials"   element={<FinancialsPage />} />
@@ -103,6 +106,9 @@ export default function App() {
           Privacy Policy and Terms of Service URLs). */}
       <Route path="/terms"   element={<TermsPage />} />
       <Route path="/privacy" element={<PrivacyPage />} />
+      {/* Public Help / SOP — same content as /app/help, hosted at
+          the marketing root so it's shareable + indexable. */}
+      <Route path="/help"    element={<PublicHelpPage />} />
 
       {/* Custom-branded auth surface — replaces Clerk's hosted page.
           The trailing /* lets Clerk handle its own sub-routes
