@@ -220,10 +220,14 @@ export function FinancialsPage() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      {/* Header */}
+      {/* Header — relative + z-30 so its stacking context floats above
+          the sticky tab bar (z-20) and the StatementView card below.
+          Without this, the Export PDF dropdown opens behind the
+          income-statement card because motion's transform creates a
+          stacking context that lands under the sibling tab bar. */}
       <motion.div
         initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-        className="px-4 sm:px-8 pt-6 pb-4"
+        className="px-4 sm:px-8 pt-6 pb-4 relative z-30"
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
@@ -886,7 +890,7 @@ function ExportButton({ isClosed, onExport, loading }: {
             animate={{ opacity: 1, y: 0,  scale: 1 }}
             exit={{ opacity: 0, y: -4, scale: 0.96 }}
             transition={{ duration: 0.12, ease: "easeOut" }}
-            className="absolute right-0 top-full mt-1.5 z-20 rounded-xl overflow-hidden min-w-[280px] origin-top-right"
+            className="absolute right-0 top-full mt-1.5 z-50 rounded-xl overflow-hidden min-w-[280px] origin-top-right"
             style={{
               background: "var(--surface)",
               border: "1px solid var(--border-strong)",

@@ -40,6 +40,7 @@ import { VarianceTable } from "@/modules/flux/components/VarianceTable"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Button, Spinner } from "@/core/ui/components"
 import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
+import { workspaceApi } from "@/modules/workspace/api"
 import type { VarianceRow } from "@/modules/flux/api"
 
 // ── Status dot colours (inline styles — no Tailwind bg-* needed) ────────────
@@ -218,9 +219,31 @@ export function FluxDashboard() {
     onError: () => setPendingAction(null),
   })
 
-  // (Removed: approveTbMut — TB-level Approve button was dropped from
-  // the header. Approvals happen per-variance via the row check icon or
-  // via the bulk-action bar in the variance table.)
+  // TB-level "Sign off on this analysis" — separate from per-variance
+  // approval. Sets TrialBalance.approved_by + approved_at on the
+  // server. Required by the month-end close gate, which won't let
+  // admins lock the books until every flux analysis for the closing
+  // month is TB-approved (not just line-approved). Without a UI
+  // affordance for this, reviewers had no way to complete the close.
+  const { data: me } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 5 * 60_000,
+  })
+  const canSignOff = me?.role === "admin" || me?.role === "reviewer"
+
+  const approveTbMut = useMutation({
+    mutationFn: (id: string) => api.approveTrialBalance(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["trial-balances"] })
+      qc.invalidateQueries({ queryKey: ["period-tracker"] })
+      setRunMsg({ kind: "ok", text: "Analysis signed off. Ready for month-end close." })
+    },
+    onError: (e: unknown) => {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setRunMsg({ kind: "err", text: detail ?? "Could not approve analysis. Try again." })
+    },
+  })
 
   // Run AI analysis on all material+pending variances
   const runFluxMut = useMutation({
@@ -503,19 +526,54 @@ export function FluxDashboard() {
                 <span className="hidden sm:inline">Find reasons</span>
               </Button>
             )}
-            {/* TB-level Approve button removed per UX request — approvals
-                happen per-variance via the row's check icon, or via the
-                bulk action bar that appears when rows are selected via
-                the new checkbox column. The "Approved" badge remains
-                so the user still sees TB-level sign-off state. */}
-            {showVarianceTable && selectedTb && selectedTb.approved_at && (
-              <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
-                style={{ background: "var(--green-subtle)", color: "var(--green)" }}
-                title={`Approved on ${new Date(selectedTb.approved_at).toLocaleString()}`}
-              >
-                <CheckCircle2 size={11} strokeWidth={2} />
-                Approved
-              </span>
+            {/* TB-level sign-off. Per-variance approvals stay in the
+                row check icon / bulk action bar; THIS is the final
+                "I sign off on the whole analysis" step that the
+                month-end close gate requires. Visible only to admin
+                + reviewer; preparers see the badge if already signed
+                off but never the action button. */}
+            {showVarianceTable && selectedTb && (
+              selectedTb.approved_at ? (
+                <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                  style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+                  title={`Approved on ${new Date(selectedTb.approved_at).toLocaleString()}`}
+                >
+                  <CheckCircle2 size={11} strokeWidth={2} />
+                  Approved
+                </span>
+              ) : canSignOff ? (
+                (() => {
+                  // Enable only when every material variance has been
+                  // approved at the row level — that's the same rule
+                  // we display in the KPI strip (Approved / Material).
+                  // Allowing TB sign-off before line approvals defeats
+                  // the maker/checker pattern.
+                  const material = variances.filter((v) => v.is_material)
+                  const linesApproved = material.filter((v) => v.status === "approved")
+                  const allLinesDone = material.length > 0 && linesApproved.length === material.length
+                  const remaining = material.length - linesApproved.length
+                  return (
+                    <Button
+                      size="sm"
+                      icon={<CheckCircle2 size={14} strokeWidth={1.8} />}
+                      loading={approveTbMut.isPending}
+                      disabled={!allLinesDone}
+                      onClick={() => tbId && approveTbMut.mutate(tbId)}
+                      title={
+                        material.length === 0
+                          ? "No material variances yet — generate flux or lower the materiality threshold."
+                          : !allLinesDone
+                            ? `Approve all ${material.length} material variance${material.length === 1 ? "" : "s"} first (${remaining} remaining).`
+                            : "Sign off on this analysis — required before the books can be closed for this month."
+                      }
+                    >
+                      <span className="hidden sm:inline">
+                        {allLinesDone ? "Sign off analysis" : `Sign off (${remaining} left)`}
+                      </span>
+                    </Button>
+                  )
+                })()
+              ) : null
             )}
             {showVarianceTable && (
               <Button variant="outline" size="sm" icon={<Download size={14} strokeWidth={1.6} />} onClick={handleExport}>
