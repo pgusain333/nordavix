@@ -81,7 +81,7 @@ async def list_members(
             "display_name":  full,
             "email":         m.get("email"),
             "image_url":     m.get("image_url"),
-            "clerk_role":    m.get("role"),     # Clerk's org role (org:admin / org:basic_member)
+            "clerk_role":    m.get("role"),     # Clerk's org role (org:admin / org:member)
             "role":          u.role if u else "preparer",  # Nordavix role
         })
     return {"members": members}
@@ -257,8 +257,15 @@ async def create_invitation(
         )
 
     # Map our role → Clerk's built-in roles. Admin = org:admin so they can
-    # manage the org in Clerk's hosted pages; reviewer/preparer = basic.
-    clerk_role = "org:admin" if role == "admin" else "org:basic_member"
+    # manage the org in Clerk's hosted pages; reviewer/preparer = member.
+    #
+    # NOTE: the default non-admin role key is `org:member` in modern
+    # Clerk production instances. The older `org:basic_member` key only
+    # exists in some legacy dev instances; sending it against a current
+    # production instance returns a 404 "Organization role not found"
+    # which we wrap as "Clerk organization isn't accessible" — masking
+    # the real cause. Always use `org:member` going forward.
+    clerk_role = "org:admin" if role == "admin" else "org:member"
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
