@@ -89,6 +89,12 @@ export function BooksSetupWizard() {
   const [booksStart, setBooksStart] = useState<string>(defaultBooksStart())
   const [editedOpenings, setEditedOpenings] = useState<Record<string, string>>({})
   const [search, setSearch] = useState("")
+  // QBO ships standard charts of accounts with placeholders (Mastercard,
+  // Visa, etc.) that many clients never use. Default-hide accounts whose
+  // GL balance is $0 AND haven't been edited — they're almost always
+  // noise on day one. The seed still writes them with $0 in the
+  // backend so we have a row in case they're ever used later.
+  const [hideZeroBalance, setHideZeroBalance] = useState(true)
 
   // QBO must be connected before we can pull the seed trial balance.
   // Uses the cached hook so the wizard renders instantly on refresh.
@@ -134,11 +140,25 @@ export function BooksSetupWizard() {
   const filteredAccounts = useMemo(() => {
     if (!preview) return [] as SeedPreviewAccount[]
     const q = search.trim().toLowerCase()
-    if (!q) return preview.accounts
-    return preview.accounts.filter(
-      (a) => a.account_name.toLowerCase().includes(q) || a.account_number.toLowerCase().includes(q),
-    )
+    const matchesSearch = (a: SeedPreviewAccount) =>
+      !q || a.account_name.toLowerCase().includes(q) || a.account_number.toLowerCase().includes(q)
+    return preview.accounts.filter(matchesSearch)
   }, [preview, search])
+
+  // Apply the "hide zero-balance" toggle on top of the search filter.
+  // An account stays visible if either its GL balance or its (possibly
+  // edited) opening is non-zero — so the user can re-edit an account
+  // back down to $0 without it vanishing mid-keystroke.
+  const visibleAccounts = useMemo(() => {
+    if (!hideZeroBalance) return filteredAccounts
+    return filteredAccounts.filter((a) => {
+      const gl   = parseFloat(a.proposed_opening) || 0
+      const open = parseFloat(editedOpenings[a.qbo_id] ?? a.proposed_opening) || 0
+      return gl !== 0 || open !== 0
+    })
+  }, [filteredAccounts, hideZeroBalance, editedOpenings])
+
+  const hiddenZeroCount = filteredAccounts.length - visibleAccounts.length
 
   const totalsByGroup = useMemo(() => {
     const map: Record<string, { count: number; total: number }> = {}
@@ -356,7 +376,7 @@ export function BooksSetupWizard() {
               </div>
             ) : (
               <>
-                <div className="px-5 py-3 flex items-center gap-2"
+                <div className="px-5 py-3 flex items-center gap-2 flex-wrap"
                   style={{ borderBottom: "1px solid var(--border)" }}>
                   <div className="relative flex-1 max-w-xs">
                     <Search size={14} strokeWidth={1.8} className="absolute left-2.5 top-1/2 -translate-y-1/2"
@@ -373,8 +393,27 @@ export function BooksSetupWizard() {
                       }}
                     />
                   </div>
-                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    {filteredAccounts.length} of {preview?.accounts.length} accounts
+                  <label
+                    className="inline-flex items-center gap-1.5 text-[11px] cursor-pointer select-none"
+                    style={{ color: "var(--text-2)" }}
+                    title="Hides QBO accounts whose GL balance and opening are both $0 — usually unused defaults like Mastercard / Visa from QuickBooks' standard chart"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={hideZeroBalance}
+                      onChange={(e) => setHideZeroBalance(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded"
+                      style={{ accentColor: "var(--green)" }}
+                    />
+                    Hide zero-balance accounts
+                  </label>
+                  <span className="text-[11px] ml-auto" style={{ color: "var(--text-muted)" }}>
+                    {visibleAccounts.length} of {preview?.accounts.length} accounts
+                    {hiddenZeroCount > 0 && hideZeroBalance && (
+                      <span className="ml-1" style={{ color: "var(--text-muted)" }}>
+                        ({hiddenZeroCount} hidden — still seeded at $0)
+                      </span>
+                    )}
                   </span>
                 </div>
 
@@ -395,7 +434,7 @@ export function BooksSetupWizard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredAccounts.map((a) => {
+                      {visibleAccounts.map((a) => {
                         const edited = editedOpenings[a.qbo_id]
                         const valueToShow = edited ?? a.proposed_opening
                         const wasEdited = edited !== undefined && edited !== a.proposed_opening
