@@ -16,6 +16,7 @@ import { cn } from "@/core/ui/utils"
 import { Badge } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { FeedbackDialog } from "@/core/ui/FeedbackDialog"
+import { WorkspaceSwitcher } from "@/core/layout/WorkspaceSwitcher"
 import { workspaceApi } from "@/modules/workspace/api"
 import { tasksApi } from "@/modules/tasks/api"
 
@@ -415,14 +416,14 @@ function OrgNameInline({ organizationName, onRename }: OrgNameInlineProps) {
               style={{ color: "var(--text-muted)" }}
             />
           </button>
-          <NavLink
-            to="/app/companies"
-            className="text-[10px] mt-1 inline-flex items-center gap-1 transition-colors hover:underline"
-            style={{ color: "var(--text-muted)" }}
-            title="Switch company or create another"
-          >
-            Switch company
-          </NavLink>
+          {/* Workspace switcher — dropdown listing every org the user
+              belongs to, + "Create company" footer. Replaces the
+              previous plain-text "Switch company" link with a proper
+              menu so users can flip workspaces without leaving the
+              sidebar. */}
+          <div className="mt-1">
+            <WorkspaceSwitcher />
+          </div>
         </>
       )}
       {error && (

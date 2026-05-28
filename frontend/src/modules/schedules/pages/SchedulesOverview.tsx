@@ -137,25 +137,36 @@ export function SchedulesOverview() {
       {/* Grid */}
       <div className="flex-1 px-4 sm:px-8 py-6 max-w-6xl w-full mx-auto">
         {!hasLoaded ? (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-            className="rounded-xl p-10 text-center"
-            style={{
-              background: "var(--surface)",
-              border: "1px dashed var(--border-strong)",
-            }}>
-            <div className="h-12 w-12 mx-auto rounded-lg flex items-center justify-center mb-3"
-              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-              <BookOpen size={22} strokeWidth={1.6} />
+          // Pre-load: render the 5 cards skeletonised with blank numbers
+          // so the layout's stable, just no real data yet. Subtle hint
+          // below tells the user to click Load above.
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {(["prepaid", "accrual", "fixed_asset", "lease", "loan"] as const).map((t, idx) => (
+                <ScheduleCard
+                  key={t}
+                  t={{
+                    type: t,
+                    human_name: SCHEDULE_HUMAN[t],
+                    active_count: 0,
+                    total_count: 0,
+                    ending_balance: "0",
+                    period_expense: "0",
+                    any_committed_for_period: false,
+                  }}
+                  delay={idx * 0.04}
+                  blank
+                  onOpen={() => navigate(SCHEDULE_ROUTE[t])}
+                />
+              ))}
             </div>
-            <p className="text-sm font-semibold text-theme mb-1">Pick a period end, then load</p>
-            <p className="text-xs max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
-              Schedules roll forward off the period-end you choose. Pick the closing
-              date for the month you're reconciling, then click{" "}
-              <span className="font-semibold">Load schedules</span> above to compute
-              the snapshot for all five types.
+            <p className="text-[11px] text-center mt-6"
+              style={{ color: "var(--text-muted)" }}>
+              Pick a period end above and click{" "}
+              <span className="font-semibold text-theme">Load schedules</span> to
+              compute the snapshot for all five types.
             </p>
-          </motion.div>
+          </>
         ) : isLoading || !data ? (
           <div className="py-20 flex flex-col items-center justify-center gap-2">
             <Spinner className="h-6 w-6" />
@@ -218,10 +229,14 @@ export function SchedulesOverview() {
 
 // ── Card ─────────────────────────────────────────────────────────────────
 
-function ScheduleCard({ t, delay, onOpen }: {
+function ScheduleCard({ t, delay, onOpen, blank }: {
   t:       OverviewType
   delay:   number
   onOpen:  () => void
+  /** When true, render placeholder dashes instead of the (likely zero)
+   * numeric values — communicates "not loaded yet" without hiding the
+   * card layout. */
+  blank?:  boolean
 }) {
   const accent = ACCENTS[t.type]
   return (
@@ -262,8 +277,9 @@ function ScheduleCard({ t, delay, onOpen }: {
             style={{ color: "var(--text-muted)" }}>
             Ending balance
           </p>
-          <p className="text-lg font-bold tabular-nums text-theme mt-0.5">
-            {fmtMoney(t.ending_balance)}
+          <p className="text-lg font-bold tabular-nums mt-0.5"
+            style={{ color: blank ? "var(--text-muted)" : "var(--text)" }}>
+            {blank ? "—" : fmtMoney(t.ending_balance)}
           </p>
         </div>
         <div className="text-right">
@@ -271,18 +287,25 @@ function ScheduleCard({ t, delay, onOpen }: {
             style={{ color: "var(--text-muted)" }}>
             Active
           </p>
-          <p className="text-sm font-semibold text-theme mt-0.5 tabular-nums">
-            {t.active_count}
-            <span className="text-[10px] font-normal ml-1" style={{ color: "var(--text-muted)" }}>
-              of {t.total_count}
-            </span>
+          <p className="text-sm font-semibold mt-0.5 tabular-nums"
+            style={{ color: blank ? "var(--text-muted)" : "var(--text)" }}>
+            {blank ? "—" : (
+              <>
+                {t.active_count}
+                <span className="text-[10px] font-normal ml-1" style={{ color: "var(--text-muted)" }}>
+                  of {t.total_count}
+                </span>
+              </>
+            )}
           </p>
         </div>
       </div>
       <div className="mt-3 pt-3 flex items-center justify-between text-[10px]"
         style={{ borderTop: "1px solid var(--border)" }}>
         <span style={{ color: "var(--text-muted)" }}>This period</span>
-        {t.any_committed_for_period ? (
+        {blank ? (
+          <span className="font-semibold" style={{ color: "var(--text-muted)" }}>—</span>
+        ) : t.any_committed_for_period ? (
           <span className="inline-flex items-center gap-1 font-semibold"
             style={{ color: "var(--green)" }}>
             <CheckCircle2 size={10} strokeWidth={2.4} />

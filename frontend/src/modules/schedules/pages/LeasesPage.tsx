@@ -232,11 +232,63 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
   const [leaseEnd, setLeaseEnd] = useState(existing?.lease_end ?? "")
   const [monthly, setMonthly] = useState(existing?.monthly_payment ?? "")
   const [useAsc842, setUseAsc842] = useState(!!existing?.initial_liability)
+  // ASC 842 doesn't change the PV calculation itself — finance vs
+  // operating only matter for the subsequent JE presentation. We capture
+  // the user's choice for clarity + future use; the calc button below
+  // uses it only to label the result. Default = operating (the more
+  // common case for SMBs).
+  const [leaseClass, setLeaseClass] = useState<"operating" | "finance">("operating")
+  // Payment timing — arrears (end of period) is the standard assumption;
+  // advance (start of period) inflates the PV by (1 + r) since the
+  // first payment is made immediately.
+  const [paymentTiming, setPaymentTiming] = useState<"arrears" | "advance">("arrears")
   const [discountRate, setDiscountRate] = useState(existing?.discount_rate_pct ?? "")
   const [rouAsset, setRouAsset] = useState(existing?.initial_rou_asset ?? "")
   const [liability, setLiability] = useState(existing?.initial_liability ?? "")
   const [notes, setNotes] = useState(existing?.notes ?? "")
   const [error, setError] = useState<string | null>(null)
+  const [calcMsg, setCalcMsg] = useState<string | null>(null)
+
+  /**
+   * PV of payments — present value of an annuity at the monthly discount
+   * rate. Initial Liability and Initial ROU Asset are equal in the
+   * simple case (no IDC / prepayments / incentives). User can adjust
+   * manually after if needed.
+   */
+  function calculatePV(): void {
+    setCalcMsg(null)
+    const pmt = parseFloat(monthly)
+    const rateAnnual = parseFloat(discountRate)
+    const start = leaseStart ? new Date(leaseStart + "T00:00:00") : null
+    const end   = leaseEnd   ? new Date(leaseEnd   + "T00:00:00") : null
+    if (!pmt || !rateAnnual || !start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
+      setError(
+        "To auto-calculate I need: Monthly payment, Discount rate %, Lease start, and Lease end. Fill those four, then click Calculate again."
+      )
+      return
+    }
+    const months = Math.max(1,
+      (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1
+    )
+    const r = rateAnnual / 100 / 12
+    let pv: number
+    if (r === 0) {
+      pv = pmt * months
+    } else {
+      pv = (pmt * (1 - Math.pow(1 + r, -months))) / r
+      if (paymentTiming === "advance") pv = pv * (1 + r)
+    }
+    const rounded = Math.round(pv * 100) / 100
+    setLiability(rounded.toFixed(2))
+    setRouAsset(rounded.toFixed(2))
+    setError(null)
+    setCalcMsg(
+      `Computed PV of ${months} payments of $${pmt.toLocaleString()} at ${rateAnnual}% (${paymentTiming}) = ` +
+      `$${rounded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. ` +
+      `Set as both Initial ROU Asset and Initial Liability. ` +
+      `(${leaseClass === "finance" ? "Finance lease" : "Operating lease"} — same initial measurement; difference is in subsequent JE presentation.)`
+    )
+  }
 
   const mut = useMutation({
     mutationFn: (body: Partial<LeaseItem>) => existing
@@ -325,6 +377,20 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
             </p>
             {useAsc842 && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
+                <Field label="Lease classification">
+                  <select value={leaseClass} onChange={(e) => setLeaseClass(e.target.value as "operating" | "finance")}
+                    className={inputCls} style={inputStyle}>
+                    <option value="operating">Operating lease</option>
+                    <option value="finance">Finance lease (capital)</option>
+                  </select>
+                </Field>
+                <Field label="Payment timing">
+                  <select value={paymentTiming} onChange={(e) => setPaymentTiming(e.target.value as "arrears" | "advance")}
+                    className={inputCls} style={inputStyle}>
+                    <option value="arrears">Arrears (end of month — standard)</option>
+                    <option value="advance">Advance (start of month)</option>
+                  </select>
+                </Field>
                 <AccountPicker mode="form" label="Right-of-use asset GL account"
                   value={rouAccount} onChange={setRouAccount} />
                 <Field label="Discount rate % (annual, e.g. 5.25)">
@@ -342,6 +408,17 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
                     onChange={(e) => setLiability(e.target.value)}
                     placeholder="PV of payments" className={`${inputCls} text-right tabular-nums`} style={inputStyle} />
                 </Field>
+                <div className="sm:col-span-2 flex flex-wrap items-center gap-3 pt-1">
+                  <Button size="sm" variant="ghost" type="button" onClick={calculatePV}>
+                    Calculate ROU + Liability from inputs
+                  </Button>
+                  {calcMsg && (
+                    <span className="text-[11px]" style={{ color: "var(--green)" }}>{calcMsg}</span>
+                  )}
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    Needs: Monthly payment, Discount rate, Lease start &amp; end. Computes PV of the payment stream and fills both fields.
+                  </span>
+                </div>
               </div>
             )}
           </div>

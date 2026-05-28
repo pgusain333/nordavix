@@ -14,11 +14,23 @@
  * the dashboard doesn't hammer QBO every time the user navigates here.
  */
 import { useEffect, useMemo, useState } from "react"
-import { useUser } from "@clerk/clerk-react"
+import { useUser, useOrganization } from "@clerk/clerk-react"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
+import { readMeta } from "@/modules/onboarding/components/CompanyForm"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
+
+/** Resolve the current workspace's month-end close target in days
+ * (default 15). Reads from CompanyMeta in localStorage so the value
+ * propagates the moment the user saves it in the setup form. */
+function useCloseTargetDays(): number {
+  const { organization } = useOrganization()
+  if (!organization?.id) return 15
+  const raw = readMeta(organization.id).month_end_close_target_days
+  const v = parseInt(raw ?? "15", 10)
+  return Number.isFinite(v) && v > 0 ? v : 15
+}
 import {
   CheckCircle2,
   ArrowRight,
@@ -999,7 +1011,11 @@ function CloseProgressCard({
   })()
   const today = new Date(new Date().toDateString())
   const daysSinceClose = periodEnd ? Math.floor((today.getTime() - periodEnd.getTime()) / 86_400_000) : 0
-  const targetClose = periodEnd ? new Date(periodEnd.getTime() + 15 * 86_400_000) : null
+  // Close-target window comes from the company meta (set during create-
+  // company / Settings). Fallback to 15 days when unset so legacy
+  // workspaces still get a sensible target.
+  const targetDays = useCloseTargetDays()
+  const targetClose = periodEnd ? new Date(periodEnd.getTime() + targetDays * 86_400_000) : null
   const daysToTarget = targetClose ? Math.ceil((targetClose.getTime() - today.getTime()) / 86_400_000) : 0
   const targetLabel = targetClose
     ? targetClose.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
