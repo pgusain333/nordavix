@@ -482,6 +482,7 @@ async def list_variances(
             VarianceResponse(
                 id=var.id,
                 account_id=var.account_id,
+                qbo_account_id=acct.qbo_account_id,
                 account_number=acct.account_number,
                 account_name=acct.account_name,
                 current_balance=acct.current_balance,
@@ -1131,6 +1132,153 @@ async def _wipe_tb_children(tb_id: uuid.UUID, db: AsyncSession) -> None:
 
     # Then accounts
     await db.execute(delete(Account).where(Account.trial_balance_id == tb_id))
+
+
+@router.post("/trial-balances/{tb_id}/accounts/{qbo_account_id}/sync")
+async def sync_one_account_from_qbo(
+    tb_id: uuid.UUID,
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Surgical refresh: re-pull just this one account's current + prior
+    balance from QBO and recompute its variance row in place. Same
+    convention as the full Flux pull (signed debit-positive), so the
+    row updates without touching anything else in the TB.
+
+    Returns the updated balances + recomputed variance fields so the
+    frontend can patch the row optimistically.
+    """
+    tb = (await db.execute(
+        select(TrialBalance).where(TrialBalance.id == tb_id)
+    )).scalar_one_or_none()
+    if tb is None:
+        raise HTTPException(status_code=404, detail="Trial balance not found.")
+
+    acct = (await db.execute(
+        select(Account).where(
+            Account.trial_balance_id == tb_id,
+            Account.qbo_account_id == qbo_account_id,
+        )
+    )).scalar_one_or_none()
+    if acct is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Account not found in this analysis — was the TB built from QBO?",
+        )
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    from core.qbo_tb import fetch_trial_balance, parse_trial_balance
+
+    # Fetch both period reports — the variance recompute needs both
+    # current and prior balances to stay consistent with the rest of
+    # the TB. Two API calls per sync; cheap enough for a per-row action.
+    try:
+        report_current = await fetch_trial_balance(conn, tb.period_current)
+        report_prior   = await fetch_trial_balance(conn, tb.period_prior)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"QBO sync failed: {exc}")
+
+    tb_current = parse_trial_balance(report_current)
+    tb_prior   = parse_trial_balance(report_prior)
+
+    # Look up by canonical id first; fall back to name variants so the
+    # sync works on older QBO instances that didn't always emit Id rows.
+    def _lookup(parsed: dict, name: str, number: str | None) -> Decimal:
+        by_id   = parsed["by_id"]
+        by_name = parsed["by_name"]
+        if qbo_account_id in by_id:
+            return by_id[qbo_account_id]
+        if number and number in by_name:
+            return by_name[number]
+        candidates = [
+            f"{number} {name}".strip() if number else "",
+            name,
+            f"{name} ({number})".strip() if number else "",
+            name.split(":")[-1].strip() if ":" in name else "",
+        ]
+        for c in candidates:
+            if c and c in by_name:
+                return by_name[c]
+        return Decimal("0")
+
+    new_current = _lookup(tb_current, acct.account_name, acct.account_number)
+    new_prior   = _lookup(tb_prior,   acct.account_name, acct.account_number)
+
+    acct.current_balance = new_current
+    acct.prior_balance   = new_prior
+
+    # Recompute the variance row in place — keep the same materiality
+    # rule + anomaly flags the rest of the analysis was generated with.
+    var = (await db.execute(
+        select(Variance).where(Variance.account_id == acct.id)
+    )).scalar_one_or_none()
+    if var is not None:
+        dollar_var = new_current - new_prior
+        var.dollar_variance = dollar_var
+        if new_prior != 0:
+            var.pct_variance = (dollar_var / new_prior).quantize(Decimal("0.0001"))
+        else:
+            var.pct_variance = None
+        var.is_material = abs(dollar_var) >= Decimal(tb.materiality_threshold)
+        # Recompute anomaly flags (subset — sign flip + dormant
+        # reactivation; new_account stays as originally tagged).
+        flags = [f for f in (var.anomaly_flags or []) if f == "new_account"]
+        if (new_prior < 0 and new_current > 0) or (new_prior > 0 and new_current < 0):
+            flags.append("sign_flip")
+        if new_prior == 0 and new_current != 0 and "new_account" not in flags:
+            flags.append("dormant_reactivated")
+        if new_prior != 0 and abs(dollar_var / new_prior) >= Decimal("0.5"):
+            flags.append("large_pct_change")
+        # De-dup while preserving order
+        seen: set[str] = set()
+        var.anomaly_flags = [f for f in flags if not (f in seen or seen.add(f))]
+
+    await db.commit()
+    await db.refresh(acct)
+    if var is not None:
+        await db.refresh(var)
+
+    try:
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user.id,
+            action="flux.account_synced",
+            entity_type="account", entity_id=acct.id,
+            metadata={
+                "summary":      f"Resynced {acct.account_name} from QBO",
+                "qbo_account_id": qbo_account_id,
+                "new_current":  str(new_current),
+                "new_prior":    str(new_prior),
+            },
+        )
+        await db.commit()
+    except Exception:
+        # Audit failures shouldn't block the user — log and continue.
+        logger.exception("Audit write failed on flux account sync")
+
+    return {
+        "account_id":      str(acct.id),
+        "qbo_account_id":  qbo_account_id,
+        "account_name":    acct.account_name,
+        "current_balance": str(new_current),
+        "prior_balance":   str(new_prior),
+        "variance": {
+            "id":              str(var.id) if var else None,
+            "dollar_variance": str(var.dollar_variance) if var else "0",
+            "pct_variance":    str(var.pct_variance) if var and var.pct_variance is not None else None,
+            "is_material":     bool(var.is_material) if var else False,
+            "anomaly_flags":   list(var.anomaly_flags or []) if var else [],
+        } if var else None,
+        "synced_at": datetime.now(UTC).isoformat(),
+    }
 
 
 @router.post("/trial-balances/{tb_id}/reset", status_code=status.HTTP_200_OK)
