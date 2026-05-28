@@ -273,6 +273,27 @@ export function BooksSetupWizard() {
                 GL trial balance as of {preview?.seed_date || "(loading…)"}. Edit any account where the real
                 subledger (bank statement, FA register, prepaid schedule, etc.) doesn't match QBO on day 1.
               </p>
+              {/* QBO source banner — tells the user which QuickBooks
+                  realm + company the wizard pulled from. Critical
+                  for verifying you're connected to the right company,
+                  especially across multiple workspaces. */}
+              {preview?.qbo_source && (
+                <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px]"
+                  style={{
+                    background: "var(--green-subtle)",
+                    border: "1px solid var(--green)",
+                    color: "var(--green)",
+                  }}>
+                  <CheckCircle2 size={12} strokeWidth={2} className="shrink-0" />
+                  <span>
+                    <span className="font-semibold">Pulled from:</span>{" "}
+                    {preview.qbo_source.company_name ?? "(QuickBooks company name unavailable)"}
+                    <span className="opacity-70 ml-2 font-mono">
+                      realm {preview.qbo_source.realm_id}
+                    </span>
+                  </span>
+                </div>
+              )}
               {(preview?.skipped_pl_count ?? 0) > 0 && (
                 <p className="text-[11px] mt-2 px-2 py-1.5 rounded inline-block"
                   style={{
@@ -280,7 +301,11 @@ export function BooksSetupWizard() {
                     color: "#1d4ed8",
                     border: "1px solid rgba(59, 130, 246, 0.30)",
                   }}>
-                  Showing {preview?.accounts.length ?? 0} balance-sheet accounts.
+                  Showing {preview?.accounts.length ?? 0} balance-sheet accounts
+                  {preview?.diagnostics?.raw_qbo_account_count !== undefined && (
+                    <>{" "}out of {preview.diagnostics.raw_qbo_account_count} returned by QuickBooks
+                    </>
+                  )}.
                   {" "}{preview!.skipped_pl_count} income / expense / COGS account{preview!.skipped_pl_count === 1 ? "" : "s"}
                   {" "}aren't shown — P&amp;L accounts always start at $0 at the beginning of each fiscal year
                   and don't need an opening balance.

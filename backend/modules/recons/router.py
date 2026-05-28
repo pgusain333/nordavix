@@ -1781,10 +1781,25 @@ async def get_seed_preview(
         # the count so the wizard can explain "you saw N more accounts
         # in your QBO TB" without it looking like a bug.
         "skipped_pl_count": pl_count,
+        # Surface WHICH QBO realm + company we're actually pulling from.
+        # Critical for debugging "always 36 accounts" reports — without
+        # this the user can't tell whether Intuit's picker quietly
+        # reused the same sandbox across workspaces. Now it's visible
+        # right at the top of the wizard.
+        "qbo_source": {
+            "realm_id":     conn.realm_id,
+            "company_name": conn.company_name,
+        },
         "diagnostics": {
-            "tb_rows":   len(tb_by_id),
-            "tb_names":  list(tb_by_name.keys())[:30],
-            "misses":    misses[:20],
+            "tb_rows":              len(tb_by_id),
+            "tb_names":             list(tb_by_name.keys())[:30],
+            "misses":               misses[:20],
+            # Raw account count BEFORE we filter to ACCOUNT_TYPE_GROUPS
+            # — if this is 36 too, the filter isn't dropping anything
+            # and the realm legitimately has 36 of these account types.
+            "raw_qbo_account_count":   len(accounts_meta),
+            "balance_sheet_kept":      len(rows),
+            "balance_sheet_skipped":   pl_count,
         },
     }
 
