@@ -12,6 +12,7 @@ import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageH
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { AccrualReversalDrawer } from "@/modules/schedules/components/AccrualReversalDrawer"
+import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { AccrualItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
@@ -106,7 +107,7 @@ export function AccrualsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ background: "var(--surface-2)" }}>
-                    <Th>Description</Th><Th>Vendor</Th><Th right>Amount</Th>
+                    <Th>Description</Th><Th>GL account</Th><Th>Vendor</Th><Th right>Amount</Th>
                     <Th>Accrued</Th><Th>Reverses</Th><Th>Status</Th><Th />
                   </tr>
                 </thead>
@@ -119,6 +120,7 @@ export function AccrualsPage() {
                           <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Ref: {it.reference}</div>
                         )}
                       </Td>
+                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
                       <Td>{it.vendor || "—"}</Td>
                       <Td right tabular>{fmt(it.amount)}</Td>
                       <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.accrual_date}</span></Td>

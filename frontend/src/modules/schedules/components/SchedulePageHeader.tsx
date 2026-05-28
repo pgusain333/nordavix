@@ -56,11 +56,7 @@ export function SchedulePageHeader({
           <div className="inline-flex items-center gap-1.5">
             <span className="text-[10px] font-semibold uppercase tracking-wide"
               style={{ color: "var(--text-muted)" }}>Period end</span>
-            <DatePicker
-              value={periodEnd}
-              onChange={onPeriod}
-              triggerClassName="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium border outline-none transition-colors"
-            />
+            <DatePicker value={periodEnd} onChange={onPeriod} />
           </div>
           <Button size="sm" icon={<Plus size={14} strokeWidth={2} />} onClick={onAddItem}>
             {addLabel ?? "Add item"}
