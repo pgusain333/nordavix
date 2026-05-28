@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
+import { formatDate } from "@/core/lib/dates"
 import {
   ArrowLeft,
   CheckCircle2,
@@ -149,7 +150,7 @@ export function ReconciliationDetail() {
     recon.recon_type === "BANK" ? "Bank account" :
     recon.recon_type === "CC"   ? "Card"     :
     "Account"
-  const periodLabel = new Date(recon.period_end).toLocaleDateString(undefined, { dateStyle: "medium" })
+  const periodLabel = formatDate(recon.period_end)
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>

@@ -20,6 +20,7 @@ import { readMeta } from "@/modules/onboarding/components/CompanyForm"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
+import { formatDate, formatDateLong } from "@/core/lib/dates"
 
 /** Resolve the current workspace's month-end close target in days
  * (default 15). Reads from CompanyMeta in localStorage so the value
@@ -1017,12 +1018,8 @@ function CloseProgressCard({
   const targetDays = useCloseTargetDays()
   const targetClose = periodEnd ? new Date(periodEnd.getTime() + targetDays * 86_400_000) : null
   const daysToTarget = targetClose ? Math.ceil((targetClose.getTime() - today.getTime()) / 86_400_000) : 0
-  const targetLabel = targetClose
-    ? targetClose.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-    : ""
-  const periodEndLabel = periodEnd
-    ? periodEnd.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-    : period
+  const targetLabel    = targetClose ? formatDate(targetClose) : ""
+  const periodEndLabel = periodEnd    ? formatDate(periodEnd)   : period
   const pct = Math.min(100, Math.max(0, Math.round(trackerEntry?.approved_pct ?? 0)))
   const status = trackerEntry?.status ?? "not_started"
   // Derive bucket counts directly from the tracker entry so the card
@@ -1033,9 +1030,7 @@ function CloseProgressCard({
 
   // ── State 1: closed ─────────────────────────────────────────────
   if (status === "closed") {
-    const closedAt = trackerEntry?.closed_at
-      ? new Date(trackerEntry.closed_at).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
-      : ""
+    const closedAt = trackerEntry?.closed_at ? formatDateLong(trackerEntry.closed_at) : ""
     return (
       <ClosedStateCard
         monthLabel={monthLabel}

@@ -74,6 +74,28 @@ ACCOUNT_TYPE_GROUPS: dict[str, str] = {
 SKIP_ACCOUNT_TYPES = {"Income", "Cost of Goods Sold", "Expense", "Other Income", "Other Expense"}
 
 
+# Name-based detection for the Retained Earnings account. QBO uses
+# AccountSubType="RetainedEarnings" but we don't always have subtype
+# in accounts_meta, so we fall back to a case-insensitive name match.
+# Matches the standard QBO label "Retained Earnings" as well as common
+# variants ("Accumulated Earnings", "Owner's Retained Earnings", etc.)
+import re as _re
+_RE_NAME_RX = _re.compile(r"\bretained\s+earnings\b", _re.IGNORECASE)
+
+
+def _is_retained_earnings(account_name: str, account_type: str) -> bool:
+    """Whether a QBO account is the Retained Earnings account.
+
+    For Equity-typed accounts we check the name — QBO's standard RE
+    account is named "Retained Earnings" but some companies localize
+    the label. This catches both. Non-Equity accounts are never RE
+    even if the name happens to contain the words.
+    """
+    if account_type != "Equity":
+        return False
+    return bool(_RE_NAME_RX.search(account_name or ""))
+
+
 # ── Public functions ─────────────────────────────────────────────────────────
 
 async def sync_overview(
@@ -405,6 +427,18 @@ async def _build_overview_from_qbo_data(
             else Decimal("0")
         )
 
+        # Retained Earnings is a special case: QBO's GL balance on RE
+        # auto-includes YTD net income (closing entries roll the P&L
+        # into RE — some QBO setups do this monthly, others only at
+        # fiscal year-end). The standard subledger approach (carry the
+        # prior closing balance forward with no activity) creates a
+        # phantom variance equal to the YTD profit. To reconcile, we
+        # set SL=GL for the RE account and explain in the source label
+        # that YTD net income flows through the P&L into this row. The
+        # user can still override manually if they want a different
+        # treatment for an AJE — has_saved_subledger takes precedence.
+        is_re = _is_retained_earnings(a.get("Name", "") or "", acct_type)
+
         if has_saved_subledger:
             # Display the saved value either way (it's the canonical
             # current-period subledger). The is_manual_seed / is_rollforward
@@ -417,6 +451,23 @@ async def _build_overview_from_qbo_data(
                 )
             else:
                 source = review.subledger_source or "Manually entered (seed)"
+            has_detail = True
+        elif is_re:
+            # Default the RE subledger to GL so the recon ties out, and
+            # surface the YTD NI breakdown in the source label so the
+            # user understands the auto-treatment. Roll-forward flags
+            # turn off — this isn't a carried-forward subledger, it's a
+            # GL-anchored auto-match.
+            subledger_balance = gl_balance
+            is_rollforward_from_subledger = False
+            is_manual_seed = False
+            ni_str = (
+                f"${actual_ni:,.2f}" if actual_ni is not None else "(not yet pulled)"
+            )
+            source = (
+                f"Auto-matched to GL — Retained Earnings absorbs YTD net income "
+                f"{ni_str} from the P&L. Override manually if posting an AJE."
+            )
             has_detail = True
         elif has_prior_rolled:
             # Nothing saved yet for this period — show the rolled-

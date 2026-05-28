@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
+import { formatDate, formatDateLong } from "@/core/lib/dates"
 import {
   Plus,
   AlertCircle,
@@ -717,9 +718,7 @@ export function FluxDashboard() {
                       <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
                         Closed by <span className="font-semibold text-theme">{closedByName || "an admin"}</span>
                         {closedEntry?.closed_at && (
-                          <> on {new Date(closedEntry.closed_at).toLocaleDateString(undefined, {
-                            year: "numeric", month: "long", day: "numeric",
-                          })}</>
+                          <> on {formatDateLong(closedEntry.closed_at)}</>
                         )}.
                         This flux analysis is frozen — reviewers and preparers can view but not edit.
                       </p>
@@ -1112,9 +1111,7 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
   }
 
   const fmt = (iso: string) => {
-    try {
-      return new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-    } catch { return iso }
+    return formatDate(iso) || iso
   }
 
   const run = useMutation({
