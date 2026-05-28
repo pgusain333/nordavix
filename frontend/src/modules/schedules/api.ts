@@ -12,6 +12,7 @@ import type {
   LeaseItem,
   LoanItem,
   Overview,
+  PrepaidAlerts,
   PrepaidItem,
   ScheduleType,
   Snapshot,
@@ -253,6 +254,20 @@ async function getLoanSuggestions(qboAccountId: string, periodEnd: string): Prom
   return data
 }
 
+/**
+ * Pure-SQL attention list for the prepaids module: every active item
+ * expiring within `expiringWithinDays` of period_end, or already past
+ * its end_date. Drives the renewal-alerts banner on PrepaidsPage. No
+ * QBO call, no AI — fast.
+ */
+async function getPrepaidAlerts(periodEnd: string, expiringWithinDays = 60): Promise<PrepaidAlerts> {
+  const { data } = await apiClient.get<PrepaidAlerts>(
+    "/api/schedules/prepaid/alerts",
+    { params: { period_end: periodEnd, expiring_within_days: expiringWithinDays } },
+  )
+  return data
+}
+
 export const schedulesApi = {
   listAccounts,
   getOverview,
@@ -267,4 +282,5 @@ export const schedulesApi = {
   getFixedAssetSuggestions,
   getLeaseSuggestions,
   getLoanSuggestions,
+  getPrepaidAlerts,
 }

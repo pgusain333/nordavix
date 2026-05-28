@@ -25,6 +25,7 @@ import logging
 import uuid
 from datetime import date as _date
 from datetime import datetime as _datetime
+from datetime import timedelta as _timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -908,3 +909,77 @@ async def loan_suggestions(
         db, tenant_id, "loan", qbo_account_id, pe,
         ScheduleLoan, calc.loan_lines_for_account,
     )
+
+
+# ── Phase 1: Renewal alerts ──────────────────────────────────────────────
+#
+# Surfaces every active prepaid item that needs the user's attention this
+# period — either expiring soon (so they should set up the renewal item)
+# or already past its end-date (so they should mark it inactive). Pure
+# database query, no QBO call, no AI inference. The "attention list" of
+# the prepaids module — drives the orange banner on PrepaidsPage.
+
+
+@router.get("/prepaid/alerts")
+async def prepaid_alerts(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="YYYY-MM-DD"),
+    expiring_within_days: int = Query(
+        60, ge=1, le=365,
+        description="Days lookahead for 'expiring soon' bucket.",
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Return two buckets of active prepaid items needing attention as of
+    period_end:
+
+      expiring_soon  end_date in (period_end, period_end + N days]
+      past_due       end_date <= period_end (still flagged active)
+
+    Each list sorted by end_date ascending so the most urgent rows
+    bubble to the top. days_to_end is included so the UI can render
+    "ends in 12 days" vs "ended 45 days ago" without a second pass
+    over dates on the client.
+    """
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+
+    horizon = pe + _timedelta(days=expiring_within_days)
+
+    rows = (await db.execute(
+        select(SchedulePrepaid).where(
+            SchedulePrepaid.tenant_id == tenant_id,
+            SchedulePrepaid.is_active == True,  # noqa: E712
+        ).order_by(SchedulePrepaid.end_date)
+    )).scalars().all()
+
+    expiring_soon: list[dict] = []
+    past_due: list[dict] = []
+
+    for r in rows:
+        days_to_end = (r.end_date - pe).days
+        item = {
+            "id":             str(r.id),
+            "qbo_account_id": r.qbo_account_id,
+            "vendor":         r.vendor,
+            "description":    r.description,
+            "reference":      r.reference,
+            "total_amount":   str(r.total_amount),
+            "start_date":     r.start_date.isoformat(),
+            "end_date":       r.end_date.isoformat(),
+            "days_to_end":    days_to_end,
+        }
+        if days_to_end > 0 and r.end_date <= horizon:
+            expiring_soon.append(item)
+        elif days_to_end <= 0:
+            past_due.append(item)
+
+    return {
+        "period_end":           pe.isoformat(),
+        "expiring_within_days": expiring_within_days,
+        "expiring_soon":        expiring_soon,
+        "past_due":             past_due,
+        "total":                len(expiring_soon) + len(past_due),
+    }

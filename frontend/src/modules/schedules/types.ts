@@ -144,3 +144,27 @@ export interface Overview {
   period_end: string
   types:      OverviewType[]
 }
+
+// ── Renewal alerts (Phase 1) ───────────────────────────────────────────────
+
+/** One row in the renewal-alerts banner on PrepaidsPage. */
+export interface PrepaidAlertItem {
+  id:             string
+  qbo_account_id: string
+  vendor:         string | null
+  description:    string
+  reference:      string | null
+  total_amount:   string
+  start_date:     string
+  end_date:       string
+  /** Negative when past_due; positive for expiring_soon. */
+  days_to_end:    number
+}
+
+export interface PrepaidAlerts {
+  period_end:           string
+  expiring_within_days: number
+  expiring_soon:        PrepaidAlertItem[]
+  past_due:             PrepaidAlertItem[]
+  total:                number
+}
