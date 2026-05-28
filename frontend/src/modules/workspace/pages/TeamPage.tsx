@@ -44,6 +44,13 @@ export function TeamPage() {
   const [inviteError, setInviteError] = useState<string | null>(null)
   const [inviteSuccess, setInviteSuccess] = useState<string | null>(null)
 
+  // Allow a couple of retries on the workspace queries. After creating
+  // or switching companies, Clerk's session-token cache can briefly hold
+  // a JWT with the old org_id — the first request gets rejected, but
+  // by the next retry the fresh JWT has propagated and the call
+  // succeeds. retry: false here used to leave the user staring at
+  // "Network Error" with a manual Retry button right after creating
+  // a new company; retry: 2 self-heals silently in ~1-2s.
   const {
     data: me,
     error: meError,
@@ -51,7 +58,7 @@ export function TeamPage() {
     refetch: refetchMe,
   } = useQuery({
     queryKey: ["workspace-me"], queryFn: workspaceApi.getMe, staleTime: 60_000,
-    retry: false,
+    retry: 2,
   })
   const {
     data: members,
@@ -60,11 +67,11 @@ export function TeamPage() {
     refetch: refetchMembers,
   } = useQuery({
     queryKey: ["workspace-members"], queryFn: workspaceApi.listMembers, staleTime: 60_000,
-    retry: false,
+    retry: 2,
   })
   const { data: invitations } = useQuery({
     queryKey: ["workspace-invitations"], queryFn: workspaceApi.listInvitations, staleTime: 60_000,
-    retry: false,
+    retry: 2,
   })
 
   function extractErrorMessage(err: unknown): string {
