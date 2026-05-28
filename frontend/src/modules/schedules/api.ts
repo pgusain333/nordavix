@@ -111,6 +111,54 @@ async function commitSnapshot(
   return data
 }
 
+// ── Per-item suggestions for the recon inline accordion ─────────────────
+
+/**
+ * One prepaid item's contribution to a given account+period. Each is
+ * selectable as a subledger component in the recon detail accordion;
+ * checking it adds `unamortized_at_period_end` to the recon's SL via
+ * the existing reconciling-items mechanism.
+ */
+export interface PrepaidSuggestion {
+  item_id:                     string
+  description:                 string
+  vendor:                      string | null
+  reference:                   string | null
+  invoice_date:                string | null
+  start_date:                  string
+  end_date:                    string
+  total_amount:                string
+  total_days:                  number
+  daily_rate:                  string
+  period_amortization:         string
+  amortized_to_date:           string
+  unamortized_at_period_end:   string
+  fully_amortized:             boolean
+}
+
+export interface PrepaidSuggestionsResponse {
+  qbo_account_id:   string
+  period_end:       string
+  items:            PrepaidSuggestion[]
+  committed:        boolean
+  committed_at?:    string | null
+  /** True when there are active prepaid items for this account but no
+   * committed snapshot for the period yet. UI shows a "commit to
+   * surface here" hint so the user knows the workflow gate. */
+  has_uncommitted:  boolean
+}
+
+async function getPrepaidSuggestions(
+  qboAccountId: string,
+  periodEnd: string,
+): Promise<PrepaidSuggestionsResponse> {
+  const { data } = await apiClient.get<PrepaidSuggestionsResponse>(
+    "/api/schedules/prepaid/suggestions",
+    { params: { qbo_account_id: qboAccountId, period_end: periodEnd } },
+  )
+  return data
+}
+
 export const schedulesApi = {
   listAccounts,
   getOverview,
@@ -120,4 +168,5 @@ export const schedulesApi = {
   deleteItem,
   previewSnapshot,
   commitSnapshot,
+  getPrepaidSuggestions,
 }

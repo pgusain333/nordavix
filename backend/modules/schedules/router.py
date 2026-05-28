@@ -25,7 +25,7 @@ import logging
 import uuid
 from datetime import date as _date
 from datetime import datetime as _datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -33,7 +33,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
-from models.account_review_status import AccountReviewStatus
 from models.qbo_connection import QboConnection
 from models.schedule import (
     ScheduleAccrual,
@@ -473,10 +472,13 @@ async def commit_snapshot(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Persist the snapshot AND write subledger_total + subledger_source on
-    the matching account_review_status row, so the reconciliations
-    module surfaces this schedule value as the account's subledger
-    balance automatically.
+    Persist the period snapshot. Does NOT modify the recon's subledger
+    value automatically — the recon stays in control of its SL logic.
+
+    Once a snapshot is committed, the recon UI surfaces the individual
+    schedule items as selectable line items in the inline accordion
+    (via GET /{type}/suggestions) so the preparer can pick which ones
+    contribute to the account's subledger balance.
 
     Body: { qbo_account_id: str, period_end: str, notes?: str }
     """
@@ -528,28 +530,6 @@ async def commit_snapshot(
     if body.get("notes"):
         existing.notes = body.get("notes")
 
-    # Push to account_review_status so the recon picks it up
-    review = (await db.execute(
-        select(AccountReviewStatus).where(
-            AccountReviewStatus.tenant_id == tenant_id,
-            AccountReviewStatus.qbo_account_id == qbo_account_id,
-            AccountReviewStatus.period_end == pe,
-        )
-    )).scalar_one_or_none()
-    if review is None:
-        review = AccountReviewStatus(
-            id=uuid.uuid4(),
-            tenant_id=tenant_id,
-            qbo_account_id=qbo_account_id,
-            period_end=pe,
-            status="pending",
-        )
-        db.add(review)
-    review.subledger_total       = Decimal(snap_d["ending_balance"])
-    review.subledger_source      = f"{_HUMAN_NAMES[schedule_type]} schedule"
-    review.subledger_entered_by  = user.id
-    review.subledger_entered_at  = _datetime.utcnow()
-
     await db.commit()
     await db.refresh(existing)
     return {
@@ -559,5 +539,121 @@ async def commit_snapshot(
         **snap_d,
         "committed":       True,
         "committed_at":    existing.committed_at.isoformat() if existing.committed_at else None,
-        "pushed_to_recon": True,
+        "pushed_to_recon": False,
     }
+
+
+# ── Prepaid suggestions for recon inline accordion ─────────────────────────
+
+
+@router.get("/prepaid/suggestions")
+async def prepaid_suggestions(
+    tenant_id: CurrentTenantId,
+    qbo_account_id: str = Query(..., description="GL account to look up prepaids for"),
+    period_end: str = Query(..., description="YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Return one row per active prepaid item mapped to this GL account
+    that's still amortizing as of period_end. Used by the recon's
+    inline accordion to offer per-item subledger components: each row
+    has a checkbox, and the recon UI sums the checked items into its
+    subledger total via the existing reconciling-items mechanism.
+
+    Days-based math throughout:
+      - total_days        = inclusive days in [start_date, end_date]
+      - daily_rate        = total_amount / total_days
+      - period_amortization = daily_rate × days of overlap with the
+                              calendar month containing period_end
+      - unamortized_at_period_end = how much remains on the BS
+                                     (the value to include in subledger)
+    """
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+
+    # Gate on a committed snapshot for this (account, period_end). The
+    # user wanted explicit "commit" to be the trigger that exposes items
+    # to the recon — until then, the accordion stays blank for this
+    # account. Returns the committed flag so the UI can hint at the
+    # missing commit if items exist but haven't been locked in yet.
+    snapshot = (await db.execute(
+        select(ScheduleSnapshot).where(
+            ScheduleSnapshot.tenant_id == tenant_id,
+            ScheduleSnapshot.schedule_type == "prepaid",
+            ScheduleSnapshot.qbo_account_id == qbo_account_id,
+            ScheduleSnapshot.period_end == pe,
+            ScheduleSnapshot.status == "committed",
+        )
+    )).scalar_one_or_none()
+
+    if snapshot is None:
+        # Tell the UI whether there ARE items waiting to be committed,
+        # so it can show a "commit snapshot to surface items" hint
+        # instead of just nothing.
+        any_active = (await db.execute(
+            select(SchedulePrepaid.id).where(
+                SchedulePrepaid.tenant_id == tenant_id,
+                SchedulePrepaid.qbo_account_id == qbo_account_id,
+                SchedulePrepaid.is_active == True,  # noqa: E712
+            ).limit(1)
+        )).first()
+        return {
+            "qbo_account_id":     qbo_account_id,
+            "period_end":         pe.isoformat(),
+            "items":              [],
+            "committed":          False,
+            "has_uncommitted":    any_active is not None,
+        }
+
+    items = (await db.execute(
+        select(SchedulePrepaid).where(
+            SchedulePrepaid.tenant_id == tenant_id,
+            SchedulePrepaid.qbo_account_id == qbo_account_id,
+            SchedulePrepaid.is_active == True,  # noqa: E712
+        )
+    )).scalars().all()
+
+    p_start, p_end = calc._period_bounds(pe)
+    out: list[dict] = []
+    for it in items:
+        # Skip items that haven't started yet (started AFTER period_end)
+        # — they're future commitments, not part of this period's SL.
+        if it.start_date > p_end:
+            continue
+        unamortized = calc._prepaid_unamortized_as_of(it, pe)
+        period_amort = calc._prepaid_period_expense(it, p_start, p_end)
+        daily_rate = calc._prepaid_daily_rate(it)
+        total_days = calc._days_inclusive(it.start_date, it.end_date)
+        amortized_to_date = calc._prepaid_amortized_through(it, pe)
+        out.append({
+            "item_id":                  str(it.id),
+            "description":              it.description,
+            "vendor":                   it.vendor,
+            "reference":                it.reference,
+            "invoice_date":             it.invoice_date.isoformat() if it.invoice_date else None,
+            "start_date":               it.start_date.isoformat(),
+            "end_date":                 it.end_date.isoformat(),
+            "total_amount":             str(_q_money(Decimal(it.total_amount))),
+            "total_days":               total_days,
+            "daily_rate":               str(_q_money(daily_rate)),
+            "period_amortization":      str(_q_money(period_amort)),
+            "amortized_to_date":        str(_q_money(amortized_to_date)),
+            "unamortized_at_period_end": str(_q_money(unamortized)),
+            "fully_amortized":          unamortized == Decimal("0"),
+        })
+    # Sort: amortizing items first (most-relevant), then fully-amortized.
+    out.sort(key=lambda r: (r["fully_amortized"], r["start_date"]))
+    return {
+        "qbo_account_id":   qbo_account_id,
+        "period_end":       pe.isoformat(),
+        "items":            out,
+        "committed":        True,
+        "committed_at":     snapshot.committed_at.isoformat() if snapshot.committed_at else None,
+        "has_uncommitted":  False,
+    }
+
+
+def _q_money(d: Decimal) -> Decimal:
+    """Local 2dp quantizer matching the rest of the app's display format."""
+    return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
