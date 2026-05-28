@@ -6,19 +6,21 @@
  *   • the empty-state on first-time sign-in.
  *
  * On success, provisions the Clerk org, stashes the meta in
- * localStorage, switches the active org to the new one, and lands
- * the user on /app (dashboard surfaces the next-step nudge for
- * connecting QBO + setting up books).
+ * localStorage, switches the active org to the new one, awaits a
+ * fresh JWT carrying the new org_id, then lands the user on /app
+ * (dashboard surfaces the next-step nudge for connecting QBO +
+ * setting up books).
  */
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { useOrganizationList, useUser, UserButton } from "@clerk/clerk-react"
+import { useOrganizationList, useSession, useUser, UserButton } from "@clerk/clerk-react"
 import { ArrowLeft } from "lucide-react"
 import { CompanyForm, writeMeta, type CompanyMeta } from "@/modules/onboarding/components/CompanyForm"
 
 export function CreateCompanyPage() {
   const navigate = useNavigate()
   const { user } = useUser()
+  const { session } = useSession()
   const { createOrganization, setActive, isLoaded } = useOrganizationList()
   const [submitting, setSubmitting] = useState(false)
   const [error,      setError]      = useState<string | null>(null)
@@ -31,11 +33,26 @@ export function CreateCompanyPage() {
       const org = await createOrganization({ name })
       writeMeta(org.id, meta)
       // Switch the Clerk session to the new org so the next request
-      // already carries its org_id, then land on the dashboard.
+      // already carries its org_id.
       if (setActive) {
         await setActive({ organization: org.id })
       }
-      setTimeout(() => navigate("/app"), 50)
+      // CRITICAL: setActive doesn't synchronously update Clerk's
+      // session-token cache — the next getToken() call can still
+      // return a JWT with the OLD (or empty) org_id for a brief
+      // window. That broke /api/workspace/me + /members + QBO on
+      // the dashboard's first render and forced a hard refresh.
+      //
+      // Force-mint a token with the new org_id BEFORE we navigate
+      // so the dashboard's first queries fire with the correct
+      // tenant context. Failures are non-fatal — the request
+      // interceptor falls through to a fresh getToken anyway.
+      if (session) {
+        try {
+          await session.getToken({ skipCache: true })
+        } catch { /* harmless — interceptor will retry */ }
+      }
+      navigate("/app")
     } catch {
       setError("Could not create company. Try a different name?")
       setSubmitting(false)
