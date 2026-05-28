@@ -159,6 +159,51 @@ async function getPrepaidSuggestions(
   return data
 }
 
+/**
+ * Delta-based line item for an accrued liability recon. Each accrual
+ * can emit up to two of these per period (one when accrued, one when
+ * reversed). Amount is signed: positive for accrual, negative for
+ * reversal — the recon's existing build-up math (opening + selected)
+ * handles the lifecycle without any additional logic.
+ */
+export interface AccrualSuggestion {
+  item_id:          string
+  /** Distinguishes the original accrual entry from its reversal. */
+  line_kind:        "accrual" | "reversal"
+  /** YYYY-MM-DD — accrual_date for accrual, reverses_on for reversal. */
+  line_date:        string
+  /** Signed: + for accrual, − for reversal. */
+  amount:           string
+  description:      string
+  vendor:           string | null
+  reference:        string | null
+  /** Lifecycle context — always populated regardless of line_kind. */
+  accrual_date:     string
+  amount_original:  string
+  reverses_on:      string | null
+  is_reversed_flag: boolean
+}
+
+export interface AccrualSuggestionsResponse {
+  qbo_account_id:   string
+  period_end:       string
+  items:            AccrualSuggestion[]
+  committed:        boolean
+  committed_at?:    string | null
+  has_uncommitted:  boolean
+}
+
+async function getAccrualSuggestions(
+  qboAccountId: string,
+  periodEnd: string,
+): Promise<AccrualSuggestionsResponse> {
+  const { data } = await apiClient.get<AccrualSuggestionsResponse>(
+    "/api/schedules/accrual/suggestions",
+    { params: { qbo_account_id: qboAccountId, period_end: periodEnd } },
+  )
+  return data
+}
+
 export const schedulesApi = {
   listAccounts,
   getOverview,
@@ -169,4 +214,5 @@ export const schedulesApi = {
   previewSnapshot,
   commitSnapshot,
   getPrepaidSuggestions,
+  getAccrualSuggestions,
 }

@@ -4,13 +4,14 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { ClipboardList, Pencil, Trash2, X, CheckCircle2 } from "lucide-react"
+import { ClipboardList, FileText, Pencil, Trash2, X, CheckCircle2 } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
+import { AccrualReversalDrawer } from "@/modules/schedules/components/AccrualReversalDrawer"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { AccrualItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
@@ -30,6 +31,8 @@ export function AccrualsPage() {
   const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [dialog, setDialog] = useState<{ open: boolean; item?: AccrualItem }>({ open: false })
+  /** Which accrual's lifecycle drawer is open (null = closed). */
+  const [drawerItem, setDrawerItem] = useState<AccrualItem | null>(null)
 
   const { data: itemsResp, isLoading: itemsLoading } = useQuery({
     queryKey: ["schedules", "accrual", "items", filterAccount],
@@ -131,8 +134,18 @@ export function AccrualsPage() {
                             style={{ color: "#b45309" }}>Active</span>
                         )}
                       </Td>
-                      <Td><RowActions onEdit={() => setDialog({ open: true, item: it })}
-                        onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} /></Td>
+                      <Td>
+                        <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                          <button
+                            onClick={() => setDrawerItem(it)}
+                            className="p-1 rounded hover:bg-[var(--surface-2)]"
+                            title="View lifecycle: accrual JE + reversal JE">
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#b45309" }} />
+                          </button>
+                          <RowActions onEdit={() => setDialog({ open: true, item: it })}
+                            onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} />
+                        </div>
+                      </Td>
                     </tr>
                   ))}
                 </tbody>
@@ -146,6 +159,15 @@ export function AccrualsPage() {
         {dialog.open && (
           <AccrualDialog existing={dialog.item} initialAccount={filterAccount}
             onClose={() => setDialog({ open: false })} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {drawerItem && (
+          <AccrualReversalDrawer
+            item={drawerItem}
+            onClose={() => setDrawerItem(null)}
+          />
         )}
       </AnimatePresence>
     </div>

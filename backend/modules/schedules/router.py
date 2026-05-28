@@ -543,6 +543,126 @@ async def commit_snapshot(
     }
 
 
+# ── Accrual suggestions for recon inline accordion ─────────────────────────
+
+
+@router.get("/accrual/suggestions")
+async def accrual_suggestions(
+    tenant_id: CurrentTenantId,
+    qbo_account_id: str = Query(..., description="GL account to look up accruals for"),
+    period_end: str = Query(..., description="YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Delta-based line items for accrued liability accounts.
+
+    Each accrual emits up to two lines depending on the period:
+      - "accrual" line: +amount when accrual_date falls in this period
+      - "reversal" line: -amount when reverses_on falls in this period
+
+    The recon's existing build-up math (opening + selected items) then
+    handles the lifecycle naturally:
+      - Month X (accrual booked): +amount added to SL
+      - Month X+1 (reversal):     -amount applied to SL → closes to 0
+
+    Gated on a committed snapshot for this (account, period) just like
+    prepaids — until the preparer commits in the Accruals schedule page,
+    the recon accordion stays blank for this account.
+
+    For accruals neither booked nor reversed in this period (i.e.,
+    carried-forward from a prior period and still outstanding), no
+    line is emitted — they're already represented in the rolled-
+    forward opening balance, so adding a line would double-count.
+    """
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+
+    snapshot = (await db.execute(
+        select(ScheduleSnapshot).where(
+            ScheduleSnapshot.tenant_id == tenant_id,
+            ScheduleSnapshot.schedule_type == "accrual",
+            ScheduleSnapshot.qbo_account_id == qbo_account_id,
+            ScheduleSnapshot.period_end == pe,
+            ScheduleSnapshot.status == "committed",
+        )
+    )).scalar_one_or_none()
+
+    if snapshot is None:
+        any_active = (await db.execute(
+            select(ScheduleAccrual.id).where(
+                ScheduleAccrual.tenant_id == tenant_id,
+                ScheduleAccrual.qbo_account_id == qbo_account_id,
+                ScheduleAccrual.is_active == True,  # noqa: E712
+            ).limit(1)
+        )).first()
+        return {
+            "qbo_account_id":   qbo_account_id,
+            "period_end":       pe.isoformat(),
+            "items":            [],
+            "committed":        False,
+            "has_uncommitted":  any_active is not None,
+        }
+
+    items = (await db.execute(
+        select(ScheduleAccrual).where(
+            ScheduleAccrual.tenant_id == tenant_id,
+            ScheduleAccrual.qbo_account_id == qbo_account_id,
+            ScheduleAccrual.is_active == True,  # noqa: E712
+        )
+    )).scalars().all()
+
+    p_start, p_end = calc._period_bounds(pe)
+    out: list[dict] = []
+    for it in items:
+        amt = Decimal(it.amount)
+        # ACCRUAL line — booking in this period.
+        if p_start <= it.accrual_date <= p_end:
+            out.append({
+                "item_id":          str(it.id),
+                "line_kind":        "accrual",
+                "line_date":        it.accrual_date.isoformat(),
+                "amount":           str(_q_money(amt)),
+                "description":      it.description,
+                "vendor":           it.vendor,
+                "reference":        it.reference,
+                "accrual_date":     it.accrual_date.isoformat(),
+                "amount_original":  str(_q_money(amt)),
+                "reverses_on":      it.reverses_on.isoformat() if it.reverses_on else None,
+                "is_reversed_flag": bool(it.is_reversed),
+            })
+        # REVERSAL line — reverses_on falls in this period AND the
+        # accrual was booked before (not same-period book+reverse,
+        # which would still emit both lines and net to 0 if both
+        # checked).
+        if it.reverses_on is not None and p_start <= it.reverses_on <= p_end:
+            out.append({
+                "item_id":          str(it.id),
+                "line_kind":        "reversal",
+                "line_date":        it.reverses_on.isoformat(),
+                "amount":           str(_q_money(-amt)),
+                "description":      it.description,
+                "vendor":           it.vendor,
+                "reference":        it.reference,
+                "accrual_date":     it.accrual_date.isoformat(),
+                "amount_original":  str(_q_money(amt)),
+                "reverses_on":      it.reverses_on.isoformat() if it.reverses_on else None,
+                "is_reversed_flag": bool(it.is_reversed),
+            })
+
+    # Sort: by date (chronological), then accrual before reversal on
+    # the same date so the lifecycle reads top-to-bottom.
+    out.sort(key=lambda r: (r["line_date"], 0 if r["line_kind"] == "accrual" else 1))
+    return {
+        "qbo_account_id":   qbo_account_id,
+        "period_end":       pe.isoformat(),
+        "items":            out,
+        "committed":        True,
+        "committed_at":     snapshot.committed_at.isoformat() if snapshot.committed_at else None,
+        "has_uncommitted":  False,
+    }
+
+
 # ── Prepaid suggestions for recon inline accordion ─────────────────────────
 
 
