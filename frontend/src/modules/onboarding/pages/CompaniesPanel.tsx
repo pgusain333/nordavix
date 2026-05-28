@@ -11,7 +11,7 @@
  * the app's page-based UX.
  */
 import { useNavigate } from "react-router-dom"
-import { useOrganization, useOrganizationList, useUser, UserButton } from "@clerk/clerk-react"
+import { useOrganization, useOrganizationList, useSession, useUser, UserButton } from "@clerk/clerk-react"
 import { Building2, Plus, ArrowRight, Calendar } from "lucide-react"
 import { useState } from "react"
 import { Spinner } from "@/core/ui/components"
@@ -21,6 +21,7 @@ export function CompaniesPanel() {
   const navigate = useNavigate()
   const { user, isLoaded: userLoaded } = useUser()
   const { organization } = useOrganization()
+  const { session } = useSession()
   const { userMemberships, setActive, isLoaded: listLoaded } = useOrganizationList({
     userMemberships: { infinite: true },
   })
@@ -37,7 +38,18 @@ export function CompaniesPanel() {
     setSwitching(orgId)
     try {
       await setActive({ organization: orgId })
-      setTimeout(() => navigate("/app"), 50)
+      // setActive doesn't synchronously refresh Clerk's session-token
+      // cache, so the dashboard's first /api/* request can fire with
+      // a JWT that still carries the OLD org_id — surfacing as
+      // "Network Error" on /workspace/me, /members, etc. Force-mint
+      // a token with the new org_id BEFORE navigating so the new
+      // tenant context reaches the backend immediately.
+      if (session) {
+        try {
+          await session.getToken({ skipCache: true })
+        } catch { /* harmless — interceptor will retry */ }
+      }
+      navigate("/app")
     } finally {
       // setSwitching cleared by route change
     }
