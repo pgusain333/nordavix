@@ -56,11 +56,14 @@ interface CommonItem {
 
 // ── Per-type item shapes ───────────────────────────────────────────────────
 
+export type PrepaidAmortMethod = "daily_rate" | "straight_line"
+
 export interface PrepaidItem extends CommonItem {
-  invoice_date: string | null
-  total_amount: string
-  start_date:   string
-  end_date:     string
+  invoice_date:        string | null
+  total_amount:        string
+  start_date:          string
+  end_date:            string
+  amortization_method: PrepaidAmortMethod
 }
 
 export interface AccrualItem extends CommonItem {
@@ -205,4 +208,77 @@ export interface PrepaidScanResult {
 export interface PrepaidCandidatesList {
   status:     string
   candidates: PrepaidCandidate[]
+}
+
+// ── AI accrual detection (Phase 1 — features a + d) ────────────────────
+
+/** Missed-accrual candidate from feature (a) — a current-period
+ * payment that AI thinks should have been accrued at period_end. */
+export interface MissedAccrualCandidate {
+  id:                     string
+  period_end:             string
+  gl_account_id:          string
+  gl_account_name:        string
+  gl_txn_id:              string | null
+  gl_txn_date:            string
+  gl_amount:              string
+  gl_memo:                string | null
+  gl_vendor:              string | null
+  ai_vendor:              string | null
+  ai_service_period_end:  string | null
+  ai_suggested_amount:    string | null
+  ai_confidence:          string
+  ai_reasoning:           string | null
+  ai_target_account_id:   string | null
+  status:                 "open" | "accepted" | "dismissed" | string
+  accepted_item_id:       string | null
+  created_at:             string | null
+}
+
+export interface MissedAccrualScanResult {
+  scanned_accounts: number
+  scanned_txns:     number
+  scan_window:      [string, string] | null
+  new_candidates:   number
+  candidates:       MissedAccrualCandidate[]
+}
+
+export interface MissedAccrualCandidatesList {
+  period_end: string
+  status:     string
+  candidates: MissedAccrualCandidate[]
+}
+
+/** Match candidate returned by the unreversed-accruals endpoint. */
+export interface UnreversedAccrualMatch {
+  gl_txn_id:         string | null
+  gl_txn_date:       string
+  gl_amount:         string
+  gl_memo:           string | null
+  gl_vendor:         string | null
+  gl_account_name:   string | null
+  match_score:       number
+  tolerance_pct_off: string
+}
+
+/** One row in the unreversed-accruals (feature d) response. */
+export interface UnreversedAccrual {
+  accrual: {
+    id:             string
+    qbo_account_id: string
+    vendor:         string | null
+    description:    string
+    amount:         string
+    accrual_date:   string
+    reverses_on:    string | null
+  }
+  matches:          UnreversedAccrualMatch[]
+  /** auto_reverse | reverse_with_trueup | manual_review */
+  suggested_action: string
+}
+
+export interface UnreversedAccrualsList {
+  period_end: string
+  items:      UnreversedAccrual[]
+  total:      number
 }

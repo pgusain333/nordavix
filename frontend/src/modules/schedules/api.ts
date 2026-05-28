@@ -11,6 +11,8 @@ import type {
   FixedAssetItem,
   LeaseItem,
   LoanItem,
+  MissedAccrualCandidatesList,
+  MissedAccrualScanResult,
   Overview,
   PrepaidAlerts,
   PrepaidCandidatesList,
@@ -18,6 +20,7 @@ import type {
   PrepaidScanResult,
   ScheduleType,
   Snapshot,
+  UnreversedAccrualsList,
 } from "@/modules/schedules/types"
 
 type ItemMap = {
@@ -314,6 +317,54 @@ async function acceptPrepaidCandidate(id: string, scheduleItemId: string | null)
   return data
 }
 
+// ── Accrual AI (features a + d) ────────────────────────────────────────
+
+async function scanForMissedAccruals(
+  periodEnd: string,
+  materialityFloor = "500.00",
+): Promise<MissedAccrualScanResult> {
+  const { data } = await apiClient.post<MissedAccrualScanResult>(
+    "/api/schedules/accrual/ai/scan-missed",
+    null,
+    { params: { period_end: periodEnd, materiality_floor: materialityFloor } },
+  )
+  return data
+}
+
+async function listMissedAccrualCandidates(
+  periodEnd: string,
+  status: "open" | "accepted" | "dismissed" | "all" = "open",
+): Promise<MissedAccrualCandidatesList> {
+  const { data } = await apiClient.get<MissedAccrualCandidatesList>(
+    "/api/schedules/accrual/ai/missed-candidates",
+    { params: { period_end: periodEnd, status } },
+  )
+  return data
+}
+
+async function dismissMissedAccrualCandidate(id: string): Promise<{ id: string; status: string }> {
+  const { data } = await apiClient.post<{ id: string; status: string }>(
+    `/api/schedules/accrual/ai/missed-candidates/${id}/dismiss`,
+  )
+  return data
+}
+
+async function acceptMissedAccrualCandidate(id: string, scheduleItemId: string | null): Promise<{ id: string; status: string }> {
+  const { data } = await apiClient.post<{ id: string; status: string }>(
+    `/api/schedules/accrual/ai/missed-candidates/${id}/accept`,
+    { schedule_item_id: scheduleItemId },
+  )
+  return data
+}
+
+async function listUnreversedAccruals(periodEnd: string): Promise<UnreversedAccrualsList> {
+  const { data } = await apiClient.get<UnreversedAccrualsList>(
+    "/api/schedules/accrual/ai/unreversed",
+    { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
 export const schedulesApi = {
   listAccounts,
   getOverview,
@@ -333,4 +384,10 @@ export const schedulesApi = {
   listPrepaidCandidates,
   dismissPrepaidCandidate,
   acceptPrepaidCandidate,
+  // Accrual AI
+  scanForMissedAccruals,
+  listMissedAccrualCandidates,
+  dismissMissedAccrualCandidate,
+  acceptMissedAccrualCandidate,
+  listUnreversedAccruals,
 }

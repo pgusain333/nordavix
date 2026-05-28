@@ -27,7 +27,7 @@ import { AiDetectBanner } from "@/modules/schedules/components/AiDetectBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import { formatDate } from "@/core/lib/dates"
-import type { PrepaidAlertItem, PrepaidCandidate, PrepaidItem } from "@/modules/schedules/types"
+import type { PrepaidAlertItem, PrepaidAmortMethod, PrepaidCandidate, PrepaidItem } from "@/modules/schedules/types"
 
 /**
  * Pre-fill payload for the New Prepaid dialog when the user is creating
@@ -46,6 +46,12 @@ interface PrepaidPrefill {
   start_date?:     string
   end_date?:       string
   notes?:          string
+  /** Pre-selected amortization method (Phase 3). AI candidates supply
+   * this via candidate.ai_method; renewals carry the prior item's
+   * method. User can override before saving. */
+  amortization_method?: PrepaidAmortMethod
+  /** Short justification shown next to the picker when AI suggested it. */
+  methodReasoning?: string
   /** UI flag — shows a small "Renewal of …" banner inside the dialog. */
   source?:         "renewal" | "ai-detect" | "invoice" | "recon-suggest"
   sourceLabel?:    string
@@ -76,6 +82,16 @@ function monthlyAmount(total: string, start: string, end: string): string {
     (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1,
   )
   return `$${(t / months).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function dailyRateLabel(total: string, start: string, end: string): string {
+  const t = parseFloat(total) || 0
+  const s = start ? new Date(start + "T00:00:00") : null
+  const e = end ? new Date(end + "T00:00:00") : null
+  if (!s || !e || isNaN(s.getTime()) || isNaN(e.getTime()) || e < s) return "$0.00/day"
+  const days = Math.max(1, Math.round((e.getTime() - s.getTime()) / 86_400_000) + 1)
+  const rate = t / days
+  return `$${rate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}/day`
 }
 
 export function PrepaidsPage() {
@@ -151,6 +167,11 @@ export function PrepaidsPage() {
       ? `${vendor} — ${c.ai_service_months ? `${c.ai_service_months}-month` : "prepaid"} coverage`
       : c.gl_memo || `Prepaid from ${c.gl_account_name}`
 
+    // Map AI's suggested method to our enum. Defensive normalization —
+    // anything other than the two valid values falls back to daily_rate.
+    const aiMethod: PrepaidAmortMethod =
+      c.ai_method === "straight_line" ? "straight_line" : "daily_rate"
+
     setDialogState({
       open: true,
       prefill: {
@@ -162,10 +183,12 @@ export function PrepaidsPage() {
         qbo_account_id: c.ai_target_account_id || undefined,
         vendor,
         description,
-        total_amount:   c.gl_amount,
-        start_date:     start,
-        end_date:       end,
-        invoice_date:   c.gl_txn_date,
+        total_amount:        c.gl_amount,
+        start_date:          start,
+        end_date:            end,
+        invoice_date:        c.gl_txn_date,
+        amortization_method: aiMethod,
+        methodReasoning:     c.ai_reasoning ?? undefined,
         notes: (
           `Detected by AI from GL entry on ${formatDate(c.gl_txn_date)}: ` +
           `$${parseFloat(c.gl_amount).toLocaleString()} to ${c.gl_account_name}.` +
@@ -195,6 +218,9 @@ export function PrepaidsPage() {
         total_amount:   prior.total_amount,
         start_date:     iso(newStart),
         end_date:       iso(newEnd),
+        // Renewals don't carry the prior item's method through the
+        // alerts API (the endpoint doesn't include it). The dialog
+        // defaults to daily_rate; user can flip to straight_line.
         notes:          `Renewal of "${prior.description}" (ended ${prior.end_date}).`,
         source:         "renewal",
         sourceLabel:    `Renewal of "${prior.description}"`,
@@ -416,6 +442,13 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
   const [startDate,   setStartDate]   = useState(existing?.start_date   ?? prefill?.start_date   ?? "")
   const [endDate,     setEndDate]     = useState(existing?.end_date     ?? prefill?.end_date     ?? "")
   const [notes,       setNotes]       = useState(existing?.notes        ?? prefill?.notes        ?? "")
+  // Amortization method (Phase 3): user-pickable, defaults to daily_rate
+  // unless prefill or existing supplies one. AI candidates set this.
+  const [amortMethod, setAmortMethod] = useState<PrepaidAmortMethod>(
+    (existing?.amortization_method as PrepaidAmortMethod | undefined) ??
+      prefill?.amortization_method ??
+      "daily_rate",
+  )
   const [error,       setError]       = useState<string | null>(null)
 
   const mut = useMutation({
@@ -457,16 +490,17 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
       return
     }
     mut.mutate({
-      qbo_account_id: account,
-      description:    description.trim(),
-      vendor:         vendor.trim() || null,
-      reference:      reference.trim() || null,
-      invoice_date:   invoiceDate || null,
-      total_amount:   totalAmount,
-      start_date:     startDate,
-      end_date:       endDate,
-      notes:          notes.trim() || null,
-      is_active:      true,
+      qbo_account_id:      account,
+      description:         description.trim(),
+      vendor:              vendor.trim() || null,
+      reference:           reference.trim() || null,
+      invoice_date:        invoiceDate || null,
+      total_amount:        totalAmount,
+      start_date:          startDate,
+      end_date:            endDate,
+      amortization_method: amortMethod,
+      notes:               notes.trim() || null,
+      is_active:           true,
     })
   }
 
@@ -545,11 +579,32 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
                 triggerClassName="w-full rounded-lg px-3 py-2 text-sm border outline-none" />
             </Field>
           </div>
-          {/* Live calc */}
+          {/* Amortization method (Phase 3 — c) */}
+          <AmortMethodPicker
+            value={amortMethod}
+            onChange={setAmortMethod}
+            totalAmount={totalAmount}
+            startDate={startDate}
+            endDate={endDate}
+            aiReasoning={!existing && prefill?.source === "ai-detect" ? prefill?.methodReasoning : undefined}
+            aiSuggestedMethod={!existing && prefill?.source === "ai-detect" ? prefill?.amortization_method : undefined}
+          />
+          {/* Live calc — adapts to the picked method */}
           {totalAmount && startDate && endDate && (
             <div className="rounded-lg p-3 text-xs"
               style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
-              Monthly amortization will be <span className="font-bold">{monthlyAmount(totalAmount, startDate, endDate)}</span>.
+              {amortMethod === "straight_line" ? (
+                <>
+                  Each calendar month touched will recognize{" "}
+                  <span className="font-bold">{monthlyAmount(totalAmount, startDate, endDate)}</span>{" "}
+                  of expense — exactly, no day-count proration.
+                </>
+              ) : (
+                <>
+                  Daily rate is <span className="font-bold">{dailyRateLabel(totalAmount, startDate, endDate)}</span>.
+                  Monthly amounts vary by month length (~{monthlyAmount(totalAmount, startDate, endDate)}/month on average).
+                </>
+              )}
             </div>
           )}
           <Field label="Notes">
@@ -583,5 +638,116 @@ export function Field({ label, children }: { label: string; children: React.Reac
         style={{ color: "var(--text-muted)" }}>{label}</span>
       {children}
     </label>
+  )
+}
+
+// ── Amortization method picker (Phase 3 — c) ──────────────────────────
+//
+// Two cards side-by-side, click-to-select. When the AI suggested one
+// of them (ai-detect prefill), that card gets a small ✨ Recommended
+// chip + the AI's one-line reasoning visible below it. User can pick
+// the other and the AI chip just moves to a non-selected position —
+// no warning, no friction; the user is always in control.
+
+function AmortMethodPicker({
+  value, onChange, totalAmount, startDate, endDate, aiReasoning, aiSuggestedMethod,
+}: {
+  value: PrepaidAmortMethod
+  onChange: (v: PrepaidAmortMethod) => void
+  totalAmount: string
+  startDate:   string
+  endDate:     string
+  aiReasoning?:       string
+  aiSuggestedMethod?: PrepaidAmortMethod
+}) {
+  const hasCalc = !!(totalAmount && startDate && endDate)
+  return (
+    <Field label="Amortization method">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <MethodCard
+          method="daily_rate"
+          title="Daily-rate"
+          tagline="Precise day-based proration"
+          rightLabel={hasCalc ? dailyRateLabel(totalAmount, startDate, endDate) : ""}
+          body="Each period gets daily_rate × days_in_period. Most accurate when start/end fall mid-month — partial first/last months are split exactly by calendar days."
+          selected={value === "daily_rate"}
+          aiSuggested={aiSuggestedMethod === "daily_rate"}
+          onClick={() => onChange("daily_rate")}
+        />
+        <MethodCard
+          method="straight_line"
+          title="Straight-line monthly"
+          tagline="Even 1/N each calendar month touched"
+          rightLabel={hasCalc ? `${monthlyAmount(totalAmount, startDate, endDate)}/mo` : ""}
+          body="Recognized at month-end. Every touched calendar month books exactly total / N — the CPA-conventional even monthly amortization."
+          selected={value === "straight_line"}
+          aiSuggested={aiSuggestedMethod === "straight_line"}
+          onClick={() => onChange("straight_line")}
+        />
+      </div>
+      {/* AI reasoning — shown when the prefill came from AI detect.
+          Sits below both cards so it doesn't tie visually to either
+          selection — the user can keep or change AI's pick freely. */}
+      {aiReasoning && aiSuggestedMethod && (
+        <div className="mt-2 rounded-md px-2.5 py-1.5 text-[11px] inline-flex items-start gap-1.5"
+          style={{ background: "rgba(124, 58, 237, 0.08)", color: "#6b21a8" }}>
+          <span className="shrink-0 mt-px">✨</span>
+          <span><span className="font-semibold">AI suggests {aiSuggestedMethod === "straight_line" ? "Straight-line" : "Daily-rate"}:</span>{" "}{aiReasoning}</span>
+        </div>
+      )}
+    </Field>
+  )
+}
+
+function MethodCard({
+  method, title, tagline, rightLabel, body, selected, aiSuggested, onClick,
+}: {
+  method:     PrepaidAmortMethod
+  title:      string
+  tagline:    string
+  rightLabel: string
+  body:       string
+  selected:   boolean
+  aiSuggested: boolean
+  onClick:    () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-method={method}
+      className="text-left rounded-lg px-3 py-2.5 transition-all"
+      style={{
+        background: selected ? "var(--green-subtle)" : "var(--surface-2)",
+        border: `1.5px solid ${selected ? "var(--green)" : "var(--border)"}`,
+        boxShadow: selected ? "0 0 0 1px var(--green) inset" : "none",
+      }}
+      onMouseEnter={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.borderColor = "var(--border-strong)" }}
+      onMouseLeave={(e) => { if (!selected) (e.currentTarget as HTMLElement).style.borderColor = "var(--border)" }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[13px] font-semibold" style={{ color: selected ? "var(--green)" : "var(--text)" }}>
+              {title}
+            </span>
+            {aiSuggested && (
+              <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+                ✨ AI pick
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{tagline}</p>
+        </div>
+        {rightLabel && (
+          <span className="text-[10px] font-mono shrink-0 tabular-nums px-1.5 py-0.5 rounded"
+            style={{ background: "white", color: "var(--text-2)", border: "1px solid var(--border)" }}>
+            {rightLabel}
+          </span>
+        )}
+      </div>
+      <p className="text-[11px] leading-snug mt-1.5" style={{ color: "var(--text-2)" }}>{body}</p>
+    </button>
   )
 }
