@@ -18,6 +18,7 @@ import { Link } from "react-router-dom"
 
 import { Spinner } from "@/core/ui/components"
 import { schedulesApi, type PrepaidSuggestion } from "@/modules/schedules/api"
+import { BulkSelectCheckbox } from "@/modules/schedules/components/BulkSelectCheckbox"
 
 interface Props {
   qboAccountId: string
@@ -26,6 +27,8 @@ interface Props {
   selectedIds:  Set<string>
   /** Fired on every checkbox toggle. Parent decides what to add to its map. */
   onToggle:     (suggestion: PrepaidSuggestion, nextChecked: boolean) => void
+  /** Bulk select / clear every selectable row in this panel at once. */
+  onBulkSet:    (suggestions: PrepaidSuggestion[], nextChecked: boolean) => void
   readOnly?:    boolean
 }
 
@@ -40,7 +43,7 @@ function fmt(s: string): string {
 }
 
 export function PrepaidSuggestionsPanel({
-  qboAccountId, periodEnd, selectedIds, onToggle, readOnly,
+  qboAccountId, periodEnd, selectedIds, onToggle, onBulkSet, readOnly,
 }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: ["schedules", "prepaid", "suggestions", qboAccountId, periodEnd],
@@ -106,6 +109,13 @@ export function PrepaidSuggestionsPanel({
           borderBottom: "1px solid var(--border)",
         }}>
         <div className="flex items-center gap-2 min-w-0">
+          <BulkSelectCheckbox
+            total={items.filter((it) => !it.fully_amortized).length}
+            selected={items.filter((it) => !it.fully_amortized && selectedIds.has(prepaidTxnId(it))).length}
+            disabled={readOnly}
+            onChange={(nextChecked) => onBulkSet(items.filter((it) => !it.fully_amortized), nextChecked)}
+            title="Select / clear every active prepaid item in this period"
+          />
           <Calendar size={13} strokeWidth={1.8} style={{ color: "#1d4ed8" }} />
           <p className="text-[11px] font-semibold text-theme">
             Suggested from Prepaids schedule

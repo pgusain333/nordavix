@@ -67,6 +67,10 @@ import {
   PrepaidSuggestionsPanel,
   prepaidTxnId,
 } from "@/modules/schedules/components/PrepaidSuggestionsPanel"
+import {
+  AccrualSuggestionsPanel,
+  accrualTxnId,
+} from "@/modules/schedules/components/AccrualSuggestionsPanel"
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
 
@@ -2261,6 +2265,81 @@ function InlineSubledgerForm({
               }
             } else {
               delete next[id]
+            }
+            return next
+          })
+        }}
+        onBulkSet={(suggestions, nextChecked) => {
+          setSelectedItemMap((prev) => {
+            const next = { ...prev }
+            for (const s of suggestions) {
+              const id = prepaidTxnId(s)
+              if (nextChecked) {
+                next[id] = {
+                  txn_id:     id,
+                  txn_type:   "Prepaid amortization",
+                  txn_number: s.reference ?? "",
+                  txn_date:   s.start_date,
+                  amount:     s.unamortized_at_period_end,
+                  memo:       `${s.description} · unamortized as of ${periodEnd}`,
+                  entity:     s.vendor ?? "",
+                }
+              } else {
+                delete next[id]
+              }
+            }
+            return next
+          })
+        }}
+      />
+
+      {/* Accruals schedule suggestions — per-period DELTA line items.
+          Each accrual emits up to two lines (accrual + reversal); the
+          recon's existing build-up math (opening + selected sums)
+          handles the lifecycle without any plumbing here. */}
+      <AccrualSuggestionsPanel
+        qboAccountId={account.qbo_id}
+        periodEnd={periodEnd}
+        selectedIds={new Set(Object.keys(selectedItemMap))}
+        readOnly={readOnly}
+        onToggle={(s, nextChecked) => {
+          const id = accrualTxnId(s)
+          setSelectedItemMap((prev) => {
+            const next = { ...prev }
+            if (nextChecked) {
+              next[id] = {
+                txn_id:     id,
+                txn_type:   s.line_kind === "accrual" ? "Accrual" : "Accrual reversal",
+                txn_number: s.reference ?? "",
+                txn_date:   s.line_date,
+                amount:     s.amount,  // signed: + for accrual, − for reversal
+                memo:       `${s.description} · ${s.line_kind === "accrual" ? "accrued" : "reversed"} ${s.line_date}`,
+                entity:     s.vendor ?? "",
+              }
+            } else {
+              delete next[id]
+            }
+            return next
+          })
+        }}
+        onBulkSet={(suggestions, nextChecked) => {
+          setSelectedItemMap((prev) => {
+            const next = { ...prev }
+            for (const s of suggestions) {
+              const id = accrualTxnId(s)
+              if (nextChecked) {
+                next[id] = {
+                  txn_id:     id,
+                  txn_type:   s.line_kind === "accrual" ? "Accrual" : "Accrual reversal",
+                  txn_number: s.reference ?? "",
+                  txn_date:   s.line_date,
+                  amount:     s.amount,
+                  memo:       `${s.description} · ${s.line_kind === "accrual" ? "accrued" : "reversed"} ${s.line_date}`,
+                  entity:     s.vendor ?? "",
+                }
+              } else {
+                delete next[id]
+              }
             }
             return next
           })
