@@ -18,10 +18,10 @@ Conventions:
 from __future__ import annotations
 
 from calendar import monthrange
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Iterable
 
 from models.schedule import (
     ScheduleAccrual,
@@ -77,9 +77,7 @@ def _is_active_in_period(item_start: date, item_end: date | None, p_start: date,
     """Item overlaps the [p_start, p_end] window?"""
     if item_end is not None and item_end < p_start:
         return False
-    if item_start > p_end:
-        return False
-    return True
+    return item_start <= p_end
 
 
 # ─── Snapshot output shape ─────────────────────────────────────────────────
