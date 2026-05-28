@@ -118,6 +118,10 @@ export interface CompanyMeta {
   materiality_threshold?: string
   auditor_firm?: string
   auditor_contact_email?: string
+  // Days after period_end the close should land by. Drives the
+  // dashboard's "Target close" tile + the Tasks app's default due
+  // dates. Defaults to 15 days post-period-end (industry typical).
+  month_end_close_target_days?: string
 }
 
 const META_KEY = (orgId: string) => `company_meta_${orgId}`
@@ -189,6 +193,7 @@ export function CompanyForm({
   const [accStd,        setAccStd]        = useState(initialMeta.accounting_standard ?? ACCOUNTING_STANDARDS[0])
   const [booksSoftware, setBooksSoftware] = useState(initialMeta.books_software ?? BOOKS_SOFTWARE[0])
   const [materiality,   setMateriality]   = useState(initialMeta.materiality_threshold ?? "1.0")
+  const [closeTargetDays, setCloseTargetDays] = useState(initialMeta.month_end_close_target_days ?? "15")
   const [auditorFirm,   setAuditorFirm]   = useState(initialMeta.auditor_firm ?? "")
   const [auditorEmail,  setAuditorEmail]  = useState(initialMeta.auditor_contact_email ?? "")
 
@@ -218,6 +223,7 @@ export function CompanyForm({
     setAccStd(initialMeta.accounting_standard ?? ACCOUNTING_STANDARDS[0])
     setBooksSoftware(initialMeta.books_software ?? BOOKS_SOFTWARE[0])
     setMateriality(initialMeta.materiality_threshold ?? "1.0")
+    setCloseTargetDays(initialMeta.month_end_close_target_days ?? "15")
     setAuditorFirm(initialMeta.auditor_firm ?? "")
     setAuditorEmail(initialMeta.auditor_contact_email ?? "")
   }, [initialName, initialMeta])
@@ -251,6 +257,7 @@ export function CompanyForm({
       accounting_standard:   accStd,
       books_software:        booksSoftware,
       materiality_threshold: trim(materiality),
+      month_end_close_target_days: trim(closeTargetDays),
       auditor_firm:          trim(auditorFirm),
       auditor_contact_email: trim(auditorEmail),
     })
@@ -404,6 +411,14 @@ export function CompanyForm({
           </Field>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Month-end close target (days after period end)"
+            hint="Used to set the close-target date on the dashboard tile + as the default for task due dates.">
+            <input type="number" step="1" min="1" max="60"
+              value={closeTargetDays} onChange={(e) => setCloseTargetDays(e.target.value)}
+              placeholder="15" disabled={submitting} className="cf-input" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="External auditor firm">
             <input value={auditorFirm} onChange={(e) => setAuditorFirm(e.target.value)}
               placeholder="e.g. Smith & Co., or N/A" disabled={submitting} className="cf-input" />
@@ -502,7 +517,7 @@ function Section({ title, icon, children }: { title: string; icon: React.ReactNo
   )
 }
 
-function Field({ label, icon, children }: { label: string; icon?: React.ReactNode; children: React.ReactNode }) {
+function Field({ label, icon, hint, children }: { label: string; icon?: React.ReactNode; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="flex items-center gap-1.5 text-[11px] font-medium mb-1" style={{ color: "var(--text-2)" }}>
@@ -510,6 +525,11 @@ function Field({ label, icon, children }: { label: string; icon?: React.ReactNod
         {label}
       </span>
       {children}
+      {hint && (
+        <span className="block text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
+          {hint}
+        </span>
+      )}
     </label>
   )
 }
