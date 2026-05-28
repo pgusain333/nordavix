@@ -33,6 +33,7 @@ Subledger derivation per account type (unchanged):
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -77,10 +78,8 @@ SKIP_ACCOUNT_TYPES = {"Income", "Cost of Goods Sold", "Expense", "Other Income",
 # Name-based detection for the Retained Earnings account. QBO uses
 # AccountSubType="RetainedEarnings" but we don't always have subtype
 # in accounts_meta, so we fall back to a case-insensitive name match.
-# Matches the standard QBO label "Retained Earnings" as well as common
-# variants ("Accumulated Earnings", "Owner's Retained Earnings", etc.)
-import re as _re
-_RE_NAME_RX = _re.compile(r"\bretained\s+earnings\b", _re.IGNORECASE)
+# Matches the standard QBO label "Retained Earnings" plus common variants.
+_RE_NAME_RX = re.compile(r"\bretained\s+earnings\b", re.IGNORECASE)
 
 
 def _is_retained_earnings(account_name: str, account_type: str) -> bool:
