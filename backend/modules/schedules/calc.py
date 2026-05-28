@@ -506,6 +506,203 @@ def roll_loans(items: Iterable[ScheduleLoan], period_end: date) -> SnapshotMath:
     )
 
 
+# ─── Per-item line helpers for the recon suggestion endpoints ──────────────
+#
+# These mirror the prepaid/accrual delta model: each item emits one or
+# more signed line items per period that the recon's existing
+# build-up math (opening + selected_items = SL) consumes directly.
+#
+# Sign convention is ALWAYS debit-positive (matches QBO TrialBalance
+# + the recon's internal storage). The recon UI's flipSign() handles
+# credit-natural display for liability accounts.
+
+
+def _prior_period_end(period_end: date) -> date:
+    """Last day of the calendar month ending immediately before period_end's month."""
+    p_start, _ = _period_bounds(period_end)
+    if p_start.month == 1:
+        return date(p_start.year - 1, 12, 31)
+    prev = p_start.month - 1
+    return date(p_start.year, prev, monthrange(p_start.year, prev)[1])
+
+
+# Fixed Assets ───
+# COST account (qbo_account_id): additions when in_service_date in period,
+#                                disposals when disposed_on in period.
+# ACC. DEPRECIATION (accumulated_dep_qbo_account_id): negative delta for
+# the period's straight-line depreciation (acc-dep is credit-natural; the
+# balance grows MORE NEGATIVE in debit-positive terms, hence -value).
+
+
+def fa_period_depreciation(item: ScheduleFixedAsset, p_start: date, p_end: date) -> Decimal:
+    """SL depreciation expense for the days of the period the asset was in service."""
+    if item.depreciation_method != "straight_line":
+        return ZERO
+    if item.useful_life_months <= 0:
+        return ZERO
+    depreciable = Decimal(item.cost) - Decimal(item.salvage_value)
+    if depreciable <= ZERO:
+        return ZERO
+    monthly = depreciable / Decimal(item.useful_life_months)
+    # Day-prorated within the period using the same calendar-day basis
+    # as prepaids — cleaner for mid-month in-service dates.
+    in_svc = item.in_service_date
+    end_of_life = date.fromordinal(
+        in_svc.toordinal() + int(item.useful_life_months * 30.4375)  # approximate; precision OK
+    )
+    if item.disposed_on is not None and item.disposed_on < end_of_life:
+        end_of_life = item.disposed_on
+    overlap_start = max(p_start, in_svc)
+    overlap_end   = min(p_end,   end_of_life)
+    days = _days_inclusive(overlap_start, overlap_end)
+    if days == 0:
+        return ZERO
+    days_in_month = monthrange(p_end.year, p_end.month)[1]
+    return monthly * (Decimal(days) / Decimal(days_in_month))
+
+
+def fa_lines_for_account(items, qbo_account_id: str, p_start: date, p_end: date) -> list[dict]:
+    """Emit signed delta lines for the account being reconciled."""
+    out: list[dict] = []
+    for it in items:
+        if not it.is_active:
+            continue
+        # COST account events
+        if it.qbo_account_id == qbo_account_id:
+            if p_start <= it.in_service_date <= p_end:
+                out.append({
+                    "item_id":   str(it.id),
+                    "line_kind": "addition",
+                    "line_date": it.in_service_date.isoformat(),
+                    "amount":    str(_q(Decimal(it.cost))),
+                    "description": it.description,
+                    "vendor":      it.vendor,
+                    "reference":   it.reference,
+                })
+            if it.disposed_on is not None and p_start <= it.disposed_on <= p_end:
+                out.append({
+                    "item_id":   str(it.id),
+                    "line_kind": "disposal",
+                    "line_date": it.disposed_on.isoformat(),
+                    "amount":    str(_q(-Decimal(it.cost))),
+                    "description": it.description,
+                    "vendor":      it.vendor,
+                    "reference":   it.reference,
+                })
+        # ACCUMULATED DEPRECIATION account
+        if it.accumulated_dep_qbo_account_id == qbo_account_id:
+            dep = fa_period_depreciation(it, p_start, p_end)
+            if dep > ZERO:
+                out.append({
+                    "item_id":   str(it.id),
+                    "line_kind": "depreciation",
+                    "line_date": p_end.isoformat(),
+                    "amount":    str(_q(-dep)),  # acc-dep grows credit → debit-positive negative
+                    "description": it.description,
+                    "vendor":      it.vendor,
+                    "reference":   it.reference,
+                })
+    return out
+
+
+# Loans ───
+# Liability balance shrinks each period by the principal portion of the
+# payment. Origination emits a positive delta in debit-positive terms?
+# No — loans are credit-natural; the balance starts negative and grows
+# less negative as it's paid down. So origination = +principal (credit),
+# principal payment = -principal_payment (debit reducing the credit).
+# (Recon's flipSign converts these to debit-positive for storage.)
+
+
+def loan_principal_paid_in_period(item: ScheduleLoan, p_start: date, p_end: date) -> Decimal:
+    """Principal paid during [p_start, p_end] = balance_at_start - balance_at_end."""
+    # Walk the amort table from loan_date up to each cap to get the balance.
+    bal_at_prior = _loan_principal_as_of(item, _prior_period_end(p_end))
+    bal_at_now   = _loan_principal_as_of(item, p_end)
+    paid = bal_at_prior - bal_at_now
+    return max(ZERO, paid)
+
+
+def loan_lines_for_account(items, qbo_account_id: str, p_start: date, p_end: date) -> list[dict]:
+    out: list[dict] = []
+    for it in items:
+        if not it.is_active:
+            continue
+        if it.qbo_account_id != qbo_account_id:
+            continue
+        if p_start <= it.loan_date <= p_end:
+            out.append({
+                "item_id":     str(it.id),
+                "line_kind":   "origination",
+                "line_date":   it.loan_date.isoformat(),
+                "amount":      str(_q(Decimal(it.original_principal))),
+                "description": it.description,
+                "vendor":      it.lender,
+                "reference":   it.reference,
+            })
+        # Principal payment for this period
+        principal_paid = loan_principal_paid_in_period(it, p_start, p_end)
+        if principal_paid > ZERO:
+            out.append({
+                "item_id":     str(it.id),
+                "line_kind":   "principal_payment",
+                "line_date":   p_end.isoformat(),
+                "amount":      str(_q(-principal_paid)),
+                "description": it.description,
+                "vendor":      it.lender,
+                "reference":   it.reference,
+            })
+    return out
+
+
+# Leases ───
+# Same model as loans: liability is credit-natural, initial recognition
+# is + (credit booked), principal payment is - (reducing credit).
+# Only emits lines for ASC 842 leases (where initial_liability is set).
+
+
+def lease_principal_paid_in_period(item: ScheduleLease, p_start: date, p_end: date) -> Decimal:
+    if item.initial_liability is None or item.discount_rate_pct is None:
+        return ZERO
+    bal_at_prior = _lease_liability_as_of(item, _prior_period_end(p_end))
+    bal_at_now   = _lease_liability_as_of(item, p_end)
+    paid = bal_at_prior - bal_at_now
+    return max(ZERO, paid)
+
+
+def lease_lines_for_account(items, qbo_account_id: str, p_start: date, p_end: date) -> list[dict]:
+    out: list[dict] = []
+    for it in items:
+        if not it.is_active:
+            continue
+        if it.initial_liability is None or it.discount_rate_pct is None:
+            continue  # cash-basis lease — no BS reconciliation
+        if it.qbo_account_id != qbo_account_id:
+            continue
+        if p_start <= it.lease_start <= p_end:
+            out.append({
+                "item_id":     str(it.id),
+                "line_kind":   "initial",
+                "line_date":   it.lease_start.isoformat(),
+                "amount":      str(_q(Decimal(it.initial_liability))),
+                "description": it.description,
+                "vendor":      it.lessor,
+                "reference":   it.reference,
+            })
+        principal_paid = lease_principal_paid_in_period(it, p_start, p_end)
+        if principal_paid > ZERO:
+            out.append({
+                "item_id":     str(it.id),
+                "line_kind":   "principal_payment",
+                "line_date":   p_end.isoformat(),
+                "amount":      str(_q(-principal_paid)),
+                "description": it.description,
+                "vendor":      it.lessor,
+                "reference":   it.reference,
+            })
+    return out
+
+
 # ─── Type registry ─────────────────────────────────────────────────────────
 
 SCHEDULE_TYPES = ("prepaid", "accrual", "fixed_asset", "lease", "loan")

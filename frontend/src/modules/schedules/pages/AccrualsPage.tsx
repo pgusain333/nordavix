@@ -13,6 +13,7 @@ import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { AccrualReversalDrawer } from "@/modules/schedules/components/AccrualReversalDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
+import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { AccrualItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
@@ -29,7 +30,7 @@ function fmt(s: string | null | undefined): string {
 
 export function AccrualsPage() {
   const qc = useQueryClient()
-  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [dialog, setDialog] = useState<{ open: boolean; item?: AccrualItem }>({ open: false })
   /** Which accrual's lifecycle drawer is open (null = closed). */

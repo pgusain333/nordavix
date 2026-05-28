@@ -14,13 +14,16 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { Home, Pencil, Trash2, X } from "lucide-react"
+import { Home, FileText, Pencil, Trash2, X } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
+import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
+import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
+import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { LeaseItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
@@ -37,9 +40,10 @@ function fmt(s: string | null | undefined): string {
 
 export function LeasesPage() {
   const qc = useQueryClient()
-  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [dialog, setDialog] = useState<{ open: boolean; item?: LeaseItem }>({ open: false })
+  const [drawerItem, setDrawerItem] = useState<LeaseItem | null>(null)
 
   const { data: itemsResp, isLoading: itemsLoading } = useQuery({
     queryKey: ["schedules", "lease", "items", filterAccount],
@@ -113,7 +117,7 @@ export function LeasesPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ background: "var(--surface-2)" }}>
-                    <Th>Lease</Th><Th>Lessor</Th><Th>Term</Th>
+                    <Th>Lease</Th><Th>GL account</Th><Th>Lessor</Th><Th>Term</Th>
                     <Th right>Monthly</Th><Th right>Initial liability</Th><Th>Mode</Th><Th />
                   </tr>
                 </thead>
@@ -126,6 +130,7 @@ export function LeasesPage() {
                           <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Ref: {it.reference}</div>
                         )}
                       </Td>
+                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
                       <Td>{it.lessor || "—"}</Td>
                       <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.lease_start} → {it.lease_end}</span></Td>
                       <Td right tabular>{fmt(it.monthly_payment)}</Td>
@@ -136,9 +141,19 @@ export function LeasesPage() {
                           {it.initial_liability ? "ASC 842" : "Cash-basis"}
                         </span>
                       </Td>
-                      <Td><RowActions
-                        onEdit={() => setDialog({ open: true, item: it })}
-                        onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} /></Td>
+                      <Td>
+                        <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                          <button
+                            onClick={() => setDrawerItem(it)}
+                            className="p-1 rounded hover:bg-[var(--surface-2)]"
+                            title="View lease amortization + JE">
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#7c3aed" }} />
+                          </button>
+                          <RowActions
+                            onEdit={() => setDialog({ open: true, item: it })}
+                            onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} />
+                        </div>
+                      </Td>
                     </tr>
                   ))}
                 </tbody>
@@ -152,6 +167,15 @@ export function LeasesPage() {
         {dialog.open && (
           <LeaseDialog existing={dialog.item} initialAccount={filterAccount}
             onClose={() => setDialog({ open: false })} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {drawerItem && (
+          <ScheduleItemDrawer
+            variant={{ kind: "lease", item: drawerItem }}
+            onClose={() => setDrawerItem(null)}
+          />
         )}
       </AnimatePresence>
     </div>

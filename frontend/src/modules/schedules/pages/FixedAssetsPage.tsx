@@ -9,13 +9,16 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { Building2, Pencil, Trash2, X } from "lucide-react"
+import { Building2, FileText, Pencil, Trash2, X } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
+import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
+import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
+import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { FixedAssetItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
@@ -37,9 +40,10 @@ function monthlyDep(cost: string, salvage: string, life: number): string {
 
 export function FixedAssetsPage() {
   const qc = useQueryClient()
-  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [dialog, setDialog] = useState<{ open: boolean; item?: FixedAssetItem }>({ open: false })
+  const [drawerItem, setDrawerItem] = useState<FixedAssetItem | null>(null)
 
   const { data: itemsResp, isLoading: itemsLoading } = useQuery({
     queryKey: ["schedules", "fixed_asset", "items", filterAccount],
@@ -110,7 +114,7 @@ export function FixedAssetsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ background: "var(--surface-2)" }}>
-                    <Th>Asset</Th><Th>Category</Th><Th>In service</Th>
+                    <Th>Asset</Th><Th>GL account</Th><Th>Category</Th><Th>In service</Th>
                     <Th right>Cost</Th><Th right>Salvage</Th><Th>Life</Th><Th right>Monthly dep.</Th><Th />
                   </tr>
                 </thead>
@@ -128,15 +132,26 @@ export function FixedAssetsPage() {
                           </div>
                         )}
                       </Td>
+                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
                       <Td>{it.category || "—"}</Td>
                       <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.in_service_date}</span></Td>
                       <Td right tabular>{fmt(it.cost)}</Td>
                       <Td right tabular>{fmt(it.salvage_value)}</Td>
                       <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.useful_life_months} mo</span></Td>
                       <Td right tabular>{monthlyDep(it.cost, it.salvage_value, it.useful_life_months)}</Td>
-                      <Td><RowActions
-                        onEdit={() => setDialog({ open: true, item: it })}
-                        onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} /></Td>
+                      <Td>
+                        <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                          <button
+                            onClick={() => setDrawerItem(it)}
+                            className="p-1 rounded hover:bg-[var(--surface-2)]"
+                            title="View depreciation schedule + JE">
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#15803d" }} />
+                          </button>
+                          <RowActions
+                            onEdit={() => setDialog({ open: true, item: it })}
+                            onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} />
+                        </div>
+                      </Td>
                     </tr>
                   ))}
                 </tbody>
@@ -150,6 +165,15 @@ export function FixedAssetsPage() {
         {dialog.open && (
           <FADialog existing={dialog.item} initialAccount={filterAccount}
             onClose={() => setDialog({ open: false })} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {drawerItem && (
+          <ScheduleItemDrawer
+            variant={{ kind: "fixed_asset", item: drawerItem }}
+            onClose={() => setDrawerItem(null)}
+          />
         )}
       </AnimatePresence>
     </div>

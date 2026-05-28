@@ -63,6 +63,7 @@ import { workspaceApi } from "@/modules/workspace/api"
 import { useUserNames } from "@/modules/workspace/hooks"
 import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
 import { useQboConnection } from "@/modules/flux/hooks"
+import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import {
   PrepaidSuggestionsPanel,
   prepaidTxnId,
@@ -71,8 +72,22 @@ import {
   AccrualSuggestionsPanel,
   accrualTxnId,
 } from "@/modules/schedules/components/AccrualSuggestionsPanel"
+import {
+  ScheduleLinePanel,
+  lineTxnId,
+} from "@/modules/schedules/components/ScheduleLinePanel"
+import type { ScheduleLineSuggestion } from "@/modules/schedules/api"
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
+
+/** Human label for the recon's ReconcilingItem.txn_type field, given a
+ * generic schedule line item from FA/Lease/Loan. Used for the badge in
+ * the SL build-up so the user sees what they checked. */
+function labelForScheduleLine(kind: "fixed_asset" | "lease" | "loan", s: ScheduleLineSuggestion): string {
+  const human = kind === "fixed_asset" ? "FA" : kind === "lease" ? "Lease" : "Loan"
+  const pretty = s.line_kind.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  return `${human} · ${pretty}`
+}
 
 function fmtMoney(s: string | number, withSign = false): string {
   const n = typeof s === "string" ? parseFloat(s) : s
@@ -157,10 +172,14 @@ export function ReconciliationsDashboard() {
   // or fall back to ?period=YYYY-MM-DD (legacy) when navigated from the
   // dashboard's month-end tracker.
   const { periodEnd: routePeriodEnd } = useParams<{ periodEnd?: string }>()
+  // Cross-app default: the dashboard writes the user's selected month to
+  // localStorage and every other app reads from it. URL params still win
+  // so deep-links + bookmarks aren't overridden.
+  const fallback = useSelectedPeriodDefault(defaultPeriodEnd())
   const initialPeriod = (() => {
     if (routePeriodEnd && /^\d{4}-\d{2}-\d{2}$/.test(routePeriodEnd)) return routePeriodEnd
     const sp = new URLSearchParams(window.location.search).get("period")
-    return sp && /^\d{4}-\d{2}-\d{2}$/.test(sp) ? sp : defaultPeriodEnd()
+    return sp && /^\d{4}-\d{2}-\d{2}$/.test(sp) ? sp : fallback
   })()
   const [periodEnd, setPeriodEnd] = useState<string>(initialPeriod)
 
@@ -2332,6 +2351,63 @@ function InlineSubledgerForm({
           })
         }}
       />
+
+      {/* Fixed Asset / Lease / Loan schedule suggestions — same
+          delta-line model as accruals, rendered via a single generic
+          ScheduleLinePanel. Each panel renders nothing if the
+          account isn't mapped to any schedule item of that type. */}
+      {(["fixed_asset", "lease", "loan"] as const).map((kind) => (
+        <ScheduleLinePanel
+          key={kind}
+          scheduleKind={kind}
+          qboAccountId={account.qbo_id}
+          periodEnd={periodEnd}
+          selectedIds={new Set(Object.keys(selectedItemMap))}
+          readOnly={readOnly}
+          onToggle={(s, scheduleKind, nextChecked) => {
+            const id = lineTxnId(scheduleKind, s)
+            setSelectedItemMap((prev) => {
+              const next = { ...prev }
+              if (nextChecked) {
+                next[id] = {
+                  txn_id:     id,
+                  txn_type:   labelForScheduleLine(scheduleKind, s),
+                  txn_number: s.reference ?? "",
+                  txn_date:   s.line_date,
+                  amount:     s.amount,
+                  memo:       `${s.description} · ${s.line_kind.replace(/_/g, " ")} ${s.line_date}`,
+                  entity:     s.vendor ?? "",
+                }
+              } else {
+                delete next[id]
+              }
+              return next
+            })
+          }}
+          onBulkSet={(suggestions, scheduleKind, nextChecked) => {
+            setSelectedItemMap((prev) => {
+              const next = { ...prev }
+              for (const s of suggestions) {
+                const id = lineTxnId(scheduleKind, s)
+                if (nextChecked) {
+                  next[id] = {
+                    txn_id:     id,
+                    txn_type:   labelForScheduleLine(scheduleKind, s),
+                    txn_number: s.reference ?? "",
+                    txn_date:   s.line_date,
+                    amount:     s.amount,
+                    memo:       `${s.description} · ${s.line_kind.replace(/_/g, " ")} ${s.line_date}`,
+                    entity:     s.vendor ?? "",
+                  }
+                } else {
+                  delete next[id]
+                }
+              }
+              return next
+            })
+          }}
+        />
+      ))}
 
       {/* ── Compact variance strip ───────────────────────────────────
           Subledger is now a CALCULATED value: opening (rolled forward)

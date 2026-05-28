@@ -9,13 +9,16 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { Banknote, Pencil, Trash2, X } from "lucide-react"
+import { Banknote, FileText, Pencil, Trash2, X } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
+import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
+import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
+import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { LoanItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
@@ -42,9 +45,10 @@ function computePMT(principal: string, ratePct: string, term: string): string {
 
 export function LoansPage() {
   const qc = useQueryClient()
-  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [dialog, setDialog] = useState<{ open: boolean; item?: LoanItem }>({ open: false })
+  const [drawerItem, setDrawerItem] = useState<LoanItem | null>(null)
 
   const { data: itemsResp, isLoading: itemsLoading } = useQuery({
     queryKey: ["schedules", "loan", "items", filterAccount],
@@ -115,7 +119,7 @@ export function LoansPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ background: "var(--surface-2)" }}>
-                    <Th>Loan</Th><Th>Lender</Th><Th>Origination</Th>
+                    <Th>Loan</Th><Th>GL account</Th><Th>Lender</Th><Th>Origination</Th>
                     <Th right>Principal</Th><Th right>Rate</Th><Th>Term</Th>
                     <Th right>Monthly</Th><Th>Type</Th><Th />
                   </tr>
@@ -129,6 +133,7 @@ export function LoansPage() {
                           <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Loan #: {it.reference}</div>
                         )}
                       </Td>
+                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
                       <Td>{it.lender || "—"}</Td>
                       <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.loan_date}</span></Td>
                       <Td right tabular>{fmt(it.original_principal)}</Td>
@@ -143,9 +148,19 @@ export function LoansPage() {
                             : "Amortizing"}
                         </span>
                       </Td>
-                      <Td><RowActions
-                        onEdit={() => setDialog({ open: true, item: it })}
-                        onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} /></Td>
+                      <Td>
+                        <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                          <button
+                            onClick={() => setDrawerItem(it)}
+                            className="p-1 rounded hover:bg-[var(--surface-2)]"
+                            title="View loan amortization + JE">
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#be123c" }} />
+                          </button>
+                          <RowActions
+                            onEdit={() => setDialog({ open: true, item: it })}
+                            onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} />
+                        </div>
+                      </Td>
                     </tr>
                   ))}
                 </tbody>
@@ -159,6 +174,15 @@ export function LoansPage() {
         {dialog.open && (
           <LoanDialog existing={dialog.item} initialAccount={filterAccount}
             onClose={() => setDialog({ open: false })} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {drawerItem && (
+          <ScheduleItemDrawer
+            variant={{ kind: "loan", item: drawerItem }}
+            onClose={() => setDrawerItem(null)}
+          />
         )}
       </AnimatePresence>
     </div>

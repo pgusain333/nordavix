@@ -15,6 +15,7 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { useUser } from "@clerk/clerk-react"
+import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
@@ -86,7 +87,11 @@ export function DashboardHome() {
   // refetches the recons overview and re-derives the flux summary, so the
   // dashboard is always showing one month at a time. Click "Open" on either
   // action card to drill into the full module-level view for the same month.
-  const [period, setPeriod] = useState<string>(defaultPeriodEnd())
+  //
+  // ALSO persists to localStorage via useSelectedPeriod so every other app
+  // (Schedules, Recons, Insights, Financials) opens to the same month on
+  // their next mount. Apps can still override locally after landing.
+  const [period, setPeriod] = useSelectedPeriod(defaultPeriodEnd())
 
   // Sequential-close gate state — when the user clicks a future tile
   // that's blocked by an earlier unapproved month, we surface an inline
