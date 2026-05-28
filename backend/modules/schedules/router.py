@@ -25,6 +25,7 @@ import logging
 import uuid
 from datetime import date as _date
 from datetime import datetime as _datetime
+from datetime import timedelta as _timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -33,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
+from models.prepaid_candidate import PrepaidCandidate
 from models.qbo_connection import QboConnection
 from models.schedule import (
     ScheduleAccrual,
@@ -43,6 +45,7 @@ from models.schedule import (
     ScheduleSnapshot,
 )
 from modules.schedules import calc
+from modules.schedules.ai.prepaid_detector import scan_for_prepaid_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -908,3 +911,256 @@ async def loan_suggestions(
         db, tenant_id, "loan", qbo_account_id, pe,
         ScheduleLoan, calc.loan_lines_for_account,
     )
+
+
+# ── Phase 1: Renewal alerts ──────────────────────────────────────────────
+#
+# Surfaces every active prepaid item that needs the user's attention this
+# period — either expiring soon (so they should set up the renewal item)
+# or already past its end-date (so they should mark it inactive). Pure
+# database query, no QBO call, no AI inference. The "attention list" of
+# the prepaids module — drives the orange banner on PrepaidsPage.
+
+
+@router.get("/prepaid/alerts")
+async def prepaid_alerts(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="YYYY-MM-DD"),
+    expiring_within_days: int = Query(
+        60, ge=1, le=365,
+        description="Days lookahead for 'expiring soon' bucket.",
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Return two buckets of active prepaid items needing attention as of
+    period_end:
+
+      expiring_soon  end_date in (period_end, period_end + N days]
+      past_due       end_date <= period_end (still flagged active)
+
+    Each list sorted by end_date ascending so the most urgent rows
+    bubble to the top. days_to_end is included so the UI can render
+    "ends in 12 days" vs "ended 45 days ago" without a second pass
+    over dates on the client.
+    """
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+
+    horizon = pe + _timedelta(days=expiring_within_days)
+
+    rows = (await db.execute(
+        select(SchedulePrepaid).where(
+            SchedulePrepaid.tenant_id == tenant_id,
+            SchedulePrepaid.is_active == True,  # noqa: E712
+        ).order_by(SchedulePrepaid.end_date)
+    )).scalars().all()
+
+    expiring_soon: list[dict] = []
+    past_due: list[dict] = []
+
+    for r in rows:
+        days_to_end = (r.end_date - pe).days
+        item = {
+            "id":             str(r.id),
+            "qbo_account_id": r.qbo_account_id,
+            "vendor":         r.vendor,
+            "description":    r.description,
+            "reference":      r.reference,
+            "total_amount":   str(r.total_amount),
+            "start_date":     r.start_date.isoformat(),
+            "end_date":       r.end_date.isoformat(),
+            "days_to_end":    days_to_end,
+        }
+        if days_to_end > 0 and r.end_date <= horizon:
+            expiring_soon.append(item)
+        elif days_to_end <= 0:
+            past_due.append(item)
+
+    return {
+        "period_end":           pe.isoformat(),
+        "expiring_within_days": expiring_within_days,
+        "expiring_soon":        expiring_soon,
+        "past_due":             past_due,
+        "total":                len(expiring_soon) + len(past_due),
+    }
+
+
+# ── Phase 2: AI detection of new prepaids in GL ──────────────────────────
+#
+# Endpoints:
+#   POST /prepaid/ai/scan       — run detector, persist new candidates,
+#                                 return full open list + counts
+#   GET  /prepaid/ai/candidates — list open candidates without re-scanning
+#   POST /prepaid/ai/candidates/{id}/dismiss — user says "not a prepaid"
+#   POST /prepaid/ai/candidates/{id}/accept  — user added a schedule item;
+#                                 record the linkage so re-scans skip it
+#
+# Detection writes to prepaid_candidates (Alembic 024). Idempotent on
+# rescan via the (tenant, gl_txn_id) unique constraint.
+
+
+def _serialize_candidate(row: PrepaidCandidate) -> dict:
+    return {
+        "id":                str(row.id),
+        "period_end":        row.period_end.isoformat(),
+        "gl_account_id":     row.gl_account_id,
+        "gl_account_name":   row.gl_account_name,
+        "gl_txn_id":         row.gl_txn_id,
+        "gl_txn_date":       row.gl_txn_date.isoformat(),
+        "gl_amount":         str(row.gl_amount),
+        "gl_memo":           row.gl_memo,
+        "gl_vendor":         row.gl_vendor,
+        "ai_vendor":         row.ai_vendor,
+        "ai_service_start":  row.ai_service_start.isoformat() if row.ai_service_start else None,
+        "ai_service_months": row.ai_service_months,
+        "ai_method":         row.ai_method,
+        "ai_confidence":     str(row.ai_confidence),
+        "ai_reasoning":      row.ai_reasoning,
+        "ai_target_account_id": row.ai_target_account_id,
+        "status":            row.status,
+        "accepted_item_id":  str(row.accepted_item_id) if row.accepted_item_id else None,
+        "created_at":        row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.post("/prepaid/ai/scan", dependencies=[Depends(require_role("preparer"))])
+async def prepaid_ai_scan(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="YYYY-MM-DD"),
+    materiality_floor: str = Query(
+        "500.00",
+        description="Decimal floor in USD — txns below this are skipped.",
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Scan the period for likely new prepaids. Runs synchronously (5-15s
+    typical) — the UI shows a spinner on the Scan button.
+    """
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+    try:
+        floor = Decimal(materiality_floor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="materiality_floor must be a number.")
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    result = await scan_for_prepaid_candidates(
+        conn, db,
+        tenant_id=tenant_id,
+        period_end=pe,
+        materiality_floor=floor,
+    )
+
+    return {
+        "scanned_accounts": result["scanned_accounts"],
+        "scanned_txns":     result["scanned_txns"],
+        "new_candidates":   result["new_candidates"],
+        "candidates":       [_serialize_candidate(r) for r in result["open"]],
+    }
+
+
+@router.get("/prepaid/ai/candidates")
+async def prepaid_ai_candidates(
+    tenant_id: CurrentTenantId,
+    status: str = Query("open", description="open | accepted | dismissed | all"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """List PrepaidCandidate rows. Defaults to open. Used by the banner
+    on PrepaidsPage to render without forcing a fresh scan."""
+    q = select(PrepaidCandidate).where(PrepaidCandidate.tenant_id == tenant_id)
+    if status != "all":
+        q = q.where(PrepaidCandidate.status == status)
+    q = q.order_by(
+        PrepaidCandidate.ai_confidence.desc(),
+        PrepaidCandidate.gl_amount.desc(),
+    )
+    rows = list((await db.execute(q)).scalars().all())
+    return {
+        "status":     status,
+        "candidates": [_serialize_candidate(r) for r in rows],
+    }
+
+
+@router.post("/prepaid/ai/candidates/{candidate_id}/dismiss",
+             dependencies=[Depends(require_role("preparer"))])
+async def prepaid_ai_dismiss(
+    candidate_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """User clicked 'Not a prepaid'. The candidate is silenced — future
+    scans won't re-surface this txn (matched by gl_txn_id uniqueness)."""
+    try:
+        cid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate id.")
+
+    row = (await db.execute(
+        select(PrepaidCandidate).where(
+            PrepaidCandidate.tenant_id == tenant_id,
+            PrepaidCandidate.id == cid,
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+
+    row.status = "dismissed"
+    row.status_changed_at = _datetime.utcnow()
+    row.status_changed_by = uuid.UUID(str(user.id)) if user else None
+    await db.commit()
+    return {"id": str(row.id), "status": row.status}
+
+
+@router.post("/prepaid/ai/candidates/{candidate_id}/accept",
+             dependencies=[Depends(require_role("preparer"))])
+async def prepaid_ai_accept(
+    candidate_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    body: dict = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Called by the frontend after it successfully creates a SchedulePrepaid
+    from a candidate. Records the linkage so re-scans skip the source
+    GL txn. Body: { schedule_item_id: "UUID" }.
+    """
+    try:
+        cid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate id.")
+
+    raw_item_id = (body or {}).get("schedule_item_id")
+    item_uuid: uuid.UUID | None = None
+    if raw_item_id:
+        try:
+            item_uuid = uuid.UUID(str(raw_item_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="schedule_item_id must be a UUID.")
+
+    row = (await db.execute(
+        select(PrepaidCandidate).where(
+            PrepaidCandidate.tenant_id == tenant_id,
+            PrepaidCandidate.id == cid,
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+
+    row.status = "accepted"
+    row.status_changed_at = _datetime.utcnow()
+    row.status_changed_by = uuid.UUID(str(user.id)) if user else None
+    row.accepted_item_id = item_uuid
+    await db.commit()
+    return {"id": str(row.id), "status": row.status, "accepted_item_id": str(item_uuid) if item_uuid else None}

@@ -12,7 +12,10 @@ import type {
   LeaseItem,
   LoanItem,
   Overview,
+  PrepaidAlerts,
+  PrepaidCandidatesList,
   PrepaidItem,
+  PrepaidScanResult,
   ScheduleType,
   Snapshot,
 } from "@/modules/schedules/types"
@@ -253,6 +256,64 @@ async function getLoanSuggestions(qboAccountId: string, periodEnd: string): Prom
   return data
 }
 
+/**
+ * Pure-SQL attention list for the prepaids module: every active item
+ * expiring within `expiringWithinDays` of period_end, or already past
+ * its end_date. Drives the renewal-alerts banner on PrepaidsPage. No
+ * QBO call, no AI — fast.
+ */
+async function getPrepaidAlerts(periodEnd: string, expiringWithinDays = 60): Promise<PrepaidAlerts> {
+  const { data } = await apiClient.get<PrepaidAlerts>(
+    "/api/schedules/prepaid/alerts",
+    { params: { period_end: periodEnd, expiring_within_days: expiringWithinDays } },
+  )
+  return data
+}
+
+// ── AI prepaid detection (Phase 2) ────────────────────────────────────────
+
+/** Run the AI scan against the current period's expense-account GL.
+ * Synchronous — 5-15s typical. Returns scan stats + the full open list. */
+async function scanForPrepaidCandidates(
+  periodEnd: string,
+  materialityFloor = "500.00",
+): Promise<PrepaidScanResult> {
+  const { data } = await apiClient.post<PrepaidScanResult>(
+    "/api/schedules/prepaid/ai/scan",
+    null,
+    { params: { period_end: periodEnd, materiality_floor: materialityFloor } },
+  )
+  return data
+}
+
+/** List candidates without re-scanning. Used to hydrate the banner on
+ * page load — if results from a prior scan still exist, the user sees
+ * them immediately instead of having to click Scan again. */
+async function listPrepaidCandidates(status: "open" | "accepted" | "dismissed" | "all" = "open"): Promise<PrepaidCandidatesList> {
+  const { data } = await apiClient.get<PrepaidCandidatesList>(
+    "/api/schedules/prepaid/ai/candidates",
+    { params: { status } },
+  )
+  return data
+}
+
+async function dismissPrepaidCandidate(id: string): Promise<{ id: string; status: string }> {
+  const { data } = await apiClient.post<{ id: string; status: string }>(
+    `/api/schedules/prepaid/ai/candidates/${id}/dismiss`,
+  )
+  return data
+}
+
+/** Record that the user turned a candidate into a real schedule item.
+ * The schedule_item_id links the two so re-scans skip the source txn. */
+async function acceptPrepaidCandidate(id: string, scheduleItemId: string | null): Promise<{ id: string; status: string }> {
+  const { data } = await apiClient.post<{ id: string; status: string }>(
+    `/api/schedules/prepaid/ai/candidates/${id}/accept`,
+    { schedule_item_id: scheduleItemId },
+  )
+  return data
+}
+
 export const schedulesApi = {
   listAccounts,
   getOverview,
@@ -267,4 +328,9 @@ export const schedulesApi = {
   getFixedAssetSuggestions,
   getLeaseSuggestions,
   getLoanSuggestions,
+  getPrepaidAlerts,
+  scanForPrepaidCandidates,
+  listPrepaidCandidates,
+  dismissPrepaidCandidate,
+  acceptPrepaidCandidate,
 }

@@ -22,9 +22,38 @@ import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { PrepaidAmortizationDrawer } from "@/modules/schedules/components/PrepaidAmortizationDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
+import { RenewalAlertsBanner } from "@/modules/schedules/components/RenewalAlertsBanner"
+import { AiDetectBanner } from "@/modules/schedules/components/AiDetectBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
-import type { PrepaidItem } from "@/modules/schedules/types"
+import { formatDate } from "@/core/lib/dates"
+import type { PrepaidAlertItem, PrepaidCandidate, PrepaidItem } from "@/modules/schedules/types"
+
+/**
+ * Pre-fill payload for the New Prepaid dialog when the user is creating
+ * a renewal of a prior item (from RenewalAlertsBanner). All fields are
+ * optional — the dialog falls back to its blank defaults for anything
+ * not provided. Keeping this loose so the same hook serves later AI
+ * detection / invoice-parse pre-fills.
+ */
+interface PrepaidPrefill {
+  qbo_account_id?: string
+  vendor?:         string
+  description?:    string
+  reference?:      string
+  invoice_date?:   string
+  total_amount?:   string
+  start_date?:     string
+  end_date?:       string
+  notes?:          string
+  /** UI flag — shows a small "Renewal of …" banner inside the dialog. */
+  source?:         "renewal" | "ai-detect" | "invoice" | "recon-suggest"
+  sourceLabel?:    string
+  /** When the prefill comes from an AI-detect candidate, the dialog
+   * calls schedulesApi.acceptPrepaidCandidate on save so the banner
+   * stops re-surfacing the source GL txn. */
+  candidateId?:    string
+}
 
 function defaultPeriodEnd(): string {
   const now = new Date()
@@ -53,7 +82,11 @@ export function PrepaidsPage() {
   const qc = useQueryClient()
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   const [filterAccount, setFilterAccount] = useState<string>("")
-  const [dialogState, setDialogState] = useState<{ open: boolean; item?: PrepaidItem }>({ open: false })
+  const [dialogState, setDialogState] = useState<{
+    open: boolean
+    item?: PrepaidItem
+    prefill?: PrepaidPrefill
+  }>({ open: false })
   /** Which item's amortization-schedule drawer is open (null = closed). */
   const [amortizationItem, setAmortizationItem] = useState<PrepaidItem | null>(null)
 
@@ -85,6 +118,90 @@ export function PrepaidsPage() {
     return { total, active }
   }, [items])
 
+  /**
+   * "Add renewal" click from RenewalAlertsBanner. Compute a sensible
+   * default for the new term:
+   *   - start_date = prior end_date + 1 day  (continuous coverage)
+   *   - end_date   = start + (prior_end - prior_start)  (same duration)
+   *   - amount     = prior amount (user adjusts if pricing changed)
+   *   - vendor / account / description / notes carry over
+   * Reference left blank — user types the new invoice ref.
+   */
+  /**
+   * "Add to schedule" click from AiDetectBanner. The dialog opens
+   * pre-filled with the candidate's data; on save, the dialog ALSO
+   * fires the accept API (via prefill.candidateId → mutation onSuccess)
+   * so the banner stops re-surfacing this txn.
+   *
+   * Date math:
+   *   start = ai_service_start (Claude's suggestion) OR the txn date
+   *   end   = start + ai_service_months months − 1 day  (so a 12-month
+   *           policy starting Apr 1 ends Mar 31, not Apr 1)
+   */
+  function handleAcceptCandidate(c: PrepaidCandidate) {
+    const start = c.ai_service_start || c.gl_txn_date
+    let end = start
+    if (c.ai_service_months && c.ai_service_months > 0) {
+      const s = new Date(start + "T00:00:00")
+      const e = new Date(s.getFullYear(), s.getMonth() + c.ai_service_months, s.getDate() - 1)
+      end = e.toISOString().slice(0, 10)
+    }
+    const vendor = c.ai_vendor || c.gl_vendor || ""
+    const description = vendor
+      ? `${vendor} — ${c.ai_service_months ? `${c.ai_service_months}-month` : "prepaid"} coverage`
+      : c.gl_memo || `Prepaid from ${c.gl_account_name}`
+
+    setDialogState({
+      open: true,
+      prefill: {
+        // qbo_account_id intentionally left blank — the candidate's
+        // gl_account_id is the EXPENSE account where the txn was
+        // mis-booked. The user picks the correct Prepaid GL account
+        // when saving. (Future: ai_target_account_id auto-maps to
+        // "Prepaid X" if one exists in the chart.)
+        qbo_account_id: c.ai_target_account_id || undefined,
+        vendor,
+        description,
+        total_amount:   c.gl_amount,
+        start_date:     start,
+        end_date:       end,
+        invoice_date:   c.gl_txn_date,
+        notes: (
+          `Detected by AI from GL entry on ${formatDate(c.gl_txn_date)}: ` +
+          `$${parseFloat(c.gl_amount).toLocaleString()} to ${c.gl_account_name}.` +
+          (c.ai_reasoning ? `\n\nAI reasoning: ${c.ai_reasoning}` : "")
+        ),
+        source:      "ai-detect",
+        sourceLabel: `AI-detected from ${c.gl_account_name} ($${parseFloat(c.gl_amount).toLocaleString()})`,
+        candidateId: c.id,
+      },
+    })
+  }
+
+  function handleAddRenewal(prior: PrepaidAlertItem) {
+    const ps = new Date(prior.start_date + "T00:00:00")
+    const pe = new Date(prior.end_date   + "T00:00:00")
+    const dur = pe.getTime() - ps.getTime()
+    const newStart = new Date(pe.getTime() + 86_400_000)
+    const newEnd   = new Date(newStart.getTime() + dur)
+    const iso = (d: Date) => d.toISOString().slice(0, 10)
+
+    setDialogState({
+      open: true,
+      prefill: {
+        qbo_account_id: prior.qbo_account_id,
+        vendor:         prior.vendor ?? "",
+        description:    prior.description,
+        total_amount:   prior.total_amount,
+        start_date:     iso(newStart),
+        end_date:       iso(newEnd),
+        notes:          `Renewal of "${prior.description}" (ended ${prior.end_date}).`,
+        source:         "renewal",
+        sourceLabel:    `Renewal of "${prior.description}"`,
+      },
+    })
+  }
+
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
       <SchedulePageHeader
@@ -98,6 +215,20 @@ export function PrepaidsPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        {/* AI detect banner (Phase 2) — scans expense GL for likely
+            prepaid items hiding as one-time expenses. User-triggered. */}
+        <AiDetectBanner
+          periodEnd={periodEnd}
+          onAccept={handleAcceptCandidate}
+        />
+
+        {/* Renewal alerts (Phase 1) — surfaces items expiring soon /
+            past end-date so the user doesn't have to scan the table. */}
+        <RenewalAlertsBanner
+          periodEnd={periodEnd}
+          onAddRenewal={handleAddRenewal}
+        />
+
         {/* Filter + KPIs */}
         <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
@@ -214,6 +345,7 @@ export function PrepaidsPage() {
         {dialogState.open && (
           <PrepaidDialog
             existing={dialogState.item}
+            prefill={dialogState.prefill}
             onClose={() => setDialogState({ open: false })}
             initialAccount={filterAccount}
           />
@@ -264,28 +396,49 @@ function Td({ children, right, tabular }: { children?: React.ReactNode; right?: 
 
 // ── Dialog ──────────────────────────────────────────────────────────────
 
-function PrepaidDialog({ existing, onClose, initialAccount }: {
+function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
   existing?:       PrepaidItem
+  prefill?:        PrepaidPrefill
   onClose:         () => void
   initialAccount:  string
 }) {
   const qc = useQueryClient()
-  const [account,   setAccount]   = useState(existing?.qbo_account_id ?? initialAccount)
-  const [description, setDescription] = useState(existing?.description ?? "")
-  const [vendor,    setVendor]    = useState(existing?.vendor ?? "")
-  const [reference, setReference] = useState(existing?.reference ?? "")
-  const [invoiceDate, setInvoiceDate] = useState(existing?.invoice_date ?? "")
-  const [totalAmount, setTotalAmount] = useState(existing?.total_amount ?? "")
-  const [startDate, setStartDate] = useState(existing?.start_date ?? "")
-  const [endDate,   setEndDate]   = useState(existing?.end_date ?? "")
-  const [notes,     setNotes]     = useState(existing?.notes ?? "")
-  const [error,     setError]     = useState<string | null>(null)
+  // Pre-fill rules:
+  //   - existing wins (we're editing, not creating)
+  //   - prefill provides values for a new item (renewal / AI / invoice)
+  //   - blank/filter-account is the final fallback for a manual add
+  const [account,     setAccount]     = useState(existing?.qbo_account_id ?? prefill?.qbo_account_id ?? initialAccount)
+  const [description, setDescription] = useState(existing?.description ?? prefill?.description ?? "")
+  const [vendor,      setVendor]      = useState(existing?.vendor      ?? prefill?.vendor      ?? "")
+  const [reference,   setReference]   = useState(existing?.reference   ?? prefill?.reference   ?? "")
+  const [invoiceDate, setInvoiceDate] = useState(existing?.invoice_date ?? prefill?.invoice_date ?? "")
+  const [totalAmount, setTotalAmount] = useState(existing?.total_amount ?? prefill?.total_amount ?? "")
+  const [startDate,   setStartDate]   = useState(existing?.start_date   ?? prefill?.start_date   ?? "")
+  const [endDate,     setEndDate]     = useState(existing?.end_date     ?? prefill?.end_date     ?? "")
+  const [notes,       setNotes]       = useState(existing?.notes        ?? prefill?.notes        ?? "")
+  const [error,       setError]       = useState<string | null>(null)
 
   const mut = useMutation({
     mutationFn: (body: Partial<PrepaidItem>) => existing
       ? schedulesApi.updateItem("prepaid", existing.id, body)
       : schedulesApi.createItem("prepaid", body),
-    onSuccess: () => {
+    onSuccess: async (created) => {
+      // If this create came from an AI-detected candidate, link the
+      // new schedule item back to the candidate so re-scans skip the
+      // source GL txn. Fire-and-forget — a failure here doesn't block
+      // the create (the schedule item is already saved).
+      if (!existing && prefill?.candidateId && (created as PrepaidItem)?.id) {
+        try {
+          await schedulesApi.acceptPrepaidCandidate(
+            prefill.candidateId,
+            (created as PrepaidItem).id,
+          )
+          qc.invalidateQueries({ queryKey: ["schedules", "prepaid", "ai-candidates"] })
+        } catch {
+          // Non-fatal — the schedule item exists. Worst case the
+          // banner re-suggests on next scan; the user can dismiss.
+        }
+      }
       qc.invalidateQueries({ queryKey: ["schedules"] })
       onClose()
     },
@@ -330,14 +483,38 @@ function PrepaidDialog({ existing, onClose, initialAccount }: {
         style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <div className="px-6 py-4 flex items-center justify-between"
           style={{ borderBottom: "1px solid var(--border)" }}>
-          <h3 className="text-base font-semibold text-theme">
-            {existing ? "Edit prepaid item" : "New prepaid item"}
-          </h3>
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-base font-semibold text-theme">
+              {existing ? "Edit prepaid item" : "New prepaid item"}
+            </h3>
+            {!existing && prefill?.source === "renewal" && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                Renewal
+              </span>
+            )}
+            {!existing && prefill?.source === "ai-detect" && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+                ✨ AI-detected
+              </span>
+            )}
+          </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-[var(--surface-2)]">
             <X size={16} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
           </button>
         </div>
         <div className="px-6 py-5 space-y-4">
+          {!existing && prefill?.sourceLabel && (
+            <div className="rounded-lg px-3 py-2 text-[11px] flex items-start gap-2"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              <span className="shrink-0 mt-px">✨</span>
+              <span>
+                Pre-filled from <span className="font-semibold">{prefill.sourceLabel}</span>.
+                {" "}Adjust amount, dates, or any other field — your edits override the suggestion.
+              </span>
+            </div>
+          )}
           <AccountPicker mode="form" label="GL account" value={account} onChange={setAccount} />
           <Field label="Description *">
             <input value={description} onChange={(e) => setDescription(e.target.value)}
