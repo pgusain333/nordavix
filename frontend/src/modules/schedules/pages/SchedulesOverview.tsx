@@ -10,9 +10,10 @@
  * the recon-interlink magic so first-time users understand why they
  * should fill these out.
  */
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
+import { useOrganization } from "@clerk/clerk-react"
 import { motion } from "framer-motion"
 import {
   Calendar, ClipboardList, Building2, Home, Banknote,
@@ -27,6 +28,21 @@ import {
   SCHEDULE_BLURB, SCHEDULE_HUMAN, SCHEDULE_ROUTE,
   type OverviewType, type ScheduleType,
 } from "@/modules/schedules/types"
+
+/**
+ * Persistence for hasLoaded across navigation. Without this, drilling
+ * into a schedule type and clicking back wipes the dashboard back to
+ * the blank-cards empty state because `hasLoaded` is component-local
+ * state. We persist a per-org flag in sessionStorage so the overview
+ * auto-loads on remount within the same browser session.
+ *
+ * Why sessionStorage, not localStorage: the flag should reset on a
+ * fresh tab so a returning user sees "click Load" intentionality —
+ * but within a session, drilling in/out should feel seamless.
+ */
+function schedulesLoadedKey(orgId: string | undefined): string {
+  return `nordavix:schedules:loaded:${orgId ?? "anon"}`
+}
 
 /** Default to last day of the previous full month. */
 function defaultPeriodEnd(): string {
@@ -59,11 +75,36 @@ function fmtMoney(s: string): string {
 
 export function SchedulesOverview() {
   const navigate = useNavigate()
+  const { organization } = useOrganization()
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   /** Don't auto-compute roll-forwards on mount — the user picks the
    * period first and clicks Load. Once loaded, period changes auto-
-   * refetch as normal (TanStack Query's queryKey-based caching). */
-  const [hasLoaded, setHasLoaded] = useState(false)
+   * refetch as normal (TanStack Query's queryKey-based caching).
+   *
+   * We restore hasLoaded from sessionStorage on mount so back-nav
+   * from a schedule detail page doesn't wipe the dashboard back to
+   * the blank-cards state. The React Query cache survives the unmount
+   * (default 5-min gcTime), so flipping hasLoaded on rehydrates the
+   * data immediately without a refetch. */
+  const orgKey = schedulesLoadedKey(organization?.id)
+  const [hasLoaded, setHasLoaded] = useState<boolean>(() => {
+    try { return typeof window !== "undefined" && sessionStorage.getItem(orgKey) === "1" }
+    catch { return false }
+  })
+
+  // If the org changes mid-session (workspace switcher), re-read the
+  // flag for the new org. Without this, switching orgs would carry the
+  // previous org's loaded state into the new workspace.
+  useEffect(() => {
+    try { setHasLoaded(sessionStorage.getItem(orgKey) === "1") } catch { /* ignore */ }
+  }, [orgKey])
+
+  // Persist whenever the flag flips on. We never write false — the only
+  // way to "reset" is opening a new tab (a fresh session).
+  useEffect(() => {
+    if (!hasLoaded) return
+    try { sessionStorage.setItem(orgKey, "1") } catch { /* ignore */ }
+  }, [hasLoaded, orgKey])
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["schedules", "overview", periodEnd],

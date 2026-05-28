@@ -16,6 +16,7 @@ import {
   AlertTriangle, ArrowLeft, CheckCircle2, FileText, Paperclip, Search, Sparkles, User, XCircle,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
+import { formatDate } from "@/core/lib/dates"
 import {
   reconsApi,
   type OverrideEntry,
@@ -31,13 +32,7 @@ function fmtMoney(s: string | number | null): string {
 }
 
 function fmtDate(s: string | null): string {
-  if (!s) return "—"
-  try {
-    const d = new Date(s)
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-  } catch {
-    return s
-  }
+  return formatDate(s) || "—"
 }
 
 const STATUS_COLORS: Record<AccountReviewStatus, { bg: string; fg: string }> = {

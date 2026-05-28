@@ -12,6 +12,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
+import { formatDate } from "@/core/lib/dates"
 import {
   Zap,
   Upload,
@@ -152,7 +153,7 @@ export function ConnectionsPage() {
                     {qbo.company}
                   </p>
                   <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    Realm {qbo.realm_id} · connected {new Date(qbo.connected_at).toLocaleDateString()}
+                    Realm {qbo.realm_id} · connected {formatDate(qbo.connected_at)}
                   </p>
                 </div>
               ) : (

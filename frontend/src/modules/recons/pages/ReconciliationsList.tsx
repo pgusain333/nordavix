@@ -8,6 +8,7 @@ import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
+import { formatDate } from "@/core/lib/dates"
 import {
   Search,
   ArrowRight,
@@ -230,7 +231,7 @@ function ReconCard({ recon, expanded, onToggle, onSync, riskFilter, navigate }: 
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-theme truncate">{recon.name}</p>
           <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            Period {new Date(recon.period_end).toLocaleDateString()} · {humanize(recon.status, { in_review: "In review" })}
+            Period {formatDate(recon.period_end)} · {humanize(recon.status, { in_review: "In review" })}
           </p>
         </div>
         <div className="hidden sm:flex items-center gap-4 text-right">

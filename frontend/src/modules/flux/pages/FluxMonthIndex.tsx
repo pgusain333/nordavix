@@ -28,6 +28,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
+import { formatDate } from "@/core/lib/dates"
 import { motion } from "framer-motion"
 import {
   BarChart3,
@@ -445,7 +446,7 @@ export function FluxMonthIndex() {
                               <span className="sm:block">
                                 <span className="truncate inline-block max-w-[60vw] align-bottom text-theme">{latest.name || "Untitled"}</span>
                                 <span className="sm:block text-[10px] sm:mt-0.5 ml-1 sm:ml-0">
-                                  · {new Date(latest.created_at).toLocaleDateString()}
+                                  · {formatDate(latest.created_at)}
                                 </span>
                               </span>
                             </>

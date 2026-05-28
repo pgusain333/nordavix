@@ -22,6 +22,7 @@ import {
 } from "@tanstack/react-table"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "framer-motion"
+import { formatDate } from "@/core/lib/dates"
 import {
   CheckCircle2,
   Check,
@@ -71,8 +72,7 @@ interface Props {
 function _formatHeaderDate(iso?: string, suffix?: string): string {
   if (!iso) return suffix ?? ""
   try {
-    const d = new Date(iso + "T00:00:00")
-    const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    const date = formatDate(iso)
     return suffix ? `${date} (${suffix})` : date
   } catch { return suffix ?? iso }
 }

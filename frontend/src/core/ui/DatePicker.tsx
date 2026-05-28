@@ -20,6 +20,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { Calendar, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react"
+import { formatDate } from "@/core/lib/dates"
 
 interface Props {
   /** ISO YYYY-MM-DD, or empty string for unset. */
@@ -57,13 +58,8 @@ function fromIso(s: string): { y: number; m: number; d: number } | null {
   return { y, m: m - 1, d }
 }
 function fmtDisplay(iso: string): string {
-  const p = fromIso(iso)
-  if (!p) return ""
-  try {
-    return new Date(p.y, p.m, p.d).toLocaleDateString(undefined, {
-      month: "short", day: "numeric", year: "numeric",
-    })
-  } catch { return iso }
+  // App-wide standard: MM-DD-YYYY (US, unambiguous when copy-pasted).
+  return formatDate(iso) || iso
 }
 function daysInMonth(y: number, m: number): number { return new Date(y, m + 1, 0).getDate() }
 function isSameDate(a: { y: number; m: number; d: number }, b: { y: number; m: number; d: number }): boolean {

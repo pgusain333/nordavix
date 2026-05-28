@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
+import { formatDate } from "@/core/lib/dates"
 import {
   CheckSquare,
   AlertTriangle,
@@ -79,8 +80,7 @@ function isOpen(t: Task): boolean {
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—"
   try {
-    return new Date(iso + (iso.includes("T") ? "" : "T00:00:00"))
-      .toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    return formatDate(iso)
   } catch { return iso }
 }
 function fmtRelDate(iso: string | null | undefined): string {

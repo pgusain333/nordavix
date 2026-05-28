@@ -14,6 +14,7 @@ import {
   UserPlus, Users, Crown, Eye, Pencil, Mail, X, AlertTriangle, CheckCircle2,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { formatDate } from "@/core/lib/dates"
 import { workspaceApi, type NordavixRole } from "@/modules/workspace/api"
 
 const ROLE_LABELS: Record<NordavixRole, { label: string; icon: React.ReactNode; bg: string; fg: string; help: string }> = {
@@ -341,7 +342,7 @@ export function TeamPage() {
                       {meta.icon} {meta.label}
                     </span>
                     <span className="ml-auto text-[10px]" style={{ color: "var(--text-muted)" }}>
-                      Sent {inv.created_at ? new Date(inv.created_at as string).toLocaleDateString() : "—"}
+                      Sent {formatDate(inv.created_at as string | undefined) || "—"}
                     </span>
                     {isAdmin && (
                       <button

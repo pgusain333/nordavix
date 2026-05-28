@@ -36,6 +36,7 @@ import {
 import { Spinner } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { apiClient } from "@/core/api/client"
+import { formatDate } from "@/core/lib/dates"
 import { workspaceApi, type WorkspaceMember } from "@/modules/workspace/api"
 import {
   CompanyForm, readMeta, writeMeta, type CompanyMeta,
@@ -415,7 +416,7 @@ function ProfileSection() {
         <ReadOnlyField label="Full name"     value={displayName} />
         <ReadOnlyField label="Primary email" value={primaryEmail} />
         <ReadOnlyField label="User ID"       value={user.id} mono />
-        <ReadOnlyField label="Joined"        value={user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"} />
+        <ReadOnlyField label="Joined"        value={formatDate(user.createdAt) || "—"} />
       </div>
 
       <p className="text-[11px] mt-5" style={{ color: "var(--text-muted)" }}>
@@ -909,9 +910,18 @@ function AppearanceSection() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DataExportSection() {
+  const navigate = useNavigate()
   const { organization } = useOrganization()
+  const { data: me } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 10 * 60_000,
+    enabled:  !!organization,
+  })
+  const isAdmin = me?.role === "admin"
   const [downloading, setDownloading] = useState<"audit" | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showDelete, setShowDelete] = useState(false)
 
   async function downloadAuditLog() {
     setError(null)
@@ -980,21 +990,215 @@ function DataExportSection() {
 
       {error && <p className="text-xs mt-4" style={{ color: "#dc2626" }}>{error}</p>}
 
-      {/* Danger zone (placeholder for future) */}
+      {/* Danger zone — delete workspace (admin only) */}
       <div className="mt-7 pt-5" style={{ borderTop: "1px solid var(--border)" }}>
-        <div className="flex items-start gap-3 rounded-lg p-4"
+        <div className="rounded-lg p-4"
           style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
-          <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0 mt-0.5" style={{ color: "#dc2626" }} />
-          <div className="flex-1">
-            <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>Danger zone</p>
-            <p className="text-[12px] mt-0.5" style={{ color: "#991b1b" }}>
-              Permanent workspace operations (transfer ownership, delete workspace) live here. Coming
-              soon — for now, contact support for irreversible actions.
-            </p>
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0 mt-0.5" style={{ color: "#dc2626" }} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>Danger zone</p>
+              <p className="text-[12px] mt-0.5" style={{ color: "#991b1b" }}>
+                Deleting this workspace removes <span className="font-semibold">{organization?.name ?? "the company"}</span>{" "}
+                from your account and revokes access for every member. Connected data (QuickBooks
+                sync, audit log, reconciliations, schedules) becomes inaccessible. This cannot
+                be undone.
+              </p>
+              {!isAdmin && organization && (
+                <p className="text-[11px] mt-2 inline-flex items-center gap-1"
+                  style={{ color: "#991b1b" }}>
+                  <ShieldCheck size={11} strokeWidth={2} />
+                  Only workspace admins can delete a company.
+                </p>
+              )}
+            </div>
+            {isAdmin && organization && (
+              <button
+                onClick={() => setShowDelete(true)}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
+                style={{
+                  background: "white",
+                  color: "#b91c1c",
+                  border: "1px solid #fecaca",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#fee2e2" }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "white" }}
+              >
+                Delete company
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Type-to-confirm modal */}
+      <AnimatePresence>
+        {showDelete && organization && (
+          <DeleteCompanyModal
+            organization={organization}
+            onCancel={() => setShowDelete(false)}
+            onDeleted={() => {
+              setShowDelete(false)
+              navigate("/app/companies")
+            }}
+          />
+        )}
+      </AnimatePresence>
     </SectionShell>
+  )
+}
+
+/**
+ * Type-to-confirm modal for deleting a workspace.
+ *
+ * Why type-to-confirm: a plain "Are you sure?" yes/no is easily clicked
+ * through. Forcing the user to type the company name verbatim makes
+ * accidental deletion essentially impossible while still being one
+ * action away for the intentional case.
+ *
+ * After Clerk's organization.destroy() succeeds, we also wipe every
+ * localStorage / sessionStorage key whose name contains the org id
+ * (CompanyForm meta, notif/AI prefs, schedules-loaded flag, etc.) so
+ * the browser doesn't carry stale per-org state into other workspaces.
+ *
+ * Tenant rows in our DB become orphaned by design — the user no longer
+ * has org access via Clerk so the rows are invisible. A scheduled
+ * backend cleanup job can purge them later if needed.
+ */
+function DeleteCompanyModal({
+  organization, onCancel, onDeleted,
+}: {
+  organization: { id: string; name: string | null; destroy: () => Promise<unknown> }
+  onCancel:  () => void
+  onDeleted: () => void
+}) {
+  const [typed, setTyped] = useState("")
+  const [working, setWorking] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const expected = organization.name ?? ""
+  const canDelete = typed.trim() === expected.trim() && expected.length > 0 && !working
+
+  // Esc closes (unless we're mid-delete).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !working) onCancel()
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [onCancel, working])
+
+  async function handleDelete() {
+    if (!canDelete) return
+    setErr(null)
+    setWorking(true)
+    try {
+      await organization.destroy()
+      // Wipe every browser-side key tied to this org so the next
+      // active workspace doesn't inherit stale meta / prefs.
+      try {
+        const orgId = organization.id
+        for (const store of [localStorage, sessionStorage]) {
+          const keys: string[] = []
+          for (let i = 0; i < store.length; i++) {
+            const k = store.key(i)
+            if (k && k.includes(orgId)) keys.push(k)
+          }
+          keys.forEach((k) => store.removeItem(k))
+        }
+      } catch { /* harmless */ }
+      onDeleted()
+    } catch (e) {
+      const msg = (e as { message?: string })?.message
+      setErr(msg ?? "Could not delete the workspace. Try again?")
+      setWorking(false)
+    }
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.6)" }}
+      onClick={() => !working && onCancel()}
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        className="rounded-2xl max-w-md w-full"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+      >
+        <div className="px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-2.5">
+            <span className="h-8 w-8 rounded-lg inline-flex items-center justify-center shrink-0"
+              style={{ background: "#fef2f2", color: "#dc2626" }}>
+              <AlertTriangle size={15} strokeWidth={2} />
+            </span>
+            <div>
+              <h3 className="text-sm font-bold" style={{ color: "var(--text)" }}>
+                Delete workspace
+              </h3>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                This action cannot be undone.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          <p className="text-[13px]" style={{ color: "var(--text-2)" }}>
+            You're about to permanently delete{" "}
+            <span className="font-semibold" style={{ color: "var(--text)" }}>{expected}</span>.
+            All members will lose access. QuickBooks sync, reconciliations, schedules, audit log,
+            and uploaded evidence will become inaccessible.
+          </p>
+          <div>
+            <label className="block text-[11px] font-semibold mb-1.5" style={{ color: "var(--text-2)" }}>
+              Type <span className="font-mono px-1 rounded" style={{ background: "var(--surface-2)" }}>{expected}</span> to confirm
+            </label>
+            <input
+              autoFocus
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              disabled={working}
+              placeholder={expected}
+              className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+              style={{
+                background: "var(--surface-2)",
+                border: `1px solid ${canDelete ? "#dc2626" : "var(--border-strong)"}`,
+                color: "var(--text)",
+              }}
+            />
+          </div>
+          {err && (
+            <div className="rounded-md px-3 py-2 text-[11px]"
+              style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+              {err}
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3 flex items-center justify-end gap-2"
+          style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+          <button
+            onClick={onCancel}
+            disabled={working}
+            className="px-3 py-1.5 rounded-md text-xs font-semibold transition-colors disabled:opacity-50"
+            style={{ color: "var(--text-2)", background: "transparent" }}
+            onMouseEnter={(e) => { if (!working) (e.currentTarget as HTMLElement).style.background = "var(--surface)" }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent" }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={!canDelete}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ background: "#dc2626", color: "white" }}
+          >
+            {working ? <Spinner className="h-3 w-3" /> : <AlertTriangle size={12} strokeWidth={2} />}
+            {working ? "Deleting…" : "Delete forever"}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   )
 }
 

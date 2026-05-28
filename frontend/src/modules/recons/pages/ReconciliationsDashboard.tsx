@@ -21,6 +21,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
+import { formatDate, formatDateLong } from "@/core/lib/dates"
 import {
   RefreshCw,
   AlertTriangle,
@@ -1118,9 +1119,7 @@ export function ReconciliationsDashboard() {
                 <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
                   Closed by <span className="font-semibold text-theme">{closedByName || "an admin"}</span>
                   {overview.closed_at && (
-                    <> on {new Date(overview.closed_at).toLocaleDateString(undefined, {
-                      year: "numeric", month: "long", day: "numeric",
-                    })}</>
+                    <> on {formatDateLong(overview.closed_at)}</>
                   )}.
                   All reconciliations are frozen — reviewers and preparers can view but not edit.
                 </p>
@@ -3428,12 +3427,8 @@ function TrialBalanceCheckCard({ check, breakdown }: {
   let ytdStartLabel = check.ytd_start
   let periodEndLabel = check.period_end
   try {
-    ytdStartLabel = new Date(check.ytd_start + "T00:00:00").toLocaleDateString(undefined, {
-      month: "short", day: "numeric", year: "numeric",
-    })
-    periodEndLabel = new Date(check.period_end + "T00:00:00").toLocaleDateString(undefined, {
-      month: "short", day: "numeric", year: "numeric",
-    })
+    ytdStartLabel  = formatDate(check.ytd_start)
+    periodEndLabel = formatDate(check.period_end)
   } catch { /* fallthrough */ }
 
   return (

@@ -18,6 +18,7 @@
  *     English summary" callout that big-SaaS legal pages all have now.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { formatDateLong } from "@/core/lib/dates"
 import { Link, useNavigate } from "react-router-dom"
 import { useUser } from "@clerk/clerk-react"
 import { motion } from "framer-motion"
@@ -125,9 +126,7 @@ export function LegalLayout({
 
   const fmtDate = useMemo(() => (iso: string) => {
     try {
-      return new Date(iso + "T00:00:00").toLocaleDateString("en-US", {
-        year: "numeric", month: "long", day: "numeric",
-      })
+      return formatDateLong(iso)
     } catch { return iso }
   }, [])
 
