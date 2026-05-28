@@ -701,6 +701,22 @@ export interface SeedPreview {
   accounts:          SeedPreviewAccount[]
   warning?:          string | null
   skipped_pl_count?: number   // Income/Expense/COGS accounts that always open at $0
+  // Which QBO realm + company this preview was pulled from. Surfaced
+  // in the wizard so the user can verify they're connected to the
+  // company they intended (catches the "Intuit picker silently reused
+  // the same sandbox" case).
+  qbo_source?: {
+    realm_id:     string
+    company_name: string | null
+  }
+  diagnostics?: {
+    tb_rows:                  number
+    tb_names:                 string[]
+    misses:                   string[]
+    raw_qbo_account_count?:   number
+    balance_sheet_kept?:      number
+    balance_sheet_skipped?:   number
+  }
 }
 
 async function getBooksStatus(): Promise<BooksStatus> {
