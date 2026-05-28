@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import String
+from sqlalchemy import String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,14 +12,25 @@ class User(TimestampMixin, TenantBase):
     """
     A Clerk user provisioned within a tenant.
 
-    Roles in v1: "admin" (full access) or "member" (can approve/edit narratives).
-    Granular permission enforcement is deferred to a future release — the data
-    model supports it from day one via the `role` field.
+    The same Clerk identity (clerk_user_id) can belong to multiple
+    tenants — each membership is its own User row with its own role.
+    Uniqueness is enforced on the composite (clerk_user_id, tenant_id)
+    via migration 022; a plain non-unique index on clerk_user_id stays
+    for the few lookup paths that filter by user alone (Clerk webhooks,
+    admin tools). See migration 022 for the rationale: the single-
+    column unique constraint blocked multi-workspace founders from
+    ever appearing as admin in a second workspace.
+
+    Roles in v1: "admin" | "reviewer" | "preparer" (enforced at the
+    application layer via core.auth.dependencies.require_role).
     """
     __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("clerk_user_id", "tenant_id", name="uq_users_clerk_user_id_tenant_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    clerk_user_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    clerk_user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
-    # role: "admin" | "member" — enforced at application layer (not DB constraint) for flexibility
-    role: Mapped[str] = mapped_column(String(50), nullable=False, default="member")
+    # role: "admin" | "reviewer" | "preparer" — enforced at the application layer
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="preparer")
