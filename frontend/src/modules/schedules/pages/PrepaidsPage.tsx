@@ -22,6 +22,7 @@ import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { PrepaidAmortizationDrawer } from "@/modules/schedules/components/PrepaidAmortizationDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
+import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { PrepaidItem } from "@/modules/schedules/types"
 
@@ -50,7 +51,7 @@ function monthlyAmount(total: string, start: string, end: string): string {
 
 export function PrepaidsPage() {
   const qc = useQueryClient()
-  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [dialogState, setDialogState] = useState<{ open: boolean; item?: PrepaidItem }>({ open: false })
   /** Which item's amortization-schedule drawer is open (null = closed). */

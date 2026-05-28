@@ -204,6 +204,55 @@ async function getAccrualSuggestions(
   return data
 }
 
+/**
+ * Shared shape for fixed-asset / lease / loan suggestion line items.
+ * Each is a signed delta in debit-positive convention (matches the
+ * recon's internal storage; the UI's flipSign handles credit-natural
+ * display). Selecting the row adds it to the recon's SL build-up.
+ */
+export interface ScheduleLineSuggestion {
+  item_id:     string
+  line_kind:   string  // type-specific: addition|disposal|depreciation|initial|principal_payment|origination
+  line_date:   string  // YYYY-MM-DD
+  amount:      string  // signed string
+  description: string
+  vendor:      string | null
+  reference:   string | null
+}
+
+export interface ScheduleSuggestionsResponse {
+  qbo_account_id:   string
+  period_end:       string
+  items:            ScheduleLineSuggestion[]
+  committed:        boolean
+  committed_at?:    string | null
+  has_uncommitted:  boolean
+}
+
+async function getFixedAssetSuggestions(qboAccountId: string, periodEnd: string): Promise<ScheduleSuggestionsResponse> {
+  const { data } = await apiClient.get<ScheduleSuggestionsResponse>(
+    "/api/schedules/fixed_asset/suggestions",
+    { params: { qbo_account_id: qboAccountId, period_end: periodEnd } },
+  )
+  return data
+}
+
+async function getLeaseSuggestions(qboAccountId: string, periodEnd: string): Promise<ScheduleSuggestionsResponse> {
+  const { data } = await apiClient.get<ScheduleSuggestionsResponse>(
+    "/api/schedules/lease/suggestions",
+    { params: { qbo_account_id: qboAccountId, period_end: periodEnd } },
+  )
+  return data
+}
+
+async function getLoanSuggestions(qboAccountId: string, periodEnd: string): Promise<ScheduleSuggestionsResponse> {
+  const { data } = await apiClient.get<ScheduleSuggestionsResponse>(
+    "/api/schedules/loan/suggestions",
+    { params: { qbo_account_id: qboAccountId, period_end: periodEnd } },
+  )
+  return data
+}
+
 export const schedulesApi = {
   listAccounts,
   getOverview,
@@ -215,4 +264,7 @@ export const schedulesApi = {
   commitSnapshot,
   getPrepaidSuggestions,
   getAccrualSuggestions,
+  getFixedAssetSuggestions,
+  getLeaseSuggestions,
+  getLoanSuggestions,
 }

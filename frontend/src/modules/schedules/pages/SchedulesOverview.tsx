@@ -21,6 +21,7 @@ import {
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import {
   SCHEDULE_BLURB, SCHEDULE_HUMAN, SCHEDULE_ROUTE,
@@ -58,7 +59,7 @@ function fmtMoney(s: string): string {
 
 export function SchedulesOverview() {
   const navigate = useNavigate()
-  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   /** Don't auto-compute roll-forwards on mount — the user picks the
    * period first and clicks Load. Once loaded, period changes auto-
    * refetch as normal (TanStack Query's queryKey-based caching). */

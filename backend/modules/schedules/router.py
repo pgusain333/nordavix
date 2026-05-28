@@ -777,3 +777,134 @@ async def prepaid_suggestions(
 def _q_money(d: Decimal) -> Decimal:
     """Local 2dp quantizer matching the rest of the app's display format."""
     return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+# ── Generic suggestion helper for the 3 amort-based types ─────────────────
+
+
+async def _generic_suggestions(
+    db: AsyncSession,
+    tenant_id,
+    schedule_type: str,
+    qbo_account_id: str,
+    pe,
+    model_cls,
+    line_fn,
+    extra_account_field: str | None = None,
+) -> dict:
+    """
+    Shared scaffold for fixed_asset / lease / loan suggestion endpoints.
+    All three gate on a committed snapshot and emit delta line items via
+    type-specific helpers in calc.py.
+
+    `extra_account_field` covers Fixed Assets where one item maps to two
+    accounts (cost via qbo_account_id + accumulated dep via
+    accumulated_dep_qbo_account_id) — both need to surface suggestions
+    for the same item.
+    """
+    snapshot = (await db.execute(
+        select(ScheduleSnapshot).where(
+            ScheduleSnapshot.tenant_id == tenant_id,
+            ScheduleSnapshot.schedule_type == schedule_type,
+            ScheduleSnapshot.qbo_account_id == qbo_account_id,
+            ScheduleSnapshot.period_end == pe,
+            ScheduleSnapshot.status == "committed",
+        )
+    )).scalar_one_or_none()
+
+    if snapshot is None:
+        # Count active items mapped to this account (via either field)
+        q = select(model_cls.id).where(
+            model_cls.tenant_id == tenant_id,
+            model_cls.is_active == True,  # noqa: E712
+        )
+        if extra_account_field:
+            q = q.where(
+                (model_cls.qbo_account_id == qbo_account_id) |
+                (getattr(model_cls, extra_account_field) == qbo_account_id)
+            )
+        else:
+            q = q.where(model_cls.qbo_account_id == qbo_account_id)
+        any_active = (await db.execute(q.limit(1))).first()
+        return {
+            "qbo_account_id":   qbo_account_id,
+            "period_end":       pe.isoformat(),
+            "items":            [],
+            "committed":        False,
+            "has_uncommitted":  any_active is not None,
+        }
+
+    # Pull ALL active items for the type (line_fn filters by account itself).
+    items = (await db.execute(
+        select(model_cls).where(
+            model_cls.tenant_id == tenant_id,
+            model_cls.is_active == True,  # noqa: E712
+        )
+    )).scalars().all()
+
+    p_start, p_end = calc._period_bounds(pe)
+    lines = line_fn(items, qbo_account_id, p_start, p_end)
+    lines.sort(key=lambda r: (r["line_date"], r["line_kind"]))
+    return {
+        "qbo_account_id":   qbo_account_id,
+        "period_end":       pe.isoformat(),
+        "items":            lines,
+        "committed":        True,
+        "committed_at":     snapshot.committed_at.isoformat() if snapshot.committed_at else None,
+        "has_uncommitted":  False,
+    }
+
+
+@router.get("/fixed_asset/suggestions")
+async def fixed_asset_suggestions(
+    tenant_id: CurrentTenantId,
+    qbo_account_id: str = Query(...),
+    period_end: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delta-based lines for the FA recon. One item may emit lines for
+    BOTH the cost account AND the accumulated-depreciation account
+    depending on which one the user opened."""
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+    return await _generic_suggestions(
+        db, tenant_id, "fixed_asset", qbo_account_id, pe,
+        ScheduleFixedAsset, calc.fa_lines_for_account,
+        extra_account_field="accumulated_dep_qbo_account_id",
+    )
+
+
+@router.get("/lease/suggestions")
+async def lease_suggestions(
+    tenant_id: CurrentTenantId,
+    qbo_account_id: str = Query(...),
+    period_end: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delta-based lines for the lease liability recon. Cash-basis leases
+    (no discount_rate / initial_liability set) emit nothing."""
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+    return await _generic_suggestions(
+        db, tenant_id, "lease", qbo_account_id, pe,
+        ScheduleLease, calc.lease_lines_for_account,
+    )
+
+
+@router.get("/loan/suggestions")
+async def loan_suggestions(
+    tenant_id: CurrentTenantId,
+    qbo_account_id: str = Query(...),
+    period_end: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delta-based lines for the loan liability recon."""
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+    return await _generic_suggestions(
+        db, tenant_id, "loan", qbo_account_id, pe,
+        ScheduleLoan, calc.loan_lines_for_account,
+    )
