@@ -20,10 +20,13 @@ export function ClerkApiWirer(): null {
   const queryClient = useQueryClient()
   const previousOrgId = useRef<string | null | undefined>(undefined)
 
-  // Wire the auth token provider — runs on every session change.
+  // Wire the auth token provider — runs on every session change. The
+  // provider passes through the opts bag so the response interceptor
+  // can request a cache-bypassing fresh token after a 401 (org-switch
+  // race recovery).
   useEffect(() => {
     if (session) {
-      setApiAuthProvider(() => session.getToken())
+      setApiAuthProvider((opts) => session.getToken(opts))
     }
   }, [session])
 
