@@ -21,6 +21,7 @@ import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageH
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { PrepaidAmortizationDrawer } from "@/modules/schedules/components/PrepaidAmortizationDrawer"
+import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { PrepaidItem } from "@/modules/schedules/types"
 
@@ -149,6 +150,7 @@ export function PrepaidsPage() {
                 <thead>
                   <tr style={{ background: "var(--surface-2)" }}>
                     <Th>Description</Th>
+                    <Th>GL account</Th>
                     <Th>Vendor</Th>
                     <Th right>Total</Th>
                     <Th>Window</Th>
@@ -167,6 +169,7 @@ export function PrepaidsPage() {
                           </div>
                         )}
                       </Td>
+                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
                       <Td>{it.vendor || "—"}</Td>
                       <Td right tabular>{fmt(it.total_amount)}</Td>
                       <Td>

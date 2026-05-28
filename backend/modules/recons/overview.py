@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -1080,14 +1080,24 @@ def _try_titles(r: dict, bucket: str) -> Any:
     return None
 
 
+def _period_start_of_month(period_end: date) -> date:
+    """First-of-month bound for a period — used by the subledger drill-in
+    on non-AR/AP accounts so the user sees ONLY transactions posted
+    during the period being reconciled, not the trailing 90 days."""
+    return period_end.replace(day=1)
+
+
 async def _txn_rows_for_account(
     conn: QboConnection,
     session: AsyncSession,
     qbo_account_id: str,
     period_end: date,
 ) -> tuple[list[dict], str]:
-    """Bank/CC: recent transactions touching this account (last 90 days)."""
-    cutoff = (period_end - timedelta(days=90)).isoformat()
+    """Bank/CC: transactions touching this account during the reconciled
+    period (first-of-month → period_end). Per-period scope matches what
+    the reconciler is actually validating; the old 90-day window
+    showed activity from periods that were already closed."""
+    cutoff = _period_start_of_month(period_end).isoformat()
     end = period_end.isoformat()
     out: list[dict] = []
 
@@ -1115,7 +1125,7 @@ async def _txn_rows_for_account(
             })
 
     out.sort(key=lambda x: x["txn_date"], reverse=True)
-    return out, "Recent deposits and purchases hitting this account (last 90 days)."
+    return out, f"Deposits + purchases posted to this account during {cutoff} → {end}."
 
 
 async def _je_rows_for_account(
@@ -1124,8 +1134,10 @@ async def _je_rows_for_account(
     qbo_account_id: str,
     period_end: date,
 ) -> tuple[list[dict], str]:
-    """Generic: list recent JE lines hitting the account."""
-    cutoff = (period_end - timedelta(days=90)).isoformat()
+    """Generic: JE lines hitting the account during the reconciled
+    period (first-of-month → period_end). Per-period scope same as
+    the Bank/CC variant above."""
+    cutoff = _period_start_of_month(period_end).isoformat()
     end = period_end.isoformat()
     try:
         q = (
@@ -1158,4 +1170,4 @@ async def _je_rows_for_account(
             "memo":        (je.get("PrivateNote") or "")[:200],
         })
     out.sort(key=lambda x: x["txn_date"], reverse=True)
-    return out, "Recent journal entry activity on this account (last 90 days)."
+    return out, f"Journal entries posted to this account during {cutoff} → {end}."

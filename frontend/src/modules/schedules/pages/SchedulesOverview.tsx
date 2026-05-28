@@ -16,10 +16,10 @@ import { useQuery } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import {
   Calendar, ClipboardList, Building2, Home, Banknote,
-  ArrowRight, CheckCircle2, Sparkles, BookOpen,
+  ArrowRight, CheckCircle2, Sparkles, BookOpen, RefreshCw,
 } from "lucide-react"
 
-import { Spinner } from "@/core/ui/components"
+import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { schedulesApi } from "@/modules/schedules/api"
 import {
@@ -59,10 +59,15 @@ function fmtMoney(s: string): string {
 export function SchedulesOverview() {
   const navigate = useNavigate()
   const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  /** Don't auto-compute roll-forwards on mount — the user picks the
+   * period first and clicks Load. Once loaded, period changes auto-
+   * refetch as normal (TanStack Query's queryKey-based caching). */
+  const [hasLoaded, setHasLoaded] = useState(false)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["schedules", "overview", periodEnd],
     queryFn:  () => schedulesApi.getOverview(periodEnd),
+    enabled:  hasLoaded,
   })
 
   const totalAcrossTypes = useMemo(() => {
@@ -91,16 +96,20 @@ export function SchedulesOverview() {
               so you enter the data once and the recon stays in sync forever after.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[11px] font-semibold uppercase tracking-wide"
               style={{ color: "var(--text-muted)" }}>
               Period end
             </span>
-            <DatePicker
-              value={periodEnd}
-              onChange={setPeriodEnd}
-              triggerClassName="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium border outline-none transition-colors"
-            />
+            <DatePicker value={periodEnd} onChange={setPeriodEnd} />
+            <Button
+              size="sm"
+              onClick={() => { setHasLoaded(true); if (hasLoaded) refetch() }}
+              loading={isFetching}
+              icon={<RefreshCw size={14} strokeWidth={1.8} />}
+            >
+              {hasLoaded ? "Refresh" : "Load schedules"}
+            </Button>
           </div>
         </div>
         {/* Sum across types */}
@@ -126,7 +135,27 @@ export function SchedulesOverview() {
 
       {/* Grid */}
       <div className="flex-1 px-4 sm:px-8 py-6 max-w-6xl w-full mx-auto">
-        {isLoading || !data ? (
+        {!hasLoaded ? (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
+            className="rounded-xl p-10 text-center"
+            style={{
+              background: "var(--surface)",
+              border: "1px dashed var(--border-strong)",
+            }}>
+            <div className="h-12 w-12 mx-auto rounded-lg flex items-center justify-center mb-3"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              <BookOpen size={22} strokeWidth={1.6} />
+            </div>
+            <p className="text-sm font-semibold text-theme mb-1">Pick a period end, then load</p>
+            <p className="text-xs max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+              Schedules roll forward off the period-end you choose. Pick the closing
+              date for the month you're reconciling, then click{" "}
+              <span className="font-semibold">Load schedules</span> above to compute
+              the snapshot for all five types.
+            </p>
+          </motion.div>
+        ) : isLoading || !data ? (
           <div className="py-20 flex flex-col items-center justify-center gap-2">
             <Spinner className="h-6 w-6" />
             <p className="text-xs" style={{ color: "var(--text-muted)" }}>

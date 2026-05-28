@@ -774,10 +774,9 @@ export function ReconciliationsDashboard() {
     setDrawerAccount(a)
     setDrawerMode("subledger")
   }
-  function openVariance(a: OverviewAccount) {
-    setDrawerAccount(a)
-    setDrawerMode("variance")
-  }
+  // openVariance removed with the row-level Variance button — drawer
+  // can still render the variance view if drawerMode is forced from
+  // elsewhere, but no UI path opens it on a row click now.
 
   return (
     <div ref={pageScrollRef} className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
@@ -1575,15 +1574,14 @@ export function ReconciliationsDashboard() {
                             </td>
                             <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-1.5">
-                                {/* Per-row QBO sync — re-pulls just this
-                                    account's GL balance from QuickBooks
-                                    and patches the row in place. Hidden
-                                    on closed periods (no edits). */}
+                                {/* Per-row QBO sync — icon-only to keep the
+                                    action cluster compact. Hidden on
+                                    closed periods (no edits). */}
                                 {!isClosed && (
                                   <button
                                     onClick={() => rowSyncMut.mutate(a.qbo_id)}
                                     disabled={rowSyncMut.isPending && rowSyncMut.variables === a.qbo_id}
-                                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+                                    className="inline-flex items-center justify-center rounded-md h-6 w-6 transition-colors"
                                     style={{
                                       color: "var(--text-2)",
                                       border: "1px solid var(--border-strong)",
@@ -1598,7 +1596,6 @@ export function ReconciliationsDashboard() {
                                     ) : (
                                       <RefreshCw size={11} strokeWidth={1.8} />
                                     )}
-                                    Sync
                                   </button>
                                 )}
                                 {/* Per-row Agentic — open to all roles.
@@ -1642,21 +1639,11 @@ export function ReconciliationsDashboard() {
                                   <Eye size={11} strokeWidth={1.8} />
                                   Subledger
                                 </button>
-                                {hasVariance && (
-                                  <button
-                                    onClick={() => openVariance(a)}
-                                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
-                                    style={{
-                                      color: "#b91c1c",
-                                      border: "1px solid #fecaca",
-                                      background: "#fef2f2",
-                                    }}
-                                    title="See transactions likely causing the variance"
-                                  >
-                                    <GitCompareArrows size={11} strokeWidth={1.8} />
-                                    Variance
-                                  </button>
-                                )}
+                                {/* Variance button removed per user direction
+                                    — the inline accordion already surfaces
+                                    transactions/reconciling-items for the
+                                    account; the standalone Variance drawer
+                                    was redundant. */}
                                 {/* "Download PDF" — available once the row is
                                     Prepared (reviewed) or Approved so the user
                                     can pull a working-paper file for either
