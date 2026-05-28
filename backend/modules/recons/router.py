@@ -422,6 +422,130 @@ async def sync_overview_endpoint(
     return overview
 
 
+@router.post("/account/{qbo_account_id}/sync")
+async def sync_one_account_from_qbo(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Surgical refresh: re-pull one account's GL balance from QBO and
+    upsert the snapshot in place. Doesn't touch AR/AP aging or any
+    other account — fast (~1-2s) for the row-level refresh.
+
+    Used by the recon dashboard's per-row "sync" button so the user
+    can iterate on one row without re-pulling the whole TB.
+    """
+    try:
+        pe = date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    # Look up the existing snapshot row so we can re-use account_number
+    # / account_name / account_type — they don't change per sync, but
+    # we need them to upsert with the same metadata.
+    from models.gl_balance_snapshot import GlBalanceSnapshot
+    snap = (await db.execute(
+        select(GlBalanceSnapshot).where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.qbo_account_id == qbo_account_id,
+            GlBalanceSnapshot.period_end == pe,
+        )
+    )).scalar_one_or_none()
+
+    # Pull fresh TB for that period + lookup the account by canonical id.
+    from core.qbo_tb import fetch_trial_balance, parse_trial_balance
+    try:
+        report = await fetch_trial_balance(conn, pe)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"QBO sync failed: {exc}")
+    parsed = parse_trial_balance(report)
+    by_id = parsed["by_id"]
+    new_balance: Decimal | None = None
+    if qbo_account_id in by_id:
+        new_balance = by_id[qbo_account_id]
+    elif snap is not None and snap.account_number and snap.account_number in parsed["by_name"]:
+        new_balance = parsed["by_name"][snap.account_number]
+    elif snap is not None:
+        # Final fallback: try the display name + variants.
+        for k in (snap.account_name, f"{snap.account_number} {snap.account_name}".strip() if snap.account_number else ""):
+            if k and k in parsed["by_name"]:
+                new_balance = parsed["by_name"][k]
+                break
+    if new_balance is None:
+        raise HTTPException(
+            status_code=404,
+            detail="QBO returned no balance for that account on the period end date.",
+        )
+
+    if snap is None:
+        # First-time sync for this (account, period) — need the account
+        # metadata from QBO's chart. Pull the Account record so we
+        # populate name/number/type alongside the balance.
+        from modules.recons.service import _qbo_get
+        try:
+            data = await _qbo_get(
+                conn, db, f"/account/{qbo_account_id}",
+                params={"minorversion": "65"},
+            )
+        except Exception:
+            data = {}
+        a = data.get("Account") or {}
+        snap = GlBalanceSnapshot(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            qbo_account_id=qbo_account_id,
+            period_end=pe,
+            account_number=(a.get("AcctNum") or "") or None,
+            account_name=(a.get("Name") or qbo_account_id),
+            account_type=(a.get("AccountType") or ""),
+            balance=new_balance,
+        )
+        db.add(snap)
+    else:
+        snap.balance = new_balance
+        snap.captured_at = datetime.now(UTC)
+
+    await db.commit()
+    await db.refresh(snap)
+
+    try:
+        from core.audit.log import write_audit_event as _audit
+        await _audit(
+            db, tenant_id=tenant_id, user_id=user.id,
+            action="recon.account_synced",
+            entity_type="account_snapshot", entity_id=snap.id,
+            metadata={
+                "summary":      f"Resynced {snap.account_name} from QBO",
+                "qbo_account_id": qbo_account_id,
+                "period_end":   pe.isoformat(),
+                "new_balance":  str(new_balance),
+            },
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("Audit write failed on recon account sync")
+
+    return {
+        "qbo_account_id": qbo_account_id,
+        "period_end":     pe.isoformat(),
+        "account_name":   snap.account_name,
+        "account_number": snap.account_number,
+        "account_type":   snap.account_type,
+        "gl_balance":     str(new_balance.quantize(Decimal("0.01"))),
+        "captured_at":    snap.captured_at.isoformat() if snap.captured_at else None,
+    }
+
+
 @router.get("/account/{qbo_account_id}/subledger")
 async def get_account_subledger(
     qbo_account_id: str,

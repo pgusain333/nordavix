@@ -13,13 +13,14 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { Calendar, Pencil, Trash2, X } from "lucide-react"
+import { Calendar, FileText, Pencil, Trash2, X } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
+import { PrepaidAmortizationDrawer } from "@/modules/schedules/components/PrepaidAmortizationDrawer"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { PrepaidItem } from "@/modules/schedules/types"
 
@@ -51,6 +52,8 @@ export function PrepaidsPage() {
   const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [dialogState, setDialogState] = useState<{ open: boolean; item?: PrepaidItem }>({ open: false })
+  /** Which item's amortization-schedule drawer is open (null = closed). */
+  const [amortizationItem, setAmortizationItem] = useState<PrepaidItem | null>(null)
 
   const { data: itemsResp, isLoading: itemsLoading } = useQuery({
     queryKey: ["schedules", "prepaid", "items", filterAccount],
@@ -175,6 +178,12 @@ export function PrepaidsPage() {
                       <Td>
                         <div className="inline-flex items-center gap-1.5 justify-end w-full">
                           <button
+                            onClick={() => setAmortizationItem(it)}
+                            className="p-1 rounded hover:bg-[var(--surface-2)]"
+                            title="View amortization schedule + journal entry">
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#1d4ed8" }} />
+                          </button>
+                          <button
                             onClick={() => setDialogState({ open: true, item: it })}
                             className="p-1 rounded hover:bg-[var(--surface-2)]"
                             title="Edit">
@@ -203,6 +212,15 @@ export function PrepaidsPage() {
             existing={dialogState.item}
             onClose={() => setDialogState({ open: false })}
             initialAccount={filterAccount}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {amortizationItem && (
+          <PrepaidAmortizationDrawer
+            item={amortizationItem}
+            onClose={() => setAmortizationItem(null)}
           />
         )}
       </AnimatePresence>

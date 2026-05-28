@@ -66,6 +66,10 @@ class VarianceResponse(BaseModel):
     """Flattened variance view combining Variance + Account + Narrative."""
     id: uuid.UUID
     account_id: uuid.UUID
+    # QBO account id when the TB was pulled from QBO (null on Excel-uploaded
+    # TBs). Drives the per-row "Sync from QBO" button — without an id we
+    # can't ask QBO for that account's balance.
+    qbo_account_id: str | None = None
     account_number: str
     account_name: str
     current_balance: Decimal

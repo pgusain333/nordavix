@@ -319,6 +319,42 @@ export function ReconciliationsDashboard() {
     },
   })
 
+  /**
+   * Per-row QBO sync — refreshes just THIS account's GL balance from
+   * QBO and patches the overview cache in place. Avoids triggering
+   * the full /sync action when the user just wants one row updated.
+   */
+  const rowSyncMut = useMutation({
+    mutationFn: (qboAccountId: string) => reconsApi.syncOneAccount(qboAccountId, periodEnd),
+    onSuccess: (data) => {
+      // Patch only the synced row's gl_balance + recompute variance =
+      // gl - subledger_balance so the overview stays internally
+      // consistent without a refetch. The full invalidate happens on
+      // the next user-driven action (period change, Sync All, etc.).
+      qc.setQueryData<Overview | undefined>(["recons-overview", periodEnd], (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          accounts: old.accounts.map((a) => {
+            if (a.qbo_id !== data.qbo_account_id) return a
+            const gl = parseFloat(data.gl_balance) || 0
+            const sub = parseFloat(a.subledger_balance) || 0
+            return {
+              ...a,
+              gl_balance:  data.gl_balance,
+              variance:    (gl - sub).toFixed(2),
+            }
+          }),
+        }
+      })
+      setSyncMsg(`${data.account_name} resynced from QuickBooks.`)
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
+    },
+  })
+
   function triggerRowAgentic(a: OverviewAccount) {
     // Confirm before overwriting existing AI commentary, per user spec.
     if (a.ai_commentary) {
@@ -1535,6 +1571,32 @@ export function ReconciliationsDashboard() {
                             </td>
                             <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-1.5">
+                                {/* Per-row QBO sync — re-pulls just this
+                                    account's GL balance from QuickBooks
+                                    and patches the row in place. Hidden
+                                    on closed periods (no edits). */}
+                                {!isClosed && (
+                                  <button
+                                    onClick={() => rowSyncMut.mutate(a.qbo_id)}
+                                    disabled={rowSyncMut.isPending && rowSyncMut.variables === a.qbo_id}
+                                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+                                    style={{
+                                      color: "var(--text-2)",
+                                      border: "1px solid var(--border-strong)",
+                                      background: "var(--surface)",
+                                    }}
+                                    title="Sync this account's GL balance from QuickBooks"
+                                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--green)")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border-strong)")}
+                                  >
+                                    {rowSyncMut.isPending && rowSyncMut.variables === a.qbo_id ? (
+                                      <Spinner className="h-3 w-3" />
+                                    ) : (
+                                      <RefreshCw size={11} strokeWidth={1.8} />
+                                    )}
+                                    Sync
+                                  </button>
+                                )}
                                 {/* Per-row Agentic — open to all roles.
                                     Hidden when period is closed (no edits
                                     possible). Confirms before overwriting

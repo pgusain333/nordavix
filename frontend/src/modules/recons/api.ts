@@ -491,6 +491,30 @@ async function syncPeriod(periodEnd: string): Promise<Overview> {
   return data
 }
 
+/**
+ * Result of a per-row account sync: just the freshly-pulled GL balance
+ * for one (account, period). The recon dashboard patches the row in
+ * place from this payload — no full overview refetch needed.
+ */
+export interface AccountSyncResult {
+  qbo_account_id: string
+  period_end:     string
+  account_name:   string
+  account_number: string | null
+  account_type:   string
+  gl_balance:     string
+  captured_at:    string | null
+}
+
+async function syncOneAccount(qboAccountId: string, periodEnd: string): Promise<AccountSyncResult> {
+  const { data } = await apiClient.post<AccountSyncResult>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/sync`,
+    null,
+    { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
 async function getAccountSubledger(qboAccountId: string, periodEnd: string): Promise<SubledgerDetail> {
   const { data } = await apiClient.get<SubledgerDetail>(
     `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/subledger`,
@@ -881,6 +905,7 @@ export const reconsApi = {
   getDashboard,
   getOverview,
   syncPeriod,
+  syncOneAccount,
   runAgenticPrep,
   runAgenticPrepForAccount,
   resetAgenticPrep,

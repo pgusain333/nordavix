@@ -35,6 +35,7 @@ import {
   Download,
   Eye,
   ListOrdered,
+  RefreshCw,
   RotateCcw,
   X,
 } from "lucide-react"
@@ -322,6 +323,44 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     },
   })
 
+  /**
+   * Per-row QBO sync. Re-pulls just THIS account's current + prior
+   * balance from QBO, recomputes its variance, and patches the row in
+   * the cached list. Skips rows that don't have a qbo_account_id (rare
+   * — happens for Excel-uploaded TBs where there's no QBO link).
+   */
+  const rowSync = useMutation({
+    mutationFn: async (row: VarianceRow) => {
+      if (!row.qbo_account_id) {
+        throw new Error("No QBO account id on this row — can't sync.")
+      }
+      return api.syncOneAccountFromQbo(tbId, row.qbo_account_id)
+    },
+    onSuccess: (data) => {
+      const prev = qc.getQueryData<VarianceRow[]>(["variances", tbId])
+      if (prev) {
+        qc.setQueryData<VarianceRow[]>(["variances", tbId],
+          prev.map((r) => r.qbo_account_id === data.qbo_account_id
+            ? {
+                ...r,
+                current_balance: data.current_balance,
+                prior_balance:   data.prior_balance,
+                dollar_variance: data.variance?.dollar_variance ?? r.dollar_variance,
+                pct_variance:    data.variance?.pct_variance ?? r.pct_variance,
+                is_material:     data.variance?.is_material ?? r.is_material,
+                anomaly_flags:   data.variance?.anomaly_flags ?? r.anomaly_flags,
+              }
+            : r,
+          ),
+        )
+      }
+      onMessage?.({ kind: "ok", text: `${data.account_name} resynced from QuickBooks.` })
+    },
+    onError: (err: unknown) => {
+      onMessage?.({ kind: "err", text: extractErrorDetail(err) ?? "Could not sync from QBO." })
+    },
+  })
+
   function triggerRowAgentic(row: VarianceRow) {
     // Confirm before overwriting existing commentary (per user spec).
     if (row.ai_commentary) {
@@ -495,8 +534,31 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         const r = row.original
         const agenticPendingForThisRow =
           rowAgentic.isPending && rowAgentic.variables === r.id
+        const syncPendingForThisRow =
+          rowSync.isPending && rowSync.variables?.id === r.id
+        const hasQboLink = !!r.qbo_account_id
         return (
           <div className="flex items-center gap-1.5 justify-end">
+            {/* Per-row QBO sync — re-pulls just this account's current
+                + prior balance, recomputes its variance, patches the
+                row in place. Hidden on Excel-uploaded TBs (no QBO id).
+                Disabled on locked periods. */}
+            {!readOnly && hasQboLink && (
+              <Button
+                size="icon-sm"
+                variant="outline"
+                title="Sync this account's balance from QuickBooks"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  rowSync.mutate(r)
+                }}
+                disabled={syncPendingForThisRow}
+              >
+                {syncPendingForThisRow
+                  ? <Spinner className="h-3 w-3" />
+                  : <RefreshCw size={13} strokeWidth={1.8} />}
+              </Button>
+            )}
             {/* Per-row Agentic — open to all workspace members.
                 Pulls QBO txns + runs the deeper structured analysis
                 on this row. Shown on every row (materiality removed).

@@ -77,6 +77,8 @@ export interface AICommentary {
 export interface VarianceRow {
   id:               string
   account_id:       string
+  /** QBO account id; null on Excel-uploaded TBs. Drives the per-row sync button. */
+  qbo_account_id:   string | null
   account_number:   string
   account_name:     string
   current_balance:  string
@@ -324,6 +326,34 @@ function exportUrl(tbId: string): string {
   return `${base}/api/flux/trial-balances/${tbId}/export`
 }
 
+// ── Per-account QBO sync (surgical row refresh) ────────────────────────
+
+export interface AccountSyncResult {
+  account_id:      string
+  qbo_account_id:  string
+  account_name:    string
+  current_balance: string
+  prior_balance:   string
+  variance?: {
+    id:              string | null
+    dollar_variance: string
+    pct_variance:    string | null
+    is_material:     boolean
+    anomaly_flags:   string[]
+  } | null
+  synced_at:       string
+}
+
+async function syncOneAccountFromQbo(
+  tbId: string,
+  qboAccountId: string,
+): Promise<AccountSyncResult> {
+  const { data } = await apiClient.post<AccountSyncResult>(
+    `/api/flux/trial-balances/${tbId}/accounts/${qboAccountId}/sync`,
+  )
+  return data
+}
+
 async function exportExcel(tbId: string, fileName?: string): Promise<void> {
   const { data } = await apiClient.get(`/api/flux/trial-balances/${tbId}/export`, {
     responseType: "blob",
@@ -391,6 +421,8 @@ export const api = {
   runAgenticOnVariance,
   getVarianceTransactions,
   toggleVarianceTransactionCheck,
+  // Per-row refresh
+  syncOneAccountFromQbo,
   // Export
   exportUrl,
   exportExcel,
