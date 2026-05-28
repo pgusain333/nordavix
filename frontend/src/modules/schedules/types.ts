@@ -168,3 +168,41 @@ export interface PrepaidAlerts {
   past_due:             PrepaidAlertItem[]
   total:                number
 }
+
+// ── AI prepaid detection (Phase 2) ────────────────────────────────────────
+
+/** A single AI-detected potential prepaid from a GL transaction.
+ * Persisted as a row in prepaid_candidates. */
+export interface PrepaidCandidate {
+  id:                string
+  period_end:        string
+  gl_account_id:     string
+  gl_account_name:   string
+  gl_txn_id:         string | null
+  gl_txn_date:       string
+  gl_amount:         string
+  gl_memo:           string | null
+  gl_vendor:         string | null
+  ai_vendor:         string | null
+  ai_service_start:  string | null
+  ai_service_months: number | null
+  ai_method:         "straight_line" | "daily_rate" | string
+  ai_confidence:     string
+  ai_reasoning:      string | null
+  ai_target_account_id: string | null
+  status:            "open" | "accepted" | "dismissed" | string
+  accepted_item_id:  string | null
+  created_at:        string | null
+}
+
+export interface PrepaidScanResult {
+  scanned_accounts: number
+  scanned_txns:     number
+  new_candidates:   number
+  candidates:       PrepaidCandidate[]
+}
+
+export interface PrepaidCandidatesList {
+  status:     string
+  candidates: PrepaidCandidate[]
+}

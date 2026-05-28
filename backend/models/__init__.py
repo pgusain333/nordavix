@@ -8,6 +8,7 @@ from models.closed_period import ClosedPeriod
 from models.feedback import Feedback
 from models.narrative import Narrative
 from models.period_sync import PeriodSync
+from models.prepaid_candidate import PrepaidCandidate
 from models.qbo_connection import QboConnection
 from models.schedule import (
     ScheduleAccrual,
@@ -32,6 +33,7 @@ __all__ = [
     "Feedback",
     "Narrative",
     "PeriodSync",
+    "PrepaidCandidate",
     "QboConnection",
     "ScheduleAccrual",
     "ScheduleFixedAsset",

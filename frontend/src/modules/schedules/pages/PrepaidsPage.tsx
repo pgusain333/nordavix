@@ -23,9 +23,11 @@ import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { PrepaidAmortizationDrawer } from "@/modules/schedules/components/PrepaidAmortizationDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { RenewalAlertsBanner } from "@/modules/schedules/components/RenewalAlertsBanner"
+import { AiDetectBanner } from "@/modules/schedules/components/AiDetectBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
-import type { PrepaidAlertItem, PrepaidItem } from "@/modules/schedules/types"
+import { formatDate } from "@/core/lib/dates"
+import type { PrepaidAlertItem, PrepaidCandidate, PrepaidItem } from "@/modules/schedules/types"
 
 /**
  * Pre-fill payload for the New Prepaid dialog when the user is creating
@@ -47,6 +49,10 @@ interface PrepaidPrefill {
   /** UI flag — shows a small "Renewal of …" banner inside the dialog. */
   source?:         "renewal" | "ai-detect" | "invoice" | "recon-suggest"
   sourceLabel?:    string
+  /** When the prefill comes from an AI-detect candidate, the dialog
+   * calls schedulesApi.acceptPrepaidCandidate on save so the banner
+   * stops re-surfacing the source GL txn. */
+  candidateId?:    string
 }
 
 function defaultPeriodEnd(): string {
@@ -121,6 +127,57 @@ export function PrepaidsPage() {
    *   - vendor / account / description / notes carry over
    * Reference left blank — user types the new invoice ref.
    */
+  /**
+   * "Add to schedule" click from AiDetectBanner. The dialog opens
+   * pre-filled with the candidate's data; on save, the dialog ALSO
+   * fires the accept API (via prefill.candidateId → mutation onSuccess)
+   * so the banner stops re-surfacing this txn.
+   *
+   * Date math:
+   *   start = ai_service_start (Claude's suggestion) OR the txn date
+   *   end   = start + ai_service_months months − 1 day  (so a 12-month
+   *           policy starting Apr 1 ends Mar 31, not Apr 1)
+   */
+  function handleAcceptCandidate(c: PrepaidCandidate) {
+    const start = c.ai_service_start || c.gl_txn_date
+    let end = start
+    if (c.ai_service_months && c.ai_service_months > 0) {
+      const s = new Date(start + "T00:00:00")
+      const e = new Date(s.getFullYear(), s.getMonth() + c.ai_service_months, s.getDate() - 1)
+      end = e.toISOString().slice(0, 10)
+    }
+    const vendor = c.ai_vendor || c.gl_vendor || ""
+    const description = vendor
+      ? `${vendor} — ${c.ai_service_months ? `${c.ai_service_months}-month` : "prepaid"} coverage`
+      : c.gl_memo || `Prepaid from ${c.gl_account_name}`
+
+    setDialogState({
+      open: true,
+      prefill: {
+        // qbo_account_id intentionally left blank — the candidate's
+        // gl_account_id is the EXPENSE account where the txn was
+        // mis-booked. The user picks the correct Prepaid GL account
+        // when saving. (Future: ai_target_account_id auto-maps to
+        // "Prepaid X" if one exists in the chart.)
+        qbo_account_id: c.ai_target_account_id || undefined,
+        vendor,
+        description,
+        total_amount:   c.gl_amount,
+        start_date:     start,
+        end_date:       end,
+        invoice_date:   c.gl_txn_date,
+        notes: (
+          `Detected by AI from GL entry on ${formatDate(c.gl_txn_date)}: ` +
+          `$${parseFloat(c.gl_amount).toLocaleString()} to ${c.gl_account_name}.` +
+          (c.ai_reasoning ? `\n\nAI reasoning: ${c.ai_reasoning}` : "")
+        ),
+        source:      "ai-detect",
+        sourceLabel: `AI-detected from ${c.gl_account_name} ($${parseFloat(c.gl_amount).toLocaleString()})`,
+        candidateId: c.id,
+      },
+    })
+  }
+
   function handleAddRenewal(prior: PrepaidAlertItem) {
     const ps = new Date(prior.start_date + "T00:00:00")
     const pe = new Date(prior.end_date   + "T00:00:00")
@@ -158,6 +215,13 @@ export function PrepaidsPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        {/* AI detect banner (Phase 2) — scans expense GL for likely
+            prepaid items hiding as one-time expenses. User-triggered. */}
+        <AiDetectBanner
+          periodEnd={periodEnd}
+          onAccept={handleAcceptCandidate}
+        />
+
         {/* Renewal alerts (Phase 1) — surfaces items expiring soon /
             past end-date so the user doesn't have to scan the table. */}
         <RenewalAlertsBanner
@@ -358,7 +422,23 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
     mutationFn: (body: Partial<PrepaidItem>) => existing
       ? schedulesApi.updateItem("prepaid", existing.id, body)
       : schedulesApi.createItem("prepaid", body),
-    onSuccess: () => {
+    onSuccess: async (created) => {
+      // If this create came from an AI-detected candidate, link the
+      // new schedule item back to the candidate so re-scans skip the
+      // source GL txn. Fire-and-forget — a failure here doesn't block
+      // the create (the schedule item is already saved).
+      if (!existing && prefill?.candidateId && (created as PrepaidItem)?.id) {
+        try {
+          await schedulesApi.acceptPrepaidCandidate(
+            prefill.candidateId,
+            (created as PrepaidItem).id,
+          )
+          qc.invalidateQueries({ queryKey: ["schedules", "prepaid", "ai-candidates"] })
+        } catch {
+          // Non-fatal — the schedule item exists. Worst case the
+          // banner re-suggests on next scan; the user can dismiss.
+        }
+      }
       qc.invalidateQueries({ queryKey: ["schedules"] })
       onClose()
     },
@@ -411,6 +491,12 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
               <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
                 style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
                 Renewal
+              </span>
+            )}
+            {!existing && prefill?.source === "ai-detect" && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+                ✨ AI-detected
               </span>
             )}
           </div>
