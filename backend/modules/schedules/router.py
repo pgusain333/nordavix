@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
+from models.missed_accrual_candidate import MissedAccrualCandidate
 from models.prepaid_candidate import PrepaidCandidate
 from models.qbo_connection import QboConnection
 from models.schedule import (
@@ -45,6 +46,10 @@ from models.schedule import (
     ScheduleSnapshot,
 )
 from modules.schedules import calc
+from modules.schedules.ai.accrual_detector import (
+    find_unreversed_accruals,
+    scan_for_missed_accruals,
+)
 from modules.schedules.ai.prepaid_detector import scan_for_prepaid_candidates
 
 logger = logging.getLogger(__name__)
@@ -1178,3 +1183,191 @@ async def prepaid_ai_accept(
     row.accepted_item_id = item_uuid
     await db.commit()
     return {"id": str(row.id), "status": row.status, "accepted_item_id": str(item_uuid) if item_uuid else None}
+
+
+# ── Accrual AI: missed accruals (a) + unreversed accruals (d) ────────────
+
+
+def _serialize_missed_accrual(row: MissedAccrualCandidate) -> dict:
+    return {
+        "id":                   str(row.id),
+        "period_end":           row.period_end.isoformat(),
+        "gl_account_id":        row.gl_account_id,
+        "gl_account_name":      row.gl_account_name,
+        "gl_txn_id":            row.gl_txn_id,
+        "gl_txn_date":          row.gl_txn_date.isoformat(),
+        "gl_amount":            str(row.gl_amount),
+        "gl_memo":              row.gl_memo,
+        "gl_vendor":            row.gl_vendor,
+        "ai_vendor":            row.ai_vendor,
+        "ai_service_period_end": row.ai_service_period_end.isoformat() if row.ai_service_period_end else None,
+        "ai_suggested_amount":  str(row.ai_suggested_amount) if row.ai_suggested_amount is not None else None,
+        "ai_confidence":        str(row.ai_confidence),
+        "ai_reasoning":         row.ai_reasoning,
+        "ai_target_account_id": row.ai_target_account_id,
+        "status":               row.status,
+        "accepted_item_id":     str(row.accepted_item_id) if row.accepted_item_id else None,
+        "created_at":           row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.post("/accrual/ai/scan-missed", dependencies=[Depends(require_role("preparer"))])
+async def accrual_ai_scan_missed(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="YYYY-MM-DD — the period_end we're checking for missed accruals."),
+    materiality_floor: str = Query("500.00"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Scan the month AFTER period_end (plus first 15 days of the
+    month after that) for payments that look like missed accruals."""
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+    try:
+        floor = Decimal(materiality_floor)
+    except Exception:
+        raise HTTPException(status_code=400, detail="materiality_floor must be a number.")
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    result = await scan_for_missed_accruals(
+        conn, db,
+        tenant_id=tenant_id,
+        period_end=pe,
+        materiality_floor=floor,
+    )
+    return {
+        "scanned_accounts": result["scanned_accounts"],
+        "scanned_txns":     result["scanned_txns"],
+        "scan_window":      result.get("scan_window"),
+        "new_candidates":   result["new_candidates"],
+        "candidates":       [_serialize_missed_accrual(r) for r in result["open"]],
+    }
+
+
+@router.get("/accrual/ai/missed-candidates")
+async def accrual_ai_missed_candidates(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="YYYY-MM-DD"),
+    status: str = Query("open"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """List missed-accrual candidates for the given period_end without
+    re-scanning. Hydrates the banner on page load."""
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+    q = select(MissedAccrualCandidate).where(
+        MissedAccrualCandidate.tenant_id == tenant_id,
+        MissedAccrualCandidate.period_end == pe,
+    )
+    if status != "all":
+        q = q.where(MissedAccrualCandidate.status == status)
+    q = q.order_by(
+        MissedAccrualCandidate.ai_confidence.desc(),
+        MissedAccrualCandidate.gl_amount.desc(),
+    )
+    rows = list((await db.execute(q)).scalars().all())
+    return {
+        "period_end": pe.isoformat(),
+        "status":     status,
+        "candidates": [_serialize_missed_accrual(r) for r in rows],
+    }
+
+
+@router.post("/accrual/ai/missed-candidates/{candidate_id}/dismiss",
+             dependencies=[Depends(require_role("preparer"))])
+async def accrual_ai_missed_dismiss(
+    candidate_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        cid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate id.")
+    row = (await db.execute(
+        select(MissedAccrualCandidate).where(
+            MissedAccrualCandidate.tenant_id == tenant_id,
+            MissedAccrualCandidate.id == cid,
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+    row.status = "dismissed"
+    row.status_changed_at = _datetime.utcnow()
+    row.status_changed_by = uuid.UUID(str(user.id)) if user else None
+    await db.commit()
+    return {"id": str(row.id), "status": row.status}
+
+
+@router.post("/accrual/ai/missed-candidates/{candidate_id}/accept",
+             dependencies=[Depends(require_role("preparer"))])
+async def accrual_ai_missed_accept(
+    candidate_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    body: dict = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Called by the frontend after it creates a ScheduleAccrual from
+    the candidate. Records the linkage so re-scans skip the txn."""
+    try:
+        cid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate id.")
+    raw_item_id = (body or {}).get("schedule_item_id")
+    item_uuid: uuid.UUID | None = None
+    if raw_item_id:
+        try:
+            item_uuid = uuid.UUID(str(raw_item_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="schedule_item_id must be a UUID.")
+    row = (await db.execute(
+        select(MissedAccrualCandidate).where(
+            MissedAccrualCandidate.tenant_id == tenant_id,
+            MissedAccrualCandidate.id == cid,
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+    row.status = "accepted"
+    row.status_changed_at = _datetime.utcnow()
+    row.status_changed_by = uuid.UUID(str(user.id)) if user else None
+    row.accepted_item_id = item_uuid
+    await db.commit()
+    return {"id": str(row.id), "status": row.status, "accepted_item_id": str(item_uuid) if item_uuid else None}
+
+
+@router.get("/accrual/ai/unreversed")
+async def accrual_ai_unreversed(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Feature (d) — find active, not-reversed accruals that should
+    have reversed by period_end, and attempt to match each to a
+    current-period GL payment. Pure heuristic match — no AI call."""
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+    rows = await find_unreversed_accruals(
+        conn, db, tenant_id=tenant_id, period_end=pe,
+    )
+    return {
+        "period_end": pe.isoformat(),
+        "items":      rows,
+        "total":      len(rows),
+    }

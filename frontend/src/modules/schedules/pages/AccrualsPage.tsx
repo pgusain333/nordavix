@@ -13,10 +13,36 @@ import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { AccrualReversalDrawer } from "@/modules/schedules/components/AccrualReversalDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
+import { AiDetectMissedAccrualsBanner } from "@/modules/schedules/components/AiDetectMissedAccrualsBanner"
+import { UnreversedAccrualsBanner } from "@/modules/schedules/components/UnreversedAccrualsBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
-import type { AccrualItem } from "@/modules/schedules/types"
+import { formatDate } from "@/core/lib/dates"
+import type { AccrualItem, MissedAccrualCandidate } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
+
+/**
+ * Pre-fill payload for the New Accrual dialog when the user is creating
+ * from a missed-accrual AI candidate (or future renewal-style flows).
+ * Same shape philosophy as PrepaidPrefill in PrepaidsPage.tsx — loose
+ * optional fields; the dialog falls back to blank for anything missing.
+ */
+interface AccrualPrefill {
+  qbo_account_id?: string
+  vendor?:         string
+  description?:    string
+  reference?:      string
+  accrual_date?:   string
+  reverses_on?:    string
+  amount?:         string
+  notes?:          string
+  /** UI flag — shows an "AI-detected" chip in the dialog header. */
+  source?:         "ai-missed" | "manual"
+  sourceLabel?:    string
+  /** When the prefill is from an AI candidate, the dialog calls
+   * acceptMissedAccrualCandidate on save to silence the source txn. */
+  candidateId?:    string
+}
 
 function defaultPeriodEnd(): string {
   const now = new Date()
@@ -32,7 +58,11 @@ export function AccrualsPage() {
   const qc = useQueryClient()
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   const [filterAccount, setFilterAccount] = useState<string>("")
-  const [dialog, setDialog] = useState<{ open: boolean; item?: AccrualItem }>({ open: false })
+  const [dialog, setDialog] = useState<{
+    open: boolean
+    item?: AccrualItem
+    prefill?: AccrualPrefill
+  }>({ open: false })
   /** Which accrual's lifecycle drawer is open (null = closed). */
   const [drawerItem, setDrawerItem] = useState<AccrualItem | null>(null)
 
@@ -63,6 +93,57 @@ export function AccrualsPage() {
     return { total, active: items.filter((i) => i.is_active).length }
   }, [items])
 
+  /**
+   * "Add accrual" click from the AI missed-accrual banner. The dialog
+   * opens pre-filled with the candidate's data; on save the dialog
+   * ALSO fires the accept API (via prefill.candidateId → mutation
+   * onSuccess) so the banner stops re-surfacing this txn.
+   *
+   * Default dates:
+   *   accrual_date = ai_service_period_end (typically the viewed
+   *                  period_end — "you should have accrued at 03-31")
+   *   reverses_on  = first of next month after accrual_date — the
+   *                  conventional "reverse at start of next period"
+   *                  so the actual payment offsets cleanly
+   */
+  function handleAcceptMissedCandidate(c: MissedAccrualCandidate) {
+    const accrualDate = c.ai_service_period_end || c.period_end
+    // Compute first-of-next-month for reverses_on
+    const ad = new Date(accrualDate + "T00:00:00")
+    const reverses = new Date(ad.getFullYear(), ad.getMonth() + 1, 1)
+    const reversesIso = reverses.toISOString().slice(0, 10)
+
+    const amount = c.ai_suggested_amount || c.gl_amount
+    const vendor = c.ai_vendor || c.gl_vendor || ""
+    const description = vendor
+      ? `${vendor} — accrued for ${formatDate(accrualDate)} services`
+      : (c.gl_memo || `Missed accrual from ${c.gl_account_name}`)
+
+    setDialog({
+      open: true,
+      prefill: {
+        // qbo_account_id left blank — gl_account_id is the EXPENSE
+        // account where the payment hit. The new accrual should go
+        // to an Accrued Liability account; user picks it.
+        qbo_account_id: c.ai_target_account_id || undefined,
+        vendor,
+        description,
+        amount,
+        accrual_date: accrualDate,
+        reverses_on: reversesIso,
+        notes: (
+          `Detected by AI — payment of $${parseFloat(c.gl_amount).toLocaleString()} ` +
+          `on ${formatDate(c.gl_txn_date)} to ${c.gl_account_name} looks like work ` +
+          `performed in or before ${formatDate(accrualDate)}.` +
+          (c.ai_reasoning ? `\n\nAI reasoning: ${c.ai_reasoning}` : "")
+        ),
+        source: "ai-missed",
+        sourceLabel: `AI-detected missed accrual from ${c.gl_account_name} ($${parseFloat(c.gl_amount).toLocaleString()})`,
+        candidateId: c.id,
+      },
+    })
+  }
+
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
       <SchedulePageHeader
@@ -76,6 +157,15 @@ export function AccrualsPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        {/* AI: detect missed accruals (feature a) */}
+        <AiDetectMissedAccrualsBanner
+          periodEnd={periodEnd}
+          onAccept={handleAcceptMissedCandidate}
+        />
+
+        {/* AI: unreversed accrual checker (feature d) */}
+        <UnreversedAccrualsBanner periodEnd={periodEnd} />
+
         <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker value={filterAccount} onChange={setFilterAccount} mode="filter" label="GL account" />
@@ -160,8 +250,12 @@ export function AccrualsPage() {
 
       <AnimatePresence>
         {dialog.open && (
-          <AccrualDialog existing={dialog.item} initialAccount={filterAccount}
-            onClose={() => setDialog({ open: false })} />
+          <AccrualDialog
+            existing={dialog.item}
+            prefill={dialog.prefill}
+            initialAccount={filterAccount}
+            onClose={() => setDialog({ open: false })}
+          />
         )}
       </AnimatePresence>
 
@@ -216,26 +310,46 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
   )
 }
 
-function AccrualDialog({ existing, onClose, initialAccount }: {
-  existing?: AccrualItem; onClose: () => void; initialAccount: string
+function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
+  existing?:      AccrualItem
+  prefill?:       AccrualPrefill
+  onClose:        () => void
+  initialAccount: string
 }) {
   const qc = useQueryClient()
-  const [account, setAccount] = useState(existing?.qbo_account_id ?? initialAccount)
-  const [description, setDescription] = useState(existing?.description ?? "")
-  const [vendor, setVendor] = useState(existing?.vendor ?? "")
-  const [reference, setReference] = useState(existing?.reference ?? "")
-  const [accrualDate, setAccrualDate] = useState(existing?.accrual_date ?? "")
-  const [amount, setAmount] = useState(existing?.amount ?? "")
-  const [reversesOn, setReversesOn] = useState(existing?.reverses_on ?? "")
+  // Pre-fill: existing (edit) wins; prefill (AI / future) provides a
+  // pre-populated new item; blank/filter-account is the manual fallback.
+  const [account, setAccount] = useState(existing?.qbo_account_id ?? prefill?.qbo_account_id ?? initialAccount)
+  const [description, setDescription] = useState(existing?.description ?? prefill?.description ?? "")
+  const [vendor, setVendor] = useState(existing?.vendor ?? prefill?.vendor ?? "")
+  const [reference, setReference] = useState(existing?.reference ?? prefill?.reference ?? "")
+  const [accrualDate, setAccrualDate] = useState(existing?.accrual_date ?? prefill?.accrual_date ?? "")
+  const [amount, setAmount] = useState(existing?.amount ?? prefill?.amount ?? "")
+  const [reversesOn, setReversesOn] = useState(existing?.reverses_on ?? prefill?.reverses_on ?? "")
   const [isReversed, setIsReversed] = useState(existing?.is_reversed ?? false)
-  const [notes, setNotes] = useState(existing?.notes ?? "")
+  const [notes, setNotes] = useState(existing?.notes ?? prefill?.notes ?? "")
   const [error, setError] = useState<string | null>(null)
 
   const mut = useMutation({
     mutationFn: (body: Partial<AccrualItem>) => existing
       ? schedulesApi.updateItem("accrual", existing.id, body)
       : schedulesApi.createItem("accrual", body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["schedules"] }); onClose() },
+    onSuccess: async (created) => {
+      // If this came from an AI missed-accrual candidate, silence
+      // the source GL txn so re-scans skip it. Fire-and-forget —
+      // a failure here doesn't block the create.
+      if (!existing && prefill?.candidateId && (created as AccrualItem)?.id) {
+        try {
+          await schedulesApi.acceptMissedAccrualCandidate(
+            prefill.candidateId,
+            (created as AccrualItem).id,
+          )
+          qc.invalidateQueries({ queryKey: ["schedules", "accrual", "ai-missed"] })
+        } catch { /* harmless — accrual is saved */ }
+      }
+      qc.invalidateQueries({ queryKey: ["schedules"] })
+      onClose()
+    },
     onError: (e: unknown) => {
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       setError(msg ?? "Could not save.")
@@ -269,12 +383,31 @@ function AccrualDialog({ existing, onClose, initialAccount }: {
         style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <div className="px-6 py-4 flex items-center justify-between"
           style={{ borderBottom: "1px solid var(--border)" }}>
-          <h3 className="text-base font-semibold text-theme">{existing ? "Edit accrual" : "New accrual"}</h3>
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-base font-semibold text-theme">{existing ? "Edit accrual" : "New accrual"}</h3>
+            {!existing && prefill?.source === "ai-missed" && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+                ✨ AI-detected
+              </span>
+            )}
+          </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-[var(--surface-2)]">
             <X size={16} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
           </button>
         </div>
         <div className="px-6 py-5 space-y-4">
+          {!existing && prefill?.sourceLabel && (
+            <div className="rounded-lg px-3 py-2 text-[11px] flex items-start gap-2"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              <span className="shrink-0 mt-px">✨</span>
+              <span>
+                Pre-filled from <span className="font-semibold">{prefill.sourceLabel}</span>.
+                {" "}Adjust any field — your edits override the suggestion. Pick the correct{" "}
+                <span className="font-semibold">Accrued Liability</span> GL account below.
+              </span>
+            </div>
+          )}
           <AccountPicker mode="form" label="GL account" value={account} onChange={setAccount} />
           <Field label="Description *">
             <input value={description} onChange={(e) => setDescription(e.target.value)}

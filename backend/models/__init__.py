@@ -6,6 +6,7 @@ from models.ai_usage import AIUsage
 from models.audit_log import AuditLog
 from models.closed_period import ClosedPeriod
 from models.feedback import Feedback
+from models.missed_accrual_candidate import MissedAccrualCandidate
 from models.narrative import Narrative
 from models.period_sync import PeriodSync
 from models.prepaid_candidate import PrepaidCandidate
@@ -31,6 +32,7 @@ __all__ = [
     "AuditLog",
     "ClosedPeriod",
     "Feedback",
+    "MissedAccrualCandidate",
     "Narrative",
     "PeriodSync",
     "PrepaidCandidate",
