@@ -56,11 +56,14 @@ interface CommonItem {
 
 // ── Per-type item shapes ───────────────────────────────────────────────────
 
+export type PrepaidAmortMethod = "daily_rate" | "straight_line"
+
 export interface PrepaidItem extends CommonItem {
-  invoice_date: string | null
-  total_amount: string
-  start_date:   string
-  end_date:     string
+  invoice_date:        string | null
+  total_amount:        string
+  start_date:          string
+  end_date:            string
+  amortization_method: PrepaidAmortMethod
 }
 
 export interface AccrualItem extends CommonItem {

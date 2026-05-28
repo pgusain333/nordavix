@@ -125,10 +125,11 @@ def _serialize(schedule_type: str, row) -> dict:
     out = _serialize_common(row)
     if schedule_type == "prepaid":
         out.update({
-            "invoice_date":   row.invoice_date.isoformat() if row.invoice_date else None,
-            "total_amount":   str(row.total_amount),
-            "start_date":     row.start_date.isoformat(),
-            "end_date":       row.end_date.isoformat(),
+            "invoice_date":         row.invoice_date.isoformat() if row.invoice_date else None,
+            "total_amount":         str(row.total_amount),
+            "start_date":           row.start_date.isoformat(),
+            "end_date":             row.end_date.isoformat(),
+            "amortization_method":  getattr(row, "amortization_method", "daily_rate"),
         })
     elif schedule_type == "accrual":
         out.update({
@@ -198,6 +199,14 @@ def _apply_body(schedule_type: str, row, body: dict) -> None:
         if "total_amount" in body: row.total_amount = _dec(body.get("total_amount")) or Decimal("0")
         if "start_date" in body:   row.start_date = _parse_date(body.get("start_date"), "start_date")
         if "end_date" in body:     row.end_date = _parse_date(body.get("end_date"), "end_date")
+        if "amortization_method" in body:
+            m = (body.get("amortization_method") or "daily_rate").strip()
+            if m not in ("daily_rate", "straight_line"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="amortization_method must be 'daily_rate' or 'straight_line'.",
+                )
+            row.amortization_method = m
         if row.end_date is not None and row.start_date is not None and row.end_date < row.start_date:
             raise HTTPException(status_code=400, detail="end_date must be on or after start_date.")
     elif schedule_type == "accrual":
@@ -747,7 +756,9 @@ async def prepaid_suggestions(
         unamortized = calc._prepaid_unamortized_as_of(it, pe)
         period_amort = calc._prepaid_period_expense(it, p_start, p_end)
         daily_rate = calc._prepaid_daily_rate(it)
+        monthly_rate = calc._prepaid_monthly_rate(it)
         total_days = calc._days_inclusive(it.start_date, it.end_date)
+        total_months = calc._prepaid_months_touched(it)
         amortized_to_date = calc._prepaid_amortized_through(it, pe)
         out.append({
             "item_id":                  str(it.id),
@@ -759,7 +770,10 @@ async def prepaid_suggestions(
             "end_date":                 it.end_date.isoformat(),
             "total_amount":             str(_q_money(Decimal(it.total_amount))),
             "total_days":               total_days,
+            "total_months":             total_months,
+            "amortization_method":      calc._prepaid_method(it),
             "daily_rate":               str(_q_money(daily_rate)),
+            "monthly_rate":             str(_q_money(monthly_rate)),
             "period_amortization":      str(_q_money(period_amort)),
             "amortized_to_date":        str(_q_money(amortized_to_date)),
             "unamortized_at_period_end": str(_q_money(unamortized)),

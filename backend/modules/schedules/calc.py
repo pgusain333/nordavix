@@ -21,6 +21,7 @@ from calendar import monthrange
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
+from datetime import timedelta as _timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from models.schedule import (
@@ -125,19 +126,88 @@ def _days_inclusive(start: date, end: date) -> int:
     return (end - start).days + 1
 
 
+def _prepaid_method(item: SchedulePrepaid) -> str:
+    """Return the item's amortization method. Defaults to daily_rate
+    when the column hasn't been backfilled or any legacy data slips
+    through with a NULL — keeps the math behavior stable across the
+    migration boundary."""
+    m = getattr(item, "amortization_method", None) or "daily_rate"
+    return m if m in ("daily_rate", "straight_line") else "daily_rate"
+
+
+def _prepaid_months_touched(item: SchedulePrepaid) -> int:
+    """Count of distinct (year, month) pairs in [start, end]. Used for
+    straight-line monthly amortization where each touched month gets
+    total / N regardless of how many days within the month the item
+    actually covers."""
+    s, e = item.start_date, item.end_date
+    if e < s:
+        return 0
+    return (e.year - s.year) * 12 + (e.month - s.month) + 1
+
+
 def _prepaid_daily_rate(item: SchedulePrepaid) -> Decimal:
-    """Total amount divided by inclusive day count over [start, end]."""
+    """Total amount divided by inclusive day count over [start, end].
+
+    Defined unconditionally for both methods — the per-item drill-in
+    drawer renders it for reference even on straight-line items so the
+    user can sanity-check against the JE amount they'd post."""
     total_days = max(1, _days_inclusive(item.start_date, item.end_date))
     return Decimal(item.total_amount) / Decimal(total_days)
 
 
-def _prepaid_amortized_through(item: SchedulePrepaid, as_of: date) -> Decimal:
-    """Cumulative expense recognized from start_date through `as_of`."""
+def _prepaid_monthly_rate(item: SchedulePrepaid) -> Decimal:
+    """Straight-line monthly rate = total / months_touched. Symmetric
+    to _prepaid_daily_rate — defined for both methods so the per-item
+    drill-in can show both rates and let the user pick which to trust."""
+    n = max(1, _prepaid_months_touched(item))
+    return Decimal(item.total_amount) / Decimal(n)
+
+
+def _prepaid_amortized_through_dr(item: SchedulePrepaid, as_of: date) -> Decimal:
+    """Daily-rate cumulative — linear per day."""
     if as_of < item.start_date:
         return ZERO
     end_day = min(as_of, item.end_date)
     elapsed_days = _days_inclusive(item.start_date, end_day)
     return _prepaid_daily_rate(item) * Decimal(elapsed_days)
+
+
+def _prepaid_amortized_through_sl(item: SchedulePrepaid, as_of: date) -> Decimal:
+    """Straight-line monthly cumulative — total/N recognized at each
+    month-end touched by the item. Past end_date returns full total
+    (the "tail" cleans up any rounding from partial last month).
+
+    Cases:
+      as_of < start         → 0
+      as_of >= end          → total
+      start <= as_of < end  → months_passed × monthly_rate, where
+                              months_passed = count of month-ends in
+                              [start, as_of] (inclusive). A month-end
+                              counts when as_of is on or after the
+                              last day of that month.
+    """
+    if as_of < item.start_date:
+        return ZERO
+    if as_of >= item.end_date:
+        return Decimal(item.total_amount)
+
+    months_passed = (as_of.year - item.start_date.year) * 12 + (as_of.month - item.start_date.month)
+    last_of_as_of_month = monthrange(as_of.year, as_of.month)[1]
+    if as_of.day >= last_of_as_of_month:
+        months_passed += 1
+    months_passed = max(0, months_passed)
+    n = max(1, _prepaid_months_touched(item))
+    if months_passed >= n:
+        return Decimal(item.total_amount)  # safety: never over-amortize
+    return _prepaid_monthly_rate(item) * Decimal(months_passed)
+
+
+def _prepaid_amortized_through(item: SchedulePrepaid, as_of: date) -> Decimal:
+    """Dispatch on amortization_method."""
+    if _prepaid_method(item) == "straight_line":
+        return _prepaid_amortized_through_sl(item, as_of)
+    return _prepaid_amortized_through_dr(item, as_of)
 
 
 def _prepaid_unamortized_as_of(item: SchedulePrepaid, as_of: date) -> Decimal:
@@ -150,18 +220,43 @@ def _prepaid_unamortized_as_of(item: SchedulePrepaid, as_of: date) -> Decimal:
     return max(ZERO, Decimal(item.total_amount) - amortized)
 
 
-def _prepaid_period_expense(item: SchedulePrepaid, p_start: date, p_end: date) -> Decimal:
-    """
-    Expense recognized in the [p_start, p_end] window.
-
-    = daily_rate × (days of overlap between [p_start, p_end] and [start_date, end_date])
-    """
+def _prepaid_period_expense_dr(item: SchedulePrepaid, p_start: date, p_end: date) -> Decimal:
+    """Daily-rate expense for [p_start, p_end] = daily_rate × overlap_days."""
     overlap_start = max(p_start, item.start_date)
     overlap_end   = min(p_end,   item.end_date)
     overlap_days  = _days_inclusive(overlap_start, overlap_end)
     if overlap_days == 0:
         return ZERO
     return _prepaid_daily_rate(item) * Decimal(overlap_days)
+
+
+def _prepaid_period_expense_sl(item: SchedulePrepaid, p_start: date, p_end: date) -> Decimal:
+    """Straight-line monthly expense — derived as the DROP in
+    unamortized balance between the prior period-end and p_end.
+
+    This guarantees the JE for the period = (beginning - ending), so
+    the snapshot's period_expense always matches the per-line sum.
+    Avoids any drift from a separately-computed monthly rate.
+    """
+    if p_end < item.start_date or p_start > item.end_date:
+        return ZERO
+    prior_end = p_start - _timedelta(days=1)
+    beg = _prepaid_unamortized_as_of(item, prior_end)
+    end = _prepaid_unamortized_as_of(item, p_end)
+    drop = beg - end
+    if drop < ZERO:
+        return ZERO
+    return drop
+
+
+def _prepaid_period_expense(item: SchedulePrepaid, p_start: date, p_end: date) -> Decimal:
+    """
+    Expense recognized in the [p_start, p_end] window. Dispatch on the
+    item's amortization_method.
+    """
+    if _prepaid_method(item) == "straight_line":
+        return _prepaid_period_expense_sl(item, p_start, p_end)
+    return _prepaid_period_expense_dr(item, p_start, p_end)
 
 
 def roll_prepaids(items: Iterable[SchedulePrepaid], period_end: date) -> SnapshotMath:

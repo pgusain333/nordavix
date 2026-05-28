@@ -46,13 +46,21 @@ class _ScheduleItemBase(TenantBase):
 
 
 class SchedulePrepaid(_ScheduleItemBase):
-    """One prepaid invoice. Amortized straight-line over [start_date, end_date]."""
+    """One prepaid invoice. Amortized over [start_date, end_date].
+
+    amortization_method controls the recognition pattern:
+      daily_rate    — total / inclusive day count, applied per day
+                      (precise for mid-month policies; legacy default)
+      straight_line — total / N per calendar month touched, recognized
+                      at month-end (CPA-conventional "even monthly")
+    """
     __tablename__ = "schedule_prepaids"
 
     invoice_date: Mapped[date | None] = mapped_column(Date)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    amortization_method: Mapped[str] = mapped_column(String(20), nullable=False, default="daily_rate")
 
 
 class ScheduleAccrual(_ScheduleItemBase):
