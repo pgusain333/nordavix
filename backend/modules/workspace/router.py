@@ -88,12 +88,43 @@ async def list_members(
 
 
 @router.get("/me")
-async def get_me(user: CurrentUser) -> dict:
+async def get_me(
+    user: CurrentUser,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """
-    Current user's role + identity. The middleware handles legacy-role
-    healing now — keeping this endpoint simple so it never errors out
-    and leaves the frontend stuck on a loading state.
+    Current user's role + identity. The middleware handles most role
+    provisioning at sign-in; this endpoint adds one extra safety net:
+    if the caller's tenant has zero admins (e.g. the create-company
+    flow lost a race and the founder ended up as a non-admin in their
+    own workspace), promote the requester to admin so they can finish
+    setting up (invite team, connect QBO, etc.).
+
+    Strict scope — only fires when there's literally no admin at all.
+    For tenants that already have an admin, role stays exactly as set.
     """
+    if user.role != "admin":
+        admin_count = (await db.execute(
+            select(User).where(User.tenant_id == tenant_id, User.role == "admin")
+        )).scalars().all()
+        if not list(admin_count):
+            old_role = user.role
+            user.role = "admin"
+            await db.commit()
+            await db.refresh(user)
+            from core.audit.log import write_audit_event
+            await write_audit_event(
+                db, tenant_id=tenant_id, user_id=user.id,
+                action="workspace.role_self_heal_to_admin",
+                entity_type="user", entity_id=user.id,
+                metadata={
+                    "summary":  f"Promoted {user.email} to admin (no admin existed in tenant)",
+                    "old_role": old_role,
+                    "new_role": "admin",
+                },
+            )
+            await db.commit()
     return {
         "id":            str(user.id),
         "clerk_user_id": user.clerk_user_id,
