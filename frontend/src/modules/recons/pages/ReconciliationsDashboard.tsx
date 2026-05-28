@@ -63,6 +63,10 @@ import { workspaceApi } from "@/modules/workspace/api"
 import { useUserNames } from "@/modules/workspace/hooks"
 import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
 import { useQboConnection } from "@/modules/flux/hooks"
+import {
+  PrepaidSuggestionsPanel,
+  prepaidTxnId,
+} from "@/modules/schedules/components/PrepaidSuggestionsPanel"
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
 
@@ -2166,6 +2170,40 @@ function InlineSubledgerForm({
       {account.ai_commentary && (
         <AiCommentaryCard commentary={account.ai_commentary} />
       )}
+
+      {/* ── Prepaids schedule suggestions ────────────────────────────
+          When this account has prepaid items committed in the Schedules
+          module, surface them here as selectable subledger components.
+          Each toggle add/removes a synthetic ReconcilingItem from the
+          shared selectedItemMap — so the recon's existing SL build-up
+          math picks up the change without any logic changes. Renders
+          nothing if there are no prepaids for this (account, period). */}
+      <PrepaidSuggestionsPanel
+        qboAccountId={account.qbo_id}
+        periodEnd={periodEnd}
+        selectedIds={new Set(Object.keys(selectedItemMap))}
+        readOnly={readOnly}
+        onToggle={(s, nextChecked) => {
+          const id = prepaidTxnId(s)
+          setSelectedItemMap((prev) => {
+            const next = { ...prev }
+            if (nextChecked) {
+              next[id] = {
+                txn_id:     id,
+                txn_type:   "Prepaid amortization",
+                txn_number: s.reference ?? "",
+                txn_date:   s.start_date,
+                amount:     s.unamortized_at_period_end,
+                memo:       `${s.description} · unamortized as of ${periodEnd}`,
+                entity:     s.vendor ?? "",
+              }
+            } else {
+              delete next[id]
+            }
+            return next
+          })
+        }}
+      />
 
       {/* ── Compact variance strip ───────────────────────────────────
           Subledger is now a CALCULATED value: opening (rolled forward)

@@ -106,6 +106,38 @@ class SnapshotMath:
 
 
 # ─── Prepaids ──────────────────────────────────────────────────────────────
+#
+# DAYS-based amortization (not monthly). Each prepaid is amortized
+# straight-line by calendar day across [start_date, end_date]. This is
+# more precise than calendar-month bucketing — a policy that starts
+# mid-month gets exactly the partial slice for that month, and short
+# vs long months expense the right proportion of the daily rate.
+#
+# Convention: both endpoints inclusive. A Jan 1 → Dec 31 policy has
+# 365 days; Jan 1 → Jan 31 has 31 days. Daily rate is computed once
+# per item and reused for both period_expense and unamortized lookups.
+
+
+def _days_inclusive(start: date, end: date) -> int:
+    """Inclusive day count between start and end. Returns 0 if end < start."""
+    if end < start:
+        return 0
+    return (end - start).days + 1
+
+
+def _prepaid_daily_rate(item: SchedulePrepaid) -> Decimal:
+    """Total amount divided by inclusive day count over [start, end]."""
+    total_days = max(1, _days_inclusive(item.start_date, item.end_date))
+    return Decimal(item.total_amount) / Decimal(total_days)
+
+
+def _prepaid_amortized_through(item: SchedulePrepaid, as_of: date) -> Decimal:
+    """Cumulative expense recognized from start_date through `as_of`."""
+    if as_of < item.start_date:
+        return ZERO
+    end_day = min(as_of, item.end_date)
+    elapsed_days = _days_inclusive(item.start_date, end_day)
+    return _prepaid_daily_rate(item) * Decimal(elapsed_days)
 
 
 def _prepaid_unamortized_as_of(item: SchedulePrepaid, as_of: date) -> Decimal:
@@ -114,11 +146,22 @@ def _prepaid_unamortized_as_of(item: SchedulePrepaid, as_of: date) -> Decimal:
         return Decimal(item.total_amount)
     if as_of >= item.end_date:
         return ZERO
-    total_months = max(1, _months_between(item.start_date, item.end_date))
-    monthly = Decimal(item.total_amount) / Decimal(total_months)
-    elapsed = _months_between(item.start_date, as_of)
-    elapsed = min(elapsed, total_months)
-    return max(ZERO, Decimal(item.total_amount) - (monthly * Decimal(elapsed)))
+    amortized = _prepaid_amortized_through(item, as_of)
+    return max(ZERO, Decimal(item.total_amount) - amortized)
+
+
+def _prepaid_period_expense(item: SchedulePrepaid, p_start: date, p_end: date) -> Decimal:
+    """
+    Expense recognized in the [p_start, p_end] window.
+
+    = daily_rate × (days of overlap between [p_start, p_end] and [start_date, end_date])
+    """
+    overlap_start = max(p_start, item.start_date)
+    overlap_end   = min(p_end,   item.end_date)
+    overlap_days  = _days_inclusive(overlap_start, overlap_end)
+    if overlap_days == 0:
+        return ZERO
+    return _prepaid_daily_rate(item) * Decimal(overlap_days)
 
 
 def roll_prepaids(items: Iterable[SchedulePrepaid], period_end: date) -> SnapshotMath:
