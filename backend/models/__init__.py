@@ -9,6 +9,14 @@ from models.feedback import Feedback
 from models.narrative import Narrative
 from models.period_sync import PeriodSync
 from models.qbo_connection import QboConnection
+from models.schedule import (
+    ScheduleAccrual,
+    ScheduleFixedAsset,
+    ScheduleLease,
+    ScheduleLoan,
+    SchedulePrepaid,
+    ScheduleSnapshot,
+)
 from models.subledger_evidence import SubledgerEvidence
 from models.tenant import Tenant
 from models.trial_balance import TrialBalance
@@ -25,6 +33,12 @@ __all__ = [
     "Narrative",
     "PeriodSync",
     "QboConnection",
+    "ScheduleAccrual",
+    "ScheduleFixedAsset",
+    "ScheduleLease",
+    "ScheduleLoan",
+    "SchedulePrepaid",
+    "ScheduleSnapshot",
     "SubledgerEvidence",
     "Tenant",
     "TrialBalance",

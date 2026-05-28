@@ -17,6 +17,12 @@ import { TasksPage } from "@/modules/tasks/pages/TasksPage"
 import { IntercompanyPage } from "@/modules/intercompany/pages/IntercompanyPage"
 import { FinancialsPage } from "@/modules/financials/pages/FinancialsPage"
 import { InsightsPage } from "@/modules/insights/pages/InsightsPage"
+import { SchedulesOverview } from "@/modules/schedules/pages/SchedulesOverview"
+import { PrepaidsPage } from "@/modules/schedules/pages/PrepaidsPage"
+import { AccrualsPage } from "@/modules/schedules/pages/AccrualsPage"
+import { FixedAssetsPage } from "@/modules/schedules/pages/FixedAssetsPage"
+import { LeasesPage } from "@/modules/schedules/pages/LeasesPage"
+import { LoansPage } from "@/modules/schedules/pages/LoansPage"
 import { BooksSetupWizard } from "@/modules/onboarding/pages/BooksSetupWizard"
 import { TeamPage } from "@/modules/workspace/pages/TeamPage"
 import { CompaniesPanel } from "@/modules/onboarding/pages/CompaniesPanel"
@@ -67,6 +73,15 @@ function AppRoutes() {
           <Route path="intercompany" element={<IntercompanyPage />} />
           <Route path="financials"   element={<FinancialsPage />} />
           <Route path="insights"     element={<InsightsPage />} />
+          {/* Schedules — overview + 5 type-specific detail pages. Each
+              schedule's ending balance auto-populates the subledger on
+              its GL account's reconciliation via the committed snapshot. */}
+          <Route path="schedules"                element={<SchedulesOverview />} />
+          <Route path="schedules/prepaids"       element={<PrepaidsPage />} />
+          <Route path="schedules/accruals"       element={<AccrualsPage />} />
+          <Route path="schedules/fixed-assets"   element={<FixedAssetsPage />} />
+          <Route path="schedules/leases"         element={<LeasesPage />} />
+          <Route path="schedules/loans"          element={<LoansPage />} />
           {/* Flux: index = month-row list, /analyses = full workspace,
               /:tbId = deep link into a specific analysis. */}
           <Route path="flux"                  element={<FluxMonthIndex />} />

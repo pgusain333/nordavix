@@ -1,0 +1,334 @@
+/**
+ * Fixed Assets schedule detail page. See PrepaidsPage for pattern docs.
+ *
+ * Roll-forward shows cost beginning + additions − disposals = ending,
+ * with period depreciation as the "expense" line. Accumulated depreciation
+ * is a separate GL account (contra-asset), tracked via the
+ * accumulated_dep_qbo_account_id field on each item.
+ */
+import { useMemo, useState } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { motion, AnimatePresence } from "framer-motion"
+import { Building2, Pencil, Trash2, X } from "lucide-react"
+
+import { Button, Spinner } from "@/core/ui/components"
+import { DatePicker } from "@/core/ui/DatePicker"
+import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
+import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
+import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
+import { schedulesApi } from "@/modules/schedules/api"
+import type { FixedAssetItem } from "@/modules/schedules/types"
+import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
+
+function defaultPeriodEnd(): string {
+  const now = new Date()
+  const last = new Date(now.getFullYear(), now.getMonth(), 0)
+  return last.toISOString().slice(0, 10)
+}
+function fmt(s: string | null | undefined): string {
+  const n = parseFloat(s ?? "0") || 0
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+function monthlyDep(cost: string, salvage: string, life: number): string {
+  const c = parseFloat(cost) || 0, s = parseFloat(salvage) || 0
+  if (life < 1) return "$0.00"
+  return `$${((c - s) / life).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+export function FixedAssetsPage() {
+  const qc = useQueryClient()
+  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  const [filterAccount, setFilterAccount] = useState<string>("")
+  const [dialog, setDialog] = useState<{ open: boolean; item?: FixedAssetItem }>({ open: false })
+
+  const { data: itemsResp, isLoading: itemsLoading } = useQuery({
+    queryKey: ["schedules", "fixed_asset", "items", filterAccount],
+    queryFn:  () => schedulesApi.listItems("fixed_asset", { qbo_account_id: filterAccount || undefined }),
+  })
+  const items = itemsResp?.items ?? []
+
+  const { data: snapshot, isLoading: snapshotLoading } = useQuery({
+    queryKey: ["schedules", "fixed_asset", "snapshot", filterAccount, periodEnd],
+    queryFn:  () => schedulesApi.previewSnapshot("fixed_asset", filterAccount, periodEnd),
+    enabled:  !!filterAccount,
+  })
+
+  const commitMut = useMutation({
+    mutationFn: () => schedulesApi.commitSnapshot("fixed_asset", filterAccount, periodEnd),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
+  })
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => schedulesApi.deleteItem("fixed_asset", id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
+  })
+
+  const totals = useMemo(() => {
+    const cost = items.filter((i) => i.is_active && !i.disposed_on)
+      .reduce((s, i) => s + (parseFloat(i.cost) || 0), 0)
+    return { cost, active: items.filter((i) => i.is_active).length }
+  }, [items])
+
+  return (
+    <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
+      <SchedulePageHeader
+        type="fixed_asset"
+        icon={<Building2 size={20} strokeWidth={1.6} />}
+        accent={{ fg: "#15803d", bg: "rgba(21, 128, 61, 0.10)" }}
+        periodEnd={periodEnd} onPeriod={setPeriodEnd}
+        onAddItem={() => setDialog({ open: true })} addLabel="Add asset"
+      />
+
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+          <AccountPicker value={filterAccount} onChange={setFilterAccount} mode="filter" label="Cost (asset) GL account" />
+          <Kpi label="Total cost (active)" value={fmt(totals.cost.toString())} />
+          <Kpi label="Active assets" value={totals.active.toString()} />
+        </div>
+
+        <RollForwardCard
+          snapshot={snapshot} isLoading={snapshotLoading} hasAccount={!!filterAccount}
+          expenseLabel="Depreciation" paymentLabel="Disposals"
+          onCommit={() => commitMut.mutate()} committing={commitMut.isPending}
+          alreadyCommitted={!!snapshot?.committed}
+        />
+
+        <div className="rounded-xl overflow-hidden"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+          <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+            <p className="text-sm font-semibold text-theme">Fixed assets</p>
+            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              Straight-line depreciation: (cost − salvage) ÷ useful life in months.
+            </p>
+          </div>
+          {itemsLoading ? (
+            <div className="py-12 flex justify-center"><Spinner className="h-5 w-5" /></div>
+          ) : items.length === 0 ? (
+            <Empty onAdd={() => setDialog({ open: true })} verb="asset" />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ background: "var(--surface-2)" }}>
+                    <Th>Asset</Th><Th>Category</Th><Th>In service</Th>
+                    <Th right>Cost</Th><Th right>Salvage</Th><Th>Life</Th><Th right>Monthly dep.</Th><Th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it) => (
+                    <tr key={it.id} style={{ borderTop: "1px solid var(--border)", opacity: it.is_active ? 1 : 0.5 }}>
+                      <Td>
+                        <div className="text-theme">{it.description}</div>
+                        {it.reference && (
+                          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Tag: {it.reference}</div>
+                        )}
+                        {it.disposed_on && (
+                          <div className="text-[10px] font-semibold" style={{ color: "#b91c1c" }}>
+                            Disposed {it.disposed_on}
+                          </div>
+                        )}
+                      </Td>
+                      <Td>{it.category || "—"}</Td>
+                      <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.in_service_date}</span></Td>
+                      <Td right tabular>{fmt(it.cost)}</Td>
+                      <Td right tabular>{fmt(it.salvage_value)}</Td>
+                      <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.useful_life_months} mo</span></Td>
+                      <Td right tabular>{monthlyDep(it.cost, it.salvage_value, it.useful_life_months)}</Td>
+                      <Td><RowActions
+                        onEdit={() => setDialog({ open: true, item: it })}
+                        onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} /></Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {dialog.open && (
+          <FADialog existing={dialog.item} initialAccount={filterAccount}
+            onClose={() => setDialog({ open: false })} />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function Kpi({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-wider"
+        style={{ color: "var(--text-muted)" }}>{label}</p>
+      <p className="text-base font-bold tabular-nums mt-0.5 text-theme">{value}</p>
+    </div>
+  )
+}
+function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
+  return <th className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`} style={{ color: "var(--text-muted)" }}>{children}</th>
+}
+function Td({ children, right, tabular }: { children?: React.ReactNode; right?: boolean; tabular?: boolean }) {
+  return <td className={`px-3 py-2 ${right ? "text-right" : ""} ${tabular ? "tabular-nums" : ""}`}>{children}</td>
+}
+function Empty({ onAdd, verb }: { onAdd: () => void; verb: string }) {
+  return (
+    <div className="py-12 px-6 text-center">
+      <p className="text-sm font-semibold text-theme mb-1">No {verb}s yet</p>
+      <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>Add your first {verb} to start the depreciation roll-forward.</p>
+      <Button size="sm" onClick={onAdd}>Add {verb}</Button>
+    </div>
+  )
+}
+function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
+  return (
+    <div className="inline-flex items-center gap-1.5 justify-end w-full">
+      <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Edit">
+        <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+      </button>
+      <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Delete">
+        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#b91c1c" }} />
+      </button>
+    </div>
+  )
+}
+
+function FADialog({ existing, onClose, initialAccount }: {
+  existing?: FixedAssetItem; onClose: () => void; initialAccount: string
+}) {
+  const qc = useQueryClient()
+  const [account, setAccount] = useState(existing?.qbo_account_id ?? initialAccount)
+  const [accumAccount, setAccumAccount] = useState(existing?.accumulated_dep_qbo_account_id ?? "")
+  const [description, setDescription] = useState(existing?.description ?? "")
+  const [category, setCategory] = useState(existing?.category ?? "")
+  const [vendor, setVendor] = useState(existing?.vendor ?? "")
+  const [reference, setReference] = useState(existing?.reference ?? "")
+  const [inService, setInService] = useState(existing?.in_service_date ?? "")
+  const [cost, setCost] = useState(existing?.cost ?? "")
+  const [salvage, setSalvage] = useState(existing?.salvage_value ?? "0")
+  const [life, setLife] = useState(existing?.useful_life_months?.toString() ?? "60")
+  const [disposedOn, setDisposedOn] = useState(existing?.disposed_on ?? "")
+  const [disposalProceeds, setDisposalProceeds] = useState(existing?.disposal_proceeds ?? "")
+  const [notes, setNotes] = useState(existing?.notes ?? "")
+  const [error, setError] = useState<string | null>(null)
+
+  const mut = useMutation({
+    mutationFn: (body: Partial<FixedAssetItem>) => existing
+      ? schedulesApi.updateItem("fixed_asset", existing.id, body)
+      : schedulesApi.createItem("fixed_asset", body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["schedules"] }); onClose() },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+      setError(msg ?? "Could not save.")
+    },
+  })
+
+  function submit() {
+    setError(null)
+    if (!account || !description.trim() || !cost || !inService || !life) {
+      setError("Account, description, cost, in-service date, useful life are required.")
+      return
+    }
+    mut.mutate({
+      qbo_account_id: account,
+      accumulated_dep_qbo_account_id: accumAccount || null,
+      description: description.trim(), category: category.trim() || null,
+      vendor: vendor.trim() || null, reference: reference.trim() || null,
+      in_service_date: inService, cost, salvage_value: salvage || "0",
+      useful_life_months: parseInt(life, 10),
+      depreciation_method: "straight_line",
+      disposed_on: disposedOn || null,
+      disposal_proceeds: disposalProceeds || null,
+      notes: notes.trim() || null, is_active: true,
+    })
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.6)" }} onClick={onClose}>
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        className="rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <div className="px-6 py-4 flex items-center justify-between"
+          style={{ borderBottom: "1px solid var(--border)" }}>
+          <h3 className="text-base font-semibold text-theme">{existing ? "Edit asset" : "New fixed asset"}</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--surface-2)]">
+            <X size={16} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+          </button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <AccountPicker mode="form" label="Cost (asset) GL account" value={account} onChange={setAccount} />
+            <AccountPicker mode="form" label="Accumulated depreciation GL account" value={accumAccount} onChange={setAccumAccount} />
+          </div>
+          <Field label="Description *">
+            <input value={description} onChange={(e) => setDescription(e.target.value)}
+              placeholder="Conference table — Office HQ" className={inputCls} style={inputStyle} />
+          </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Category">
+              <input value={category} onChange={(e) => setCategory(e.target.value)}
+                placeholder="Furniture & Fixtures" className={inputCls} style={inputStyle} />
+            </Field>
+            <Field label="Vendor">
+              <input value={vendor} onChange={(e) => setVendor(e.target.value)}
+                className={inputCls} style={inputStyle} />
+            </Field>
+            <Field label="Asset tag / reference">
+              <input value={reference} onChange={(e) => setReference(e.target.value)}
+                placeholder="FA-001" className={inputCls} style={inputStyle} />
+            </Field>
+            <Field label="In-service date *">
+              <DatePicker value={inService || ""} onChange={setInService}
+                triggerClassName="w-full rounded-lg px-3 py-2 text-sm border outline-none" />
+            </Field>
+            <Field label="Cost *">
+              <input type="number" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)}
+                placeholder="5000.00" className={`${inputCls} text-right tabular-nums`} style={inputStyle} />
+            </Field>
+            <Field label="Salvage value">
+              <input type="number" step="0.01" value={salvage} onChange={(e) => setSalvage(e.target.value)}
+                className={`${inputCls} text-right tabular-nums`} style={inputStyle} />
+            </Field>
+            <Field label="Useful life (months) *">
+              <input type="number" step="1" value={life} onChange={(e) => setLife(e.target.value)}
+                placeholder="60" className={`${inputCls} text-right tabular-nums`} style={inputStyle} />
+            </Field>
+            <Field label="Disposed on">
+              <DatePicker value={disposedOn || ""} onChange={setDisposedOn}
+                triggerClassName="w-full rounded-lg px-3 py-2 text-sm border outline-none" />
+            </Field>
+            <Field label="Disposal proceeds">
+              <input type="number" step="0.01" value={disposalProceeds}
+                onChange={(e) => setDisposalProceeds(e.target.value)}
+                className={`${inputCls} text-right tabular-nums`} style={inputStyle} />
+            </Field>
+          </div>
+          {cost && life && (
+            <div className="rounded-lg p-3 text-xs"
+              style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
+              Monthly depreciation: <span className="font-bold">{monthlyDep(cost, salvage || "0", parseInt(life, 10) || 1)}</span>{" "}
+              (straight-line).
+            </div>
+          )}
+          <Field label="Notes">
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+              className={inputCls} style={inputStyle} />
+          </Field>
+          {error && <p className="text-xs" style={{ color: "#b91c1c" }}>{error}</p>}
+        </div>
+        <div className="px-6 py-3 flex items-center justify-end gap-2"
+          style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+          <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button size="sm" loading={mut.isPending} onClick={submit}>
+            {existing ? "Save changes" : "Add asset"}
+          </Button>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}

@@ -15,6 +15,7 @@ from modules.intercompany.router import router as intercompany_router
 from modules.qbo.router import oauth_router as qbo_oauth_router
 from modules.qbo.router import qbo_router
 from modules.recons.router import router as recons_router
+from modules.schedules.router import router as schedules_router
 from modules.tasks.router import router as tasks_router
 from modules.workspace.router import router as workspace_router
 
@@ -58,6 +59,7 @@ app.include_router(tasks_router,     prefix="/api/tasks",           tags=["tasks
 app.include_router(intercompany_router, prefix="/api/intercompany", tags=["intercompany"])
 app.include_router(financials_router,   prefix="/api/financials",   tags=["financials"])
 app.include_router(insights_router,     prefix="/api/insights",     tags=["insights"])
+app.include_router(schedules_router,     prefix="/api/schedules",    tags=["schedules"])
 app.include_router(feedback_router,      prefix="/api/feedback",     tags=["feedback"])
 
 
