@@ -177,7 +177,8 @@ async def scan_for_prepaid_candidates(
         ai_results = _classify_with_claude(candidates_to_classify)
 
         # ── 5) Persist the AI's likely-prepaid picks ────────────────
-        for ctx, ai in zip(candidates_to_classify, ai_results):
+        # strict=True is safe — _classify_with_claude pads to length.
+        for ctx, ai in zip(candidates_to_classify, ai_results, strict=True):
             if not ai or not ai.get("is_prepaid"):
                 continue
             row = PrepaidCandidate(
