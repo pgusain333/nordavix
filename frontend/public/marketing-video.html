@@ -1,0 +1,940 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Nordavix — 30s demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ─────────────────────────────────────────────────────────────
+       NORDAVIX 30-SECOND MARKETING "VIDEO"
+
+       Single-file HTML animation designed to be screen-recorded.
+       Open in any browser, full-screen (press F or use the play
+       button), start a screen recorder, click the page once to
+       trigger the animation. Total runtime: 30.0 seconds exactly.
+
+       Brand tokens are the real ones from tailwind.config.ts so
+       it matches the live product visually:
+         --green       #3E8F66   (CTA, brand accent)
+         --green-soft  rgba(62,143,102,0.10)
+         --ai-purple   #7C3AED   (AI features)
+         --ai-soft     rgba(124,58,237,0.10)
+         --bg-light    #F8F9FA
+         --surface     #FFFFFF
+         --text        #1F2937
+         --text-mute   #6B7280
+         --border      #E5E7EB
+         --red         #B91C1C   (alerts/missed)
+       Fonts are loaded above (Plus Jakarta Sans + JetBrains Mono +
+       Space Grotesk for the wordmark — same stack as the live app).
+
+       Scene timeline (30.0s total):
+         0.0 – 4.0   HOOK         (dark, white text)
+         4.0 – 7.5   APP OPENS    (cursor approaches Scan button)
+         7.5 – 15.0  AI FINDS IT  (banner expands, Baker Botts row)
+         15.0 – 22.0 ONE CLICK    (dialog opens pre-filled, save)
+         22.0 – 26.5 BRAND        (wordmark + tagline)
+         26.5 – 30.0 CTA          (URL)
+    ───────────────────────────────────────────────────────────── */
+
+    :root {
+      --green:        #3E8F66;
+      --green-soft:   rgba(62, 143, 102, 0.10);
+      --ai-purple:    #7C3AED;
+      --ai-soft:      rgba(124, 58, 237, 0.10);
+      --ai-border:    rgba(124, 58, 237, 0.30);
+      --bg-light:     #F8F9FA;
+      --surface:      #FFFFFF;
+      --surface-2:    #F3F4F6;
+      --text:         #1F2937;
+      --text-mute:    #6B7280;
+      --text-2:       #4B5563;
+      --border:       #E5E7EB;
+      --red:          #B91C1C;
+      --red-bg:       #FEF2F2;
+      --red-border:   #FECACA;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+      background: #000;
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #000;
+    }
+
+    /* Scenes — each is absolutely positioned and animated
+       independently. We rely on `animation-fill-mode: both` so they
+       stay at 0 opacity before they fade in and at 0 after they
+       fade out (no flash of un-animated content). */
+    .scene {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      animation-fill-mode: both;
+      animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+
+    /* Single keyframe used by every scene — each scene tunes its
+       own duration + delay below so the percentages map to a clean
+       fade-in / hold / fade-out shape regardless of length. */
+    @keyframes scene {
+      0%      { opacity: 0; transform: scale(1.01); }
+      10%     { opacity: 1; transform: scale(1); }
+      90%     { opacity: 1; transform: scale(1); }
+      100%    { opacity: 0; transform: scale(0.995); }
+    }
+
+    .playing .scene-1 { animation: scene 4.4s    0.0s; }   /* 0.0 – 4.4 */
+    .playing .scene-2 { animation: scene 3.9s    4.0s; }   /* 4.0 – 7.9 */
+    .playing .scene-3 { animation: scene 7.9s    7.5s; }   /* 7.5 – 15.4 */
+    .playing .scene-4 { animation: scene 7.4s   15.0s; }   /* 15.0 – 22.4 */
+    .playing .scene-5 { animation: scene 4.9s   22.0s; }   /* 22.0 – 26.9 */
+    .playing .scene-6 { animation: scene 3.5s   26.5s; }   /* 26.5 – 30.0 */
+
+
+    /* ── Scene 1: Hook ─────────────────────────────────────── */
+    .scene-1 {
+      background: radial-gradient(ellipse at center, #14181c 0%, #000 70%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.6em;
+    }
+    .scene-1 .line {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-weight: 700;
+      color: white;
+      letter-spacing: -0.02em;
+      font-size: clamp(28px, 5vw, 64px);
+      opacity: 0;
+      animation-fill-mode: both;
+      animation-timing-function: ease-out;
+    }
+    .playing .scene-1 .l1 { animation: lineIn 0.6s 0.4s forwards; }
+    .playing .scene-1 .l2 { animation: lineIn 0.6s 1.4s forwards; color: #94a3b8; }
+    .playing .scene-1 .l3 { animation: lineIn 0.6s 2.4s forwards; color: var(--green); }
+    @keyframes lineIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+
+    /* ── Scenes 2–4: Mock Nordavix UI ───────────────────────── */
+    .app {
+      background: var(--bg-light);
+      width: 100%; height: 100%;
+      display: flex;
+      flex-direction: column;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+    .app-header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .app-header .logo {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .app-header .logo .dot { color: var(--green); }
+    .app-header .sep { color: var(--border); }
+    .app-header .breadcrumb {
+      font-size: 13px;
+      color: var(--text-mute);
+    }
+    .app-header .breadcrumb b { color: var(--text); font-weight: 600; }
+
+    .app-body {
+      flex: 1;
+      padding: 28px 32px;
+      max-width: 1100px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .page-title {
+      font-size: clamp(20px, 2.2vw, 28px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .page-title .period {
+      font-size: 0.55em;
+      font-weight: 500;
+      color: var(--text-mute);
+      margin-left: 0.6em;
+    }
+
+    /* AI banner — matches the live AiDetectMissedAccrualsBanner */
+    .ai-banner {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      transition: border-color 0.4s ease;
+    }
+    .ai-banner.active { border-color: var(--ai-border); }
+    .ai-banner-head {
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+      transition: background 0.4s ease;
+    }
+    .ai-banner.active .ai-banner-head { background: var(--ai-soft); }
+    .ai-icon {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      background: var(--ai-soft);
+      color: var(--ai-purple);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .ai-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .ai-sub {
+      font-size: 12px;
+      color: var(--text-mute);
+      margin-top: 2px;
+    }
+    .ai-sub .pop { color: var(--ai-purple); font-weight: 600; }
+
+    .ai-scan-btn {
+      margin-left: auto;
+      background: var(--green);
+      color: white;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+      position: relative;
+    }
+
+    /* Spinner that shows during the "scanning" beat */
+    .ai-scan-btn .spinner {
+      display: none;
+      width: 11px; height: 11px;
+      border: 1.5px solid white;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .ai-scan-btn.scanning .label-default { display: none; }
+    .ai-scan-btn.scanning .label-scanning { display: inline; }
+    .ai-scan-btn .label-scanning { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* The expanded results list — Baker Botts row */
+    .ai-results {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.5s ease;
+      padding: 0 16px;
+    }
+    .ai-banner.expanded .ai-results { max-height: 220px; padding: 4px 16px 12px 16px; }
+    .result-row {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      transition: border-color 0.3s, transform 0.4s;
+    }
+    .result-row.highlight {
+      border-color: var(--ai-border);
+      transform: scale(1.005);
+    }
+    .result-row .ai-spark {
+      width: 26px; height: 26px;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--ai-purple);
+      flex-shrink: 0;
+    }
+    .result-row .body { flex: 1; min-width: 0; }
+    .result-row .row1 {
+      display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap;
+    }
+    .result-row .vendor {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .chip {
+      font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: white;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .chip.conf-high {
+      background: var(--green-soft);
+      color: var(--green);
+      border: none;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .result-row .meta {
+      font-size: 11px;
+      color: var(--text-2);
+      margin-top: 2px;
+    }
+    .result-row .reasoning {
+      font-size: 11px;
+      font-style: italic;
+      color: var(--text-mute);
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .result-row .actions {
+      display: flex; gap: 6px; flex-shrink: 0;
+    }
+    .btn-add {
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: var(--green);
+      color: white;
+      border: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .btn-dismiss {
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: white;
+      color: var(--text-2);
+      border: 1px solid var(--border);
+    }
+
+
+    /* ── Scene 4: Dialog ──────────────────────────────────────── */
+    .dialog-backdrop {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s, background 0.4s;
+    }
+    .playing .scene-4 .dialog-backdrop {
+      animation: dlgBack 0.5s 0.4s forwards;
+    }
+    @keyframes dlgBack {
+      to { opacity: 1; background: rgba(0,0,0,0.5); }
+    }
+    .dialog {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      max-width: 580px;
+      width: 100%;
+      overflow: hidden;
+      transform: scale(0.96) translateY(8px);
+      opacity: 0;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.30);
+    }
+    .playing .scene-4 .dialog {
+      animation: dlgIn 0.5s 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+    }
+    @keyframes dlgIn {
+      to { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    .dialog-head {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .dialog-head h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .chip-ai {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 10px;
+      border-radius: 999px;
+      background: var(--ai-soft);
+      color: var(--ai-purple);
+    }
+    .dialog-body {
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .prefill-callout {
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 11px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      display: flex;
+      gap: 6px;
+      align-items: flex-start;
+      line-height: 1.5;
+    }
+    .field {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .field label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-mute);
+    }
+    .field input {
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      font-family: inherit;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .dialog-foot {
+      padding: 12px 24px;
+      background: var(--surface-2);
+      border-top: 1px solid var(--border);
+      display: flex; justify-content: flex-end; gap: 8px;
+    }
+    .btn-cancel {
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-2);
+      border: none;
+    }
+    .btn-save {
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 16px;
+      border-radius: 8px;
+      background: var(--green);
+      color: white;
+      border: none;
+    }
+
+
+    /* ── Synthetic mouse cursor ────────────────────────────── */
+    .cursor {
+      position: absolute;
+      top: 0; left: 0;
+      width: 20px; height: 20px;
+      pointer-events: none;
+      z-index: 100;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,0.30));
+      opacity: 0;
+    }
+    .playing .cursor { animation: cursorPath 30s 0s linear forwards; }
+    /* Cursor moves through these "stops" — keyframe percentages
+       map onto the 30s timeline so each scene gets its own arc. */
+    @keyframes cursorPath {
+      /* Hidden during hook */
+      0%, 13%       { opacity: 0; left: 50%; top: 50%; }
+      /* Scene 2 (4.0–7.9s): cursor enters from right, lands on Scan button */
+      13.5%         { opacity: 1; left: 88%; top: 50%; }
+      24%           { opacity: 1; left: 73%; top: 41%; }   /* ~7.2s — at Scan button */
+      26.5%         { opacity: 1; left: 73%; top: 41%; }   /* click moment ~7.95s */
+      /* Scene 3 (7.5–15.4s): cursor pulls back, points at result row */
+      30%           { opacity: 1; left: 30%; top: 56%; }
+      50%           { opacity: 1; left: 30%; top: 56%; }   /* hold */
+      /* Scene 4 (15.0–22.4s): cursor moves to dialog Save button */
+      55%           { opacity: 1; left: 70%; top: 84%; }
+      70%           { opacity: 1; left: 68%; top: 84%; }   /* click Save ~21s */
+      /* Hidden again during outro */
+      75%, 100%     { opacity: 0; left: 50%; top: 50%; }
+    }
+    /* Click ripple effect — pure CSS pulse triggered by .click-pulse */
+    .click-pulse {
+      position: absolute;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      background: rgba(124, 58, 237, 0.5);
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+    }
+    .playing .pulse-1 { animation: pulse 0.8s 7.7s forwards; left: 73%; top: 41%; }
+    .playing .pulse-2 { animation: pulse 0.8s 21.0s forwards; left: 68%; top: 84%; }
+    @keyframes pulse {
+      0%   { opacity: 0.7; transform: translate(-50%, -50%) scale(0.6); }
+      100% { opacity: 0;   transform: translate(-50%, -50%) scale(2.4); }
+    }
+
+
+    /* ── Text overlays (caption-style) ──────────────────────── */
+    .overlay {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 8%;
+      max-width: 80%;
+      text-align: center;
+      pointer-events: none;
+      opacity: 0;
+    }
+    .overlay .pill {
+      display: inline-block;
+      background: rgba(0,0,0,0.85);
+      color: white;
+      padding: 14px 24px;
+      border-radius: 999px;
+      font-size: clamp(16px, 2.1vw, 22px);
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.10);
+    }
+    .overlay .pill b { color: var(--green); font-weight: 700; }
+    .overlay .pill u { color: var(--ai-purple); text-decoration: none; }
+    .playing .overlay-3 { animation: overlay 4.5s 9.0s forwards; }
+    .playing .overlay-4 { animation: overlay 4.5s 17.0s forwards; }
+    @keyframes overlay {
+      0%    { opacity: 0; transform: translateX(-50%) translateY(8px); }
+      10%   { opacity: 1; transform: translateX(-50%) translateY(0); }
+      90%   { opacity: 1; transform: translateX(-50%) translateY(0); }
+      100%  { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+    }
+
+
+    /* ── Scene 5: Brand ────────────────────────────────────── */
+    .scene-5 {
+      background: linear-gradient(180deg, #000 0%, #14181c 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1em;
+    }
+    .scene-5 .wordmark {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: clamp(40px, 9vw, 120px);
+      letter-spacing: -0.04em;
+      color: white;
+      opacity: 0;
+    }
+    .scene-5 .wordmark .dot { color: var(--green); }
+    .scene-5 .tagline {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-weight: 500;
+      font-size: clamp(16px, 2vw, 24px);
+      color: #94a3b8;
+      letter-spacing: -0.01em;
+      opacity: 0;
+    }
+    .playing .scene-5 .wordmark { animation: lineIn 0.6s 22.5s forwards; }
+    .playing .scene-5 .tagline  { animation: lineIn 0.6s 23.3s forwards; }
+
+
+    /* ── Scene 6: CTA ──────────────────────────────────────── */
+    .scene-6 {
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .scene-6 .url {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: clamp(36px, 7vw, 96px);
+      color: white;
+      letter-spacing: -0.03em;
+      opacity: 0;
+    }
+    .scene-6 .url .ext { color: var(--green); }
+    .scene-6 .small {
+      font-size: clamp(12px, 1.4vw, 16px);
+      color: var(--text-mute);
+      margin-top: 1.2em;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      opacity: 0;
+    }
+    .playing .scene-6 .url   { animation: lineIn 0.5s 26.8s forwards; }
+    .playing .scene-6 .small { animation: lineIn 0.5s 27.4s forwards; }
+
+
+    /* ── Controls (NOT recorded — hide before capturing) ──── */
+    .controls {
+      position: fixed;
+      bottom: 20px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; gap: 8px;
+      z-index: 1000;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+      padding: 6px;
+      border-radius: 999px;
+    }
+    .playing .controls { display: none; }
+    .controls button {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      background: white;
+      color: #000;
+    }
+    .controls button:hover { background: var(--green); color: white; }
+    .controls .hint {
+      color: rgba(255,255,255,0.7);
+      font-size: 11px;
+      align-self: center;
+      padding: 0 10px;
+    }
+    .replay-fab {
+      display: none;
+      position: fixed;
+      bottom: 20px; right: 20px;
+      z-index: 1000;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+      color: white;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+    }
+    .replaying .replay-fab { display: block; }
+  </style>
+</head>
+<body>
+  <div class="stage" id="stage">
+
+    <!-- SCENE 1 — HOOK (0.0 – 4.4s) -->
+    <div class="scene scene-1">
+      <div class="line l1">Last week of every month.</div>
+      <div class="line l2">200,000 controllers do the same thing.</div>
+      <div class="line l3">Catching what they missed.</div>
+    </div>
+
+    <!-- SCENE 2 — APP OPENS (4.0 – 7.9s) -->
+    <div class="scene scene-2">
+      <div class="app">
+        <div class="app-header">
+          <div class="logo">nordavix<span class="dot">.</span></div>
+          <span class="sep">/</span>
+          <div class="breadcrumb">Schedules · <b>Accrued Expenses</b></div>
+        </div>
+        <div class="app-body">
+          <div class="page-title">
+            Accrued Expenses
+            <span class="period">Period · April 2026</span>
+          </div>
+          <div class="ai-banner active">
+            <div class="ai-banner-head">
+              <div class="ai-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 5.7 6.1.5-4.6 4 1.4 6-5.3-3.2L6.7 18l1.4-6-4.6-4 6.1-.5L12 2z"/></svg>
+              </div>
+              <div>
+                <div class="ai-title">AI missed-accrual detection</div>
+                <div class="ai-sub">Scan next month's GL for invoices dated for work done in April</div>
+              </div>
+              <button class="ai-scan-btn" id="scanBtn">
+                <svg class="label-default" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                <span class="label-default">Scan for missed accruals</span>
+                <span class="spinner"></span>
+                <span class="label-scanning">Scanning…</span>
+              </button>
+            </div>
+            <div class="ai-results" id="aiResults">
+              <div class="result-row" id="bakerRow">
+                <div class="ai-spark">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 5.7 6.1.5-4.6 4 1.4 6-5.3-3.2L6.7 18l1.4-6-4.6-4 6.1-.5L12 2z"/></svg>
+                </div>
+                <div class="body">
+                  <div class="row1">
+                    <span class="vendor">Baker Botts LLP</span>
+                    <span class="chip">$8,500.00 paid</span>
+                    <span class="chip conf-high">High confidence</span>
+                  </div>
+                  <div class="meta">Paid 04-12-2026 · posted to <b>Legal &amp; Professional Fees</b></div>
+                  <div class="reasoning">AI: Memo references "March legal services" — should have been accrued at 03-31-2026.</div>
+                </div>
+                <div class="actions">
+                  <button class="btn-add">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14"/></svg>
+                    Add accrual
+                  </button>
+                  <button class="btn-dismiss">Not missed</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCENE 3 — AI FINDS IT (7.5 – 15.4s) -->
+    <div class="scene scene-3">
+      <div class="app">
+        <div class="app-header">
+          <div class="logo">nordavix<span class="dot">.</span></div>
+          <span class="sep">/</span>
+          <div class="breadcrumb">Schedules · <b>Accrued Expenses</b></div>
+        </div>
+        <div class="app-body">
+          <div class="page-title">
+            Accrued Expenses
+            <span class="period">Period · April 2026</span>
+          </div>
+          <div class="ai-banner active expanded">
+            <div class="ai-banner-head">
+              <div class="ai-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 5.7 6.1.5-4.6 4 1.4 6-5.3-3.2L6.7 18l1.4-6-4.6-4 6.1-.5L12 2z"/></svg>
+              </div>
+              <div>
+                <div class="ai-title">AI missed-accrual detection</div>
+                <div class="ai-sub"><span class="pop">1 payment looks like a missed accrual</span> — accept to book retroactively + auto-reverse</div>
+              </div>
+              <button class="ai-scan-btn">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Re-scan
+              </button>
+            </div>
+            <div class="ai-results">
+              <div class="result-row highlight">
+                <div class="ai-spark">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 5.7 6.1.5-4.6 4 1.4 6-5.3-3.2L6.7 18l1.4-6-4.6-4 6.1-.5L12 2z"/></svg>
+                </div>
+                <div class="body">
+                  <div class="row1">
+                    <span class="vendor">Baker Botts LLP</span>
+                    <span class="chip">$8,500.00 paid</span>
+                    <span class="chip conf-high">High confidence</span>
+                  </div>
+                  <div class="meta">Paid 04-12-2026 · posted to <b>Legal &amp; Professional Fees</b></div>
+                  <div class="reasoning">AI: Memo references "March legal services" — should have been accrued at 03-31-2026.</div>
+                </div>
+                <div class="actions">
+                  <button class="btn-add">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14"/></svg>
+                    Add accrual
+                  </button>
+                  <button class="btn-dismiss">Not missed</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCENE 4 — ONE CLICK (15.0 – 22.4s) -->
+    <div class="scene scene-4">
+      <div class="app">
+        <div class="app-header">
+          <div class="logo">nordavix<span class="dot">.</span></div>
+          <span class="sep">/</span>
+          <div class="breadcrumb">Schedules · <b>Accrued Expenses</b></div>
+        </div>
+        <div class="app-body">
+          <div class="page-title">
+            Accrued Expenses
+            <span class="period">Period · April 2026</span>
+          </div>
+          <div class="ai-banner active expanded" style="opacity: 0.35;">
+            <div class="ai-banner-head">
+              <div class="ai-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 5.7 6.1.5-4.6 4 1.4 6-5.3-3.2L6.7 18l1.4-6-4.6-4 6.1-.5L12 2z"/></svg>
+              </div>
+              <div>
+                <div class="ai-title">AI missed-accrual detection</div>
+                <div class="ai-sub">Reviewing candidate…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal layered over the page -->
+        <div class="dialog-backdrop">
+          <div class="dialog">
+            <div class="dialog-head">
+              <h3>New accrual</h3>
+              <span class="chip-ai">✨ AI-detected</span>
+            </div>
+            <div class="dialog-body">
+              <div class="prefill-callout">
+                <span>✨</span>
+                <span>Pre-filled from <b>AI-detected missed accrual from Legal &amp; Professional Fees ($8,500)</b>. Pick the correct Accrued Liability GL account below.</span>
+              </div>
+              <div class="field">
+                <label>Description</label>
+                <input value="Baker Botts LLP — accrued for 03-31-2026 services" readonly />
+              </div>
+              <div class="field-grid">
+                <div class="field">
+                  <label>Vendor</label>
+                  <input value="Baker Botts LLP" readonly />
+                </div>
+                <div class="field">
+                  <label>Amount</label>
+                  <input value="$8,500.00" readonly style="text-align:right; font-family: 'JetBrains Mono', monospace;" />
+                </div>
+                <div class="field">
+                  <label>Accrual date</label>
+                  <input value="03-31-2026" readonly />
+                </div>
+                <div class="field">
+                  <label>Reverses on</label>
+                  <input value="04-01-2026" readonly />
+                </div>
+              </div>
+            </div>
+            <div class="dialog-foot">
+              <button class="btn-cancel">Cancel</button>
+              <button class="btn-save" id="saveBtn">Add accrual</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCENE 5 — BRAND (22.0 – 26.9s) -->
+    <div class="scene scene-5">
+      <div class="wordmark">nordavix<span class="dot">.</span></div>
+      <div class="tagline">The AI-native month-end close.</div>
+    </div>
+
+    <!-- SCENE 6 — CTA (26.5 – 30.0s) -->
+    <div class="scene scene-6">
+      <div class="url">nordavix<span class="ext">.com</span></div>
+      <div class="small">Open beta</div>
+    </div>
+
+    <!-- Synthetic cursor -->
+    <svg class="cursor" viewBox="0 0 24 24" fill="white" stroke="#000" stroke-width="1.5" stroke-linejoin="round">
+      <path d="M3 2 L19 12 L11 13 L9 21 Z" />
+    </svg>
+
+    <!-- Click pulses -->
+    <div class="click-pulse pulse-1"></div>
+    <div class="click-pulse pulse-2"></div>
+
+    <!-- Text overlays (captions for sound-off viewing) -->
+    <div class="overlay overlay-3">
+      <span class="pill"><b>AI</b> scans next month's GL for prior-period invoices.</span>
+    </div>
+    <div class="overlay overlay-4">
+      <span class="pill"><u>One click.</u> Booked + reversal set.</span>
+    </div>
+  </div>
+
+  <!-- Pre-play controls — hidden once the animation starts. Make
+       sure to click Play (or press space/enter) BEFORE starting
+       the screen recorder so this UI isn't captured. -->
+  <div class="controls" id="controls">
+    <button id="playBtn">▶ Play 30s demo</button>
+    <button id="fullBtn">⛶ Fullscreen</button>
+    <span class="hint">Press <b>F</b> to fullscreen, then click Play. Start screen recorder before clicking.</span>
+  </div>
+
+  <button class="replay-fab" id="replayBtn">↺ Replay</button>
+
+  <script>
+    const stage = document.getElementById('stage');
+    const playBtn = document.getElementById('playBtn');
+    const fullBtn = document.getElementById('fullBtn');
+    const replayBtn = document.getElementById('replayBtn');
+    const scanBtn = document.getElementById('scanBtn');
+
+    function play() {
+      // Strip any prior play state then add — restarts CSS animations
+      document.body.classList.remove('playing');
+      document.body.classList.remove('replaying');
+      void stage.offsetWidth;  // force reflow
+      document.body.classList.add('playing');
+      // Show the scanning spinner from t=5.0s to t=7.5s for realism
+      setTimeout(() => scanBtn?.classList.add('scanning'), 5000);
+      setTimeout(() => scanBtn?.classList.remove('scanning'), 7400);
+      // Show replay FAB after animation completes
+      setTimeout(() => document.body.classList.add('replaying'), 30200);
+    }
+
+    playBtn.addEventListener('click', play);
+    replayBtn.addEventListener('click', play);
+    fullBtn.addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'f' || e.key === 'F') fullBtn.click();
+      if (e.key === ' ' || e.key === 'Enter') play();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# Nordavix — robots.txt
+# https://nordavix.com/robots.txt
+
+# Public marketing pages — crawl freely
+User-agent: *
+Allow: /
+
+# Auth-protected application — no SEO value, would pollute the index
+# with sign-in redirects and serialized React shells.
+Disallow: /app/
+Disallow: /sign-in
+Disallow: /sign-up
+
+# Backend API — never useful in search results.
+Disallow: /api/
+
+# Internal demo asset — keep out of search results.
+Disallow: /marketing-video.html
+
+# Sitemap location — Google + Bing pick this up automatically.
+Sitemap: https://nordavix.com/sitemap.xml
