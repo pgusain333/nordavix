@@ -14,8 +14,9 @@ Disallow: /sign-up
 # Backend API — never useful in search results.
 Disallow: /api/
 
-# Internal demo asset — keep out of search results.
+# Internal assets — keep out of search results.
 Disallow: /marketing-video.html
+Disallow: /og-image.html
 
 # Sitemap location — Google + Bing pick this up automatically.
 Sitemap: https://nordavix.com/sitemap.xml
