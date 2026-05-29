@@ -8,6 +8,7 @@ import { ClipboardList, FileText, Pencil, Trash2, X, CheckCircle2 } from "lucide
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
@@ -82,9 +83,12 @@ export function AccrualsPage() {
     mutationFn: () => schedulesApi.commitSnapshot("accrual", filterAccount, periodEnd),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
   })
+  const optimistic = useScheduleOptimistic("accrual")
   const deleteMut = useMutation({
     mutationFn: (id: string) => schedulesApi.deleteItem("accrual", id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
+    onMutate:   (id)         => optimistic.beginDelete(id),
+    onError:    (_e, _v, c)  => optimistic.rollback(c),
+    onSettled:  ()           => optimistic.settle(),
   })
 
   const exportMut = useMutation({
@@ -336,10 +340,18 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
   const [notes, setNotes] = useState(existing?.notes ?? prefill?.notes ?? "")
   const [error, setError] = useState<string | null>(null)
 
+  const optimistic = useScheduleOptimistic("accrual")
   const mut = useMutation({
     mutationFn: (body: Partial<AccrualItem>) => existing
       ? schedulesApi.updateItem("accrual", existing.id, body)
       : schedulesApi.createItem("accrual", body),
+    onMutate: (body) => {
+      if (existing) {
+        return optimistic.beginUpdate(existing.id, body as Record<string, unknown>)
+      }
+      const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      return optimistic.beginCreate({ id: tempId, ...(body as Record<string, unknown>) })
+    },
     onSuccess: async (created) => {
       // If this came from an AI missed-accrual candidate, silence
       // the source GL txn so re-scans skip it. Fire-and-forget —
@@ -353,13 +365,14 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
           qc.invalidateQueries({ queryKey: ["schedules", "accrual", "ai-missed"] })
         } catch { /* harmless — accrual is saved */ }
       }
-      qc.invalidateQueries({ queryKey: ["schedules"] })
       onClose()
     },
-    onError: (e: unknown) => {
+    onError: (e: unknown, _vars, ctx) => {
+      optimistic.rollback(ctx)
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       setError(msg ?? "Could not save.")
     },
+    onSettled: () => optimistic.settle(),
   })
 
   function submit() {
