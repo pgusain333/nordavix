@@ -239,7 +239,6 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
 function LoanDialog({ existing, onClose, initialAccount }: {
   existing?: LoanItem; onClose: () => void; initialAccount: string
 }) {
-  const qc = useQueryClient()
   const [account, setAccount] = useState(existing?.qbo_account_id ?? initialAccount)
   const [description, setDescription] = useState(existing?.description ?? "")
   const [lender, setLender] = useState(existing?.lender ?? "")

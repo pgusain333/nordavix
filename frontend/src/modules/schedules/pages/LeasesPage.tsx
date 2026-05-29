@@ -232,7 +232,6 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
 function LeaseDialog({ existing, onClose, initialAccount }: {
   existing?: LeaseItem; onClose: () => void; initialAccount: string
 }) {
-  const qc = useQueryClient()
   const [account, setAccount] = useState(existing?.qbo_account_id ?? initialAccount)
   const [rouAccount, setRouAccount] = useState(existing?.rou_qbo_account_id ?? "")
   const [description, setDescription] = useState(existing?.description ?? "")

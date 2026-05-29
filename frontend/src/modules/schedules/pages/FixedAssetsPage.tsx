@@ -230,7 +230,6 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
 function FADialog({ existing, onClose, initialAccount }: {
   existing?: FixedAssetItem; onClose: () => void; initialAccount: string
 }) {
-  const qc = useQueryClient()
   const [account, setAccount] = useState(existing?.qbo_account_id ?? initialAccount)
   const [accumAccount, setAccumAccount] = useState(existing?.accumulated_dep_qbo_account_id ?? "")
   const [description, setDescription] = useState(existing?.description ?? "")
