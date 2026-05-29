@@ -1885,6 +1885,69 @@ async def get_seed_preview(
         })
     rows.sort(key=lambda r: (r["group_label"], r["account_number"]))
 
+    # ── Retained Earnings: combine GL balance + YTD net income ────
+    #
+    # QBO's TrialBalance shows RE at its prior-year-end carrying
+    # value — it does NOT include the current YTD profit (which sits
+    # on the P&L until closing entries roll it in at fiscal year-end).
+    #
+    # For an opening-balance seed dated mid-year, the "true" RE that
+    # the user thinks of is RE-per-TB + YTD-NI-from-PL. Seeding just
+    # the TB value would understate equity and create a phantom
+    # variance on the very first reconciliation against post-seed
+    # GL (which DOES start absorbing NI as the year progresses).
+    #
+    # So: detect RE rows, pull YTD NI for [Jan 1 of seed year, seed_date],
+    # and adjust the proposed opening accordingly. We also surface the
+    # breakdown (original GL + YTD NI = combined) so the wizard can
+    # render the explanation, not just the number.
+    #
+    # Sign convention: RE is credit-natural so its GL shows negative.
+    # YTD NI from P&L is positive when profit. Profit increases the
+    # credit balance, i.e. makes RE more negative → combined = gl − ytd_ni.
+    from modules.recons.overview import _extract_net_income, _is_retained_earnings
+
+    ytd_ni: Decimal | None = None
+    ytd_ni_error: str | None = None
+    re_accounts_adjusted: list[str] = []
+
+    re_indexes = [
+        i for i, r in enumerate(rows)
+        if _is_retained_earnings(r["account_name"], r["account_type"])
+    ]
+
+    if re_indexes:
+        try:
+            ytd_start = seed_date.replace(month=1, day=1)
+            pl_report = await _qbo_get(
+                conn, db,
+                "/reports/ProfitAndLoss",
+                params={
+                    "start_date":        ytd_start.isoformat(),
+                    "end_date":          seed_date.isoformat(),
+                    "accounting_method": "Accrual",
+                    "minorversion":      "65",
+                },
+            )
+            ytd_ni = _extract_net_income(pl_report)
+            if ytd_ni is None:
+                ytd_ni_error = "Could not find Net Income row in the YTD P&L."
+        except Exception:
+            logger.exception("Seed-preview YTD NI pull failed")
+            ytd_ni_error = "Could not pull YTD P&L from QuickBooks."
+
+        if ytd_ni is not None:
+            ytd_ni_q = ytd_ni.quantize(Decimal("0.01"))
+            for i in re_indexes:
+                row = rows[i]
+                original = Decimal(row["proposed_opening"])
+                combined = (original - ytd_ni_q).quantize(Decimal("0.01"))
+                row["proposed_opening"]    = str(combined)
+                row["original_gl_balance"] = str(original)
+                row["ytd_ni_added"]        = str(ytd_ni_q)
+                row["combined_with_ytd_ni"] = True
+                re_accounts_adjusted.append(row["account_name"])
+
     warning_msg = None
     if misses:
         logger.warning("Seed-preview matched 0 for %d accounts: %s", len(misses), misses[:10])
@@ -1900,6 +1963,12 @@ async def get_seed_preview(
         "seed_date":       seed_date.isoformat(),
         "accounts":        rows,
         "warning":         warning_msg,
+        # Per-account RE adjustment context — frontend uses these to
+        # render the "RE balance + YTD NI = combined" breakdown.
+        "ytd_ni":               str(ytd_ni.quantize(Decimal("0.01"))) if ytd_ni is not None else None,
+        "ytd_ni_period":        [seed_date.replace(month=1, day=1).isoformat(), seed_date.isoformat()] if re_indexes else None,
+        "ytd_ni_error":         ytd_ni_error,
+        "re_accounts_adjusted": re_accounts_adjusted,
         # P&L accounts in QBO (Income / Expense / COGS) always open at $0
         # at the start of a fiscal year, so we don't seed them. Surface
         # the count so the wizard can explain "you saw N more accounts
