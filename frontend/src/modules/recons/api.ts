@@ -729,6 +729,12 @@ export interface SeedPreviewAccount {
   account_type:     string
   group_label:      string
   proposed_opening: string
+  // Set on Retained Earnings accounts when the backend added YTD net
+  // income to the proposed opening. UI uses these to render the
+  // "RE balance + YTD NI = combined" breakdown.
+  combined_with_ytd_ni?: boolean
+  original_gl_balance?:  string
+  ytd_ni_added?:         string
 }
 
 export interface SeedPreview {
@@ -736,6 +742,13 @@ export interface SeedPreview {
   seed_date:         string
   accounts:          SeedPreviewAccount[]
   warning?:          string | null
+  // RE-specific context — populated when at least one Retained Earnings
+  // account was detected. The wizard uses these to explain why the RE
+  // proposed opening differs from the raw GL value.
+  ytd_ni?:               string | null
+  ytd_ni_period?:        [string, string] | null
+  ytd_ni_error?:         string | null
+  re_accounts_adjusted?: string[]
   skipped_pl_count?: number   // Income/Expense/COGS accounts that always open at $0
   // Which QBO realm + company this preview was pulled from. Surfaced
   // in the wizard so the user can verify they're connected to the

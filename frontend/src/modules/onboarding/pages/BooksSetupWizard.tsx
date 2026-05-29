@@ -417,6 +417,38 @@ export function BooksSetupWizard() {
                   </span>
                 </div>
 
+                {/* RE + YTD NI callout — explains why the proposed
+                    opening for Retained Earnings differs from the raw
+                    QBO TB balance. Only renders when at least one RE
+                    account was detected and YTD NI was successfully
+                    pulled from the P&L. */}
+                {preview?.ytd_ni && (preview?.re_accounts_adjusted?.length ?? 0) > 0 && (
+                  <div className="mx-5 mt-3 rounded-lg px-3 py-2.5 text-[11px] flex items-start gap-2"
+                    style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
+                    <span className="shrink-0 mt-px">✨</span>
+                    <span>
+                      <span className="font-semibold">
+                        Retained Earnings combined with YTD net income from the P&L
+                      </span>{" "}
+                      ({fmtMoney(preview.ytd_ni)} for{" "}
+                      {preview.ytd_ni_period
+                        ? `${preview.ytd_ni_period[0]} → ${preview.ytd_ni_period[1]}`
+                        : "the YTD period"}). Mid-year QBO TBs show RE at its
+                      prior-year-end value only; the current YTD profit sits on
+                      the P&L until fiscal-year close. We add it here so the
+                      opening equity reflects the true balance as of{" "}
+                      {preview.seed_date}. Adjusted: {preview.re_accounts_adjusted?.join(", ")}.
+                    </span>
+                  </div>
+                )}
+                {preview?.ytd_ni_error && (preview?.re_accounts_adjusted?.length ?? 0) > 0 && (
+                  <div className="mx-5 mt-3 rounded-lg px-3 py-2 text-[11px]"
+                    style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>
+                    Note: Retained Earnings shown at raw GL balance — {preview.ytd_ni_error}{" "}
+                    Edit the RE row manually if you need to combine YTD income.
+                  </div>
+                )}
+
                 <div className="overflow-x-auto" style={{ maxHeight: "55vh" }}>
                   <table className="w-full text-sm">
                     <thead>
@@ -443,10 +475,28 @@ export function BooksSetupWizard() {
                             <td className="px-3 py-2 font-mono text-xs" style={{ color: "var(--text-2)" }}>
                               {a.account_number || "—"}
                             </td>
-                            <td className="px-3 py-2 text-theme">{a.account_name}</td>
+                            <td className="px-3 py-2 text-theme">
+                              {a.account_name}
+                              {a.combined_with_ytd_ni && (
+                                <span className="ml-2 inline-flex items-center gap-1 text-[9px] uppercase font-bold px-1.5 py-0.5 rounded align-middle"
+                                  style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+                                  title={`GL ${fmtMoney(a.original_gl_balance ?? "0")} + YTD NI ${fmtMoney(a.ytd_ni_added ?? "0")} = ${fmtMoney(a.proposed_opening)}`}>
+                                  + YTD NI
+                                </span>
+                              )}
+                            </td>
                             <td className="px-3 py-2 text-xs" style={{ color: "var(--text-2)" }}>{a.group_label}</td>
                             <td className="px-3 py-2 text-right tabular-nums text-xs" style={{ color: "var(--text-muted)" }}>
-                              {fmtMoney(a.proposed_opening)}
+                              {a.combined_with_ytd_ni ? (
+                                <div className="leading-tight">
+                                  <div>{fmtMoney(a.proposed_opening)}</div>
+                                  <div className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                                    {fmtMoney(a.original_gl_balance ?? "0")} <span style={{ color: "var(--green)" }}>+ NI {fmtMoney(a.ytd_ni_added ?? "0")}</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                fmtMoney(a.proposed_opening)
+                              )}
                             </td>
                             <td className="px-3 py-2 text-right">
                               <div className="inline-flex items-center gap-1">
