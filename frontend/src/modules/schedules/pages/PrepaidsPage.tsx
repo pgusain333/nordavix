@@ -17,6 +17,7 @@ import { Calendar, FileText, Pencil, Trash2, X } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
@@ -123,9 +124,12 @@ export function PrepaidsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
   })
 
+  const optimistic = useScheduleOptimistic("prepaid")
   const deleteMut = useMutation({
     mutationFn: (id: string) => schedulesApi.deleteItem("prepaid", id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
+    onMutate:   (id)         => optimistic.beginDelete(id),
+    onError:    (_e, _v, c)  => optimistic.rollback(c),
+    onSettled:  ()           => optimistic.settle(),
   })
 
   const exportMut = useMutation({
@@ -457,10 +461,19 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
   )
   const [error,       setError]       = useState<string | null>(null)
 
+  const optimistic = useScheduleOptimistic("prepaid")
   const mut = useMutation({
     mutationFn: (body: Partial<PrepaidItem>) => existing
       ? schedulesApi.updateItem("prepaid", existing.id, body)
       : schedulesApi.createItem("prepaid", body),
+    onMutate: (body) => {
+      if (existing) {
+        return optimistic.beginUpdate(existing.id, body as Partial<PrepaidItem> as Record<string, unknown>)
+      }
+      // Create — stamp a temp id so the row keys; server response replaces it.
+      const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      return optimistic.beginCreate({ id: tempId, ...(body as Record<string, unknown>) })
+    },
     onSuccess: async (created) => {
       // If this create came from an AI-detected candidate, link the
       // new schedule item back to the candidate so re-scans skip the
@@ -478,13 +491,14 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
           // banner re-suggests on next scan; the user can dismiss.
         }
       }
-      qc.invalidateQueries({ queryKey: ["schedules"] })
       onClose()
     },
-    onError: (e: unknown) => {
+    onError: (e: unknown, _vars, ctx) => {
+      optimistic.rollback(ctx)
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       setError(msg ?? "Could not save the prepaid item.")
     },
+    onSettled: () => optimistic.settle(),
   })
 
   function submit() {

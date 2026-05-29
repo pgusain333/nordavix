@@ -13,6 +13,7 @@ import { Building2, FileText, Pencil, Trash2, X } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
@@ -61,9 +62,12 @@ export function FixedAssetsPage() {
     mutationFn: () => schedulesApi.commitSnapshot("fixed_asset", filterAccount, periodEnd),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
   })
+  const optimistic = useScheduleOptimistic("fixed_asset")
   const deleteMut = useMutation({
     mutationFn: (id: string) => schedulesApi.deleteItem("fixed_asset", id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
+    onMutate:   (id)         => optimistic.beginDelete(id),
+    onError:    (_e, _v, c)  => optimistic.rollback(c),
+    onSettled:  ()           => optimistic.settle(),
   })
 
   const exportMut = useMutation({
@@ -242,15 +246,25 @@ function FADialog({ existing, onClose, initialAccount }: {
   const [notes, setNotes] = useState(existing?.notes ?? "")
   const [error, setError] = useState<string | null>(null)
 
+  const optimistic = useScheduleOptimistic("fixed_asset")
   const mut = useMutation({
     mutationFn: (body: Partial<FixedAssetItem>) => existing
       ? schedulesApi.updateItem("fixed_asset", existing.id, body)
       : schedulesApi.createItem("fixed_asset", body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["schedules"] }); onClose() },
-    onError: (e: unknown) => {
+    onMutate: (body) => {
+      if (existing) {
+        return optimistic.beginUpdate(existing.id, body as Record<string, unknown>)
+      }
+      const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      return optimistic.beginCreate({ id: tempId, ...(body as Record<string, unknown>) })
+    },
+    onSuccess: () => { onClose() },
+    onError: (e: unknown, _vars, ctx) => {
+      optimistic.rollback(ctx)
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       setError(msg ?? "Could not save.")
     },
+    onSettled: () => optimistic.settle(),
   })
 
   function submit() {

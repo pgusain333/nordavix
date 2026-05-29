@@ -18,6 +18,7 @@ import { Home, FileText, Pencil, Trash2, X } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
@@ -60,9 +61,12 @@ export function LeasesPage() {
     mutationFn: () => schedulesApi.commitSnapshot("lease", filterAccount, periodEnd),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
   })
+  const optimistic = useScheduleOptimistic("lease")
   const deleteMut = useMutation({
     mutationFn: (id: string) => schedulesApi.deleteItem("lease", id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
+    onMutate:   (id)         => optimistic.beginDelete(id),
+    onError:    (_e, _v, c)  => optimistic.rollback(c),
+    onSettled:  ()           => optimistic.settle(),
   })
 
   const exportMut = useMutation({
@@ -296,15 +300,25 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
     )
   }
 
+  const optimistic = useScheduleOptimistic("lease")
   const mut = useMutation({
     mutationFn: (body: Partial<LeaseItem>) => existing
       ? schedulesApi.updateItem("lease", existing.id, body)
       : schedulesApi.createItem("lease", body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["schedules"] }); onClose() },
-    onError: (e: unknown) => {
+    onMutate: (body) => {
+      if (existing) {
+        return optimistic.beginUpdate(existing.id, body as Record<string, unknown>)
+      }
+      const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      return optimistic.beginCreate({ id: tempId, ...(body as Record<string, unknown>) })
+    },
+    onSuccess: () => { onClose() },
+    onError: (e: unknown, _vars, ctx) => {
+      optimistic.rollback(ctx)
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       setError(msg ?? "Could not save.")
     },
+    onSettled: () => optimistic.settle(),
   })
 
   function submit() {

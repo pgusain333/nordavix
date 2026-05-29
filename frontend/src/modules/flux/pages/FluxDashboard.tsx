@@ -149,15 +149,10 @@ export function FluxDashboard() {
     }
   }, [tbs, tbId, navigate, searchParams])
 
-  // Poll selected TB if it's processing/generating
-  useEffect(() => {
-    if (!selectedTb) return
-    if (!["processing", "generating"].includes(selectedTb.status)) return
-    const interval = setInterval(() => {
-      qc.invalidateQueries({ queryKey: ["trial-balances"] })
-    }, 5_000)
-    return () => clearInterval(interval)
-  }, [selectedTb?.id, selectedTb?.status, qc])
+  // The ["trial-balances"] query above already polls on a 5s
+  // refetchInterval whenever any TB is processing/generating, so no
+  // separate setInterval effect is needed here. (Previously we ran a
+  // duplicate timer that invalidated the same query — pure noise.)
 
 
   // Deep-link: ?connect=qbo auto-redirects to Intuit's OAuth page once.

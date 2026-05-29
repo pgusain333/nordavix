@@ -12,7 +12,7 @@
 import { useEffect, useRef } from "react"
 import { useOrganization, useSession } from "@clerk/clerk-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { setApiAuthProvider } from "@/core/api/client"
+import { clearApiTokenCache, setApiAuthProvider } from "@/core/api/client"
 
 export function ClerkApiWirer(): null {
   const { session } = useSession()
@@ -59,6 +59,10 @@ export function ClerkApiWirer(): null {
       try {
         localStorage.removeItem("nordavix:qbo-connection-cache")
       } catch { /* private mode — ignore */ }
+      // Drop the apiClient's in-memory token cache too — otherwise a
+      // sub-4s burst of mutations right after the switch would still
+      // sign requests with the previous org's JWT.
+      clearApiTokenCache()
       // Force a fresh token so the new org_id reaches the backend on
       // the very next request. Fire-and-forget; failures are harmless
       // (the next request will fall through to a fresh getToken anyway).

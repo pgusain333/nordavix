@@ -26,11 +26,65 @@ export function setApiAuthProvider(
   getToken: (opts?: GetTokenOpts) => Promise<string | null>,
 ): void {
   _getToken = getToken
+  // Wipe any cached token; the new provider owns auth from here on.
+  _tokenCache = null
+}
+
+/**
+ * Tiny in-flight token cache: Clerk's getToken is internally cached, but
+ * still triggers a microtask + promise round-trip per call. When the UI
+ * fires a burst of mutations (e.g. bulk-approve 12 recon rows at once),
+ * that's 12 sequential awaits. Coalescing them in-memory for a few
+ * seconds drops each subsequent request's auth overhead to ~0ms.
+ *
+ * Skipped entirely when `skipCache` is requested (401 retry path).
+ */
+type CachedToken = { token: string; expiresAt: number }
+let _tokenCache: CachedToken | null    = null
+let _tokenInflight: Promise<string | null> | null = null
+const TOKEN_TTL_MS = 4_000   // shorter than Clerk's own 60s — just to coalesce bursts.
+
+async function obtainToken(opts?: GetTokenOpts): Promise<string | null> {
+  if (!_getToken) return null
+
+  // Bypass the in-flight cache on explicit skipCache (401 retry).
+  if (opts?.skipCache) {
+    _tokenCache    = null
+    _tokenInflight = null
+    return _getToken({ skipCache: true })
+  }
+
+  const now = Date.now()
+  if (_tokenCache && _tokenCache.expiresAt > now) {
+    return _tokenCache.token
+  }
+  if (_tokenInflight) return _tokenInflight
+
+  _tokenInflight = (async () => {
+    try {
+      const t = await _getToken!()
+      if (t) {
+        _tokenCache = { token: t, expiresAt: Date.now() + TOKEN_TTL_MS }
+      }
+      return t
+    } finally {
+      _tokenInflight = null
+    }
+  })()
+  return _tokenInflight
+}
+
+/** External entrypoint for ClerkProvider's org-switch effect to drop
+ *  the cached token instantly (so the next request mints a fresh one
+ *  scoped to the new org). */
+export function clearApiTokenCache(): void {
+  _tokenCache    = null
+  _tokenInflight = null
 }
 
 apiClient.interceptors.request.use(async (config) => {
   if (_getToken) {
-    const token = await _getToken()
+    const token = await obtainToken()
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -59,7 +113,8 @@ apiClient.interceptors.response.use(
     if (status === 401 && original && !original._nordavixAuthRetry && _getToken) {
       original._nordavixAuthRetry = true
       try {
-        const fresh = await _getToken({ skipCache: true })
+        // skipCache:true bypasses our in-memory cache AND Clerk's cache.
+        const fresh = await obtainToken({ skipCache: true })
         if (fresh) {
           original.headers = { ...(original.headers ?? {}), Authorization: `Bearer ${fresh}` }
           return apiClient.request(original)
