@@ -426,16 +426,13 @@ async def _build_overview_from_qbo_data(
             else Decimal("0")
         )
 
-        # Retained Earnings is a special case: QBO's GL balance on RE
-        # auto-includes YTD net income (closing entries roll the P&L
-        # into RE — some QBO setups do this monthly, others only at
-        # fiscal year-end). The standard subledger approach (carry the
-        # prior closing balance forward with no activity) creates a
-        # phantom variance equal to the YTD profit. To reconcile, we
-        # set SL=GL for the RE account and explain in the source label
-        # that YTD net income flows through the P&L into this row. The
-        # user can still override manually if they want a different
-        # treatment for an AJE — has_saved_subledger takes precedence.
+        # Retained Earnings is detected here so the frontend knows to
+        # request the YTD-net-income synthetic reconciling line from
+        # the /period-entries endpoint when the row is expanded. We
+        # used to auto-match SL=GL for RE accounts (transparent but
+        # opaque to the user — they couldn't see WHY they tied out).
+        # Now we let SL roll forward like any other equity account
+        # and surface the YTD NI as a checkable line item instead.
         is_re = _is_retained_earnings(a.get("Name", "") or "", acct_type)
 
         if has_saved_subledger:
@@ -450,23 +447,6 @@ async def _build_overview_from_qbo_data(
                 )
             else:
                 source = review.subledger_source or "Manually entered (seed)"
-            has_detail = True
-        elif is_re:
-            # Default the RE subledger to GL so the recon ties out, and
-            # surface the YTD NI breakdown in the source label so the
-            # user understands the auto-treatment. Roll-forward flags
-            # turn off — this isn't a carried-forward subledger, it's a
-            # GL-anchored auto-match.
-            subledger_balance = gl_balance
-            is_rollforward_from_subledger = False
-            is_manual_seed = False
-            ni_str = (
-                f"${actual_ni:,.2f}" if actual_ni is not None else "(not yet pulled)"
-            )
-            source = (
-                f"Auto-matched to GL — Retained Earnings absorbs YTD net income "
-                f"{ni_str} from the P&L. Override manually if posting an AJE."
-            )
             has_detail = True
         elif has_prior_rolled:
             # Nothing saved yet for this period — show the rolled-
@@ -498,6 +478,10 @@ async def _build_overview_from_qbo_data(
             "gl_balance":          str(gl_balance.quantize(Decimal("0.01"))),
             "subledger_balance":   str(subledger_balance.quantize(Decimal("0.01"))),
             "subledger_source":    source,
+            # Lets the frontend know to request the YTD-net-income
+            # synthetic reconciling line from /period-entries when
+            # this row's accordion is expanded.
+            "is_retained_earnings": is_re,
             # Green "Manual" dot — TRUE only when this is a seed entry
             # (subledger set with no prior period to roll from). Used
             # to be true for ANY saved subledger, which lit the dot up

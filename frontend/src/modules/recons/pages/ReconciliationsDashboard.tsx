@@ -1966,9 +1966,14 @@ function InlineSubledgerForm({
 
   // Transactions posted to this account in the closing period — these are
   // the candidates the user picks from to explain GL-vs-subledger variance.
+  // For Retained Earnings accounts, we pass include_ytd_ni=true so the
+  // backend prepends a synthetic row representing current-period net
+  // income from the P&L. Ticking that row closes the variance caused by
+  // QBO auto-rolling profit into RE.
+  const isRetainedEarnings = (account as { is_retained_earnings?: boolean }).is_retained_earnings === true
   const { data: periodEntries, isLoading: entriesLoading } = useQuery({
-    queryKey: ["recon-period-entries", account.qbo_id, periodEnd],
-    queryFn:  () => reconsApi.getPeriodEntries(account.qbo_id, periodEnd),
+    queryKey: ["recon-period-entries", account.qbo_id, periodEnd, isRetainedEarnings],
+    queryFn:  () => reconsApi.getPeriodEntries(account.qbo_id, periodEnd, { includeYtdNi: isRetainedEarnings }),
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   })

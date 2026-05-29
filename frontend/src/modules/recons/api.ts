@@ -632,10 +632,22 @@ async function setSubledgerOverride(
   return data
 }
 
-async function getPeriodEntries(qboAccountId: string, periodEnd: string): Promise<PeriodEntries> {
+async function getPeriodEntries(
+  qboAccountId: string,
+  periodEnd: string,
+  opts: { includeYtdNi?: boolean } = {},
+): Promise<PeriodEntries> {
   const { data } = await apiClient.get<PeriodEntries>(
     `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/period-entries`,
-    { params: { period_end: periodEnd } },
+    {
+      params: {
+        period_end: periodEnd,
+        // Only sent when the account is Retained Earnings — backend
+        // prepends a synthetic YTD-net-income row that the user can
+        // check to close the SL-vs-GL gap caused by P&L absorption.
+        ...(opts.includeYtdNi ? { include_ytd_ni: true } : {}),
+      },
+    },
   )
   return data
 }
