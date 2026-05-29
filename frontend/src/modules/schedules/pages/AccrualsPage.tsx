@@ -87,6 +87,10 @@ export function AccrualsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
   })
 
+  const exportMut = useMutation({
+    mutationFn: () => schedulesApi.downloadScheduleExcel("accrual", periodEnd),
+  })
+
   const totals = useMemo(() => {
     const total = items.filter((i) => i.is_active && !i.is_reversed)
       .reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
@@ -154,6 +158,8 @@ export function AccrualsPage() {
         onPeriod={setPeriodEnd}
         onAddItem={() => setDialog({ open: true })}
         addLabel="Add accrual"
+        onExport={() => exportMut.mutate()}
+        exporting={exportMut.isPending}
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">

@@ -365,6 +365,54 @@ async function listUnreversedAccruals(periodEnd: string): Promise<UnreversedAccr
   return data
 }
 
+/**
+ * Backend slugs for /api/exports/schedules/{slug}. The frontend uses the
+ * ScheduleType enum (`prepaid`, `accrual`, ...) — this map converts to
+ * the matching URL slug.
+ */
+const EXPORT_SLUG: Record<ScheduleType, "prepaids" | "accruals" | "fixed-assets" | "leases" | "loans"> = {
+  prepaid:     "prepaids",
+  accrual:     "accruals",
+  fixed_asset: "fixed-assets",
+  lease:       "leases",
+  loan:        "loans",
+}
+
+/**
+ * Download the per-schedule-type Excel workbook for a period.
+ *
+ * Server returns a Content-Disposition with the canonical filename;
+ * we honour that when present and fall back to a sensible default.
+ */
+async function downloadScheduleExcel(
+  type: ScheduleType,
+  periodEnd: string,
+): Promise<void> {
+  const slug = EXPORT_SLUG[type]
+  const res = await apiClient.get<Blob>(
+    `/api/exports/schedules/${slug}`,
+    {
+      params:       { period_end: periodEnd },
+      responseType: "blob",
+    },
+  )
+
+  // Try to honour the server's Content-Disposition filename.
+  let filename = `${slug}_${periodEnd}.xlsx`
+  const cd = res.headers?.["content-disposition"] as string | undefined
+  if (cd) {
+    const m = cd.match(/filename="?([^"]+)"?/i)
+    if (m && m[1]) filename = m[1]
+  }
+
+  const url = URL.createObjectURL(new Blob([res.data]))
+  const a   = document.createElement("a")
+  a.href     = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export const schedulesApi = {
   listAccounts,
   getOverview,
@@ -390,4 +438,6 @@ export const schedulesApi = {
   dismissMissedAccrualCandidate,
   acceptMissedAccrualCandidate,
   listUnreversedAccruals,
+  // Excel export
+  downloadScheduleExcel,
 }

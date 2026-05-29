@@ -14,13 +14,11 @@ Endpoints:
   PUT  /trial-balances/{id}/variances/{v}   /narrative — manual edit
   GET  /trial-balances/{id}/export          Excel download
 """
-import io
 import logging
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
@@ -1031,79 +1029,63 @@ async def update_narrative(
 async def export_excel(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """
     Export the variance analysis as an Excel file.
-    Includes: TB metadata, account variances, AI narratives.
+    Delegates to modules.exports.flux_workbook for a consistent
+    monochrome look that matches the Period Export and per-account
+    reconciliation downloads.
     """
-    tb_result = await db.execute(select(TrialBalance).where(TrialBalance.id == tb_id))
-    tb = tb_result.scalar_one_or_none()
-    if tb is None:
+    from io import BytesIO
+
+    from modules.exports.flux_workbook import build_flux_workbook
+
+    # Resolve workspace name for the cover sheet
+    company_name = "Workspace"
+    try:
+        from models.tenant import Tenant
+        t = (await db.execute(
+            select(Tenant).where(Tenant.id == tenant_id),
+            execution_options={"skip_tenant_filter": True},
+        )).scalar_one_or_none()
+        if t and getattr(t, "name", None):
+            company_name = t.name
+    except Exception:
+        pass
+
+    generated_by = "Unknown user"
+    try:
+        if user:
+            display = getattr(user, "display_name", None) or getattr(user, "email", None)
+            if display:
+                generated_by = str(display)
+    except Exception:
+        pass
+
+    try:
+        data, fname = await build_flux_workbook(
+            db=db,
+            tb_id=tb_id,
+            company_name=company_name,
+            generated_by_name=generated_by,
+        )
+    except ValueError:
         raise HTTPException(status_code=404, detail="Trial balance not found")
-
-    # Load all variance + account + narrative rows
-    stmt = (
-        select(Variance, Account, Narrative)
-        .join(Account, Variance.account_id == Account.id)
-        .outerjoin(Narrative, Narrative.variance_id == Variance.id)
-        .where(Account.trial_balance_id == tb_id)
-        .order_by(Variance.is_material.desc(), Variance.dollar_variance.desc())
-    )
-    rows = (await db.execute(stmt)).all()
-
-    # Build DataFrame
-    data = []
-    for var, acct, narr in rows:
-        data.append({
-            "Account Number":   acct.account_number,
-            "Account Name":     acct.account_name,
-            "FS Category":      acct.fs_category or "",
-            "FS Line":          acct.fs_line or "",
-            "Current Balance":  float(acct.current_balance),
-            "Prior Balance":    float(acct.prior_balance),
-            "Dollar Variance":  float(var.dollar_variance),
-            "% Variance":       float(var.pct_variance) if var.pct_variance else None,
-            "Material":         "Yes" if var.is_material else "No",
-            "Status":           var.status,
-            "Anomaly Flags":    ", ".join(var.anomaly_flags or []),
-            "AI Commentary":    narr.content if narr else "",
-            "Confidence Score": float(narr.confidence_score) if narr and narr.confidence_score else None,
-        })
-
-    df = pd.DataFrame(data)
-
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        # Summary sheet
-        summary = pd.DataFrame({
-            "Field": ["Analysis Name", "Current Period", "Prior Period", "Materiality Threshold", "Status"],
-            "Value": [
-                tb.name,
-                str(tb.period_current),
-                str(tb.period_prior),
-                f"${float(tb.materiality_threshold):,.0f}",
-                tb.status,
-            ],
-        })
-        summary.to_excel(writer, sheet_name="Summary", index=False)
-        df.to_excel(writer, sheet_name="Variance Analysis", index=False)
-
-        # Basic formatting
-        for sheet_name in writer.sheets:
-            ws = writer.sheets[sheet_name]
-            for col in ws.columns:
-                max_len = max((len(str(cell.value or "")) for cell in col), default=10)
-                ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 60)
-
-    buf.seek(0)
-    safe_name = tb.name.replace(" ", "_").replace("/", "-")
+    except Exception:
+        logger.exception("Flux workbook build failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not build the flux export. Check server logs.",
+        )
 
     return StreamingResponse(
-        buf,
+        BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f'attachment; filename="{safe_name}_flux.xlsx"'
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "Cache-Control": "no-store",
         },
     )
 

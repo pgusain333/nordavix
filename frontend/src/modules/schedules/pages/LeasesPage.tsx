@@ -65,6 +65,10 @@ export function LeasesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
   })
 
+  const exportMut = useMutation({
+    mutationFn: () => schedulesApi.downloadScheduleExcel("lease", periodEnd),
+  })
+
   const totals = useMemo(() => {
     const monthly = items.filter((i) => i.is_active)
       .reduce((s, i) => s + (parseFloat(i.monthly_payment) || 0), 0)
@@ -81,6 +85,8 @@ export function LeasesPage() {
         accent={{ fg: "#7c3aed", bg: "rgba(124, 58, 237, 0.10)" }}
         periodEnd={periodEnd} onPeriod={setPeriodEnd}
         onAddItem={() => setDialog({ open: true })} addLabel="Add lease"
+        onExport={() => exportMut.mutate()}
+        exporting={exportMut.isPending}
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">

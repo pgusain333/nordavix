@@ -22,7 +22,6 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-import pandas as pd
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -3045,87 +3044,62 @@ async def delete_reconciliation(
 async def export_reconciliation(
     recon_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    recon = (await db.execute(
-        select(Reconciliation).where(Reconciliation.id == recon_id)
-    )).scalar_one_or_none()
-    if recon is None:
+    """
+    Build a per-reconciliation support package (.xlsx). Delegates to
+    modules.exports.recon_workbook for a consistent monochrome look
+    that matches Period Export, flux variance, and per-schedule
+    downloads.
+    """
+    from io import BytesIO
+
+    from modules.exports.recon_workbook import build_recon_workbook
+
+    # Resolve workspace name for the cover sheet
+    company_name = "Workspace"
+    try:
+        from models.tenant import Tenant
+        t = (await db.execute(
+            select(Tenant).where(Tenant.id == tenant_id),
+            execution_options={"skip_tenant_filter": True},
+        )).scalar_one_or_none()
+        if t and getattr(t, "name", None):
+            company_name = t.name
+    except Exception:
+        pass
+
+    generated_by = "Unknown user"
+    try:
+        if user:
+            display = getattr(user, "display_name", None) or getattr(user, "email", None)
+            if display:
+                generated_by = str(display)
+    except Exception:
+        pass
+
+    try:
+        data, fname = await build_recon_workbook(
+            db=db,
+            recon_id=recon_id,
+            company_name=company_name,
+            generated_by_name=generated_by,
+        )
+    except ValueError:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    except Exception:
+        logger.exception("Recon workbook build failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not build the reconciliation export. Check server logs.",
+        )
 
-    items = list((await db.execute(
-        select(ReconciliationItem).where(ReconciliationItem.reconciliation_id == recon_id)
-        .order_by(desc(ReconciliationItem.subledger_balance))
-    )).scalars().all())
-    item_ids = [i.id for i in items]
-
-    txns: list[ReconTransaction] = []
-    if item_ids:
-        txns = list((await db.execute(
-            select(ReconTransaction).where(ReconTransaction.reconciliation_item_id.in_(item_ids))
-        )).scalars().all())
-
-    notes = list((await db.execute(
-        select(ReconNote).where(ReconNote.reconciliation_id == recon_id)
-        .order_by(ReconNote.created_at)
-    )).scalars().all())
-
-    name_by_item = {i.id: i.entity_name for i in items}
-
-    summary_df = pd.DataFrame({
-        "Field": ["Reconciliation", "Type", "Period End", "GL Total",
-                  "Subledger Total", "Difference", "Status", "AI Summary"],
-        "Value": [recon.name, recon.recon_type, str(recon.period_end),
-                  f"${float(recon.gl_total):,.2f}",
-                  f"${float(recon.subledger_total):,.2f}",
-                  f"${float(recon.difference):,.2f}",
-                  recon.status, recon.ai_summary or ""],
-    })
-    items_df = pd.DataFrame([{
-        "Entity": i.entity_name,
-        "GL Balance": float(i.gl_balance),
-        "Subledger Balance": float(i.subledger_balance),
-        "Difference": float(i.difference),
-        "Current": float(i.aging_current),
-        "1-30": float(i.aging_1_30),
-        "31-60": float(i.aging_31_60),
-        "61-90": float(i.aging_61_90),
-        "Over 90": float(i.aging_over_90),
-        "Risk": i.risk_level,
-        "Status": i.status,
-        "AI Commentary": i.ai_commentary or "",
-    } for i in items])
-    txns_df = pd.DataFrame([{
-        "Entity": name_by_item.get(t.reconciliation_item_id, ""),
-        "Category": t.category,
-        "Type": t.txn_type,
-        "Number": t.txn_number or "",
-        "Date": str(t.txn_date) if t.txn_date else "",
-        "Amount": float(t.amount),
-        "Memo": t.memo or "",
-    } for t in txns])
-    notes_df = pd.DataFrame([{
-        "When": n.created_at.isoformat(),
-        "Body": n.body,
-    } for n in notes])
-
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        summary_df.to_excel(writer, sheet_name="Summary", index=False)
-        items_df.to_excel(writer, sheet_name="Items", index=False)
-        if not txns_df.empty:
-            txns_df.to_excel(writer, sheet_name="Evidence", index=False)
-        if not notes_df.empty:
-            notes_df.to_excel(writer, sheet_name="Notes", index=False)
-        for sheet in writer.sheets.values():
-            for col in sheet.columns:
-                max_len = max((len(str(c.value or "")) for c in col), default=10)
-                sheet.column_dimensions[col[0].column_letter].width = min(max_len + 2, 60)
-
-    buf.seek(0)
-    safe = recon.name.replace(" ", "_").replace("/", "-")
     return StreamingResponse(
-        buf,
+        BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{safe}_reconciliation.xlsx"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "Cache-Control": "no-store",
+        },
     )
