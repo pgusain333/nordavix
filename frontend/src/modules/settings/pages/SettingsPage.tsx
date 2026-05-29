@@ -35,6 +35,7 @@ import {
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
+import { DatePicker } from "@/core/ui/DatePicker"
 import { apiClient } from "@/core/api/client"
 import { formatDate } from "@/core/lib/dates"
 import { workspaceApi, type WorkspaceMember } from "@/modules/workspace/api"
@@ -919,9 +920,47 @@ function DataExportSection() {
     enabled:  !!organization,
   })
   const isAdmin = me?.role === "admin"
-  const [downloading, setDownloading] = useState<"audit" | null>(null)
+  const [downloading, setDownloading] = useState<"audit" | "period" | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showDelete, setShowDelete] = useState(false)
+  /** Default period_end = last day of previous calendar month — the
+   * most common close period people want to export. */
+  const [periodEnd, setPeriodEnd] = useState<string>(() => {
+    const d = new Date()
+    const last = new Date(d.getFullYear(), d.getMonth(), 0)
+    return last.toISOString().slice(0, 10)
+  })
+
+  /** Pull the Period Export workbook as a binary blob, then trigger a
+   * browser download. We use axios's `responseType: "blob"` so the
+   * raw bytes come through intact (default JSON parsing would corrupt
+   * the .xlsx). Filename is taken from Content-Disposition when the
+   * server sends it. */
+  async function downloadPeriodWorkbook() {
+    if (!organization) return
+    setError(null)
+    setDownloading("period")
+    try {
+      const resp = await apiClient.get<Blob>(
+        "/api/exports/period",
+        { params: { period_end: periodEnd }, responseType: "blob" },
+      )
+      // Extract filename from Content-Disposition if present
+      const disp = (resp.headers["content-disposition"] ?? resp.headers["Content-Disposition"] ?? "") as string
+      const match = disp.match(/filename="?([^"]+)"?/i)
+      const fname = match?.[1] ?? `nordavix_close_${periodEnd}.xlsx`
+      const url = URL.createObjectURL(resp.data)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = fname
+      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      setError("Could not build the period export. The workspace may not have a committed snapshot for that period yet.")
+    } finally {
+      setDownloading(null)
+    }
+  }
 
   async function downloadAuditLog() {
     setError(null)
@@ -961,10 +1000,49 @@ function DataExportSection() {
       icon={Download}
     >
       <div className="space-y-3">
+        {/* Period Export workbook (.xlsx) — the new big one.
+            Single download with cover + recons + schedules + audit log. */}
+        <div className="rounded-lg p-4 flex flex-col gap-3"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-4">
+            <span className="h-8 w-8 rounded-md flex items-center justify-center shrink-0"
+              style={{ background: "var(--surface)", color: "var(--green)" }}>
+              <FileDown size={14} strokeWidth={1.8} />
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>Period Export (Excel)</p>
+              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                One workbook with cover sheet, reconciliations, prepaid / accrual / fixed-asset /
+                lease / loan schedules, and a 90-day audit log. Brand-styled, totals included,
+                pivot-ready.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap pl-12">
+            <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Period end
+            </span>
+            <DatePicker value={periodEnd} onChange={setPeriodEnd} compact />
+            <button
+              onClick={downloadPeriodWorkbook}
+              disabled={!organization || downloading !== null}
+              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
+              style={{
+                background: downloading === "period" ? "var(--surface)" : "var(--green)",
+                color: downloading === "period" ? "var(--text-muted)" : "white",
+                border: downloading === "period" ? "1px solid var(--border)" : "none",
+              }}
+            >
+              {downloading === "period" ? <Spinner className="h-3 w-3" /> : <Download size={12} strokeWidth={1.8} />}
+              {downloading === "period" ? "Building workbook…" : "Download .xlsx"}
+            </button>
+          </div>
+        </div>
+
         <ExportRow
           icon={<FileDown size={14} strokeWidth={1.8} />}
           title="Audit log (CSV)"
-          description="Every workspace event (logins, recon approvals, period closes, …). Up to 1,000 most-recent rows."
+          description="Just the workspace events — logins, recon approvals, period closes. Lighter file than the full Period Export above. Up to 1,000 most-recent rows."
           buttonLabel={downloading === "audit" ? "Generating…" : "Download CSV"}
           loading={downloading === "audit"}
           onClick={downloadAuditLog}
@@ -973,16 +1051,8 @@ function DataExportSection() {
 
         <ExportRow
           icon={<FileDown size={14} strokeWidth={1.8} />}
-          title="Reconciliations (CSV)"
-          description="All approved reconciliations for the active period. Coming soon — currently exportable per-account from each reconciliation."
-          buttonLabel="Coming soon"
-          disabled
-        />
-
-        <ExportRow
-          icon={<FileDown size={14} strokeWidth={1.8} />}
-          title="Full workspace export"
-          description="One zip with everything: trial balances, reconciliations, audit log, evidence files."
+          title="Full workspace export (.zip)"
+          description="One zip with everything: trial balances, every PDF, all schedules, evidence files. Coming soon — for now the Period Export above covers most needs."
           buttonLabel="Coming soon"
           disabled
         />

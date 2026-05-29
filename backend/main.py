@@ -7,6 +7,7 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from core.config import settings
 from core.tenancy.middleware import TenantMiddleware
 from modules.audit.router import router as audit_router
+from modules.exports.router import router as exports_router
 from modules.feedback.router import router as feedback_router
 from modules.financials.router import router as financials_router
 from modules.flux.router import router as flux_router
@@ -58,6 +59,7 @@ app.include_router(workspace_router, prefix="/api/workspace",       tags=["works
 app.include_router(tasks_router,     prefix="/api/tasks",           tags=["tasks"])
 app.include_router(intercompany_router, prefix="/api/intercompany", tags=["intercompany"])
 app.include_router(financials_router,   prefix="/api/financials",   tags=["financials"])
+app.include_router(exports_router,      prefix="/api/exports",      tags=["exports"])
 app.include_router(insights_router,     prefix="/api/insights",     tags=["insights"])
 app.include_router(schedules_router,     prefix="/api/schedules",    tags=["schedules"])
 app.include_router(feedback_router,      prefix="/api/feedback",     tags=["feedback"])
