@@ -128,6 +128,10 @@ export function PrepaidsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
   })
 
+  const exportMut = useMutation({
+    mutationFn: () => schedulesApi.downloadScheduleExcel("prepaid", periodEnd),
+  })
+
   const totals = useMemo(() => {
     const total = items.reduce((s, i) => s + (parseFloat(i.total_amount) || 0), 0)
     const active = items.filter((i) => i.is_active).length
@@ -238,6 +242,8 @@ export function PrepaidsPage() {
         onPeriod={setPeriodEnd}
         onAddItem={() => setDialogState({ open: true })}
         addLabel="Add prepaid"
+        onExport={() => exportMut.mutate()}
+        exporting={exportMut.isPending}
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">

@@ -1,14 +1,14 @@
 """
-Shared xlsx styling + helpers. Every sheet in the workbook uses the
-same look so the export reads as one document, not five glued-together
-csvs.
+Shared xlsx styling + helpers. Every sheet in every export uses the
+same look — clean, no fills, no color. CPA-workpaper aesthetic:
+black text on white with thin grey borders for the grid, thicker
+bottom border on header rows, double top border for totals.
 
-Brand tokens (matched to the PDF generators):
-  Green  #3E8F66   (header fill on tables)
-  Navy   #1F3A5F   (cover sheet accent)
-  Light  #F3F4F6   (alternating row background)
-  Dark   #1F2937   (body text)
-  Muted  #6B7280   (subtle text)
+Used by:
+  - modules/exports/period_workbook.py  (Period Export)
+  - modules/exports/recon_workbook.py   (per-account / per-recon export)
+  - modules/exports/flux_workbook.py    (variance analysis export)
+  - modules/exports/schedules_workbook.py (per-schedule type export)
 """
 from __future__ import annotations
 
@@ -22,24 +22,21 @@ from openpyxl.styles import (
     Border,
     Font,
     NamedStyle,
-    PatternFill,
     Side,
 )
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-# ── Brand colors ────────────────────────────────────────────────────────
-GREEN = "3E8F66"
-NAVY  = "1F3A5F"
-LIGHT = "F3F4F6"
-DARK  = "1F2937"
-MUTED = "6B7280"
-WHITE = "FFFFFF"
+# ── Neutral tokens (no color) ───────────────────────────────────────────
+DARK  = "111827"   # body text — near-black
+MUTED = "6B7280"   # captions / muted labels
+GRID  = "D1D5DB"   # thin grid border
+RULE  = "111827"   # thick rule (under headers, above totals)
 
-# ── Reusable styles (registered per-workbook below) ─────────────────────
-
-_THIN  = Side(style="thin", color="E5E7EB")
-_THICK = Side(style="medium", color=DARK)
+# ── Border sides ────────────────────────────────────────────────────────
+_THIN     = Side(style="thin",   color=GRID)
+_MEDIUM   = Side(style="medium", color=RULE)
+_DOUBLE   = Side(style="double", color=RULE)
 
 
 def register_styles(wb: Workbook) -> None:
@@ -48,12 +45,12 @@ def register_styles(wb: Workbook) -> None:
     styles = [
         NamedStyle(
             name="nx_h1",  # cover-sheet H1
-            font=Font(name="Calibri", size=28, bold=True, color=DARK),
+            font=Font(name="Calibri", size=24, bold=True, color=DARK),
             alignment=Alignment(horizontal="left", vertical="center"),
         ),
         NamedStyle(
             name="nx_h2",  # sheet titles
-            font=Font(name="Calibri", size=18, bold=True, color=NAVY),
+            font=Font(name="Calibri", size=16, bold=True, color=DARK),
             alignment=Alignment(horizontal="left", vertical="center"),
         ),
         NamedStyle(
@@ -63,20 +60,19 @@ def register_styles(wb: Workbook) -> None:
         ),
         NamedStyle(
             name="nx_value",  # field values on cover sheet
-            font=Font(name="Calibri", size=13, color=DARK),
+            font=Font(name="Calibri", size=12, color=DARK),
             alignment=Alignment(horizontal="left", vertical="top"),
         ),
         NamedStyle(
             name="nx_table_head",  # column header row on table sheets
-            font=Font(name="Calibri", size=10, bold=True, color=WHITE),
-            fill=PatternFill("solid", fgColor=GREEN),
+            font=Font(name="Calibri", size=10, bold=True, color=DARK),
             alignment=Alignment(horizontal="left", vertical="center", wrap_text=True),
-            border=Border(top=_THIN, bottom=_THIN, left=_THIN, right=_THIN),
+            border=Border(top=_THIN, bottom=_MEDIUM, left=_THIN, right=_THIN),
         ),
         NamedStyle(
             name="nx_cell_text",
             font=Font(name="Calibri", size=10, color=DARK),
-            alignment=Alignment(horizontal="left", vertical="center"),
+            alignment=Alignment(horizontal="left", vertical="center", wrap_text=True),
             border=Border(top=_THIN, bottom=_THIN, left=_THIN, right=_THIN),
         ),
         NamedStyle(
@@ -94,6 +90,13 @@ def register_styles(wb: Workbook) -> None:
             border=Border(top=_THIN, bottom=_THIN, left=_THIN, right=_THIN),
         ),
         NamedStyle(
+            name="nx_cell_pct",
+            font=Font(name="Calibri", size=10, color=DARK),
+            alignment=Alignment(horizontal="right", vertical="center"),
+            number_format='0.0%',
+            border=Border(top=_THIN, bottom=_THIN, left=_THIN, right=_THIN),
+        ),
+        NamedStyle(
             name="nx_cell_date",
             font=Font(name="Calibri", size=10, color=DARK),
             alignment=Alignment(horizontal="left", vertical="center"),
@@ -103,23 +106,28 @@ def register_styles(wb: Workbook) -> None:
         NamedStyle(
             name="nx_cell_muted",
             font=Font(name="Calibri", size=10, italic=True, color=MUTED),
-            alignment=Alignment(horizontal="left", vertical="center"),
+            alignment=Alignment(horizontal="left", vertical="center", wrap_text=True),
             border=Border(top=_THIN, bottom=_THIN, left=_THIN, right=_THIN),
         ),
         NamedStyle(
             name="nx_total_label",
             font=Font(name="Calibri", size=11, bold=True, color=DARK),
             alignment=Alignment(horizontal="right", vertical="center"),
-            border=Border(top=_THICK, bottom=_THIN, left=_THIN, right=_THIN),
-            fill=PatternFill("solid", fgColor=LIGHT),
+            border=Border(top=_DOUBLE, bottom=_THIN, left=_THIN, right=_THIN),
         ),
         NamedStyle(
             name="nx_total_money",
             font=Font(name="Calibri", size=11, bold=True, color=DARK),
             alignment=Alignment(horizontal="right", vertical="center"),
             number_format='_-$* #,##0.00_-;-$* #,##0.00_-;_-$* "-"??_-;_-@_-',
-            border=Border(top=_THICK, bottom=_THIN, left=_THIN, right=_THIN),
-            fill=PatternFill("solid", fgColor=LIGHT),
+            border=Border(top=_DOUBLE, bottom=_THIN, left=_THIN, right=_THIN),
+        ),
+        NamedStyle(
+            name="nx_total_int",
+            font=Font(name="Calibri", size=11, bold=True, color=DARK),
+            alignment=Alignment(horizontal="right", vertical="center"),
+            number_format='#,##0',
+            border=Border(top=_DOUBLE, bottom=_THIN, left=_THIN, right=_THIN),
         ),
     ]
     for s in styles:
@@ -134,7 +142,7 @@ def add_sheet_title(ws: Worksheet, title: str, *, subtitle: str | None = None) -
     row number where the header row should start (skipping a blank row)."""
     ws["A1"] = title
     ws["A1"].style = "nx_h2"
-    ws.row_dimensions[1].height = 30
+    ws.row_dimensions[1].height = 28
     if subtitle:
         ws["A2"] = subtitle
         ws["A2"].font = Font(name="Calibri", size=10, italic=True, color=MUTED)
@@ -144,11 +152,11 @@ def add_sheet_title(ws: Worksheet, title: str, *, subtitle: str | None = None) -
 
 def write_table_header(ws: Worksheet, row: int, headers: list[str]) -> None:
     """Write a single styled header row. Caller supplies the column
-    widths separately via autosize_columns or set_column_widths."""
+    widths separately via set_column_widths."""
     for i, h in enumerate(headers, start=1):
         cell = ws.cell(row=row, column=i, value=h)
         cell.style = "nx_table_head"
-    ws.row_dimensions[row].height = 32
+    ws.row_dimensions[row].height = 26
 
 
 def set_column_widths(ws: Worksheet, widths: list[float]) -> None:

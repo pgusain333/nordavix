@@ -7,7 +7,7 @@
  */
 import { Link } from "react-router-dom"
 import { motion } from "framer-motion"
-import { ArrowLeft, Plus } from "lucide-react"
+import { ArrowLeft, Download, Plus } from "lucide-react"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Button } from "@/core/ui/components"
 import { SCHEDULE_BLURB, SCHEDULE_HUMAN, type ScheduleType } from "@/modules/schedules/types"
@@ -20,10 +20,17 @@ interface Props {
   onPeriod:    (v: string) => void
   onAddItem:   () => void
   addLabel?:   string
+  /** When supplied, renders a "Download Excel" button (left of "+ Add").
+   *  The handler should call schedulesApi.downloadScheduleExcel for the
+   *  current type + period_end. We pass downloading separately so each
+   *  page can drive its own spinner state. */
+  onExport?:   () => void
+  exporting?:  boolean
 }
 
 export function SchedulePageHeader({
   type, icon, accent, periodEnd, onPeriod, onAddItem, addLabel,
+  onExport, exporting,
 }: Props) {
   return (
     <motion.div
@@ -58,6 +65,18 @@ export function SchedulePageHeader({
               style={{ color: "var(--text-muted)" }}>Period end</span>
             <DatePicker value={periodEnd} onChange={onPeriod} />
           </div>
+          {onExport && (
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<Download size={14} strokeWidth={2} />}
+              onClick={onExport}
+              loading={exporting}
+              title="Download this schedule as Excel"
+            >
+              Excel
+            </Button>
+          )}
           <Button size="sm" icon={<Plus size={14} strokeWidth={2} />} onClick={onAddItem}>
             {addLabel ?? "Add item"}
           </Button>

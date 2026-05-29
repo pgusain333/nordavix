@@ -70,6 +70,10 @@ export function LoansPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedules"] }),
   })
 
+  const exportMut = useMutation({
+    mutationFn: () => schedulesApi.downloadScheduleExcel("loan", periodEnd),
+  })
+
   const totals = useMemo(() => {
     const principal = items.filter((i) => i.is_active)
       .reduce((s, i) => s + (parseFloat(i.original_principal) || 0), 0)
@@ -84,6 +88,8 @@ export function LoansPage() {
         accent={{ fg: "#be123c", bg: "rgba(190, 18, 60, 0.10)" }}
         periodEnd={periodEnd} onPeriod={setPeriodEnd}
         onAddItem={() => setDialog({ open: true })} addLabel="Add loan"
+        onExport={() => exportMut.mutate()}
+        exporting={exportMut.isPending}
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
