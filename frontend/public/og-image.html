@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Nordavix — OG card template</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ─────────────────────────────────────────────────────────────
+       NORDAVIX — Open Graph card (1200×630 PNG)
+
+       This file renders a single 1200×630 px design that you can
+       screenshot to PNG, save as frontend/public/og-image.png, and
+       it'll be served at https://nordavix.com/og-image.png — the
+       URL referenced by the og:image + twitter:image meta tags in
+       index.html.
+
+       HOW TO EXPORT TO PNG (in order of polish):
+
+       1. Best — Chrome DevTools "Capture full size screenshot":
+            a. Open this file in Chrome
+            b. DevTools (F12) → Cmd/Ctrl+Shift+M (device toolbar)
+            c. Set viewport to 1200 × 630 (Responsive mode, type
+               1200 in width, 630 in height)
+            d. DevTools 3-dot menu → "Capture full size screenshot"
+            e. Save the PNG as frontend/public/og-image.png
+
+       2. Decent — Any screenshot tool, fullscreen the page first
+
+       3. Lazy — macOS Cmd+Shift+4, drag selection box around card
+
+       The .card element below is locked to 1200×630 so the result
+       matches Open Graph's required dimensions exactly. Anything
+       outside the card (the page background) gets cropped.
+
+       To tweak the design, edit the .card inner markup below.
+    ───────────────────────────────────────────────────────────── */
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      min-height: 100vh;
+      background: #1a1a1a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .card {
+      width: 1200px;
+      height: 630px;
+      background:
+        radial-gradient(circle at 80% 20%, rgba(124, 58, 237, 0.22) 0%, transparent 50%),
+        radial-gradient(circle at 20% 80%, rgba(62, 143, 102, 0.18) 0%, transparent 55%),
+        linear-gradient(135deg, #0A0E14 0%, #11161D 100%);
+      position: relative;
+      overflow: hidden;
+      padding: 80px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    /* Subtle grid overlay for depth */
+    .card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
+
+    /* Glowing horizontal pulse line — the same brand motif used in
+       the marketing video's opening scene */
+    .card::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 600px;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #4FB081, transparent);
+      box-shadow: 0 0 24px rgba(79, 176, 129, 0.5);
+      opacity: 0.5;
+    }
+
+    /* Top row — small kicker badge */
+    .top {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      background: rgba(124, 58, 237, 0.18);
+      border: 1px solid rgba(124, 58, 237, 0.35);
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: #C4B5FD;
+    }
+    .kicker .sparkle {
+      width: 14px; height: 14px;
+      color: #A855F7;
+    }
+
+    /* Middle — primary message */
+    .middle {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .headline {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 80px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: white;
+      line-height: 1.0;
+      max-width: 920px;
+    }
+    .headline .accent {
+      background: linear-gradient(120deg, #4FB081 0%, #A855F7 100%);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+    .tagline {
+      font-size: 26px;
+      font-weight: 500;
+      color: #94A3B8;
+      letter-spacing: -0.01em;
+      max-width: 800px;
+    }
+
+    /* Bottom row — wordmark + URL */
+    .bottom {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .wordmark {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 52px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      color: white;
+    }
+    .wordmark .dot {
+      color: #4FB081;
+      text-shadow: 0 0 18px rgba(79, 176, 129, 0.6);
+    }
+    .url {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 18px;
+      font-weight: 500;
+      color: #475569;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    /* Helpful guide outline for screenshotting — turn OFF before capture */
+    body.show-guide .card { outline: 2px dashed #475569; outline-offset: 4px; }
+    .guide-hint {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      z-index: 100;
+      backdrop-filter: blur(8px);
+    }
+    body.exporting .guide-hint { display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+
+    <div class="top">
+      <span class="kicker">
+        <svg class="sparkle" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 5.7 6.1.5-4.6 4 1.4 6-5.3-3.2L6.7 18l1.4-6-4.6-4 6.1-.5L12 2z"/></svg>
+        AI-NATIVE · OPEN BETA
+      </span>
+    </div>
+
+    <div class="middle">
+      <div class="headline">
+        Close your books<br/>
+        <span class="accent">in days, not weeks.</span>
+      </div>
+      <div class="tagline">
+        AI-prepared reconciliations, flux analysis, schedules, and
+        the executive financial package — built by CPAs, for CPAs.
+      </div>
+    </div>
+
+    <div class="bottom">
+      <div class="wordmark">nordavix<span class="dot">.</span></div>
+      <div class="url">nordavix.com</div>
+    </div>
+
+  </div>
+
+  <div class="guide-hint">
+    Set DevTools viewport to <b>1200 × 630</b>, then "Capture full size screenshot." Save as <b>public/og-image.png</b>.
+  </div>
+</body>
+</html>
