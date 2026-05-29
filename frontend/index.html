@@ -13,9 +13,18 @@
     <meta name="description" content="AI-prepared reconciliations, flux analysis, schedules, and the executive financial package. Close your books in days, not weeks. Built by CPAs for CPAs." />
     <meta name="theme-color" content="#3E8F66" />
 
-    <!-- Canonical — single-page-app fallback; per-route canonicals
-         would require SSR. Most marketing shares are of the homepage. -->
-    <link rel="canonical" href="https://nordavix.com/" />
+    <!-- No <link rel="canonical"> here on purpose.
+         We're an SPA: every route serves this same index.html, so a
+         static canonical pointing to "/" would tell Google that every
+         page (/solutions, /help, /terms, /privacy) is a duplicate of
+         the homepage. That triggered the GSC warning:
+           "Alternate page with proper canonical tag"
+         and consolidated all 5 sitemap URLs into a single indexed page.
+
+         Without a static canonical, Google indexes each route on its
+         own merits. If true duplicates from query strings (e.g.
+         ?utm_source=…) become a problem later, add per-route canonical
+         via react-helmet-async or move to a pre-rendered build. -->
 
     <!-- Open Graph (LinkedIn, Facebook, Slack, iMessage, most chat apps) -->
     <meta property="og:type" content="website" />
