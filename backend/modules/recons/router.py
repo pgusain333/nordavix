@@ -2190,6 +2190,15 @@ async def get_account_period_entries(
     qbo_account_id: str,
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    include_ytd_ni: bool = Query(
+        False,
+        description=(
+            "When true (frontend sets this for Retained Earnings accounts), "
+            "prepends a synthetic checkable row representing the current "
+            "period's YTD net income from the P&L. Ticking it closes the "
+            "GL-vs-SL variance for RE accounts that absorb period profit."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -2198,6 +2207,11 @@ async def get_account_period_entries(
     subledger modal so the user can select which entries explain the
     GL-vs-subledger variance — the classic bank-rec "outstanding items"
     pattern, persisted on the override row.
+
+    For Retained Earnings accounts (caller sets include_ytd_ni=true),
+    we prepend one synthetic row that represents the YTD net income
+    auto-rolled from the P&L into RE. Ticking it adds to the subledger
+    side so the row ties out without a manual journal entry.
 
     Falls through to an empty list (not 404) when QBO isn't connected so
     the modal UI degrades gracefully.
@@ -2225,6 +2239,41 @@ async def get_account_period_entries(
 
     rows = []
     total = Decimal("0")
+
+    # ── Synthetic YTD net-income row for Retained Earnings ────────
+    # Prepended (so it sits at the top of the reconciling-items table)
+    # when the caller flags this as an RE account. Pulled from the
+    # already-synced PeriodSync.actual_net_income — no QBO call here.
+    #
+    # Sign convention: actual_net_income is the raw P&L net income
+    # (positive when profit, negative when loss). RE is credit-natural,
+    # so a closing JE for profit posts as DR Income Summary / CR
+    # Retained Earnings — i.e. amount on the RE side is a credit,
+    # which in QBO's debit-positive GL convention is -actual_ni.
+    # That signed amount, when summed into the subledger by the
+    # frontend, closes the GL-vs-SL gap exactly.
+    if include_ytd_ni:
+        from models.period_sync import PeriodSync
+        ps = (await db.execute(
+            select(PeriodSync).where(PeriodSync.period_end == pe)
+        )).scalar_one_or_none()
+        if ps is not None and ps.actual_net_income is not None:
+            ytd_ni = Decimal(ps.actual_net_income)
+            synthetic_amount = (-ytd_ni).quantize(Decimal("0.01"))
+            rows.append({
+                "txn_id":     f"system:ytd_ni:{pe.isoformat()}",
+                "txn_type":   "System",
+                "txn_number": "YTD-NI",
+                "txn_date":   pe.isoformat(),
+                "amount":     str(synthetic_amount),
+                "memo":       (
+                    f"Current period net income from P&L ($"
+                    f"{ytd_ni:,.2f}) — tick to absorb into Retained Earnings."
+                ),
+                "entity":     "Income Statement",
+            })
+            total += synthetic_amount
+
     for r in gl_rows:
         amount = r["amount"]
         total += amount
