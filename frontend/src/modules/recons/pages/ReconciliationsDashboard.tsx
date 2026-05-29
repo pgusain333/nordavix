@@ -63,6 +63,10 @@ import {
 import { workspaceApi } from "@/modules/workspace/api"
 import { useUserNames } from "@/modules/workspace/hooks"
 import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
+import {
+  AccountDetailDrawer,
+  readDrawerAcctFromHash,
+} from "@/modules/recons/components/AccountDetailDrawer"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import {
@@ -206,6 +210,21 @@ export function ReconciliationsDashboard() {
   const [confirmClear, setConfirmClear] = useState(false)
   /** qbo_account_id of the row currently expanded inline (null = all collapsed). */
   const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null)
+  /** "Inline" (legacy accordion) vs "Drawer" (right-side panel, opt-in preview).
+   *  Persists across reloads via localStorage so a reviewer can keep using
+   *  the mode they like without re-toggling. Defaults to "inline" — the
+   *  drawer is a deliberate opt-in until everyone's seen it. */
+  const [detailMode, setDetailMode] = useState<"inline" | "drawer">(() => {
+    try {
+      const v = localStorage.getItem("nordavix:recons-detail-mode")
+      return v === "drawer" ? "drawer" : "inline"
+    } catch { return "inline" }
+  })
+  useEffect(() => {
+    try { localStorage.setItem("nordavix:recons-detail-mode", detailMode) } catch { /* private mode */ }
+  }, [detailMode])
+  /** Account currently shown in the right-side drawer (drawer mode only). */
+  const [drawerAcctId, setDrawerAcctId] = useState<string | null>(() => readDrawerAcctFromHash())
 
   // KPI sticky-on-scroll: tracks the page's scroll position so the top
   // KPI cards collapse to a compact horizontal bar once the user has
@@ -1289,6 +1308,39 @@ export function ReconciliationsDashboard() {
               })}
             </div>
 
+            {/* Detail-view mode toggle — preview of the right-side drawer
+                pattern. Persists per-user; click "Drawer" then click any
+                account row to see the slide-in panel instead of the
+                inline accordion. ESC closes; ←/→ flip between accounts.  */}
+            <div className="inline-flex items-center gap-1 rounded-lg p-1"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border)", width: "fit-content" }}
+              title="How to open account details">
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5"
+                style={{ color: "var(--text-muted)" }}>View</span>
+              {(["inline", "drawer"] as const).map((m) => {
+                const active = detailMode === m
+                return (
+                  <button
+                    key={m}
+                    onClick={() => {
+                      setDetailMode(m)
+                      // Switching modes — close whatever was open in the
+                      // other mode so the user isn't seeing both at once.
+                      if (m === "drawer") setExpandedAccountId(null)
+                      else                setDrawerAcctId(null)
+                    }}
+                    className="rounded-md px-2.5 py-0.5 text-[11px] font-medium transition-all"
+                    style={{
+                      background: active ? "var(--surface)" : "transparent",
+                      color:      active ? "var(--text)"    : "var(--text-muted)",
+                      boxShadow:  active ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
+                    }}>
+                    {m === "inline" ? "Inline" : "Drawer"}
+                  </button>
+                )
+              })}
+            </div>
+
             {/* Filters */}
             <div className="flex items-center gap-2 flex-wrap">
               <div className="relative flex-1 min-w-[180px] max-w-xs">
@@ -1477,26 +1529,35 @@ export function ReconciliationsDashboard() {
                         const color = GROUP_COLORS[a.group_label] ?? "var(--text-muted)"
                         const isSelected = selected.has(a.qbo_id)
                         const status = a.review_status
-                        const isExpanded = expandedAccountId === a.qbo_id
+                        // In drawer mode the inline accordion never opens —
+                        // the right-side drawer takes over for drill-in.
+                        const isExpanded = detailMode === "inline" && expandedAccountId === a.qbo_id
+                        const isDrawerOpen = detailMode === "drawer" && drawerAcctId === a.qbo_id
                         return (
                           <Fragment key={a.qbo_id}>
                           <tr
-                            onClick={() => setExpandedAccountId(isExpanded ? null : a.qbo_id)}
+                            onClick={() => {
+                              if (detailMode === "drawer") {
+                                setDrawerAcctId(isDrawerOpen ? null : a.qbo_id)
+                              } else {
+                                setExpandedAccountId(isExpanded ? null : a.qbo_id)
+                              }
+                            }}
                             style={{
                               borderBottom: isExpanded ? "none" : "1px solid var(--border)",
                               cursor: "pointer",
                               background: isSelected
                                 ? "var(--green-subtle)"
-                                : isExpanded
+                                : isExpanded || isDrawerOpen
                                   ? "var(--surface-2)"
                                   : status === "approved"
                                     ? "rgba(16, 185, 129, 0.04)"
                                     : "transparent",
                             }}
                             className="transition-colors"
-                            onMouseEnter={(e) => { if (!isSelected && !isExpanded) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                            onMouseEnter={(e) => { if (!isSelected && !isExpanded && !isDrawerOpen) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
                             onMouseLeave={(e) => {
-                              if (!isSelected && !isExpanded) {
+                              if (!isSelected && !isExpanded && !isDrawerOpen) {
                                 (e.currentTarget as HTMLElement).style.background =
                                   status === "approved" ? "rgba(16, 185, 129, 0.04)" : ""
                               }
@@ -1779,6 +1840,24 @@ export function ReconciliationsDashboard() {
 
       {/* The manual-subledger editor now opens inline as an expanded row
           inside the table (see InlineSubledgerForm). No modal needed. */}
+
+      {/* Right-side detail drawer (preview pattern, behind a view-mode
+          toggle). When the user picks "Drawer" mode, clicking any
+          account row opens this instead of expanding the inline
+          accordion. Prev/Next arrows + ←/→ keys flip between accounts;
+          ESC closes. URL hash keeps it open across refresh. */}
+      <AccountDetailDrawer
+        account={
+          drawerAcctId
+            ? filteredAccounts.find((a) => a.qbo_id === drawerAcctId) ?? null
+            : null
+        }
+        accounts={filteredAccounts}
+        periodEnd={periodEnd}
+        readOnly={isClosed}
+        onNavigate={(a) => setDrawerAcctId(a.qbo_id)}
+        onClose={() => setDrawerAcctId(null)}
+      />
     </div>
   )
 }
