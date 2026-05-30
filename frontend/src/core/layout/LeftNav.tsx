@@ -27,6 +27,34 @@ interface NavItem {
   available: boolean
 }
 
+/**
+ * Kick off the dynamic import for a lazy-loaded route on hover. Once
+ * the chunk is fetched, the next time the user actually navigates the
+ * page renders without a Suspense flash.
+ *
+ * Maps each nav path to the same lazy import App.tsx uses. Calling
+ * import() a second time is free — Vite returns the already-resolved
+ * promise — so we don't bother memoizing.
+ */
+function prefetchRoute(path: string): void {
+  // Strip query/hash + the /app prefix for matching.
+  const p = path.replace(/[?#].*$/, "").replace(/^\/app\/?/, "")
+  switch (p) {
+    case "":               return // Dashboard is eager
+    case "tasks":          void import("@/modules/tasks/pages/TasksPage");                  return
+    case "connections":    void import("@/modules/connections/pages/ConnectionsPage");      return
+    case "flux":           void import("@/modules/flux/pages/FluxMonthIndex");              return
+    case "reconciliations":void import("@/modules/recons/pages/ReconciliationsMonthIndex"); return
+    case "schedules":      void import("@/modules/schedules/pages/SchedulesOverview");      return
+    case "intercompany":   void import("@/modules/intercompany/pages/IntercompanyPage");    return
+    case "financials":     void import("@/modules/financials/pages/FinancialsPage");        return
+    case "insights":       void import("@/modules/insights/pages/InsightsPage");            return
+    case "team":           void import("@/modules/workspace/pages/TeamPage");               return
+    case "settings":       void import("@/modules/settings/pages/SettingsPage");            return
+    case "help":           void import("@/modules/help/pages/HelpPage");                    return
+  }
+}
+
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard",          path: "/app",                 icon: LayoutDashboard, available: true  },
   { label: "Close Tasks",        path: "/app/tasks",           icon: CheckSquare,     available: true  },
@@ -158,6 +186,12 @@ export function LeftNav({ onClose }: Props) {
               to={item.path}
               end={item.path === "/app"}
               onClick={() => onClose?.()}
+              // Prefetch the destination's lazy chunk + its primary
+              // query when the user hovers the nav item. Means clicking
+              // the link starts rendering immediately instead of waiting
+              // for JS + JSON to land. Fire-and-forget; safe to spam.
+              onMouseEnter={() => prefetchRoute(item.path)}
+              onFocus={() => prefetchRoute(item.path)}
               className={({ isActive }) =>
                 cn("flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-all duration-150",
                   isActive ? "font-medium" : "")

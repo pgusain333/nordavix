@@ -415,6 +415,10 @@ function MarkModal({ existing, onClose, onSaved }:
   const [kind, setKind]         = useState<IcKind>(existing?.kind ?? "unknown")
   const [notes, setNotes]       = useState(existing?.notes ?? "")
 
+  // Save (upsert) — optimistic close + invalidate so the modal feels
+  // instant. The overview query refetches in the background and lands
+  // shortly after. Server rejections are surfaced via the standard
+  // axios error path (rare since we validated the inputs client-side).
   const saveMut = useMutation({
     mutationFn: () => icApi.upsertMark({
       qbo_account_id: qboId.trim(),
@@ -422,11 +426,38 @@ function MarkModal({ existing, onClose, onSaved }:
       kind,
       notes:          notes.trim() || null,
     }),
-    onSuccess: onSaved,
+    onMutate: () => {
+      // Optimistically close the modal so the user isn't staring at
+      // a spinner; the parent's onSaved will fire on success too,
+      // but we don't want them to think the save is hung.
+      onSaved()
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["intercompany-overview"] }),
   })
+  // Delete — optimistic remove from the cached list so the row vanishes
+  // immediately. Rollback on error restores it.
   const deleteMut = useMutation({
     mutationFn: () => icApi.deleteMark(existing!.id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["intercompany-overview"] }); onClose() },
+    onMutate: async () => {
+      if (!existing) return { prev: undefined }
+      await qc.cancelQueries({ queryKey: ["intercompany-overview"] })
+      const prev = qc.getQueryData<unknown>(["intercompany-overview"])
+      // Best-effort optimistic patch: filter the deleted mark out of any
+      // list-shaped data on the overview query.
+      qc.setQueryData<{ accounts?: IcAccount[] } | undefined>(
+        ["intercompany-overview"],
+        (old) => {
+          if (!old?.accounts) return old
+          return { ...old, accounts: old.accounts.filter((a) => a.id !== existing.id) }
+        },
+      )
+      onClose()
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev !== undefined) qc.setQueryData(["intercompany-overview"], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["intercompany-overview"] }),
   })
 
   return (

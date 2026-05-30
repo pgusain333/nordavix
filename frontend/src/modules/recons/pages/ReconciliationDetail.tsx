@@ -130,9 +130,16 @@ export function ReconciliationDetail() {
     mutationFn: (uid: string | null) => reconsApi.assignReconciliation(reconId!, uid),
     onSuccess:  () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
   })
+  // Delete — invalidate the list so the deleted row vanishes when
+  // the user arrives at the list, then navigate without `replace`
+  // (so back-nav works naturally if they cancel via browser back).
   const del = useMutation({
     mutationFn: () => reconsApi.deleteReconciliation(reconId!),
-    onSuccess:  () => navigate("/app/reconciliations", { replace: true }),
+    onSuccess:  () => {
+      qc.invalidateQueries({ queryKey: ["reconciliations"] })
+      qc.invalidateQueries({ queryKey: ["recons-overview"] })
+      navigate("/app/reconciliations")
+    },
   })
 
   if (isLoading || !detail) {

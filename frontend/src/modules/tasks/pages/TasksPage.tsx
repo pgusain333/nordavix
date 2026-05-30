@@ -231,12 +231,19 @@ export function TasksPage() {
     })
   }
 
+  // Bulk action — optimistically clears the selection so the UI
+  // responds the instant the user clicks. The actual task rows
+  // refresh from the server invalidation below; that's fine because
+  // their visible status doesn't typically need to flip until the
+  // due_date / assignee / completion update lands.
   const bulkMut = useMutation({
     mutationFn: (body: Parameters<typeof tasksApi.bulkAction>[0]) => tasksApi.bulkAction(body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tasks"] })
+    onMutate: () => {
+      // Drop the selection immediately so the bulk action bar collapses
+      // and the user sees their click "took effect" without waiting.
       setSelected(new Set())
     },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   })
 
   // Build the bulk targets payload from current selection

@@ -128,9 +128,29 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   const [drawerRowId, setDrawerRowId] = useState<string | null>(() => readVarianceDrawerIdFromHash())
 
   // ── Approve mutation ───────────────────────────────────────────────────────
+  // Per-row approve — optimistic so the status pill flips immediately.
+  // Rolls back on server error (rare for approvals; mostly happens if
+  // the row was already approved by another user).
   const approve = useMutation({
     mutationFn: (varId: string) => api.approveVariance(tbId, varId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["variances", tbId] }),
+    onMutate: async (varId: string) => {
+      await qc.cancelQueries({ queryKey: ["variances", tbId] })
+      const prev = qc.getQueryData<VarianceRow[]>(["variances", tbId])
+      if (prev) {
+        qc.setQueryData<VarianceRow[]>(["variances", tbId],
+          prev.map((r) => r.id === varId
+            ? { ...r, status: "approved", approved_at: new Date().toISOString() }
+            : r,
+          ),
+        )
+      }
+      return { prev }
+    },
+    onError: (err: unknown, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["variances", tbId], ctx.prev)
+      onMessage?.({ kind: "err", text: extractErrorDetail(err) ?? "Could not approve. Try again." })
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["variances", tbId] }),
   })
 
   // Map a target status → the tab the affected rows now belong to,
@@ -289,13 +309,37 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   })
 
   // ── Narrative edit mutation ────────────────────────────────────────────────
+  // Optimistic: the typed narrative shows up the moment Save is clicked,
+  // edit field collapses, no waiting for the server. If the API errors,
+  // we restore the old text and reopen editing.
   const editNarrative = useMutation({
     mutationFn: ({ varId, content }: { varId: string; content: string }) =>
       api.updateNarrative(tbId, varId, content),
-    onSuccess: () => {
+    onMutate: async ({ varId, content }) => {
+      await qc.cancelQueries({ queryKey: ["variances", tbId] })
+      const prev = qc.getQueryData<VarianceRow[]>(["variances", tbId])
+      if (prev) {
+        qc.setQueryData<VarianceRow[]>(["variances", tbId],
+          prev.map((r) => r.id === varId
+            ? {
+                ...r,
+                narrative: content,
+                // Auto-bump from pending/flagged → edited so the row
+                // jumps to the right tab without an extra refresh.
+                status: (r.status === "pending" || r.status === "flagged") ? "edited" : r.status,
+              }
+            : r,
+          ),
+        )
+      }
       setEditing(null)
-      qc.invalidateQueries({ queryKey: ["variances", tbId] })
+      return { prev }
     },
+    onError: (err: unknown, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["variances", tbId], ctx.prev)
+      onMessage?.({ kind: "err", text: extractErrorDetail(err) ?? "Could not save narrative. Try again." })
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["variances", tbId] }),
   })
 
   // Per-row Agentic — runs the deeper analysis on ONE variance.
