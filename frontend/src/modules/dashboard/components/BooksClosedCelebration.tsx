@@ -29,7 +29,10 @@ interface Stats {
   reconsTied:    number
   totalAccounts: number
   aiAssisted:    number
-  auditReady:    number
+  /** Total reconciling items ticked across every account — the
+   *  concrete "work done" number we actually track. Was "auditReady"
+   *  earlier but that's a feature we haven't built yet. */
+  itemsMatched:  number
 }
 
 interface Props {
@@ -121,7 +124,7 @@ export function BooksClosedCelebration({
    */
   function handleShareLinkedIn() {
     const url  = "https://nordavix.com"
-    const text = `Just closed ${monthLabel} books in Nordavix 🎯  ${stats.reconsTied}/${stats.totalAccounts} accounts tied, ${stats.aiAssisted} AI-assisted. Highly recommend if you're tired of week-long closes.`
+    const text = `Just closed ${monthLabel} books in Nordavix 🎯  ${stats.reconsTied}/${stats.totalAccounts} accounts tied, ${stats.aiAssisted} AI-assisted, ${stats.itemsMatched} items matched. Highly recommend if you're tired of week-long closes.`
     const linkedin = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}&summary=${encodeURIComponent(text)}`
     window.open(linkedin, "_blank", "noopener,noreferrer,width=600,height=600")
   }
@@ -221,9 +224,9 @@ export function BooksClosedCelebration({
 
                   {/* Stats row */}
                   <div className="mt-7 grid grid-cols-3 gap-2 sm:gap-3">
-                    <StatTile value={stats.reconsTied} total={stats.totalAccounts} label="Accounts tied" />
-                    <StatTile value={stats.aiAssisted}                              label="AI-assisted"  />
-                    <StatTile value={stats.auditReady}                              label="Audit-ready"  />
+                    <StatTile value={stats.reconsTied}   total={stats.totalAccounts} label="Accounts tied" />
+                    <StatTile value={stats.aiAssisted}                                label="AI-assisted"  />
+                    <StatTile value={stats.itemsMatched}                              label="Items matched" />
                   </div>
 
                   {/* Personal line */}

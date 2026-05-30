@@ -653,19 +653,10 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                 <CheckCircle2 size={14} strokeWidth={1.6} />
               </Button>
             )}
-            <Button
-              size="icon-sm"
-              variant="outline"
-              title="Edit narrative — opens the drawer"
-              onClick={(e) => {
-                e.stopPropagation()
-                setEditing(r.id)
-                setEditContent(r.narrative ?? "")
-                setDrawerRowId(r.id)
-              }}
-            >
-              <Pencil size={14} strokeWidth={1.6} />
-            </Button>
+            {/* Pencil / Edit-narrative button removed. Narrative
+                editing now lives inside the drawer's Commentary tab,
+                so the row no longer needs a per-row pencil icon.
+                Clicking anywhere on the row opens the drawer. */}
           </div>
         )
       },

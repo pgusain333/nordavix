@@ -130,7 +130,7 @@ export function DashboardHome() {
   const [celebration, setCelebration] = useState<{
     monthLabel:  string
     periodEnd:   string
-    stats:       { reconsTied: number; totalAccounts: number; aiAssisted: number; auditReady: number }
+    stats:       { reconsTied: number; totalAccounts: number; aiAssisted: number; itemsMatched: number }
     companyName: string | null
   } | null>(null)
 
@@ -299,12 +299,16 @@ export function DashboardHome() {
       // Capture stats RIGHT NOW from the live overview, before the
       // invalidations below trigger refetches that could replace the
       // numbers mid-celebration. Snapshot-then-fire-modal pattern.
+      // `itemsMatched` = total reconciling items ticked across every
+      // account — real measure of work done that we actually track.
+      // (Was "audit-ready" earlier but that's not a feature yet, so
+      // we'd be claiming credit for capability we don't deliver.)
       const accounts = overview?.accounts ?? []
       const stats = {
         totalAccounts: accounts.length,
         reconsTied:    accounts.filter((a) => a.review_status === "approved").length,
         aiAssisted:    accounts.filter((a) => !!a.ai_commentary).length,
-        auditReady:    accounts.filter((a) => (a.evidence_count ?? 0) > 0).length,
+        itemsMatched:  accounts.reduce((sum, a) => sum + (a.reconciling_items?.length ?? 0), 0),
       }
       setCelebration({
         monthLabel,
@@ -992,7 +996,7 @@ export function DashboardHome() {
         open={celebration !== null}
         monthLabel={celebration?.monthLabel ?? ""}
         periodEnd={celebration?.periodEnd ?? ""}
-        stats={celebration?.stats ?? { reconsTied: 0, totalAccounts: 0, aiAssisted: 0, auditReady: 0 }}
+        stats={celebration?.stats ?? { reconsTied: 0, totalAccounts: 0, aiAssisted: 0, itemsMatched: 0 }}
         userName={user?.firstName ?? user?.fullName ?? null}
         companyName={celebration?.companyName ?? null}
         onClose={() => setCelebration(null)}

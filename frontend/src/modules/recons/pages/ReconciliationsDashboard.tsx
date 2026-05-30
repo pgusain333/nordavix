@@ -29,10 +29,8 @@ import {
   CheckCircle2,
   Search,
   Eye,
-  GitCompareArrows,
   X,
   Trash2,
-  Zap,
   ExternalLink,
   Sparkles,
   Upload,
@@ -55,7 +53,6 @@ import {
   type Overview,
   type OverviewAccount,
   type SubledgerDetail,
-  type VarianceDetail,
   type AccountReviewStatus,
   type ReconcilingItem,
   type EvidenceVerification,
@@ -207,7 +204,6 @@ export function ReconciliationsDashboard() {
    *  "open" it disappears from the list and shows up under "approved" — */
   const [statusBucket, setStatusBucket] = useState<"open" | "reviewed" | "approved" | "all">("open")
   const [drawerAccount, setDrawerAccount] = useState<OverviewAccount | null>(null)
-  const [drawerMode, setDrawerMode] = useState<"subledger" | "variance">("subledger")
   const [confirmClear, setConfirmClear] = useState(false)
   /** Account currently shown in the right-side drawer. Drawer is now
    *  the only drill-in path — inline accordion was removed. URL hash
@@ -845,11 +841,9 @@ export function ReconciliationsDashboard() {
 
   function openSubledger(a: OverviewAccount) {
     setDrawerAccount(a)
-    setDrawerMode("subledger")
   }
-  // openVariance removed with the row-level Variance button — drawer
-  // can still render the variance view if drawerMode is forced from
-  // elsewhere, but no UI path opens it on a row click now.
+  // Variance-reasons mode removed from the subledger drawer per user
+  // feedback — the drawer is subledger-detail only now.
 
   return (
     <div
@@ -1810,10 +1804,8 @@ export function ReconciliationsDashboard() {
         {drawerAccount && (
           <DetailDrawer
             account={drawerAccount}
-            mode={drawerMode}
             periodEnd={periodEnd}
             onClose={() => setDrawerAccount(null)}
-            onSwitchMode={(m) => setDrawerMode(m)}
           />
         )}
       </AnimatePresence>
@@ -2781,7 +2773,45 @@ function InlineSubledgerForm({
               <table className="w-full text-xs min-w-[500px]">
                 <thead>
                   <tr style={{ background: "var(--surface-2)", position: "sticky", top: 0 }}>
-                    <th className="w-8 px-2 py-2"></th>
+                    {/* Select-all checkbox in the header. Three states:
+                          - none of the rows ticked → unchecked
+                          - all rows ticked         → checked
+                          - some ticked             → indeterminate
+                        Click toggles all on / all off based on whether
+                        any are currently selected. */}
+                    <th className="w-8 px-2 py-2 text-center">
+                      {(() => {
+                        const rows = periodEntries!.rows
+                        const ticked = rows.filter((r) => !!selectedItemMap[r.txn_id]).length
+                        const allChecked  = ticked === rows.length && rows.length > 0
+                        const someChecked = ticked > 0 && ticked < rows.length
+                        return (
+                          <input
+                            type="checkbox"
+                            checked={allChecked}
+                            disabled={readOnly}
+                            ref={(el) => { if (el) el.indeterminate = someChecked }}
+                            title={allChecked ? "Untick all items" : "Tick all items"}
+                            onChange={() => {
+                              if (readOnly) return
+                              setSelectedItemMap((prev) => {
+                                const next = { ...prev }
+                                if (allChecked) {
+                                  // Untick: drop every QBO-pulled row from the map.
+                                  // Keep manual items intact — they're user-added,
+                                  // not "select all" toggleable.
+                                  for (const r of rows) delete next[r.txn_id]
+                                } else {
+                                  // Tick: add every row to the map.
+                                  for (const r of rows) next[r.txn_id] = r
+                                }
+                                return next
+                              })
+                            }}
+                          />
+                        )
+                      })()}
+                    </th>
                     <th className="text-left px-2 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
                     <th className="text-left px-2 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
                     <th className="text-left px-2 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
@@ -3903,27 +3933,22 @@ function Operator({ op }: { op: string }) {
 
 interface DrawerProps {
   account:     OverviewAccount
-  mode:        "subledger" | "variance"
   periodEnd:   string
   onClose:     () => void
-  onSwitchMode:(m: "subledger" | "variance") => void
 }
 
-function DetailDrawer({ account, mode, periodEnd, onClose, onSwitchMode }: DrawerProps) {
+function DetailDrawer({ account, periodEnd, onClose }: DrawerProps) {
   const variance = parseFloat(account.variance)
   const hasVariance = Math.abs(variance) >= 0.5
 
   const { data: subledger, isLoading: subLoading } = useQuery<SubledgerDetail>({
     queryKey: ["recon-subledger", account.qbo_id, periodEnd],
     queryFn:  () => reconsApi.getAccountSubledger(account.qbo_id, periodEnd),
-    enabled:  mode === "subledger",
   })
 
-  const { data: varianceDetail, isLoading: varLoading } = useQuery<VarianceDetail>({
-    queryKey: ["recon-variance", account.qbo_id, periodEnd],
-    queryFn:  () => reconsApi.getAccountVariance(account.qbo_id, periodEnd),
-    enabled:  mode === "variance",
-  })
+  // Variance-reasons tab was removed (user request: drop the
+  // "Variance reasons" option from this drawer). Subledger is the
+  // only mode now.
 
   return (
     <>
@@ -3980,56 +4005,13 @@ function DetailDrawer({ account, mode, periodEnd, onClose, onSwitchMode }: Drawe
           </button>
         </div>
 
-        {/* Mode tabs */}
-        <div className="px-5 pt-3 pb-1 flex items-center gap-1"
-          style={{ borderBottom: "1px solid var(--border)" }}>
-          <ModeTab active={mode === "subledger"} onClick={() => onSwitchMode("subledger")}
-            icon={<Eye size={12} strokeWidth={1.8} />} label="Subledger detail" />
-          <ModeTab active={mode === "variance"} onClick={() => onSwitchMode("variance")}
-            icon={<GitCompareArrows size={12} strokeWidth={1.8} />}
-            label="Variance reasons"
-            badge={hasVariance ? "!" : undefined} />
-        </div>
-
-        {/* Body */}
+        {/* Body — subledger detail only. The old tab strip + Variance
+            reasons mode was removed per user feedback. */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {mode === "subledger" ? (
-            <SubledgerBody subledger={subledger} loading={subLoading} />
-          ) : (
-            <VarianceBody
-              variance={varianceDetail}
-              loading={varLoading}
-              expectedVariance={account.variance}
-            />
-          )}
+          <SubledgerBody subledger={subledger} loading={subLoading} />
         </div>
       </motion.aside>
     </>
-  )
-}
-
-function ModeTab({ active, onClick, icon, label, badge }:
-  { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; badge?: string }
-) {
-  return (
-    <button
-      onClick={onClick}
-      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors"
-      style={{
-        color: active ? "var(--text)" : "var(--text-muted)",
-        borderBottom: `2px solid ${active ? "var(--green)" : "transparent"}`,
-        marginBottom: "-1px",
-      }}
-    >
-      {icon}
-      {label}
-      {badge && (
-        <span className="inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full text-[9px] font-bold"
-          style={{ background: "#fee2e2", color: "#b91c1c" }}>
-          {badge}
-        </span>
-      )}
-    </button>
   )
 }
 
@@ -4158,104 +4140,5 @@ function SubledgerBody({ subledger, loading }: { subledger?: SubledgerDetail; lo
   )
 }
 
-function VarianceBody({ variance, loading, expectedVariance }:
-  { variance?: VarianceDetail; loading: boolean; expectedVariance: string }
-) {
-  if (loading) {
-    return <div className="py-12 flex items-center justify-center"><Spinner className="h-5 w-5" /></div>
-  }
-  if (!variance) return null
-
-  const sum = variance.rows.reduce((n, r) => n + (parseFloat(r.amount) || 0), 0)
-  const expected = parseFloat(expectedVariance) || 0
-  const diff = sum - expected
-  const inSync = Math.abs(diff) < 1
-
-  return (
-    <div className="space-y-3">
-      <div className="rounded-lg p-3 flex items-start gap-2"
-        style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
-        <AlertCircle size={12} strokeWidth={1.8} style={{ color: "#b91c1c" }} className="shrink-0 mt-0.5" />
-        <p className="text-xs leading-snug" style={{ color: "#b91c1c" }}>{variance.source}</p>
-      </div>
-
-      {variance.rows.length === 0 ? (
-        <div className="py-8 text-center">
-          <Zap size={24} strokeWidth={1.6} style={{ color: "var(--text-muted)" }} className="mx-auto mb-2" />
-          <p className="text-sm font-medium text-theme">No transactions found in the last 90 days.</p>
-          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-            The gap may be from older activity. Widen the window or check the GL directly.
-          </p>
-        </div>
-      ) : (
-        <table className="w-full text-xs">
-          <thead>
-            <tr style={{ borderBottom: "1px solid var(--border)" }}>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Type</th>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>#</th>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Date</th>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Entity</th>
-              <th className="text-right py-2 px-2 font-semibold" style={{ color: "var(--text)" }}>Amount</th>
-              <th className="text-left py-2 px-2 font-semibold" style={{ color: "var(--text-muted)" }}>Memo</th>
-            </tr>
-          </thead>
-          <tbody>
-            {variance.rows.map((r, i) => {
-              const flagged = r.flag === "no_entity_ref"
-              return (
-                <tr key={i} style={{
-                  borderBottom: "1px solid var(--border)",
-                  background: flagged ? "rgba(245, 158, 11, 0.08)" : "transparent",
-                }}
-                  title={flagged ? "Journal entry without a customer/vendor ref — likely cause of the gap" : ""}
-                >
-                  <td className="py-2 px-2 text-theme">{r.txn_type}</td>
-                  <td className="py-2 px-2 font-mono" style={{ color: "var(--text-2)" }}>{r.txn_number || "—"}</td>
-                  <td className="py-2 px-2" style={{ color: "var(--text-2)" }}>{r.txn_date || "—"}</td>
-                  <td className="py-2 px-2 truncate max-w-[110px]" style={{ color: "var(--text-2)" }}>
-                    {r.entity || (flagged ? <span style={{ color: "#92400e", fontStyle: "italic" }}>no ref</span> : "—")}
-                  </td>
-                  <td className="text-right py-2 px-2 tabular-nums font-medium text-theme">{fmtMoney(r.amount)}</td>
-                  <td className="py-2 px-2 truncate max-w-[160px]" style={{ color: "var(--text-muted)" }}>{r.memo || "—"}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-          <tfoot>
-            <tr style={{ background: "var(--surface-2)", borderTop: "2px solid var(--border-strong)" }}>
-              <td className="py-2 px-2 font-bold text-theme" colSpan={4}>Sum of activity (last 90 days)</td>
-              <td className="text-right py-2 px-2 tabular-nums font-bold text-theme">{fmtMoney(sum)}</td>
-              <td />
-            </tr>
-            <tr style={{ background: "var(--surface-2)" }}>
-              <td className="py-1.5 px-2 text-xs" style={{ color: "var(--text-muted)" }} colSpan={4}>
-                GL variance for this account
-              </td>
-              <td className="text-right py-1.5 px-2 tabular-nums text-xs" style={{ color: "var(--text-2)" }}>
-                {fmtMoney(expectedVariance)}
-              </td>
-              <td />
-            </tr>
-            <tr style={{
-              background: inSync ? "var(--green-subtle)" : "#fef2f2",
-              borderTop: "1px solid var(--border)",
-            }}>
-              <td className="py-2 px-2 text-xs font-semibold"
-                style={{ color: inSync ? "var(--green)" : "#b91c1c" }} colSpan={4}>
-                {inSync ? "Activity ties to the variance" : "Activity does not tie — unexplained gap"}
-              </td>
-              <td className="text-right py-2 px-2 tabular-nums font-bold"
-                style={{ color: inSync ? "var(--green)" : "#b91c1c" }}>
-                {inSync
-                  ? <CheckCircle2 size={14} strokeWidth={2} className="inline" />
-                  : fmtMoney(diff)
-                }
-              </td>
-              <td />
-            </tr>
-          </tfoot>
-        </table>
-      )}
-    </div>
-  )
-}
+// VarianceBody removed — was the rendering for the "Variance reasons"
+// tab inside DetailDrawer, which the user removed.
