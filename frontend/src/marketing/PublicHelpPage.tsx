@@ -16,10 +16,20 @@ import { ArrowRight, BookOpen, ExternalLink } from "lucide-react"
 import { HelpContent } from "@/modules/help/HelpContent"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { MarketingFooter } from "@/marketing/MarketingFooter"
+import { SEO, breadcrumbSchema } from "@/marketing/seo/SEO"
 
 export function PublicHelpPage() {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
+      <SEO
+        title="Help & documentation — how to use Nordavix"
+        description="How Nordavix works: connecting QuickBooks, running reconciliations and flux analysis, agentic AI mode, intercompany consolidation, closing the books. Step-by-step guides for controllers and CPAs."
+        path="/help"
+        jsonLd={breadcrumbSchema([
+          { name: "Home", path: "/" },
+          { name: "Help", path: "/help" },
+        ])}
+      />
       {/* ── Marketing header ── */}
       <header className="sticky top-0 z-30 border-b backdrop-blur"
         style={{

@@ -8,23 +8,61 @@
     <link rel="icon" type="image/svg+xml" href="/logo-mark-dark.svg" />
     <link rel="apple-touch-icon" href="/logo-mark-dark.svg" />
 
-    <!-- Primary tags (Google search result, browser tab) -->
+    <!-- PWA manifest — declares app name + icons for the install prompt
+         and gives Google a mobile-quality signal. -->
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Primary tags (Google search result, browser tab) — these are
+         the FALLBACK values. Every public route also renders an <SEO>
+         component (react-helmet-async) that overrides these per-route
+         with a unique title + description + canonical. -->
     <title>Nordavix - The AI-native month-end close</title>
     <meta name="description" content="AI-prepared reconciliations, flux analysis, schedules, and the executive financial package. Close your books in days, not weeks. Built by CPAs for CPAs." />
     <meta name="theme-color" content="#3E8F66" />
 
-    <!-- No <link rel="canonical"> here on purpose.
-         We're an SPA: every route serves this same index.html, so a
-         static canonical pointing to "/" would tell Google that every
-         page (/solutions, /help, /terms, /privacy) is a duplicate of
-         the homepage. That triggered the GSC warning:
-           "Alternate page with proper canonical tag"
-         and consolidated all 5 sitemap URLs into a single indexed page.
+    <!-- Per-route canonical is now emitted by the <SEO> component on
+         each marketing page (HomePage, SolutionsPage, PublicHelpPage,
+         TermsPage, PrivacyPage, and each blog post). No static canonical
+         here on purpose — a static one pointing to "/" would tell Google
+         that every page is a duplicate of the homepage (the bug that
+         caused the GSC "Alternate page with proper canonical" warning
+         the last time we tried it). -->
 
-         Without a static canonical, Google indexes each route on its
-         own merits. If true duplicates from query strings (e.g.
-         ?utm_source=…) become a problem later, add per-route canonical
-         via react-helmet-async or move to a pre-rendered build. -->
+    <!-- Structured data — always-on Organization + SoftwareApplication
+         schemas. Rich snippets in Google search results: brand sidebar,
+         app rating widget, sitelinks. Per-page schemas (FAQPage,
+         BreadcrumbList, Article) are emitted dynamically by <SEO>. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type":    "Organization",
+      "name":     "Nordavix",
+      "url":      "https://nordavix.com",
+      "logo":     "https://nordavix.com/logo-mark-dark.svg",
+      "description": "AI-native month-end close platform for CPA firms and corporate controllers. AI-prepared reconciliations, flux analysis, intercompany consolidation, schedules, and the executive financial package.",
+      "sameAs": [
+        "https://www.linkedin.com/company/nordavix/"
+      ]
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context":               "https://schema.org",
+      "@type":                  "SoftwareApplication",
+      "name":                   "Nordavix",
+      "applicationCategory":    "BusinessApplication",
+      "applicationSubCategory": "Accounting Software",
+      "operatingSystem":        "Web",
+      "url":                    "https://nordavix.com",
+      "description":            "AI-prepared month-end close software: reconciliations, flux analysis, intercompany consolidation, schedules, and the executive financial package. Connects to QuickBooks Online.",
+      "offers": {
+        "@type":        "Offer",
+        "price":        "0",
+        "priceCurrency": "USD",
+        "description":  "Free during beta"
+      }
+    }
+    </script>
 
     <!-- Open Graph (LinkedIn, Facebook, Slack, iMessage, most chat apps) -->
     <meta property="og:type" content="website" />

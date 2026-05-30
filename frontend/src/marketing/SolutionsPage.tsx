@@ -23,6 +23,7 @@ import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { useUser } from "@clerk/clerk-react"
 import { motion } from "framer-motion"
+import { SEO, breadcrumbSchema } from "@/marketing/seo/SEO"
 import {
   Menu, X, ArrowRight, Sparkles, Scale, BarChart3, Lightbulb,
   ArrowLeftRight, BookOpen, Plug, Lock, CheckCircle2, LayoutDashboard,
@@ -688,6 +689,15 @@ export function SolutionsPage() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
+      <SEO
+        title="Solutions — every step of the month-end close, one platform"
+        description="Reconciliations, flux analysis, schedules, intercompany consolidation, financial package, and AI commentary. Tour every Nordavix app and how they connect into the close loop."
+        path="/solutions"
+        jsonLd={breadcrumbSchema([
+          { name: "Home", path: "/" },
+          { name: "Solutions", path: "/solutions" },
+        ])}
+      />
       <Navbar />
 
       {/* ── HERO ────────────────────────────────────────────────────── */}

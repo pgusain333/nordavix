@@ -1,0 +1,32 @@
+/**
+ * Blog post registry — single source of truth for the blog index and
+ * the /blog/:slug route. Add new posts here, import them in the array,
+ * and they appear in the index automatically (sorted by date desc).
+ *
+ * Why a hand-maintained list and not a glob: gives the import graph
+ * a deterministic shape so Vite tree-shakes unused posts and the
+ * order is explicit.
+ */
+import type { BlogPostModule } from "@/marketing/blog/types"
+
+import * as monthEndCloseChecklist          from "@/marketing/blog/posts/month-end-close-checklist"
+import * as intercompanyConsolidationQbo    from "@/marketing/blog/posts/intercompany-consolidation-quickbooks"
+import * as aiAccounting2026                from "@/marketing/blog/posts/ai-in-accounting-2026"
+
+const RAW_POSTS: BlogPostModule[] = [
+  monthEndCloseChecklist          as BlogPostModule,
+  intercompanyConsolidationQbo    as BlogPostModule,
+  aiAccounting2026                as BlogPostModule,
+]
+
+/**
+ * All posts, sorted newest first. Stable sort so two posts with the
+ * same date keep their declaration order.
+ */
+export const POSTS: BlogPostModule[] = [...RAW_POSTS].sort(
+  (a, b) => b.meta.date.localeCompare(a.meta.date),
+)
+
+export function findPostBySlug(slug: string): BlogPostModule | undefined {
+  return POSTS.find((p) => p.meta.slug === slug)
+}

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client"
 import { ClerkProvider } from "@clerk/clerk-react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { BrowserRouter } from "react-router-dom"
+import { HelmetProvider } from "react-helmet-async"
 import App from "./App"
 import DevShell from "./DevShell"
 import { ThemeProvider } from "@/core/theme/ThemeProvider"
@@ -59,13 +60,15 @@ if (!root) throw new Error("Root element not found")
 if (IS_DEV_PLACEHOLDER) {
   createRoot(root).render(
     <StrictMode>
-      <ThemeProvider>
-        <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
-            <DevShell />
-          </BrowserRouter>
-        </QueryClientProvider>
-      </ThemeProvider>
+      <HelmetProvider>
+        <ThemeProvider>
+          <QueryClientProvider client={queryClient}>
+            <BrowserRouter>
+              <DevShell />
+            </BrowserRouter>
+          </QueryClientProvider>
+        </ThemeProvider>
+      </HelmetProvider>
     </StrictMode>,
   )
 } else {
@@ -74,21 +77,23 @@ if (IS_DEV_PLACEHOLDER) {
   }
   createRoot(root).render(
     <StrictMode>
-      <ThemeProvider>
-        <ClerkProvider
-          publishableKey={PUBLISHABLE_KEY}
-          signInUrl="/sign-in"
-          signUpUrl="/sign-up"
-          signInFallbackRedirectUrl="/app"
-          signUpFallbackRedirectUrl="/app"
-        >
-          <QueryClientProvider client={queryClient}>
-            <BrowserRouter>
-              <App />
-            </BrowserRouter>
-          </QueryClientProvider>
-        </ClerkProvider>
-      </ThemeProvider>
+      <HelmetProvider>
+        <ThemeProvider>
+          <ClerkProvider
+            publishableKey={PUBLISHABLE_KEY}
+            signInUrl="/sign-in"
+            signUpUrl="/sign-up"
+            signInFallbackRedirectUrl="/app"
+            signUpFallbackRedirectUrl="/app"
+          >
+            <QueryClientProvider client={queryClient}>
+              <BrowserRouter>
+                <App />
+              </BrowserRouter>
+            </QueryClientProvider>
+          </ClerkProvider>
+        </ThemeProvider>
+      </HelmetProvider>
     </StrictMode>,
   )
 }

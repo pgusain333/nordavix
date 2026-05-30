@@ -33,6 +33,7 @@ import { Link } from "react-router-dom"
 import { useUser } from "@clerk/clerk-react"
 import { motion, AnimatePresence, useScroll, useTransform } from "framer-motion"
 import { MarketingFooter } from "@/marketing/MarketingFooter"
+import { SEO, faqSchema, breadcrumbSchema } from "@/marketing/seo/SEO"
 import {
   Sparkles, ArrowRight, CheckCircle2, Menu, X, Zap, Lock, Brain,
   ShieldCheck, ScrollText, GitCompareArrows, Workflow, Plug,
@@ -108,6 +109,11 @@ function Navbar() {
               onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
               Features
             </a>
+            <Link to="/blog" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
+              Blog
+            </Link>
             <a href="#pricing" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
@@ -171,6 +177,7 @@ function Navbar() {
             {[
               { label: "Solutions", to: "/solutions" },
               { label: "Features",  to: "#features" },
+              { label: "Blog",      to: "/blog" },
               { label: "Beta",      to: "#pricing" },
               { label: "FAQ",       to: "#faq" },
             ].map((item) => (
@@ -1288,35 +1295,42 @@ function Pricing() {
 }
 
 // ─── FAQ ───────────────────────────────────────────────────────────────────
+//
+// Hoisted to module scope so the same Q&A list feeds both the visible
+// accordion AND the FAQPage JSON-LD schema injected by <SEO>. That's
+// what makes the FAQ eligible for Google's "People also ask" rich
+// result — same questions visible + structured.
+
+export const FAQ_QUESTIONS = [
+  {
+    q: "How does Nordavix actually pull data from QuickBooks?",
+    a: "When you connect your QBO account via OAuth (read-only scope), we make live calls to QBO's reporting APIs — TrialBalance, GeneralLedger, ProfitAndLoss, AgedReceivables, AgedPayables. We never write back. Data is pulled on demand per period, so what you see is always current.",
+  },
+  {
+    q: "Where is the AI commentary actually generated?",
+    a: "We send a structured prompt containing the relevant account, period balances, and (when you've pulled them) the top transactions driving the variance to Anthropic's Claude API over an encrypted connection. Our agreement with Anthropic prohibits training on your data. The full data flow is documented in our Privacy Policy.",
+  },
+  {
+    q: "Can my preparers and reviewers have different access levels?",
+    a: "Yes. Three built-in roles: admin (full access including period close), reviewer (can approve work), preparer (can enter data but can't approve own work). Maker/checker is enforced — a preparer can't approve their own reconciliation.",
+  },
+  {
+    q: "Is my data isolated from other customers?",
+    a: "Every row in our database is tagged with a tenant_id and access is enforced by a session-level filter at the ORM layer. Cross-tenant reads are physically blocked, not just hidden. We're working toward formal SOC 2 attestation.",
+  },
+  {
+    q: "What happens to my data if I cancel?",
+    a: "We retain your data for 30 days after cancellation so you can export it, then delete from active systems within 90 days. Backups purge on our standard rotation (no more than 180 days). Full detail in the Privacy Policy.",
+  },
+  {
+    q: "Can I close my books with Nordavix?",
+    a: "Yes — admins can lock a period once all accounts are approved. Once locked, reviewers and preparers can view but not edit anything for that period. We also enforce a sequential close gate: you can't close March until February's closed.",
+  },
+]
 
 function FAQ() {
   const [openIdx, setOpenIdx] = useState<number | null>(0)
-  const QUESTIONS = [
-    {
-      q: "How does Nordavix actually pull data from QuickBooks?",
-      a: "When you connect your QBO account via OAuth (read-only scope), we make live calls to QBO's reporting APIs — TrialBalance, GeneralLedger, ProfitAndLoss, AgedReceivables, AgedPayables. We never write back. Data is pulled on demand per period, so what you see is always current.",
-    },
-    {
-      q: "Where is the AI commentary actually generated?",
-      a: "We send a structured prompt containing the relevant account, period balances, and (when you've pulled them) the top transactions driving the variance to Anthropic's Claude API over an encrypted connection. Our agreement with Anthropic prohibits training on your data. The full data flow is documented in our Privacy Policy.",
-    },
-    {
-      q: "Can my preparers and reviewers have different access levels?",
-      a: "Yes. Three built-in roles: admin (full access including period close), reviewer (can approve work), preparer (can enter data but can't approve own work). Maker/checker is enforced — a preparer can't approve their own reconciliation.",
-    },
-    {
-      q: "Is my data isolated from other customers?",
-      a: "Every row in our database is tagged with a tenant_id and access is enforced by a session-level filter at the ORM layer. Cross-tenant reads are physically blocked, not just hidden. We're working toward formal SOC 2 attestation.",
-    },
-    {
-      q: "What happens to my data if I cancel?",
-      a: "We retain your data for 30 days after cancellation so you can export it, then delete from active systems within 90 days. Backups purge on our standard rotation (no more than 180 days). Full detail in the Privacy Policy.",
-    },
-    {
-      q: "Can I close my books with Nordavix?",
-      a: "Yes — admins can lock a period once all accounts are approved. Once locked, reviewers and preparers can view but not edit anything for that period. We also enforce a sequential close gate: you can't close March until February's closed.",
-    },
-  ]
+  const QUESTIONS = FAQ_QUESTIONS
 
   return (
     <section id="faq" className="px-6 py-24 sm:py-32" style={{ background: "var(--surface)" }}>
@@ -1471,8 +1485,22 @@ function FounderQuote() {
 const _scrollHooksUsed = { useScroll, useTransform, Eye }
 
 export function HomePage() {
+  // Build the FAQ schema once per render so Google can surface the
+  // visible Q&A directly as a rich snippet. The same QUESTIONS array
+  // feeds the on-page accordion AND this structured-data payload —
+  // that's the rule for being eligible for the rich result.
+  const faqSchemaObj = faqSchema(FAQ_QUESTIONS.map((q) => ({ question: q.q, answer: q.a })))
+  const crumbs = breadcrumbSchema([{ name: "Home", path: "/" }])
+
   return (
     <div className="min-h-screen text-theme">
+      <SEO
+        title="Nordavix — AI month-end close software for CPAs and controllers"
+        description="Close your books in days, not weeks. AI-prepared reconciliations, flux analysis, intercompany consolidation, schedules, and an executive financial package — all built on top of QuickBooks Online."
+        path="/"
+        bareTitle
+        jsonLd={[faqSchemaObj, crumbs]}
+      />
       <Navbar />
       <Hero />
       <TrustStrip />

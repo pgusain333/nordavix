@@ -13,6 +13,7 @@
  */
 import { ShieldCheck } from "lucide-react"
 import { LegalLayout, type LegalSection } from "./_legal/LegalLayout"
+import { SEO } from "@/marketing/seo/SEO"
 
 const SECTIONS: LegalSection[] = [
   {
@@ -541,6 +542,13 @@ const SECTIONS: LegalSection[] = [
 
 export function PrivacyPage() {
   return (
+    <>
+    <SEO
+      title="Privacy Policy"
+      description="How Nordavix collects, uses, and protects your data. Read what we pull from QuickBooks, how AI commentary works, our subprocessors, and your privacy rights."
+      path="/privacy"
+      noindex
+    />
     <LegalLayout
       title="Privacy Policy"
       subtitle="Exactly what we collect, why we collect it, who else touches it, and the controls you have. No dark patterns, no surprise data sharing."
@@ -560,5 +568,6 @@ export function PrivacyPage() {
       }
       sections={SECTIONS}
     />
+    </>
   )
 }

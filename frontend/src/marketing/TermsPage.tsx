@@ -14,6 +14,7 @@
  */
 import { FileText } from "lucide-react"
 import { LegalLayout, type LegalSection } from "./_legal/LegalLayout"
+import { SEO } from "@/marketing/seo/SEO"
 
 const SECTIONS: LegalSection[] = [
   {
@@ -621,6 +622,13 @@ const SECTIONS: LegalSection[] = [
 
 export function TermsPage() {
   return (
+    <>
+    <SEO
+      title="Terms of Service"
+      description="The Nordavix Terms of Service — the agreement that governs use of the Nordavix month-end close platform."
+      path="/terms"
+      noindex
+    />
     <LegalLayout
       title="Terms of Service"
       subtitle="The rules of the road for using Nordavix. Plain-English summary above each section so you don't have to wade through dense legalese to find what matters."
@@ -640,5 +648,6 @@ export function TermsPage() {
       }
       sections={SECTIONS}
     />
+    </>
   )
 }

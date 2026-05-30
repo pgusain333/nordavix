@@ -53,6 +53,8 @@ const SolutionsPage           = lazy(() => import("@/marketing/SolutionsPage").t
 const TermsPage               = lazy(() => import("@/marketing/TermsPage").then(m => ({ default: m.TermsPage })))
 const PrivacyPage             = lazy(() => import("@/marketing/PrivacyPage").then(m => ({ default: m.PrivacyPage })))
 const PublicHelpPage          = lazy(() => import("@/marketing/PublicHelpPage").then(m => ({ default: m.PublicHelpPage })))
+const BlogIndex               = lazy(() => import("@/marketing/blog/BlogIndex").then(m => ({ default: m.BlogIndex })))
+const BlogPostPage            = lazy(() => import("@/marketing/blog/BlogPostPage").then(m => ({ default: m.BlogPostPage })))
 
 /** Lightweight loading state shown while a lazy route is being fetched.
  *  Intentionally minimal: a single centered spinner with the same
@@ -155,6 +157,12 @@ export default function App() {
         {/* Public Help — same content as /app/help, hosted at the
             marketing root so it's shareable + indexable. */}
         <Route path="/help"    element={<PublicHelpPage />} />
+
+        {/* Blog — public, indexed, SEO-targeted. /blog lists posts;
+            /blog/:slug renders an individual post. Registry-driven so
+            adding a post is one file in /marketing/blog/posts/. */}
+        <Route path="/blog"        element={<BlogIndex />} />
+        <Route path="/blog/:slug"  element={<BlogPostPage />} />
 
         {/* Custom-branded auth surface — replaces Clerk's hosted page.
             The trailing /* lets Clerk handle its own sub-routes
