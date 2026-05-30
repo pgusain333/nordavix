@@ -64,7 +64,8 @@ interface Props {
 // ── Width persistence ─────────────────────────────────────────────────
 
 const WIDTH_KEY = "nordavix:variance-drawer-width"
-const DEFAULT_WIDTH = 560
+// Wider default so commentary + transactions tab tables breathe.
+const DEFAULT_WIDTH = 720
 const MIN_WIDTH = 400
 const MAX_WIDTH_VW = 0.85
 
@@ -154,7 +155,7 @@ export function VarianceDetailDrawer({
           <motion.aside
             key="drawer"
             initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
-            transition={{ type: "tween", duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
+            transition={{ type: "spring", stiffness: 280, damping: 32, mass: 0.9 }}
             className="fixed top-0 right-0 z-50 h-full flex flex-col"
             style={{
               width: `min(${width}px, 100vw)`,
@@ -400,8 +401,15 @@ function IconBtn({
 
 function TabBar({ value, onChange }: { value: TabId; onChange: (v: TabId) => void }) {
   return (
-    <div className="px-2 flex items-center gap-0 overflow-x-auto"
-      style={{ borderBottom: "1px solid var(--border)" }}>
+    <div
+      className="px-2 flex items-center gap-0 overflow-x-auto sticky z-10"
+      style={{
+        borderBottom: "1px solid var(--border)",
+        background: "var(--surface)",
+        top: 0,
+        scrollSnapType: "x proximity",
+        WebkitOverflowScrolling: "touch",
+      }}>
       {TABS.map((t) => {
         const active = t.id === value
         const Icon = t.icon
@@ -409,11 +417,12 @@ function TabBar({ value, onChange }: { value: TabId; onChange: (v: TabId) => voi
           <button
             key={t.id}
             onClick={() => onChange(t.id)}
-            className="relative inline-flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold whitespace-nowrap transition-colors"
+            className="relative inline-flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold whitespace-nowrap transition-colors shrink-0"
             style={{
               color: active ? "var(--text)" : "var(--text-muted)",
               borderBottom: active ? "2px solid var(--text)" : "2px solid transparent",
               marginBottom: "-1px",
+              scrollSnapAlign: "center",
             }}>
             <Icon size={12} strokeWidth={1.8} />
             {t.label}

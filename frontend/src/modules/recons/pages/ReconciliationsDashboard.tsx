@@ -1680,12 +1680,15 @@ export function ReconciliationsDashboard() {
                                 {/* Per-row Agentic — open to all roles.
                                     Hidden when period is closed (no edits
                                     possible). Confirms before overwriting
-                                    existing ai_commentary. */}
+                                    existing ai_commentary. `whitespace-nowrap`
+                                    keeps icon + label on one line even when
+                                    the table is narrow; `shrink-0` stops the
+                                    flex container from squeezing it. */}
                                 {!isClosed && (
                                   <button
                                     onClick={() => triggerRowAgentic(a)}
                                     disabled={rowAgenticMut.isPending && rowAgenticMut.variables === a.qbo_id}
-                                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
+                                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0"
                                     style={{
                                       color: a.ai_commentary ? "var(--green)" : "var(--text-2)",
                                       border: `1px solid ${a.ai_commentary ? "var(--green)" : "var(--border-strong)"}`,
@@ -1909,7 +1912,19 @@ export function ReconciliationsDashboard() {
               </span>
             </div>
             {!isClosed && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Per-row AI: same handler as the row-level Run AI button. */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Sparkles size={12} strokeWidth={1.8} />}
+                  loading={rowAgenticMut.isPending && rowAgenticMut.variables === a.qbo_id}
+                  onClick={() => triggerRowAgentic(a)}
+                  title={a.ai_commentary
+                    ? "Re-run AI (overwrites existing analysis)"
+                    : "Run AI on this account"}>
+                  {a.ai_commentary ? "Re-run AI" : "Run AI"}
+                </Button>
                 {/* Re-open: only when row has been signed off */}
                 {a.review_status === "approved" && (
                   <Button
@@ -2453,6 +2468,25 @@ function InlineSubledgerForm({
 
       {/* ── Suggestions group (prepaid / accrual / FA / lease / loan) ── */}
       <div style={sectionStyle("suggestions")}>
+
+      {/* Help banner — explains what populates this tab. Only renders in
+          drawer mode (visibleSection !== undefined) so the inline
+          accordion stays uncluttered. */}
+      {visibleSection === "suggestions" && (
+        <div className="rounded-md px-3 py-2 mb-3 text-[11px] flex items-start gap-2"
+          style={{ background: "var(--surface)", border: "1px dashed var(--border-strong)", color: "var(--text-muted)" }}>
+          <Sparkles size={12} strokeWidth={1.8} style={{ color: "var(--green)", marginTop: 2, flexShrink: 0 }} />
+          <span>
+            <strong style={{ color: "var(--text)" }}>What's here:</strong>{" "}
+            line items the Schedules module already tracks for this
+            account + period — prepaid amortization, accrual / reversal
+            deltas, fixed-asset depreciation, lease and loan postings.
+            Click any toggle to add it as a reconciling item; the
+            subledger build-up picks it up automatically. Empty if no
+            schedules touch this account.
+          </span>
+        </div>
+      )}
 
       {/* ── Prepaids schedule suggestions ────────────────────────────
           When this account has prepaid items committed in the Schedules

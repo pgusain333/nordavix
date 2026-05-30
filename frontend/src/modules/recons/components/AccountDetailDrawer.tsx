@@ -75,7 +75,10 @@ interface Props {
 // ── Width persistence ─────────────────────────────────────────────────
 
 const WIDTH_KEY = "nordavix:recons-drawer-width"
-const DEFAULT_WIDTH = 560
+// Wider default — the deep reconcile workflow (build-up + items + evidence)
+// breathes much better at 720px. Users can drag narrower if they want
+// more list visibility, or wider if they want more form room.
+const DEFAULT_WIDTH = 720
 const MIN_WIDTH = 400
 const MAX_WIDTH_VW = 0.85   // 85% of viewport — leaves the list visible
 
@@ -169,11 +172,16 @@ export function AccountDetailDrawer({
             style={{ background: "rgba(15, 23, 42, 0.5)" }}
             onClick={onClose}
           />
-          {/* Drawer panel */}
+          {/* Drawer panel.
+              Smoother open: spring tuned for a calm material-style
+              entry — fast enough to feel responsive (no jank), slow
+              enough to track the eye. Spring beats easing on phones
+              because it adapts to interrupt (open mid-close) without
+              snapping back. */}
           <motion.aside
             key="drawer"
             initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
-            transition={{ type: "tween", duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
+            transition={{ type: "spring", stiffness: 280, damping: 32, mass: 0.9 }}
             className="fixed top-0 right-0 z-50 h-full flex flex-col"
             style={{
               width: `min(${width}px, 100vw)`,
@@ -412,9 +420,23 @@ function TabBar({ value, onChange, account }: {
     evidence: evidenceCount,
     ai:       aiBadge,
   }
+  const tooltip: Partial<Record<DrawerTabId, string>> = {
+    suggestions: "Auto-detected line items from Schedules (prepaids, accruals, fixed assets, leases, loans). Click to add them as reconciling items.",
+  }
   return (
-    <div className="px-2 flex items-center gap-0 overflow-x-auto"
-      style={{ borderBottom: "1px solid var(--border)" }}>
+    // sticky + sub-header so tabs stay glued under the account name
+    // header even when the user scrolls the form. overflow-x-auto +
+    // shrink-0 buttons + scroll-snap so the active tab can scroll into
+    // view on mobile when there isn't room for all five at once.
+    <div
+      className="px-2 flex items-center gap-0 overflow-x-auto sticky z-10"
+      style={{
+        borderBottom: "1px solid var(--border)",
+        background: "var(--surface)",
+        top: 0,
+        scrollSnapType: "x proximity",
+        WebkitOverflowScrolling: "touch",
+      }}>
       {TABS.map((t) => {
         const active = t.id === value
         const Icon = t.icon
@@ -423,11 +445,13 @@ function TabBar({ value, onChange, account }: {
           <button
             key={t.id}
             onClick={() => onChange(t.id)}
-            className="relative inline-flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold whitespace-nowrap transition-colors"
+            title={tooltip[t.id]}
+            className="relative inline-flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold whitespace-nowrap transition-colors shrink-0"
             style={{
               color: active ? "var(--text)" : "var(--text-muted)",
               borderBottom: active ? "2px solid var(--text)" : "2px solid transparent",
               marginBottom: "-1px",
+              scrollSnapAlign: "center",
             }}>
             <Icon size={12} strokeWidth={1.8} />
             {t.label}

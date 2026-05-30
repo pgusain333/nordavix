@@ -1052,9 +1052,23 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                 {r.status}
               </span>
             </div>
-            {!readOnly && canApprove && (
-              <div className="flex items-center gap-1.5">
-                {r.status !== "approved" && (
+            {!readOnly && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Per-row AI: pulls QBO transactions for this variance
+                    and asks Claude for a structured commentary. Same
+                    handler as the inline accordion's "Run AI" button. */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Sparkles size={12} strokeWidth={1.8} />}
+                  loading={rowAgentic.isPending && rowAgentic.variables === r.id}
+                  onClick={() => triggerRowAgentic(r)}
+                  title={r.ai_commentary
+                    ? "Re-run AI on this variance (overwrites existing analysis)"
+                    : "Run AI on this variance: pulls QBO transactions + structured analysis"}>
+                  {r.ai_commentary ? "Re-run AI" : "Run AI"}
+                </Button>
+                {canApprove && r.status !== "approved" && (
                   <Button
                     size="sm"
                     icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
