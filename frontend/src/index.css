@@ -144,3 +144,67 @@
     background-clip: text;
   }
 }
+
+/* ── Clerk auth form overrides ─────────────────────────────────────────
+   Why these live in CSS and not in the appearance prop:
+   Clerk applies its default styles last in the cascade, so Tailwind
+   utility classes passed via appearance.elements lose to Clerk's own
+   defaults for properties like box-shadow on error state, internal
+   margins, and field-group spacing. We use !important here ONLY for
+   the handful of properties that Clerk overrides specifically. */
+
+/* Kill Clerk's animated focus/error halo (box-shadow ring) — that's
+   what was visually bleeding up into the PASSWORD label area when
+   the input was invalid. We keep just a clean border for state. */
+.cl-formFieldInput,
+.cl-formFieldInput:focus,
+.cl-formFieldInput:focus-visible,
+.cl-formFieldInput[data-invalid="true"],
+.cl-formFieldInput[aria-invalid="true"] {
+  box-shadow: none !important;
+  outline: none !important;
+}
+.cl-formFieldInput[data-invalid="true"],
+.cl-formFieldInput[aria-invalid="true"] {
+  border-color: #dc2626 !important;
+  border-style: solid !important;  /* override Clerk's dashed invalid border */
+}
+.cl-formFieldInput:focus,
+.cl-formFieldInput:focus-visible {
+  border-color: var(--green) !important;
+}
+
+/* Generous spacing between label and input so any remaining error
+   indicator can't visually touch the label. */
+.cl-formFieldLabelRow {
+  margin-bottom: 0.5rem !important;
+}
+.cl-formField {
+  margin-bottom: 1rem !important;
+}
+.cl-formField:last-of-type {
+  margin-bottom: 0 !important;
+}
+
+/* Disable Clerk's internal step transitions — they're what caused
+   the "flash" between email and password steps. Each step now snaps
+   in cleanly. Our outer container's min-height holds the frame
+   steady so the snap isn't a visual jump. */
+.cl-rootBox *,
+.cl-rootBox *::before,
+.cl-rootBox *::after {
+  animation-duration: 0s !important;
+  transition: none !important;
+}
+
+/* Re-enable transitions for the obvious interactive elements where
+   we DO want them (hovers on buttons, focus on inputs). The above
+   rule is otherwise too aggressive. */
+.cl-formButtonPrimary,
+.cl-socialButtonsBlockButton,
+.cl-formFieldInput,
+.cl-formFieldInputShowPasswordButton {
+  transition: background-color 0.15s ease,
+              border-color 0.15s ease,
+              opacity 0.15s ease !important;
+}
