@@ -17,7 +17,6 @@
 import { useMemo } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { SignIn, SignUp } from "@clerk/clerk-react"
-import { motion } from "framer-motion"
 import {
   Sparkles, Scale, Lightbulb, Quote, ShieldCheck, ArrowLeft,
 } from "lucide-react"
@@ -121,7 +120,12 @@ export function AuthPage({ mode }: Props) {
             backgroundSize: "32px 32px",
           }} />
 
-        {/* Content stack */}
+        {/* Content stack.
+            Animations on this side dropped entirely. /sign-in/* and
+            /sign-up/* are separate React Router routes, so toggling
+            between them unmounts + remounts the whole AuthPage, which
+            replayed every motion.div on every toggle and made the
+            page feel "jumpy." Static brand panel is calmer + faster. */}
         <div className="relative z-10 flex flex-col w-full p-12 xl:p-16">
           {/* Header: logo + wordmark — sized to balance against the
               4xl/5xl headline immediately below. The 48px mark and
@@ -135,12 +139,7 @@ export function AuthPage({ mode }: Props) {
           </Link>
 
           {/* Tagline + sub */}
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, ease: "easeOut" }}
-            className="mt-16 max-w-md"
-          >
+          <div className="mt-16 max-w-md">
             <h1 className="text-4xl xl:text-5xl font-bold leading-tight" style={{ color: "var(--text)" }}>
               Close the month in <span style={{ color: "var(--green)" }}>hours</span>,
               not weeks.
@@ -149,18 +148,15 @@ export function AuthPage({ mode }: Props) {
               An AI-powered month-end close platform built by CPAs.
               Flux, reconciliations, and insights — without the swivel-chair.
             </p>
-          </motion.div>
+          </div>
 
           {/* Value-prop cards */}
           <div className="mt-12 space-y-3 max-w-md">
-            {VALUE_PROPS.map((v, i) => {
+            {VALUE_PROPS.map((v) => {
               const Icon = v.icon
               return (
-                <motion.div
+                <div
                   key={v.title}
-                  initial={{ opacity: 0, x: -12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.35, delay: 0.15 + i * 0.08, ease: "easeOut" }}
                   className="rounded-xl p-4 flex items-start gap-3 backdrop-blur"
                   style={{
                     background: "color-mix(in oklab, var(--surface) 75%, transparent)",
@@ -178,18 +174,13 @@ export function AuthPage({ mode }: Props) {
                       {v.blurb}
                     </p>
                   </div>
-                </motion.div>
+                </div>
               )
             })}
           </div>
 
           {/* Footer: quote + trust marker */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.6 }}
-            className="mt-auto pt-12"
-          >
+          <div className="mt-auto pt-12">
             <div className="flex items-start gap-3 mb-6">
               <Quote size={20} strokeWidth={1.8} style={{ color: "var(--green)" }} className="shrink-0 mt-0.5" />
               <div>
@@ -207,7 +198,7 @@ export function AuthPage({ mode }: Props) {
               <ShieldCheck size={12} strokeWidth={1.8} style={{ color: "var(--green)" }} />
               Bank-grade encryption · SOC 2 (in progress) · Read-only QuickBooks scope
             </div>
-          </motion.div>
+          </div>
         </div>
       </aside>
 
@@ -238,62 +229,68 @@ export function AuthPage({ mode }: Props) {
           </span>
         </div>
 
-        {/* Form column — centered */}
-        <div className="flex-1 flex items-center justify-center px-4 sm:px-8 py-12">
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.32, ease: "easeOut" }}
-            className="w-full max-w-md"
-          >
-            {/* Our own header */}
-            <h2 className="text-2xl sm:text-3xl font-bold leading-tight" style={{ color: "var(--text)" }}>
-              {isSignIn ? "Welcome back" : "Create your account"}
-            </h2>
-            <p className="text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              {isSignIn
-                ? "Sign in to keep closing your books with AI."
-                : "Free during early access. No credit card needed."}
-            </p>
+        {/* Form column — scrollable when content exceeds viewport
+            (Clerk's multi-step flow can grow taller than a phone
+            screen; the old `flex items-center` hid the top of the
+            form when that happened, with no way to scroll back to it).
+            The wrapper uses `min-h-full flex items-center` so the
+            form stays vertically centered when there's room, but
+            falls back to natural top-aligned scrolling when there
+            isn't. Removed the motion fade-in — toggling sign-in ↔
+            sign-up unmounts + remounts this column, so the fade
+            replayed every time and read as a stutter. */}
+        <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 sm:py-10">
+          <div className="min-h-full flex items-center justify-center">
+            <div className="w-full max-w-md">
+              {/* Our own header */}
+              <h2 className="text-2xl sm:text-3xl font-bold leading-tight" style={{ color: "var(--text)" }}>
+                {isSignIn ? "Welcome back" : "Create your account"}
+              </h2>
+              <p className="text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
+                {isSignIn
+                  ? "Sign in to keep closing your books with AI."
+                  : "Free during early access. No credit card needed."}
+              </p>
 
-            {/* Clerk form, styled to match */}
-            <div className="mt-7">
-              {isSignIn ? (
-                <SignIn
-                  appearance={appearance}
-                  routing="path"
-                  path="/sign-in"
-                  signUpUrl={`/sign-up${searchSuffix}`}
-                  fallbackRedirectUrl="/app"
-                />
-              ) : (
-                <SignUp
-                  appearance={appearance}
-                  routing="path"
-                  path="/sign-up"
-                  signInUrl={`/sign-in${searchSuffix}`}
-                  fallbackRedirectUrl="/app"
-                />
-              )}
+              {/* Clerk form, styled to match */}
+              <div className="mt-7">
+                {isSignIn ? (
+                  <SignIn
+                    appearance={appearance}
+                    routing="path"
+                    path="/sign-in"
+                    signUpUrl={`/sign-up${searchSuffix}`}
+                    fallbackRedirectUrl="/app"
+                  />
+                ) : (
+                  <SignUp
+                    appearance={appearance}
+                    routing="path"
+                    path="/sign-up"
+                    signInUrl={`/sign-in${searchSuffix}`}
+                    fallbackRedirectUrl="/app"
+                  />
+                )}
+              </div>
+
+              {/* Our own mode toggle — Clerk's footer is hidden */}
+              <p className="mt-6 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                {isSignIn ? "New to Nordavix? " : "Already have an account? "}
+                <Link to={`${otherPath}${searchSuffix}`}
+                  className="font-semibold hover:underline"
+                  style={{ color: "var(--green)" }}>
+                  {isSignIn ? "Create an account" : "Sign in"}
+                </Link>
+              </p>
+
+              <p className="mt-8 text-center text-[11px]" style={{ color: "var(--text-muted)" }}>
+                By {isSignIn ? "signing in" : "creating an account"} you agree to our
+                {" "}<a href="/terms" className="hover:underline" style={{ color: "var(--text-2)" }}>Terms</a>{" "}
+                and{" "}
+                <a href="/privacy" className="hover:underline" style={{ color: "var(--text-2)" }}>Privacy Policy</a>.
+              </p>
             </div>
-
-            {/* Our own mode toggle — Clerk's footer is hidden */}
-            <p className="mt-6 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-              {isSignIn ? "New to Nordavix? " : "Already have an account? "}
-              <Link to={`${otherPath}${searchSuffix}`}
-                className="font-semibold hover:underline"
-                style={{ color: "var(--green)" }}>
-                {isSignIn ? "Create an account" : "Sign in"}
-              </Link>
-            </p>
-
-            <p className="mt-8 text-center text-[11px]" style={{ color: "var(--text-muted)" }}>
-              By {isSignIn ? "signing in" : "creating an account"} you agree to our
-              {" "}<a href="/terms" className="hover:underline" style={{ color: "var(--text-2)" }}>Terms</a>{" "}
-              and{" "}
-              <a href="/privacy" className="hover:underline" style={{ color: "var(--text-2)" }}>Privacy Policy</a>.
-            </p>
-          </motion.div>
+          </div>
         </div>
       </section>
     </div>
