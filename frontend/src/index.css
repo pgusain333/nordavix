@@ -208,3 +208,52 @@
               border-color 0.15s ease,
               opacity 0.15s ease !important;
 }
+
+/* OTP / verification code boxes — Clerk's defaults render them as
+   tiny 36px squares packed tight together. Bumped to 52px with
+   proper spacing + larger digit font so they feel like a real input,
+   not an afterthought. Center the row so it doesn't visually drift. */
+.cl-otpCodeFieldInputs {
+  display: flex !important;
+  justify-content: center !important;
+  gap: 0.5rem !important;
+  margin: 1.5rem 0 0.75rem !important;
+}
+.cl-otpCodeFieldInput {
+  width: 52px !important;
+  height: 56px !important;
+  font-size: 1.5rem !important;
+  font-weight: 600 !important;
+  text-align: center !important;
+  background: var(--surface-2) !important;
+  border: 1.5px solid var(--border-strong) !important;
+  border-radius: 0.625rem !important;
+  color: var(--text) !important;
+  caret-color: var(--green) !important;
+}
+.cl-otpCodeFieldInput:focus,
+.cl-otpCodeFieldInput:focus-visible {
+  border-color: var(--green) !important;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--green) 18%, transparent) !important;
+  outline: none !important;
+}
+/* On narrow phones drop the box size so all 6 fit in viewport
+   without horizontal scroll. */
+@media (max-width: 380px) {
+  .cl-otpCodeFieldInput {
+    width: 42px !important;
+    height: 48px !important;
+    font-size: 1.25rem !important;
+  }
+  .cl-otpCodeFieldInputs {
+    gap: 0.375rem !important;
+  }
+}
+
+/* Center the "Didn't receive a code? Resend" link below the boxes
+   and give it more breathing room from the Continue button. */
+.cl-formResendCodeLink {
+  display: block !important;
+  text-align: center !important;
+  margin: 0.25rem 0 1.25rem !important;
+}
