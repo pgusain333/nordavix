@@ -88,6 +88,11 @@ export function VarianceDetailDrawer({
 }: Props) {
   const [tab, setTab] = useTabHash(row?.id ?? null)
   const [width, setWidth] = useState<number>(() => loadWidth())
+  // Desktop slides in from the right + pushes content; mobile becomes
+  // a bottom-sheet covering 85vh so the variance table's KPI strip /
+  // filters stay visible at the top. Tracks viewport changes so
+  // tablet rotation re-picks the right pattern.
+  const isLgUp = useMatchMedia("(min-width: 1024px)")
 
   const index = useMemo(() => {
     if (!row) return -1
@@ -112,21 +117,19 @@ export function VarianceDetailDrawer({
     return () => window.removeEventListener("keydown", handler)
   }, [row, prevRow, nextRow, onNavigate, onClose])
 
-  // Push page content aside on desktop instead of overlaying it.
-  // Same CSS-custom-property pattern as AccountDetailDrawer so the
-  // FluxDashboard page-level scroll container can add a matching
-  // `padding-right`. Mobile keeps the overlay+backdrop pattern.
+  // Push page content aside on desktop only. On mobile we render a
+  // bottom-sheet (see below), so this var stays unset and the page
+  // gets no padding push (would be pointless when the sheet covers
+  // 85vh from the bottom).
   useEffect(() => {
-    if (!row) return
-    const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches
-    if (!isDesktop) return
+    if (!row || !isLgUp) return
     document.body.style.setProperty("--detail-drawer-width", `${Math.min(width, window.innerWidth)}px`)
     document.body.classList.add("detail-drawer-open")
     return () => {
       document.body.style.removeProperty("--detail-drawer-width")
       document.body.classList.remove("detail-drawer-open")
     }
-  }, [row, width])
+  }, [row, width, isLgUp])
 
   // Drag-to-resize: same pattern as the recon drawer.
   const resizingRef = useRef(false)
@@ -160,28 +163,62 @@ export function VarianceDetailDrawer({
     <AnimatePresence>
       {row && (
         <Fragment>
-          <motion.div
-            key="backdrop"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-40 lg:hidden"
-            style={{ background: "rgba(15, 23, 42, 0.5)" }}
-            onClick={onClose}
-          />
+          {/* Backdrop — mobile only. Covers only the visible strip of
+              the variance page (top 15vh) so tapping anywhere in that
+              strip dismisses the sheet. Desktop has no backdrop
+              because the drawer pushes content aside. */}
+          {!isLgUp && (
+            <motion.div
+              key="backdrop"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="fixed left-0 right-0 top-0 z-40"
+              style={{
+                height: "15vh",
+                background: "linear-gradient(to bottom, rgba(15, 23, 42, 0.35), rgba(15, 23, 42, 0.05))",
+              }}
+              onClick={onClose}
+            />
+          )}
           <motion.aside
             key="drawer"
-            initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+            initial={isLgUp ? { x: "100%" } : { y: "100%" }}
+            animate={isLgUp ? { x: 0 } : { y: 0 }}
+            exit={isLgUp ? { x: "100%" } : { y: "100%" }}
             transition={{ type: "spring", stiffness: 280, damping: 32, mass: 0.9 }}
-            className="fixed top-0 right-0 z-50 h-full flex flex-col"
-            style={{
-              width: `min(${width}px, 100vw)`,
-              background: "var(--surface)",
-              borderLeft: "1px solid var(--border-strong)",
-              boxShadow: "-20px 0 40px rgba(0, 0, 0, 0.12)",
-            }}
+            className="fixed z-50 flex flex-col"
+            style={
+              isLgUp
+                ? {
+                    top: 0, right: 0, bottom: 0,
+                    width: `min(${width}px, 100vw)`,
+                    background: "var(--surface)",
+                    borderLeft: "1px solid var(--border-strong)",
+                    boxShadow: "-20px 0 40px rgba(0, 0, 0, 0.12)",
+                  }
+                : {
+                    left: 0, right: 0, bottom: 0,
+                    height: "85vh",
+                    background: "var(--surface)",
+                    borderTopLeftRadius: 16,
+                    borderTopRightRadius: 16,
+                    borderTop: "1px solid var(--border-strong)",
+                    boxShadow: "0 -20px 40px rgba(0, 0, 0, 0.18)",
+                  }
+            }
             role="dialog"
             aria-label={`Variance ${row.account_name} details`}
           >
+            {/* Drag-handle indicator on mobile — visual cue this is a
+                sheet, and that the visible strip above is tappable. */}
+            {!isLgUp && (
+              <div className="flex justify-center pt-2 pb-1 shrink-0">
+                <span style={{
+                  width: 40, height: 4, borderRadius: 2,
+                  background: "var(--border-strong)",
+                }} />
+              </div>
+            )}
             {/* Resize handle — desktop only */}
             <div
               onMouseDown={onResizeStart}
@@ -615,4 +652,21 @@ export function readVarianceDrawerIdFromHash(): string | null {
   if (typeof window === "undefined") return null
   const m = window.location.hash.match(/var=([^&]+)/)
   return m?.[1] ?? null
+}
+
+/** SSR-safe matchMedia hook. Returns current value + subscribes to changes. */
+function useMatchMedia(query: string): boolean {
+  const [matches, setMatches] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false
+    return window.matchMedia(query).matches
+  })
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const mql = window.matchMedia(query)
+    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches)
+    setMatches(mql.matches)
+    mql.addEventListener("change", onChange)
+    return () => mql.removeEventListener("change", onChange)
+  }, [query])
+  return matches
 }

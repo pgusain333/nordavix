@@ -101,6 +101,13 @@ export function AccountDetailDrawer({
 }: Props) {
   const [tab, setTab] = useTabHash(account?.qbo_id ?? null)
   const [width, setWidth] = useState<number>(() => loadWidth())
+  // Desktop vs mobile layout: desktop slides in from the right and
+  // pushes the page content aside; mobile uses a bottom-sheet that
+  // covers ~85vh, leaving the dashboard's KPI cards visible at the
+  // top so the user keeps context. Tracks viewport changes (rotation,
+  // window resize) so a tablet swap between portrait + landscape
+  // re-picks the right pattern.
+  const isLgUp = useMatchMedia("(min-width: 1024px)")
 
   // Position in the visible accounts list (drives Prev/Next).
   const index = useMemo(() => {
@@ -127,24 +134,22 @@ export function AccountDetailDrawer({
     return () => window.removeEventListener("keydown", handler)
   }, [account, prevAcct, nextAcct, onNavigate, onClose])
 
-  // Push the page content aside on desktop. We don't want the drawer
-  // to OVERLAY the dashboard — that hides KPI cards + the accounts list
-  // behind it. Instead we publish the drawer's current width as a CSS
-  // custom property on <body> so the page-level scroll container can
-  // add a matching `padding-right` with a tweened transition. On mobile
-  // we skip this (the drawer takes the whole sheet + a backdrop, which
-  // is the right pattern there).
+  // Push the page content aside on desktop only. We don't want the
+  // drawer to OVERLAY the dashboard — that hides KPI cards + the
+  // accounts list behind it. Publish the drawer's current width as a
+  // CSS custom property on <body> so the page-level scroll container
+  // can add a matching `padding-right` with a tweened transition.
+  // On mobile (< lg) we use a bottom-sheet instead (see below), so
+  // this var stays unset and no padding push happens.
   useEffect(() => {
-    if (!account) return
-    const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches
-    if (!isDesktop) return
+    if (!account || !isLgUp) return
     document.body.style.setProperty("--detail-drawer-width", `${Math.min(width, window.innerWidth)}px`)
     document.body.classList.add("detail-drawer-open")
     return () => {
       document.body.style.removeProperty("--detail-drawer-width")
       document.body.classList.remove("detail-drawer-open")
     }
-  }, [account, width])
+  }, [account, width, isLgUp])
 
   // Drag-to-resize. Mousedown on the left-edge handle begins tracking;
   // mousemove updates the width state; mouseup persists it. We clamp to
@@ -182,35 +187,72 @@ export function AccountDetailDrawer({
     <AnimatePresence>
       {account && (
         <Fragment>
-          {/* Backdrop — semi-transparent click-to-close on mobile / overflow areas */}
-          <motion.div
-            key="backdrop"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-40 lg:hidden"
-            style={{ background: "rgba(15, 23, 42, 0.5)" }}
-            onClick={onClose}
-          />
+          {/* Backdrop — semi-transparent click-to-close, mobile only.
+              On mobile the drawer is a bottom-sheet so the backdrop
+              covers ONLY the visible strip of dashboard above the
+              sheet (15vh). Tap that strip to dismiss; tap a card on
+              the dashboard requires closing first (standard sheet
+              behavior). On desktop there's no backdrop — the drawer
+              pushes content aside and the page stays interactive. */}
+          {!isLgUp && (
+            <motion.div
+              key="backdrop"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="fixed left-0 right-0 top-0 z-40"
+              style={{
+                height: "15vh",
+                background: "linear-gradient(to bottom, rgba(15, 23, 42, 0.35), rgba(15, 23, 42, 0.05))",
+              }}
+              onClick={onClose}
+            />
+          )}
           {/* Drawer panel.
-              Smoother open: spring tuned for a calm material-style
-              entry — fast enough to feel responsive (no jank), slow
-              enough to track the eye. Spring beats easing on phones
-              because it adapts to interrupt (open mid-close) without
-              snapping back. */}
+              Desktop: right-side panel that pushes the page content
+              aside (see useEffect above that sets --detail-drawer-width).
+              Mobile: bottom sheet that covers 85vh, leaving the top
+              15vh strip showing the dashboard's KPI cards + page
+              header. Slides up from the bottom with a calm spring. */}
           <motion.aside
             key="drawer"
-            initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+            initial={isLgUp ? { x: "100%" } : { y: "100%" }}
+            animate={isLgUp ? { x: 0 } : { y: 0 }}
+            exit={isLgUp ? { x: "100%" } : { y: "100%" }}
             transition={{ type: "spring", stiffness: 280, damping: 32, mass: 0.9 }}
-            className="fixed top-0 right-0 z-50 h-full flex flex-col"
-            style={{
-              width: `min(${width}px, 100vw)`,
-              background: "var(--surface)",
-              borderLeft: "1px solid var(--border-strong)",
-              boxShadow: "-20px 0 40px rgba(0, 0, 0, 0.12)",
-            }}
+            className="fixed z-50 flex flex-col"
+            style={
+              isLgUp
+                ? {
+                    top: 0, right: 0, bottom: 0,
+                    width: `min(${width}px, 100vw)`,
+                    background: "var(--surface)",
+                    borderLeft: "1px solid var(--border-strong)",
+                    boxShadow: "-20px 0 40px rgba(0, 0, 0, 0.12)",
+                  }
+                : {
+                    left: 0, right: 0, bottom: 0,
+                    height: "85vh",
+                    background: "var(--surface)",
+                    borderTopLeftRadius: 16,
+                    borderTopRightRadius: 16,
+                    borderTop: "1px solid var(--border-strong)",
+                    boxShadow: "0 -20px 40px rgba(0, 0, 0, 0.18)",
+                  }
+            }
             role="dialog"
             aria-label={`Account ${account.account_name} details`}
           >
+            {/* Drag-handle indicator — visual cue that this is a
+                dismissible sheet on mobile. Tap-target is the backdrop
+                above the sheet. */}
+            {!isLgUp && (
+              <div className="flex justify-center pt-2 pb-1 shrink-0">
+                <span style={{
+                  width: 40, height: 4, borderRadius: 2,
+                  background: "var(--border-strong)",
+                }} />
+              </div>
+            )}
             {/* Resize handle — desktop only. Drag to widen/narrow. */}
             <div
               onMouseDown={onResizeStart}
@@ -701,4 +743,22 @@ export function readDrawerAcctFromHash(): string | null {
   if (typeof window === "undefined") return null
   const m = window.location.hash.match(/acct=([^&]+)/)
   return m?.[1] ?? null
+}
+
+/** Minimal SSR-safe matchMedia subscription. Returns the current value
+ *  and re-renders when it changes. Defaulted to false during SSR. */
+function useMatchMedia(query: string): boolean {
+  const [matches, setMatches] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false
+    return window.matchMedia(query).matches
+  })
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const mql = window.matchMedia(query)
+    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches)
+    setMatches(mql.matches)
+    mql.addEventListener("change", onChange)
+    return () => mql.removeEventListener("change", onChange)
+  }, [query])
+  return matches
 }
