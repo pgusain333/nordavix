@@ -1858,12 +1858,18 @@ export function ReconciliationsDashboard() {
         readOnly={isClosed}
         onNavigate={(a) => setDrawerAcctId(a.qbo_id)}
         onClose={() => setDrawerAcctId(null)}
-        renderReconcileBody={(a) => (
+        renderReconcileBody={(a, section) => (
           <InlineSubledgerForm
             account={a}
             periodEnd={periodEnd}
             saving={subledgerMut.isPending}
             readOnly={isClosed}
+            // The form stays mounted across tab swaps — the section
+            // prop just toggles visibility of sub-sections via CSS.
+            // No remount, no query refetch, no state loss.
+            visibleSection={section}
+            hideHeader
+            hideFooter
             onSave={(total, source, items) => {
               subledgerMut.mutate({ qboId: a.qbo_id, total, source, items })
               if (a.review_status !== "approved" && a.review_status !== "reviewed") {
@@ -2077,8 +2083,19 @@ function VerificationBadge({
 // selector) visible while reconciling. Same fields: amount, source,
 // roll-forward, variance preview, reconciling items, evidence + verify.
 
+/**
+ * When this form is embedded inside the right-side drawer, each
+ * "section" maps to a tab. Setting `visibleSection` filters which
+ * sections render at all (via CSS, so state and queries stay alive
+ * across tab switches — the form is mounted once, not per-tab).
+ *
+ * `null` / "all" → render every section (the original accordion mode).
+ */
+type FormSection = "items" | "suggestions" | "evidence" | "ai"
+
 function InlineSubledgerForm({
   account, periodEnd, saving, readOnly = false, onSave, onClear, onClose, onAutoSave,
+  visibleSection, hideHeader, hideFooter,
 }: {
   account: OverviewAccount
   periodEnd: string
@@ -2097,7 +2114,21 @@ function InlineSubledgerForm({
       top KPI cards reflect the new state without an explicit save.
       Does NOT bump status to "reviewed" (only the Save button does). */
   onAutoSave?: (total: number, source: string | null, items: ReconcilingItem[]) => void
+  /** Drawer-mode tab filter: when set, only sections matching this tab
+   *  render (others stay mounted but display:none so state survives).
+   *  Undefined = stack all sections vertically (inline-accordion mode). */
+  visibleSection?: FormSection
+  /** Drawer mode shows the account name + close in its own header so
+   *  the form's internal header is redundant. */
+  hideHeader?: boolean
+  /** Drawer mode owns the sticky action footer (Mark prepared / Approve)
+   *  so the form's internal Save / Clear footer is redundant. */
+  hideFooter?: boolean
 }) {
+  // Helper: show this section's div based on visibleSection filter.
+  // Returns inline style — sections always mount, just toggle visibility.
+  const sectionStyle = (s: FormSection): React.CSSProperties =>
+    !visibleSection || visibleSection === s ? {} : { display: "none" }
   // Source label travels with the override row. When rolling forward, we
   // auto-populate with "Rolled forward from <date>" so the reviewer knows
   // where the number came from.
@@ -2366,23 +2397,25 @@ function InlineSubledgerForm({
   return (
     <form onSubmit={submit} className="px-4 sm:px-6 py-4 border-l-4"
       style={{ borderLeftColor: readOnly ? "#f59e0b" : "var(--green)" }}>
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-wide"
-            style={{ color: readOnly ? "#b45309" : "var(--green)" }}>
-            {readOnly ? "Locked period · view only" : "Manual subledger"} · {periodEnd}
-          </p>
-          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            GL balance {fmtMoney(account.gl_balance)} · {account.group_label}
-          </p>
+      {!hideHeader && (
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-wide"
+              style={{ color: readOnly ? "#b45309" : "var(--green)" }}>
+              {readOnly ? "Locked period · view only" : "Manual subledger"} · {periodEnd}
+            </p>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+              GL balance {fmtMoney(account.gl_balance)} · {account.group_label}
+            </p>
+          </div>
+          <button type="button" onClick={onClose}
+            className="h-7 w-7 rounded-md flex items-center justify-center"
+            style={{ color: "var(--text-muted)" }}
+            title="Collapse">
+            <X size={15} strokeWidth={1.8} />
+          </button>
         </div>
-        <button type="button" onClick={onClose}
-          className="h-7 w-7 rounded-md flex items-center justify-center"
-          style={{ color: "var(--text-muted)" }}
-          title="Collapse">
-          <X size={15} strokeWidth={1.8} />
-        </button>
-      </div>
+      )}
 
       {/* Read-only banner — the period is closed, so the form is just a
           window into what was reconciled. All controls below are
@@ -2405,9 +2438,21 @@ function InlineSubledgerForm({
           per row. The reviewer reads this BEFORE the build-up form,
           decides whether to trust the AI's work, then approves (or
           edits + saves to override). */}
-      {account.ai_commentary && (
-        <AiCommentaryCard commentary={account.ai_commentary} />
-      )}
+      <div style={sectionStyle("ai")}>
+        {account.ai_commentary && (
+          <AiCommentaryCard commentary={account.ai_commentary} />
+        )}
+        {!account.ai_commentary && visibleSection === "ai" && (
+          <div className="rounded-lg px-4 py-6 text-center text-[12px]"
+            style={{ background: "var(--surface)", border: "1px dashed var(--border)", color: "var(--text-muted)" }}>
+            No AI commentary yet for this account. Run Agentic Mode from the
+            account row actions to generate a narrative + check list.
+          </div>
+        )}
+      </div>
+
+      {/* ── Suggestions group (prepaid / accrual / FA / lease / loan) ── */}
+      <div style={sectionStyle("suggestions")}>
 
       {/* ── Prepaids schedule suggestions ────────────────────────────
           When this account has prepaid items committed in the Schedules
@@ -2574,6 +2619,11 @@ function InlineSubledgerForm({
           }}
         />
       ))}
+
+      </div>{/* end Suggestions group */}
+
+      {/* ── Items group (variance strip · build-up · reconciling table) ── */}
+      <div style={sectionStyle("items")}>
 
       {/* ── Compact variance strip ───────────────────────────────────
           Subledger is now a CALCULATED value: opening (rolled forward)
@@ -2770,6 +2820,11 @@ function InlineSubledgerForm({
           here: that information is already on the Opening balance line
           inside the build-up ("Rolled forward from <date>"). */}
 
+      </div>{/* end Items group */}
+
+      {/* ── Evidence group (source notes + supporting evidence + AI verify) ── */}
+      <div style={sectionStyle("evidence")}>
+
       {/* ── Lower two-column area: entry fields | evidence ────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="space-y-3">
@@ -2899,10 +2954,12 @@ function InlineSubledgerForm({
           </div>{/* end RIGHT column (evidence + AI verify) */}
         </div>{/* end grid */}
 
+      </div>{/* end Evidence group */}
+
       {/* Footer action bar — entirely suppressed on locked periods.
           The Close button at the top is the only way out in read-only
           mode (and that one's safe — it just collapses the accordion). */}
-      {!readOnly && (
+      {!hideFooter && !readOnly && (
         <div className="flex items-center justify-between gap-2 mt-4 pt-3"
           style={{ borderTop: "1px solid var(--border)" }}>
           {account.subledger_is_manual ? (

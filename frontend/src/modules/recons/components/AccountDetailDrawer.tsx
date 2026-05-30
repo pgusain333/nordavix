@@ -1,27 +1,24 @@
 /**
  * Right-side detail drawer for one reconciliation account.
  *
- * UX preview: alternative to the inline accordion. Click an account
- * row → 520px panel slides in from the right (full-screen on mobile),
- * list stays visible on the left so you can prev/next through accounts
- * the way you'd scan an email inbox.
- *
- * Demo behavior wired here:
- *   - Slide-in / slide-out animation
+ * Behavior:
+ *   - Slide-in panel from the right (full-screen on mobile)
+ *   - List stays visible on the left for prev/next browsing
  *   - Sticky header with status pill + Prev/Next + Close
- *   - Tabs (Summary · Subledger · Items · Evidence · AI · History)
- *   - ESC closes
- *   - ←/→ arrows move between accounts (when focus isn't in a field)
- *   - URL hash (#acct=<qbo_id>) for deep linking + refresh resilience
+ *   - Tabs: Summary · Items · Suggestions · Evidence · AI
+ *   - Sticky action footer at the bottom (Mark prepared / Approve / Re-open)
+ *   - ESC closes; ←/→ arrows move between accounts when focus isn't in a field
+ *   - URL hash (#acct=<qbo_id>&tab=<tab>) for deep linking
+ *   - User-resizable width via left-edge drag handle (persisted)
  *
- * Tab contents are intentionally a thin layer for now: the Summary tab
- * carries the most useful info (variance, AI verdict, status, evidence
- * count) so you can evaluate the pattern. The other tabs render
- * descriptive placeholders so you can imagine the final layout. When
- * you approve this mockup, we move the actual accordion sections one
- * by one into their matching tabs.
+ * Performance note:
+ *   The deep reconcile body is mounted ONCE and never unmounts as the
+ *   user switches tabs — sections that don't belong to the active tab
+ *   are CSS-hidden inside the form via its `visibleSection` prop. This
+ *   means tab switches are instant (no React tree teardown, no query
+ *   re-subscription, no state loss).
  */
-import { Fragment, useCallback, useEffect, useMemo, useRef } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   AlertTriangle,
@@ -31,8 +28,10 @@ import {
   ChevronRight,
   Clock,
   FileText,
+  GripVertical,
   Layers,
   Paperclip,
+  Receipt,
   ShieldCheck,
   Sparkles,
   X,
@@ -41,17 +40,23 @@ import {
 import type { OverviewAccount } from "@/modules/recons/api"
 
 const TABS = [
-  { id: "summary",   label: "Summary",    icon: Sparkles },
-  { id: "reconcile", label: "Reconcile",  icon: Layers   },
+  { id: "summary",     label: "Summary",     icon: Sparkles  },
+  { id: "items",       label: "Items",       icon: Receipt   },
+  { id: "suggestions", label: "Suggestions", icon: Layers    },
+  { id: "evidence",    label: "Evidence",    icon: Paperclip },
+  { id: "ai",          label: "AI",          icon: Brain     },
 ] as const
-type TabId = typeof TABS[number]["id"]
+export type DrawerTabId = typeof TABS[number]["id"]
+/** Tab ids that correspond to InlineSubledgerForm sections. Summary is
+ *  the drawer's own section, not the form. */
+export type DrawerFormSection = Exclude<DrawerTabId, "summary">
 
 interface Props {
   /** Currently open account; null = drawer closed. */
   account:          OverviewAccount | null
   /** Ordered list of accounts the user is browsing — used by Prev/Next. */
   accounts:         OverviewAccount[]
-  /** Period the drawer is scoped to (passed through for tab queries later). */
+  /** Period the drawer is scoped to. */
   periodEnd:        string
   /** Books closed → drawer renders in read-only mode like the accordion does. */
   readOnly:         boolean
@@ -59,15 +64,32 @@ interface Props {
   onNavigate:       (account: OverviewAccount) => void
   /** Called when the user closes the drawer (X, ESC, or backdrop). */
   onClose:          () => void
-  /** Renders the deep reconciliation workflow inside the Reconcile tab.
-   *  Parent owns the mutations + state — we just give it the container.
-   *  Typically wraps <InlineSubledgerForm /> with the same onSave /
-   *  onAutoSave / onClear handlers the inline accordion uses. */
-  renderReconcileBody?: (account: OverviewAccount) => React.ReactNode
-  /** Renders a sticky action footer at the bottom of the drawer. The
-   *  parent decides which buttons make sense given the row's status
-   *  (Mark prepared / Approve / Re-open / Re-sync, etc.). */
+  /** Render the InlineSubledgerForm. The parent passes a callback so we
+   *  can call it with the current tab's section filter — that way the
+   *  form stays mounted but only the right sections render. */
+  renderReconcileBody?: (account: OverviewAccount, section: DrawerFormSection) => React.ReactNode
+  /** Renders a sticky action footer at the bottom of the drawer. */
   renderFooter?:        (account: OverviewAccount) => React.ReactNode
+}
+
+// ── Width persistence ─────────────────────────────────────────────────
+
+const WIDTH_KEY = "nordavix:recons-drawer-width"
+const DEFAULT_WIDTH = 560
+const MIN_WIDTH = 400
+const MAX_WIDTH_VW = 0.85   // 85% of viewport — leaves the list visible
+
+function loadWidth(): number {
+  try {
+    const raw = localStorage.getItem(WIDTH_KEY)
+    const n = raw ? parseInt(raw, 10) : NaN
+    if (Number.isFinite(n) && n >= MIN_WIDTH) return n
+  } catch { /* private mode */ }
+  return DEFAULT_WIDTH
+}
+
+function persistWidth(w: number): void {
+  try { localStorage.setItem(WIDTH_KEY, String(Math.round(w))) } catch { /* */ }
 }
 
 export function AccountDetailDrawer({
@@ -75,6 +97,7 @@ export function AccountDetailDrawer({
   onNavigate, onClose, renderReconcileBody, renderFooter,
 }: Props) {
   const [tab, setTab] = useTabHash(account?.qbo_id ?? null)
+  const [width, setWidth] = useState<number>(() => loadWidth())
 
   // Position in the visible accounts list (drives Prev/Next).
   const index = useMemo(() => {
@@ -86,8 +109,7 @@ export function AccountDetailDrawer({
   const nextAcct = index >= 0 && index < accounts.length - 1 ? accounts[index + 1] : null
 
   // Keyboard nav: ESC closes; ← / → move between accounts (only when focus
-  // isn't sitting in an input/textarea/contenteditable — we don't want
-  // typing in a note field to flip the panel).
+  // isn't sitting in an input/textarea/contenteditable).
   useEffect(() => {
     if (!account) return
     const handler = (e: KeyboardEvent) => {
@@ -101,6 +123,38 @@ export function AccountDetailDrawer({
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
   }, [account, prevAcct, nextAcct, onNavigate, onClose])
+
+  // Drag-to-resize. Mousedown on the left-edge handle begins tracking;
+  // mousemove updates the width state; mouseup persists it. We clamp to
+  // [MIN_WIDTH, 85% of viewport] so the user can't accidentally hide
+  // the entire list or shrink the drawer below readable.
+  const resizingRef = useRef(false)
+  const onResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    resizingRef.current = true
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return
+      // Drawer is anchored to the right edge, so width = viewport - mouseX.
+      const next = Math.min(
+        Math.max(window.innerWidth - ev.clientX, MIN_WIDTH),
+        window.innerWidth * MAX_WIDTH_VW,
+      )
+      setWidth(next)
+    }
+    const onUp = () => {
+      resizingRef.current = false
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+      setWidth((w) => { persistWidth(w); return w })
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+  }, [])
 
   return (
     <AnimatePresence>
@@ -122,7 +176,7 @@ export function AccountDetailDrawer({
             transition={{ type: "tween", duration: 0.24, ease: [0.32, 0.72, 0, 1] }}
             className="fixed top-0 right-0 z-50 h-full flex flex-col"
             style={{
-              width: "min(560px, 100vw)",
+              width: `min(${width}px, 100vw)`,
               background: "var(--surface)",
               borderLeft: "1px solid var(--border-strong)",
               boxShadow: "-20px 0 40px rgba(0, 0, 0, 0.12)",
@@ -130,6 +184,29 @@ export function AccountDetailDrawer({
             role="dialog"
             aria-label={`Account ${account.account_name} details`}
           >
+            {/* Resize handle — desktop only. Drag to widen/narrow. */}
+            <div
+              onMouseDown={onResizeStart}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize drawer"
+              title="Drag to resize"
+              className="absolute top-0 left-0 h-full hidden lg:flex items-center justify-center transition-colors"
+              style={{
+                width: 6,
+                cursor: "col-resize",
+                marginLeft: -3,
+                zIndex: 60,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.background = "rgba(99, 102, 241, 0.18)"
+              }}
+              onMouseLeave={(e) => {
+                if (!resizingRef.current) (e.currentTarget as HTMLElement).style.background = "transparent"
+              }}>
+              <GripVertical size={12} strokeWidth={1.6} style={{ color: "var(--text-muted)", pointerEvents: "none" }} />
+            </div>
+
             <DrawerHeader
               account={account}
               index={index}
@@ -143,34 +220,33 @@ export function AccountDetailDrawer({
 
             <TabBar value={tab} onChange={setTab} account={account} />
 
+            {/* Body. Both panels mount; tab toggles visibility via CSS so
+                that switching is instant + state survives. The form's
+                internal section filter (visibleSection) hides sections
+                that don't belong to the active tab. */}
             <div className="flex-1 overflow-y-auto">
-              {tab === "summary" && (
+              <div style={{ display: tab === "summary" ? "block" : "none" }}>
                 <div className="px-5 py-5">
                   <SummaryTab account={account} />
                 </div>
-              )}
-              {tab === "reconcile" && (
-                // The Reconcile tab embeds the full subledger build-up,
-                // reconciling items table, evidence panel, and AI
-                // commentary — same component the inline accordion
-                // uses, so behavior is 1-to-1 with no drift risk.
-                renderReconcileBody ? (
+              </div>
+              <div style={{ display: tab !== "summary" ? "block" : "none" }}>
+                {renderReconcileBody ? (
+                  // The form decides which sections to actually render
+                  // based on its visibleSection prop. The render-prop
+                  // gets the current tab id so it can pass through.
                   <div className="px-1 py-1">
-                    {renderReconcileBody(account)}
+                    {renderReconcileBody(account, tab as DrawerFormSection)}
                   </div>
                 ) : (
-                  <PlaceholderTab
-                    title="Reconcile"
-                    hint="The full subledger build-up workflow appears here when the parent wires renderReconcileBody."
-                  />
-                )
-              )}
+                  <PlaceholderTab title="Coming soon" hint="The reconcile body will appear here when wired." />
+                )}
+              </div>
             </div>
 
             {/* Sticky action footer — sits below the scrollable body,
                 always visible. Parent decides which buttons render
-                given the row's review_status (e.g. Approve only when
-                Prepared; Re-open only when Approved). */}
+                given the row's review_status. */}
             {renderFooter && (
               <div className="px-4 py-3 sticky bottom-0"
                 style={{
@@ -323,17 +399,18 @@ function IconBtn({
 // ── Tabs ───────────────────────────────────────────────────────────────
 
 function TabBar({ value, onChange, account }: {
-  value:    TabId
-  onChange: (v: TabId) => void
+  value:    DrawerTabId
+  onChange: (v: DrawerTabId) => void
   account:  OverviewAccount
 }) {
-  // Light badge on Reconcile when there are saved reconciling items
-  // and/or attached evidence — the user sees there's work in flight
-  // without opening the tab. Summary doesn't carry a badge.
-  const reconcileCount =
-    (account.reconciling_items?.length ?? 0) + (account.evidence_count ?? 0)
-  const badge: Partial<Record<TabId, number>> = {
-    reconcile: reconcileCount,
+  // Light badges for tabs where we know counts cheaply.
+  const itemsCount     = account.reconciling_items?.length ?? 0
+  const evidenceCount  = account.evidence_count ?? 0
+  const aiBadge        = account.ai_commentary ? 1 : 0
+  const badge: Partial<Record<DrawerTabId, number>> = {
+    items:    itemsCount,
+    evidence: evidenceCount,
+    ai:       aiBadge,
   }
   return (
     <div className="px-2 flex items-center gap-0 overflow-x-auto"
@@ -429,8 +506,8 @@ function SummaryTab({ account }: { account: OverviewAccount }) {
               </span>
             </div>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              Open the <strong>Items</strong> tab to investigate the reconciling
-              transactions, or <strong>Subledger</strong> to record an override.
+              Jump to the <strong>Items</strong> tab to investigate the reconciling
+              transactions.
             </p>
           </div>
         )}
@@ -458,14 +535,6 @@ function SummaryTab({ account }: { account: OverviewAccount }) {
           </div>
         </Card>
       )}
-
-      {/* Tip strip — points the user at the deep work view */}
-      <div className="rounded-lg px-3 py-2.5 text-[10.5px]"
-        style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
-        Open the <strong style={{ color: "var(--text)" }}>Reconcile</strong> tab
-        for the full subledger build-up, reconciling items, evidence
-        uploads, and Save / Clear-override controls.
-      </div>
     </div>
   )
 }
@@ -500,10 +569,6 @@ function PlaceholderTab({ title, hint }: { title: string; hint: string }) {
       <h3 className="text-sm font-semibold text-theme mb-1">{title}</h3>
       <p className="text-[12px] max-w-xs" style={{ color: "var(--text-muted)" }}>
         {hint}
-      </p>
-      <p className="text-[11px] mt-4" style={{ color: "var(--text-muted)" }}>
-        Tab body migrates from the existing inline accordion when you approve
-        the pattern.
       </p>
     </div>
   )
@@ -549,13 +614,15 @@ function CheckDot({ status }: { status: "pass" | "warn" | "fail" }) {
 
 /** Reads / writes `#acct=<qbo_id>&tab=<tab>` so a refresh keeps the
  *  drawer open on the same account + tab and the URL is shareable. */
-function useTabHash(qboId: string | null): [TabId, (t: TabId) => void] {
+function useTabHash(qboId: string | null): [DrawerTabId, (t: DrawerTabId) => void] {
   const initial = readTabFromHash()
-  const tabRef = useRef<TabId>(initial)
+  const tabRef = useRef<DrawerTabId>(initial)
+  const [, force] = useState(0)
 
-  const setTab = useCallback((next: TabId) => {
+  const setTab = useCallback((next: DrawerTabId) => {
     tabRef.current = next
     writeHashState(qboId, next)
+    force((n) => n + 1)
   }, [qboId])
 
   // Whenever account changes, sync the hash with the open account.
@@ -566,14 +633,14 @@ function useTabHash(qboId: string | null): [TabId, (t: TabId) => void] {
   return [tabRef.current, setTab]
 }
 
-function readTabFromHash(): TabId {
+function readTabFromHash(): DrawerTabId {
   if (typeof window === "undefined") return "summary"
   const m = window.location.hash.match(/tab=([a-z]+)/)
-  const candidate = (m?.[1] ?? "summary") as TabId
+  const candidate = (m?.[1] ?? "summary") as DrawerTabId
   return TABS.some((t) => t.id === candidate) ? candidate : "summary"
 }
 
-function writeHashState(qboId: string | null, tab: TabId): void {
+function writeHashState(qboId: string | null, tab: DrawerTabId): void {
   if (typeof window === "undefined") return
   const params = new URLSearchParams()
   if (qboId) params.set("acct", qboId)
