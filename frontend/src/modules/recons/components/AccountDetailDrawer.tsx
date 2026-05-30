@@ -33,7 +33,6 @@ import {
   FileText,
   Layers,
   Paperclip,
-  Receipt,
   ShieldCheck,
   Sparkles,
   X,
@@ -42,12 +41,8 @@ import {
 import type { OverviewAccount } from "@/modules/recons/api"
 
 const TABS = [
-  { id: "summary",   label: "Summary",   icon: Sparkles    },
-  { id: "subledger", label: "Subledger", icon: Layers      },
-  { id: "items",     label: "Items",     icon: Receipt     },
-  { id: "evidence",  label: "Evidence",  icon: Paperclip   },
-  { id: "ai",        label: "AI",        icon: Brain       },
-  { id: "history",   label: "History",   icon: Clock       },
+  { id: "summary",   label: "Summary",    icon: Sparkles },
+  { id: "reconcile", label: "Reconcile",  icon: Layers   },
 ] as const
 type TabId = typeof TABS[number]["id"]
 
@@ -64,11 +59,20 @@ interface Props {
   onNavigate:       (account: OverviewAccount) => void
   /** Called when the user closes the drawer (X, ESC, or backdrop). */
   onClose:          () => void
+  /** Renders the deep reconciliation workflow inside the Reconcile tab.
+   *  Parent owns the mutations + state — we just give it the container.
+   *  Typically wraps <InlineSubledgerForm /> with the same onSave /
+   *  onAutoSave / onClear handlers the inline accordion uses. */
+  renderReconcileBody?: (account: OverviewAccount) => React.ReactNode
+  /** Renders a sticky action footer at the bottom of the drawer. The
+   *  parent decides which buttons make sense given the row's status
+   *  (Mark prepared / Approve / Re-open / Re-sync, etc.). */
+  renderFooter?:        (account: OverviewAccount) => React.ReactNode
 }
 
 export function AccountDetailDrawer({
   account, accounts, periodEnd: _periodEnd, readOnly,
-  onNavigate, onClose,
+  onNavigate, onClose, renderReconcileBody, renderFooter,
 }: Props) {
   const [tab, setTab] = useTabHash(account?.qbo_id ?? null)
 
@@ -139,14 +143,44 @@ export function AccountDetailDrawer({
 
             <TabBar value={tab} onChange={setTab} account={account} />
 
-            <div className="flex-1 overflow-y-auto px-5 py-5">
-              {tab === "summary"   && <SummaryTab   account={account} />}
-              {tab === "subledger" && <PlaceholderTab title="Subledger build-up" hint="Roll-forward opening · period items · closing balance + Save / Clear override controls." />}
-              {tab === "items"     && <PlaceholderTab title="Reconciling items" hint="Unmatched transactions + manual add row + per-item categorization (unapplied cash, duplicate, manual JE)." />}
-              {tab === "evidence"  && <PlaceholderTab title="Supporting evidence" hint="File list with AI-verified balance match + upload row + delete." />}
-              {tab === "ai"        && <PlaceholderTab title="Full AI commentary" hint="Long-form analysis, risk verdict, key entities, recommended actions." />}
-              {tab === "history"   && <PlaceholderTab title="Reviewer history" hint="Notes thread + status timeline + who-touched-what audit trail." />}
+            <div className="flex-1 overflow-y-auto">
+              {tab === "summary" && (
+                <div className="px-5 py-5">
+                  <SummaryTab account={account} />
+                </div>
+              )}
+              {tab === "reconcile" && (
+                // The Reconcile tab embeds the full subledger build-up,
+                // reconciling items table, evidence panel, and AI
+                // commentary — same component the inline accordion
+                // uses, so behavior is 1-to-1 with no drift risk.
+                renderReconcileBody ? (
+                  <div className="px-1 py-1">
+                    {renderReconcileBody(account)}
+                  </div>
+                ) : (
+                  <PlaceholderTab
+                    title="Reconcile"
+                    hint="The full subledger build-up workflow appears here when the parent wires renderReconcileBody."
+                  />
+                )
+              )}
             </div>
+
+            {/* Sticky action footer — sits below the scrollable body,
+                always visible. Parent decides which buttons render
+                given the row's review_status (e.g. Approve only when
+                Prepared; Re-open only when Approved). */}
+            {renderFooter && (
+              <div className="px-4 py-3 sticky bottom-0"
+                style={{
+                  background: "var(--surface)",
+                  borderTop: "1px solid var(--border-strong)",
+                  boxShadow: "0 -4px 12px rgba(0, 0, 0, 0.04)",
+                }}>
+                {renderFooter(account)}
+              </div>
+            )}
           </motion.aside>
         </Fragment>
       )}
@@ -293,10 +327,13 @@ function TabBar({ value, onChange, account }: {
   onChange: (v: TabId) => void
   account:  OverviewAccount
 }) {
-  // Light badge counts on tabs where we already know the number for free.
+  // Light badge on Reconcile when there are saved reconciling items
+  // and/or attached evidence — the user sees there's work in flight
+  // without opening the tab. Summary doesn't carry a badge.
+  const reconcileCount =
+    (account.reconciling_items?.length ?? 0) + (account.evidence_count ?? 0)
   const badge: Partial<Record<TabId, number>> = {
-    items:    account.reconciling_items?.length ?? 0,
-    evidence: account.evidence_count ?? 0,
+    reconcile: reconcileCount,
   }
   return (
     <div className="px-2 flex items-center gap-0 overflow-x-auto"
@@ -422,13 +459,12 @@ function SummaryTab({ account }: { account: OverviewAccount }) {
         </Card>
       )}
 
-      {/* Tip strip — sets expectation for the placeholder tabs */}
+      {/* Tip strip — points the user at the deep work view */}
       <div className="rounded-lg px-3 py-2.5 text-[10.5px]"
         style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
-        <strong style={{ color: "var(--text)" }}>Mockup mode.</strong>{" "}
-        The Summary tab above is the real data. Subledger / Items / Evidence /
-        AI / History tabs will move out of the inline accordion in the next
-        pass if you like this layout.
+        Open the <strong style={{ color: "var(--text)" }}>Reconcile</strong> tab
+        for the full subledger build-up, reconciling items, evidence
+        uploads, and Save / Clear-override controls.
       </div>
     </div>
   )
