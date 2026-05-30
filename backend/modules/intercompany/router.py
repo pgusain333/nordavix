@@ -1300,10 +1300,14 @@ async def get_consolidated_tb(
     )).scalars().all()
     conn_by_tid = {c.tenant_id: c for c in conns}
 
-    company_name = lambda tid: (
-        (conn_by_tid.get(tid).company_name if conn_by_tid.get(tid) else None)
-        or (tenant_by_id.get(tid).name if tenant_by_id.get(tid) else "Workspace")
-    )
+    def company_name(tid: uuid.UUID) -> str:
+        """Display label for a tenant — prefer the QBO company name, fall
+        back to the workspace name, then a generic placeholder."""
+        c = conn_by_tid.get(tid)
+        if c is not None and c.company_name:
+            return c.company_name
+        t = tenant_by_id.get(tid)
+        return t.name if t is not None else "Workspace"
 
     # Build elimination amount map per (tenant_id, qbo_account_id):
     # for each matched pair, the amount we eliminate from each side.
