@@ -10,7 +10,7 @@
  *   - Edit inline saves custom narrative
  *   - Material rows show amber badge
  */
-import { useState, useMemo, Fragment } from "react"
+import { useEffect, useState, useMemo, Fragment } from "react"
 import {
   useReactTable,
   getCoreRowModel,
@@ -41,6 +41,10 @@ import {
   X,
 } from "lucide-react"
 import { api, type VarianceRow, type VarianceTransactionsResponse } from "@/modules/flux/api"
+import {
+  VarianceDetailDrawer,
+  readVarianceDrawerIdFromHash,
+} from "@/modules/flux/components/VarianceDetailDrawer"
 import { Button, Badge, StatusBadge, Spinner } from "@/core/ui/components"
 import { cn, formatAccounting, formatPct } from "@/core/ui/utils"
 import { workspaceApi } from "@/modules/workspace/api"
@@ -120,6 +124,22 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   const [editContent, setEditContent] = useState("")
   // Bulk selection — same pattern as the recon accounts table.
   const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  // ── View-mode toggle (Inline accordion vs right-side Drawer) ─────────
+  // Same pattern as the recons dashboard. Drawer is opt-in via the
+  // chip rendered next to the status filters; choice persists per
+  // browser so a reviewer can pick once and forget. URL hash holds the
+  // open variance id for refresh resilience.
+  const [detailMode, setDetailMode] = useState<"inline" | "drawer">(() => {
+    try {
+      const v = localStorage.getItem("nordavix:variance-detail-mode")
+      return v === "drawer" ? "drawer" : "inline"
+    } catch { return "inline" }
+  })
+  useEffect(() => {
+    try { localStorage.setItem("nordavix:variance-detail-mode", detailMode) } catch { /* */ }
+  }, [detailMode])
+  const [drawerRowId, setDrawerRowId] = useState<string | null>(() => readVarianceDrawerIdFromHash())
 
   // ── Approve mutation ───────────────────────────────────────────────────────
   const approve = useMutation({
@@ -685,6 +705,36 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
             )
           })}
         </div>
+
+        {/* View-mode toggle (Inline accordion vs right-side Drawer).
+            Persists per-browser; click "Drawer" then any row to see
+            the slide-in panel. ESC closes; ←/→ flip between variances. */}
+        <div className="inline-flex items-center gap-1 rounded-lg p-1"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", width: "fit-content" }}>
+          <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5"
+            style={{ color: "var(--text-muted)" }}>View</span>
+          {(["inline", "drawer"] as const).map((m) => {
+            const active = detailMode === m
+            return (
+              <button
+                key={m}
+                onClick={() => {
+                  setDetailMode(m)
+                  if (m === "drawer") setExpanded(null)
+                  else                setDrawerRowId(null)
+                }}
+                className="rounded-md px-2.5 py-0.5 text-[11px] font-medium transition-all"
+                style={{
+                  background: active ? "var(--surface)" : "transparent",
+                  color:      active ? "var(--text)"    : "var(--text-muted)",
+                  boxShadow:  active ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
+                }}>
+                {m === "inline" ? "Inline" : "Drawer"}
+              </button>
+            )
+          })}
+        </div>
+
         <div className="ml-auto flex items-center gap-2">
           <Button
             variant="outline"
@@ -842,27 +892,33 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                 </thead>
             <tbody>
               {table.getRowModel().rows.map((row) => {
-                const isExpanded = expandedRow === row.original.id
+                // In drawer mode the inline accordion never opens — the
+                // right-side drawer takes over for drill-in.
+                const isExpanded = detailMode === "inline" && expandedRow === row.original.id
+                const isDrawerOpen = detailMode === "drawer" && drawerRowId === row.original.id
+                const highlighted = isExpanded || isDrawerOpen
                 const isEditing  = editingRow === row.original.id
                 return (
                   <Fragment key={row.id}>
                     <tr
                       className="cursor-pointer transition-colors"
                       style={{
-                        // Expanded rows pick up the secondary surface color;
-                        // all other rows render plain (materiality removed).
-                        background: isExpanded ? "var(--surface-2)" : "var(--surface)",
+                        background: highlighted ? "var(--surface-2)" : "var(--surface)",
                         borderBottom: "1px solid var(--border)",
                       }}
                       onMouseEnter={(e) => {
-                        if (!isExpanded) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"
+                        if (!highlighted) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"
                       }}
                       onMouseLeave={(e) => {
-                        if (!isExpanded) (e.currentTarget as HTMLElement).style.background = "var(--surface)"
+                        if (!highlighted) (e.currentTarget as HTMLElement).style.background = "var(--surface)"
                       }}
-                      onClick={() =>
-                        setExpanded((p) => p === row.original.id ? null : row.original.id)
-                      }
+                      onClick={() => {
+                        if (detailMode === "drawer") {
+                          setDrawerRowId((p) => p === row.original.id ? null : row.original.id)
+                        } else {
+                          setExpanded((p) => p === row.original.id ? null : row.original.id)
+                        }
+                      }}
                     >
                       {row.getVisibleCells().map((cell) => (
                         <td key={cell.id} className="px-3 py-1.5">
@@ -944,6 +1000,81 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         </div>
       )}
       </div> {/* /table-card wrapper */}
+
+      {/* Right-side detail drawer (opt-in via the View toggle above).
+          Reuses the existing NarrativePanel + VarianceTxnsSection
+          components via render-props so the drawer is pure chrome. */}
+      <VarianceDetailDrawer
+        row={drawerRowId ? rows.find((r) => r.id === drawerRowId) ?? null : null}
+        rows={rows}
+        readOnly={readOnly}
+        onNavigate={(r) => setDrawerRowId(r.id)}
+        onClose={() => setDrawerRowId(null)}
+        renderCommentary={(r) => (
+          <NarrativePanel
+            row={r}
+            tbId={tbId}
+            isEditing={editingRow === r.id}
+            editContent={editContent}
+            onEditContent={setEditContent}
+            onEdit={() => { setEditing(r.id); setEditContent(r.narrative ?? "") }}
+            onSave={() => editNarrative.mutate({ varId: r.id, content: editContent })}
+            onCancel={() => setEditing(null)}
+            isSaving={editNarrative.isPending}
+          />
+        )}
+        renderTransactions={(r) => (
+          <VarianceTxnsSection
+            tbId={tbId}
+            varianceId={r.id}
+            expectedVariance={r.dollar_variance}
+            fsCategory={r.fs_category}
+          />
+        )}
+        renderFooter={(r) => (
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 text-[10.5px]"
+              style={{ color: "var(--text-muted)" }}>
+              <span className="font-semibold uppercase tracking-wider">Status</span>
+              <span className="px-1.5 py-0.5 rounded font-bold uppercase tracking-wider"
+                style={{
+                  background:
+                    r.status === "approved" ? "rgba(16, 185, 129, 0.12)" :
+                    r.status === "generated" || r.status === "edited" ? "rgba(59, 130, 246, 0.12)" :
+                    r.status === "flagged"   ? "rgba(239, 68, 68, 0.12)"  :
+                                               "var(--surface-2)",
+                  color:
+                    r.status === "approved" ? "#047857" :
+                    r.status === "generated" || r.status === "edited" ? "#1d4ed8" :
+                    r.status === "flagged"   ? "#b91c1c" :
+                                               "var(--text-muted)",
+                }}>
+                {r.status}
+              </span>
+            </div>
+            {!readOnly && canApprove && (
+              <div className="flex items-center gap-1.5">
+                {r.status !== "approved" && (
+                  <Button
+                    size="sm"
+                    icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
+                    loading={approve.isPending}
+                    onClick={() => approve.mutate(r.id)}>
+                    Approve
+                  </Button>
+                )}
+                {r.status === "approved" && (
+                  <span className="text-[10.5px] inline-flex items-center gap-1"
+                    style={{ color: "var(--green)" }}>
+                    <CheckCircle2 size={11} strokeWidth={2} />
+                    Approved
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      />
     </div>
   )
 }
