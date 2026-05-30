@@ -24,7 +24,9 @@ export interface BlogPostMeta {
   readingTime:   string
   /** Display category — Close process / AI / Consolidation / etc. */
   category:      string
-  /** Author name. Defaults to "Pankaj Gusain, CPA" if omitted. */
+  /** Author name. Defaults to "The Founder CPA" if omitted — the
+   *  blog is written under a pseudonym to keep founder identity
+   *  out of public-facing surfaces. */
   author?:       string
   /** Short teaser shown in the blog index card. Plain text, no markdown. */
   excerpt:       string

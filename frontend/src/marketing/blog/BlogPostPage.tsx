@@ -19,7 +19,7 @@ import { Link, useParams, Navigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Share2, Linkedin, Twitter,
-  Link as LinkIcon, Check, ChevronRight,
+  Link as LinkIcon, Check, ChevronRight, Sparkles,
 } from "lucide-react"
 import { findPostBySlug, POSTS } from "@/marketing/blog/posts/registry"
 import { getCategoryMeta } from "@/marketing/blog/categories"
@@ -180,7 +180,7 @@ export function BlogPostPage() {
             <span className="inline-flex items-center gap-1.5">
               <Clock size={12} strokeWidth={1.8} /> {meta.readingTime}
             </span>
-            <span>By {meta.author ?? "Pankaj Gusain, CPA"}</span>
+            <span>By {meta.author ?? "The Founder CPA"}</span>
           </div>
         </div>
       </section>
@@ -201,15 +201,17 @@ export function BlogPostPage() {
             <Body />
           </motion.div>
 
-          {/* Author bio card */}
+          {/* Author bio card — pseudonymous byline; avatar uses the
+              Nordavix mark so it reads as "from the team" rather than
+              foregrounding any specific person. */}
           <div className="mt-12 rounded-2xl p-5 sm:p-6 flex items-start gap-4"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-            <div className="h-12 w-12 rounded-full shrink-0 flex items-center justify-center text-base font-bold text-white"
+            <div className="h-12 w-12 rounded-full shrink-0 flex items-center justify-center text-white"
               style={{ background: `linear-gradient(135deg, ${cat.gradient[0]}, ${cat.gradient[1]})` }}>
-              PG
+              <Sparkles size={20} strokeWidth={1.8} />
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-bold text-theme">{meta.author ?? "Pankaj Gusain, CPA"}</p>
+              <p className="text-sm font-bold text-theme">{meta.author ?? "The Founder CPA"}</p>
               <p className="text-[12px] mt-0.5" style={{ color: "var(--text-2)" }}>
                 Founder of Nordavix, the AI-native month-end close platform. CPA with
                 deep experience in controllership, audit, and consolidation across

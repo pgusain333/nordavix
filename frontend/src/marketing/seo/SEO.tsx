@@ -233,7 +233,7 @@ export function articleSchema(args: {
     dateModified:   args.dateModified || args.datePublished,
     author: {
       "@type": "Person",
-      name:    args.author || "Pankaj Gusain, CPA",
+      name:    args.author || "The Founder CPA",
     },
     publisher: {
       "@type": "Organization",
