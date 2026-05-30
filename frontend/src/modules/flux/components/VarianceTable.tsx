@@ -10,7 +10,7 @@
  *   - Edit inline saves custom narrative
  *   - Material rows show amber badge
  */
-import { useEffect, useState, useMemo, Fragment } from "react"
+import { useState, useMemo, Fragment } from "react"
 import {
   useReactTable,
   getCoreRowModel,
@@ -21,7 +21,6 @@ import {
   type SortingState,
 } from "@tanstack/react-table"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AnimatePresence, motion } from "framer-motion"
 import { formatDate } from "@/core/lib/dates"
 import {
   CheckCircle2,
@@ -119,26 +118,13 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   //   approved  = signed off
   //   all       = everything
   const [filter, setFilter] = useState<"open" | "prepared" | "approved" | "all">("open")
-  const [expandedRow, setExpanded] = useState<string | null>(null)
   const [editingRow,  setEditing]  = useState<string | null>(null)
   const [editContent, setEditContent] = useState("")
   // Bulk selection — same pattern as the recon accounts table.
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
-  // ── View-mode toggle (Inline accordion vs right-side Drawer) ─────────
-  // Same pattern as the recons dashboard. Drawer is opt-in via the
-  // chip rendered next to the status filters; choice persists per
-  // browser so a reviewer can pick once and forget. URL hash holds the
-  // open variance id for refresh resilience.
-  const [detailMode, setDetailMode] = useState<"inline" | "drawer">(() => {
-    try {
-      const v = localStorage.getItem("nordavix:variance-detail-mode")
-      return v === "drawer" ? "drawer" : "inline"
-    } catch { return "inline" }
-  })
-  useEffect(() => {
-    try { localStorage.setItem("nordavix:variance-detail-mode", detailMode) } catch { /* */ }
-  }, [detailMode])
+  // Drawer is the only drill-in path now — inline accordion was removed.
+  // URL hash keeps the selection alive across refreshes.
   const [drawerRowId, setDrawerRowId] = useState<string | null>(() => readVarianceDrawerIdFromHash())
 
   // ── Approve mutation ───────────────────────────────────────────────────────
@@ -626,12 +612,12 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
             <Button
               size="icon-sm"
               variant="outline"
-              title="Edit narrative"
+              title="Edit narrative — opens the drawer"
               onClick={(e) => {
                 e.stopPropagation()
                 setEditing(r.id)
                 setEditContent(r.narrative ?? "")
-                setExpanded(r.id)
+                setDrawerRowId(r.id)
               }}
             >
               <Pencil size={14} strokeWidth={1.6} />
@@ -701,35 +687,6 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
               >
                 {b.label}
                 <span className="text-[10px] tabular-nums opacity-80">{b.count}</span>
-              </button>
-            )
-          })}
-        </div>
-
-        {/* View-mode toggle (Inline accordion vs right-side Drawer).
-            Persists per-browser; click "Drawer" then any row to see
-            the slide-in panel. ESC closes; ←/→ flip between variances. */}
-        <div className="inline-flex items-center gap-1 rounded-lg p-1"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", width: "fit-content" }}>
-          <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5"
-            style={{ color: "var(--text-muted)" }}>View</span>
-          {(["inline", "drawer"] as const).map((m) => {
-            const active = detailMode === m
-            return (
-              <button
-                key={m}
-                onClick={() => {
-                  setDetailMode(m)
-                  if (m === "drawer") setExpanded(null)
-                  else                setDrawerRowId(null)
-                }}
-                className="rounded-md px-2.5 py-0.5 text-[11px] font-medium transition-all"
-                style={{
-                  background: active ? "var(--surface)" : "transparent",
-                  color:      active ? "var(--text)"    : "var(--text-muted)",
-                  boxShadow:  active ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
-                }}>
-                {m === "inline" ? "Inline" : "Drawer"}
               </button>
             )
           })}
@@ -892,33 +849,25 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                 </thead>
             <tbody>
               {table.getRowModel().rows.map((row) => {
-                // In drawer mode the inline accordion never opens — the
-                // right-side drawer takes over for drill-in.
-                const isExpanded = detailMode === "inline" && expandedRow === row.original.id
-                const isDrawerOpen = detailMode === "drawer" && drawerRowId === row.original.id
-                const highlighted = isExpanded || isDrawerOpen
-                const isEditing  = editingRow === row.original.id
+                // Drawer is the only drill-in path now.
+                const isDrawerOpen = drawerRowId === row.original.id
                 return (
                   <Fragment key={row.id}>
                     <tr
                       className="cursor-pointer transition-colors"
                       style={{
-                        background: highlighted ? "var(--surface-2)" : "var(--surface)",
+                        background: isDrawerOpen ? "var(--surface-2)" : "var(--surface)",
                         borderBottom: "1px solid var(--border)",
                       }}
                       onMouseEnter={(e) => {
-                        if (!highlighted) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"
+                        if (!isDrawerOpen) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"
                       }}
                       onMouseLeave={(e) => {
-                        if (!highlighted) (e.currentTarget as HTMLElement).style.background = "var(--surface)"
+                        if (!isDrawerOpen) (e.currentTarget as HTMLElement).style.background = "var(--surface)"
                       }}
-                      onClick={() => {
-                        if (detailMode === "drawer") {
-                          setDrawerRowId((p) => p === row.original.id ? null : row.original.id)
-                        } else {
-                          setExpanded((p) => p === row.original.id ? null : row.original.id)
-                        }
-                      }}
+                      onClick={() =>
+                        setDrawerRowId((p) => p === row.original.id ? null : row.original.id)
+                      }
                     >
                       {row.getVisibleCells().map((cell) => (
                         <td key={cell.id} className="px-3 py-1.5">
@@ -926,59 +875,6 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                         </td>
                       ))}
                     </tr>
-
-                    {/* Expanded narrative row — wrapped in motion.tr
-                        so the height + opacity animate when the user
-                        toggles a row. Previously a hard if-render which
-                        snapped open/closed. Height auto + a short
-                        cubic ease keeps the table feeling responsive
-                        without being slow. */}
-                    <AnimatePresence>
-                      {isExpanded && (
-                        <motion.tr
-                          key={`${row.id}-exp`}
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          transition={{ duration: 0.18, ease: [0.32, 0.72, 0, 1] }}
-                          style={{ background: "var(--surface-2)" }}
-                        >
-                          <td
-                            colSpan={columns.length}
-                            className="px-5"
-                            style={{ borderBottom: "1px solid var(--border)", padding: 0 }}
-                          >
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: "auto", opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
-                              style={{ overflow: "hidden" }}
-                            >
-                              <div className="px-5 py-4">
-                                <NarrativePanel
-                                  row={row.original}
-                                  tbId={tbId}
-                                  isEditing={isEditing}
-                                  editContent={editContent}
-                                  onEditContent={setEditContent}
-                                  onEdit={() => {
-                                    setEditing(row.original.id)
-                                    setEditContent(row.original.narrative ?? "")
-                                  }}
-                                  onSave={() => editNarrative.mutate({
-                                    varId: row.original.id,
-                                    content: editContent
-                                  })}
-                                  onCancel={() => setEditing(null)}
-                                  isSaving={editNarrative.isPending}
-                                />
-                              </div>
-                            </motion.div>
-                          </td>
-                        </motion.tr>
-                      )}
-                    </AnimatePresence>
                   </Fragment>
                 )
               })}

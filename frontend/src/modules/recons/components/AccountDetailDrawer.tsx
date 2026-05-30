@@ -218,7 +218,12 @@ export function AccountDetailDrawer({
             initial={isLgUp ? { x: "100%" } : { y: "100%" }}
             animate={isLgUp ? { x: 0 } : { y: 0 }}
             exit={isLgUp ? { x: "100%" } : { y: "100%" }}
-            transition={{ type: "spring", stiffness: 280, damping: 32, mass: 0.9 }}
+            // Material-style ease for predictable, glide-y motion (no
+            // spring overshoot, no jitter). willChange hint pushes the
+            // panel onto the GPU compositor so the transform animates
+            // off the main thread and stays smooth even while the
+            // page content is reflowing for the push-aside layout.
+            transition={{ duration: 0.32, ease: [0.4, 0, 0.2, 1] }}
             className="fixed z-50 flex flex-col"
             style={
               isLgUp
@@ -228,6 +233,7 @@ export function AccountDetailDrawer({
                     background: "var(--surface)",
                     borderLeft: "1px solid var(--border-strong)",
                     boxShadow: "-20px 0 40px rgba(0, 0, 0, 0.12)",
+                    willChange: "transform",
                   }
                 : {
                     left: 0, right: 0, bottom: 0,
@@ -237,6 +243,7 @@ export function AccountDetailDrawer({
                     borderTopRightRadius: 16,
                     borderTop: "1px solid var(--border-strong)",
                     boxShadow: "0 -20px 40px rgba(0, 0, 0, 0.18)",
+                    willChange: "transform",
                   }
             }
             role="dialog"
@@ -429,6 +436,16 @@ function StatusPill({ status }: { status: OverviewAccount["review_status"] }) {
   )
 }
 
+/** Accounting-style currency: positive = $1,234.56, negative = $(1,234.56).
+ *  Standard convention CPAs expect — beats the leading-minus style which
+ *  is easy to miss when scanning a column. */
+function fmtMoneyAcct(value: number): string {
+  const abs = Math.abs(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  })
+  return value < 0 ? `$(${abs})` : `$${abs}`
+}
+
 function BalanceCell({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   const n = parseFloat(value) || 0
   return (
@@ -438,7 +455,7 @@ function BalanceCell({ label, value, accent }: { label: string; value: string; a
         style={{ color: "var(--text-muted)" }}>{label}</div>
       <div className="text-sm font-semibold tabular-nums mt-0.5"
         style={{ color: accent ? "#b91c1c" : "var(--text)" }}>
-        {`$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+        {fmtMoneyAcct(n)}
       </div>
     </div>
   )
@@ -587,7 +604,7 @@ function SummaryTab({ account }: { account: OverviewAccount }) {
             <div className="flex items-center gap-2">
               <AlertTriangle size={14} strokeWidth={2} style={{ color: "#b45309" }} />
               <span className="text-[12px] text-theme">
-                {`$${Math.abs(variance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} unreconciled.`}
+                {`${fmtMoneyAcct(variance)} unreconciled.`}
               </span>
             </div>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>

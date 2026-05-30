@@ -384,7 +384,7 @@ export function FluxDashboard() {
         // alongside the drawer instead of disappearing under it.
         // Mobile leaves the var unset → padding stays 0.
         paddingRight: "var(--detail-drawer-width, 0px)",
-        transition: "padding-right 280ms cubic-bezier(0.32, 0.72, 0, 1)",
+        transition: "padding-right 320ms cubic-bezier(0.4, 0, 0.2, 1)",
       }}>
       {/* ANALYSES sidebar removed — FluxMonthIndex is the navigation
           surface now. FluxDashboard is a focused single-analysis view,

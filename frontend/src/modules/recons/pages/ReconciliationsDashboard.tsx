@@ -208,22 +208,9 @@ export function ReconciliationsDashboard() {
   const [drawerAccount, setDrawerAccount] = useState<OverviewAccount | null>(null)
   const [drawerMode, setDrawerMode] = useState<"subledger" | "variance">("subledger")
   const [confirmClear, setConfirmClear] = useState(false)
-  /** qbo_account_id of the row currently expanded inline (null = all collapsed). */
-  const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null)
-  /** "Inline" (legacy accordion) vs "Drawer" (right-side panel, opt-in preview).
-   *  Persists across reloads via localStorage so a reviewer can keep using
-   *  the mode they like without re-toggling. Defaults to "inline" — the
-   *  drawer is a deliberate opt-in until everyone's seen it. */
-  const [detailMode, setDetailMode] = useState<"inline" | "drawer">(() => {
-    try {
-      const v = localStorage.getItem("nordavix:recons-detail-mode")
-      return v === "drawer" ? "drawer" : "inline"
-    } catch { return "inline" }
-  })
-  useEffect(() => {
-    try { localStorage.setItem("nordavix:recons-detail-mode", detailMode) } catch { /* private mode */ }
-  }, [detailMode])
-  /** Account currently shown in the right-side drawer (drawer mode only). */
+  /** Account currently shown in the right-side drawer. Drawer is now
+   *  the only drill-in path — inline accordion was removed. URL hash
+   *  keeps the selection alive across refreshes. */
   const [drawerAcctId, setDrawerAcctId] = useState<string | null>(() => readDrawerAcctFromHash())
 
   // KPI sticky-on-scroll: tracks the page's scroll position so the top
@@ -563,11 +550,11 @@ export function ReconciliationsDashboard() {
   // different period now.
   useEffect(() => { setSelected(new Set()) }, [periodEnd])
 
-  // Auto-collapse any expanded inline form when the period goes from
-  // unlocked → locked. Avoids showing an editable form on a frozen period.
+  // Auto-close the drawer when the period goes from unlocked → locked.
+  // Avoids showing an editable detail panel on a frozen period.
   useEffect(() => {
     if (isClosed) {
-      setExpandedAccountId(null)
+      setDrawerAcctId(null)
       setSelected(new Set())
     }
   }, [isClosed])
@@ -656,9 +643,9 @@ export function ReconciliationsDashboard() {
     }) =>
       reconsApi.setSubledgerOverride(v.qboId, periodEnd, v.total, v.source, v.items),
     onSuccess: (_data, v) => {
-      // Explicit saves (Save button, Clear override) close the form.
+      // Explicit saves (Save button, Clear override) close the drawer.
       // Auto-saves leave it open so the user can keep ticking.
-      if (!v.autoSave) setExpandedAccountId(null)
+      if (!v.autoSave) setDrawerAcctId(null)
       // Optimistic patch so the manual badge / value flips immediately.
       const prev = qc.getQueryData<Overview>(["recons-overview", periodEnd])
       if (prev) {
@@ -830,7 +817,9 @@ export function ReconciliationsDashboard() {
         // transition matches the drawer's spring feel so things land
         // together. Mobile leaves the var unset, so padding stays 0.
         paddingRight: "var(--detail-drawer-width, 0px)",
-        transition: "padding-right 280ms cubic-bezier(0.32, 0.72, 0, 1)",
+        // Match the drawer's ease + duration so the page and the
+        // panel slide into place as one motion.
+        transition: "padding-right 320ms cubic-bezier(0.4, 0, 0.2, 1)",
       }}>
       {/* AI-working overlay — covers the page while the agentic preparer
           runs. Includes a Stop button that signals cooperative cancel
@@ -1321,39 +1310,6 @@ export function ReconciliationsDashboard() {
               })}
             </div>
 
-            {/* Detail-view mode toggle — preview of the right-side drawer
-                pattern. Persists per-user; click "Drawer" then click any
-                account row to see the slide-in panel instead of the
-                inline accordion. ESC closes; ←/→ flip between accounts.  */}
-            <div className="inline-flex items-center gap-1 rounded-lg p-1"
-              style={{ background: "var(--surface-2)", border: "1px solid var(--border)", width: "fit-content" }}
-              title="How to open account details">
-              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5"
-                style={{ color: "var(--text-muted)" }}>View</span>
-              {(["inline", "drawer"] as const).map((m) => {
-                const active = detailMode === m
-                return (
-                  <button
-                    key={m}
-                    onClick={() => {
-                      setDetailMode(m)
-                      // Switching modes — close whatever was open in the
-                      // other mode so the user isn't seeing both at once.
-                      if (m === "drawer") setExpandedAccountId(null)
-                      else                setDrawerAcctId(null)
-                    }}
-                    className="rounded-md px-2.5 py-0.5 text-[11px] font-medium transition-all"
-                    style={{
-                      background: active ? "var(--surface)" : "transparent",
-                      color:      active ? "var(--text)"    : "var(--text-muted)",
-                      boxShadow:  active ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
-                    }}>
-                    {m === "inline" ? "Inline" : "Drawer"}
-                  </button>
-                )
-              })}
-            </div>
-
             {/* Filters */}
             <div className="flex items-center gap-2 flex-wrap">
               <div className="relative flex-1 min-w-[180px] max-w-xs">
@@ -1542,35 +1498,29 @@ export function ReconciliationsDashboard() {
                         const color = GROUP_COLORS[a.group_label] ?? "var(--text-muted)"
                         const isSelected = selected.has(a.qbo_id)
                         const status = a.review_status
-                        // In drawer mode the inline accordion never opens —
-                        // the right-side drawer takes over for drill-in.
-                        const isExpanded = detailMode === "inline" && expandedAccountId === a.qbo_id
-                        const isDrawerOpen = detailMode === "drawer" && drawerAcctId === a.qbo_id
+                        // Drawer is the only drill-in path now — clicking
+                        // a row opens the right-side panel (or bottom
+                        // sheet on mobile). Inline accordion is gone.
+                        const isDrawerOpen = drawerAcctId === a.qbo_id
                         return (
                           <Fragment key={a.qbo_id}>
                           <tr
-                            onClick={() => {
-                              if (detailMode === "drawer") {
-                                setDrawerAcctId(isDrawerOpen ? null : a.qbo_id)
-                              } else {
-                                setExpandedAccountId(isExpanded ? null : a.qbo_id)
-                              }
-                            }}
+                            onClick={() => setDrawerAcctId(isDrawerOpen ? null : a.qbo_id)}
                             style={{
-                              borderBottom: isExpanded ? "none" : "1px solid var(--border)",
+                              borderBottom: "1px solid var(--border)",
                               cursor: "pointer",
                               background: isSelected
                                 ? "var(--green-subtle)"
-                                : isExpanded || isDrawerOpen
+                                : isDrawerOpen
                                   ? "var(--surface-2)"
                                   : status === "approved"
                                     ? "rgba(16, 185, 129, 0.04)"
                                     : "transparent",
                             }}
                             className="transition-colors"
-                            onMouseEnter={(e) => { if (!isSelected && !isExpanded && !isDrawerOpen) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                            onMouseEnter={(e) => { if (!isSelected && !isDrawerOpen) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
                             onMouseLeave={(e) => {
-                              if (!isSelected && !isExpanded && !isDrawerOpen) {
+                              if (!isSelected && !isDrawerOpen) {
                                 (e.currentTarget as HTMLElement).style.background =
                                   status === "approved" ? "rgba(16, 185, 129, 0.04)" : ""
                               }
@@ -1754,60 +1704,6 @@ export function ReconciliationsDashboard() {
                               </div>
                             </td>
                           </tr>
-                          {/* Inline expanded form — opens beneath the clicked row
-                              instead of a modal. Same fields as before. */}
-                          <AnimatePresence initial={false}>
-                            {isExpanded && (
-                              <motion.tr
-                                key={`${a.qbo_id}-expanded`}
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                transition={{ duration: 0.15 }}
-                                style={{ borderBottom: "1px solid var(--border)" }}
-                              >
-                                <td colSpan={10} style={{ padding: 0, background: "var(--surface-2)" }}>
-                                  <motion.div
-                                    initial={{ height: 0 }}
-                                    animate={{ height: "auto" }}
-                                    exit={{ height: 0 }}
-                                    transition={{ duration: 0.2, ease: "easeOut" }}
-                                    style={{ overflow: "hidden" }}
-                                  >
-                                    <InlineSubledgerForm
-                                      account={a}
-                                      periodEnd={periodEnd}
-                                      saving={subledgerMut.isPending}
-                                      readOnly={isClosed}
-                                      onSave={(total, source, items) => {
-                                        // Persist the override...
-                                        subledgerMut.mutate({ qboId: a.qbo_id, total, source, items })
-                                        // ...and bump the row to "Prepared" so the maker step
-                                        // is captured (= the "reviewed" enum on the API). Skip
-                                        // the bump for already-Approved rows so re-editing an
-                                        // approved recon doesn't silently downgrade it.
-                                        if (a.review_status !== "approved" && a.review_status !== "reviewed") {
-                                          setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })
-                                        }
-                                      }}
-                                      onAutoSave={(total, source, items) => {
-                                        // Tick-driven save: no status bump, keep form open.
-                                        // The KPI cards refresh via subledgerMut.onSuccess's
-                                        // optimistic totals recompute.
-                                        subledgerMut.mutate({
-                                          qboId: a.qbo_id, total, source, items, autoSave: true,
-                                        })
-                                      }}
-                                      onClear={() =>
-                                        subledgerMut.mutate({ qboId: a.qbo_id, total: null, source: null, items: [] })
-                                      }
-                                      onClose={() => setExpandedAccountId(null)}
-                                    />
-                                  </motion.div>
-                                </td>
-                              </motion.tr>
-                            )}
-                          </AnimatePresence>
                           </Fragment>
                         )
                       })}
