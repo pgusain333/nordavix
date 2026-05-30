@@ -32,8 +32,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
+from models.gl_balance_snapshot import GlBalanceSnapshot
 from models.intercompany_account import IntercompanyAccount
+from models.intercompany_pair import IntercompanyPair
 from models.qbo_connection import QboConnection
+from models.tenant import Tenant
+from models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -724,3 +728,852 @@ async def get_account_transactions(
         "period_start": period_start.isoformat(),
         "period_end":   pe.isoformat(),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Cross-tenant pairing + eliminations + consolidated TB
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# These endpoints turn the IC module from "tracking" into actual
+# consolidation prep. A user who is a member of multiple Clerk orgs
+# (typical for a CPA managing a multi-entity client group) can:
+#
+#   1. PAIR an IC account in one workspace with the matching account in
+#      another workspace they have access to.  /api/intercompany/pairs
+#
+#   2. See an ELIMINATIONS report — for every pair, both sides' balances
+#      at period_end + the diff. Matched pairs eliminate; mismatched
+#      pairs flag for investigation.   /api/intercompany/eliminations
+#
+#   3. Get a CONSOLIDATED TB across every linked entity with the
+#      eliminations applied. Exportable to Excel for working-paper use.
+#                                       /api/intercompany/consolidated-tb
+#
+# Cross-tenant safety: every query that crosses tenant boundaries first
+# verifies the current user is a member of the destination tenant via
+# the User table (same clerk_user_id → row exists in other tenant). The
+# row-level filter is bypassed via skip_tenant_filter ONLY when the
+# membership check has succeeded.
+
+
+# ── Schemas ─────────────────────────────────────────────────────────────────
+
+class AccessibleAccount(BaseModel):
+    qbo_account_id: str
+    account_number: str
+    account_name:   str
+    account_type:   str
+    kind:           str   # 'receivable' | 'payable' | 'unknown'
+    counterparty:   str | None
+
+
+class AccessibleCompany(BaseModel):
+    tenant_id:       str
+    clerk_org_id:    str
+    name:            str           # display name from Tenant.name
+    company_name:    str | None    # from QboConnection.company_name
+    qbo_connected:   bool
+    ic_accounts:     list[AccessibleAccount]
+
+
+class AccessibleCompaniesResponse(BaseModel):
+    companies: list[AccessibleCompany]
+
+
+class PairIn(BaseModel):
+    my_qbo_account_id:           str
+    counterparty_tenant_id:      str    # UUID string
+    counterparty_qbo_account_id: str
+    notes:                       str | None = None
+
+
+class PairOut(BaseModel):
+    pair_group_id:               str
+    my_qbo_account_id:           str
+    my_account_label:            str
+    counterparty_tenant_id:      str
+    counterparty_clerk_org_id:   str
+    counterparty_label:          str
+    counterparty_qbo_account_id: str
+    notes:                       str | None
+    created_at:                  str
+
+
+class EliminationRow(BaseModel):
+    pair_group_id:               str
+    my_qbo_account_id:           str
+    my_account_label:            str
+    my_balance:                  str
+    counterparty_tenant_id:      str
+    counterparty_label:          str
+    counterparty_balance:        str
+    # |my_balance + counterparty_balance| in absolute terms — for an IC
+    # AR ↔ IC AP pair the books should net to zero (one debit, one
+    # credit). diff = my + cp; if ~0 → matched, else mismatch.
+    diff:                        str
+    status:                      str   # 'matched' | 'mismatch' | 'one_side_missing'
+
+
+class EliminationsResponse(BaseModel):
+    period_end:    str
+    rows:          list[EliminationRow]
+    totals: dict   # matched_count, mismatch_count, total_to_eliminate
+
+
+class ConsolidatedRow(BaseModel):
+    fs_category:        str
+    account_label:      str          # combined label for the line
+    tenant_id:          str
+    company_name:       str
+    qbo_account_id:     str
+    raw_balance:        str
+    elimination:        str          # signed amount we subtract
+    consolidated:       str          # raw + elimination
+    is_eliminated_row:  bool         # true if any part of the balance was eliminated
+
+
+class ConsolidatedTbResponse(BaseModel):
+    period_end:        str
+    companies:         list[dict]   # [{ tenant_id, name }]
+    rows:              list[ConsolidatedRow]
+    totals: dict   # raw_total, elim_total, consolidated_total per category
+
+
+# ── Helpers — cross-tenant access ───────────────────────────────────────────
+
+async def _user_accessible_tenant_ids(db: AsyncSession, user: User) -> set[uuid.UUID]:
+    """
+    Every tenant the current user has a User row in (i.e. is a Clerk-org
+    member of). Bypasses the row-level tenant filter intentionally —
+    membership IS the cross-tenant authorization.
+    """
+    rows = (await db.execute(
+        select(User.tenant_id).where(User.clerk_user_id == user.clerk_user_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    return {r for r in rows}
+
+
+async def _ensure_user_can_access(db: AsyncSession, user: User, target_tenant_id: uuid.UUID) -> None:
+    """403 unless the user has membership in `target_tenant_id`."""
+    accessible = await _user_accessible_tenant_ids(db, user)
+    if target_tenant_id not in accessible:
+        raise HTTPException(403, "You don't have access to that workspace.")
+
+
+async def _account_label_from_snapshot(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+) -> str:
+    """
+    Build a display label "AccountNum AccountName" for an IC account in
+    a given tenant from the latest GL snapshot. Returns "(account)"
+    when no snapshot exists yet (recons hasn't been synced).
+    """
+    row = (await db.execute(
+        select(GlBalanceSnapshot)
+        .where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.qbo_account_id == qbo_account_id,
+        )
+        .order_by(GlBalanceSnapshot.period_end.desc())
+        .limit(1),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if row is None:
+        return "(account)"
+    num = (row.account_number or "").strip()
+    name = (row.account_name or "").strip()
+    return f"{num} {name}".strip() if num else name
+
+
+async def _balance_at_period_end(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+    period_end: date,
+) -> Decimal | None:
+    """
+    Look up the snapshot for this account at period_end (closest <= match
+    so a snapshot taken mid-month still serves). Returns None when no
+    snapshot exists for this period.
+    """
+    row = (await db.execute(
+        select(GlBalanceSnapshot)
+        .where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.qbo_account_id == qbo_account_id,
+            GlBalanceSnapshot.period_end <= period_end,
+        )
+        .order_by(GlBalanceSnapshot.period_end.desc())
+        .limit(1),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if row is None:
+        return None
+    return Decimal(row.balance)
+
+
+# ── /accessible-companies ──────────────────────────────────────────────────
+
+@router.get("/accessible-companies", response_model=AccessibleCompaniesResponse)
+async def list_accessible_companies(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> AccessibleCompaniesResponse:
+    """
+    Every OTHER workspace the current user has access to (via shared
+    Clerk org membership), plus each workspace's existing IC accounts.
+    Feeds the "Pair with company X account Y" dropdown.
+    """
+    accessible = await _user_accessible_tenant_ids(db, user)
+    accessible.discard(tenant_id)
+    if not accessible:
+        return AccessibleCompaniesResponse(companies=[])
+
+    # Pull tenants + their QBO connections + their IC accounts in three
+    # bulk queries to keep this fast. All use skip_tenant_filter since
+    # we're crossing tenant boundaries (authorization already verified).
+    tenants = (await db.execute(
+        select(Tenant).where(Tenant.id.in_(accessible)),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+
+    conns = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id.in_(accessible)),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    conn_by_tid = {c.tenant_id: c for c in conns}
+
+    ic_marks = (await db.execute(
+        select(IntercompanyAccount).where(IntercompanyAccount.tenant_id.in_(accessible)),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    marks_by_tid: dict[uuid.UUID, list[IntercompanyAccount]] = {}
+    for m in ic_marks:
+        marks_by_tid.setdefault(m.tenant_id, []).append(m)
+
+    # Hydrate account_name/number from latest snapshot per qbo_account_id.
+    # One bulk fetch across all needed (tenant_id, qbo_account_id) pairs.
+    snap_rows = (await db.execute(
+        select(GlBalanceSnapshot).where(
+            GlBalanceSnapshot.tenant_id.in_(accessible),
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    # Build dict keyed by (tenant_id, qbo_account_id) → latest snapshot
+    latest_snap: dict[tuple[uuid.UUID, str], GlBalanceSnapshot] = {}
+    for s in snap_rows:
+        key = (s.tenant_id, s.qbo_account_id)
+        prior = latest_snap.get(key)
+        if prior is None or s.period_end > prior.period_end:
+            latest_snap[key] = s
+
+    out: list[AccessibleCompany] = []
+    for t in tenants:
+        conn = conn_by_tid.get(t.id)
+        accts_out: list[AccessibleAccount] = []
+        for m in marks_by_tid.get(t.id, []):
+            snap = latest_snap.get((t.id, m.qbo_account_id))
+            accts_out.append(AccessibleAccount(
+                qbo_account_id=m.qbo_account_id,
+                account_number=(snap.account_number if snap else "") or "",
+                account_name=(snap.account_name if snap else "(account)"),
+                account_type=(snap.account_type if snap else ""),
+                kind=m.kind,
+                counterparty=m.counterparty,
+            ))
+        # Sort accounts by number then name
+        accts_out.sort(key=lambda a: (a.account_number, a.account_name))
+        out.append(AccessibleCompany(
+            tenant_id=str(t.id),
+            clerk_org_id=t.clerk_org_id,
+            name=t.name,
+            company_name=(conn.company_name if conn else None),
+            qbo_connected=conn is not None,
+            ic_accounts=accts_out,
+        ))
+    # Sort companies alphabetically by display name
+    out.sort(key=lambda c: c.name.lower())
+    return AccessibleCompaniesResponse(companies=out)
+
+
+# ── /pairs ──────────────────────────────────────────────────────────────────
+
+@router.get("/pairs", response_model=list[PairOut])
+async def list_pairs(
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> list[PairOut]:
+    """Pairs visible to THIS tenant (its half of each pair_group)."""
+    pairs = list((await db.execute(
+        select(IntercompanyPair).order_by(IntercompanyPair.created_at.desc())
+    )).scalars().all())
+    out: list[PairOut] = []
+    for p in pairs:
+        my_label = await _account_label_from_snapshot(db, tenant_id, p.my_qbo_account_id)
+        out.append(PairOut(
+            pair_group_id=str(p.pair_group_id),
+            my_qbo_account_id=p.my_qbo_account_id,
+            my_account_label=my_label,
+            counterparty_tenant_id=str(p.counterparty_tenant_id),
+            counterparty_clerk_org_id=p.counterparty_clerk_org_id,
+            counterparty_label=p.counterparty_label,
+            counterparty_qbo_account_id=p.counterparty_qbo_account_id,
+            notes=p.notes,
+            created_at=p.created_at.isoformat(),
+        ))
+    return out
+
+
+@router.post("/pairs", response_model=PairOut)
+async def create_pair(
+    body: PairIn,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PairOut:
+    """
+    Create a pair: writes TWO rows (one per tenant) sharing a
+    pair_group_id. Idempotent: returns the existing pair if one already
+    exists with the same (my_account, cp_tenant, cp_account).
+    """
+    try:
+        cp_tenant_uuid = uuid.UUID(body.counterparty_tenant_id)
+    except Exception:
+        raise HTTPException(400, "counterparty_tenant_id must be a UUID.")
+
+    # Authorize: user must have access to the counterparty tenant too
+    await _ensure_user_can_access(db, user, cp_tenant_uuid)
+
+    # Idempotency check — same triple already paired?
+    existing = (await db.execute(
+        select(IntercompanyPair).where(
+            IntercompanyPair.my_qbo_account_id == body.my_qbo_account_id,
+            IntercompanyPair.counterparty_tenant_id == cp_tenant_uuid,
+            IntercompanyPair.counterparty_qbo_account_id == body.counterparty_qbo_account_id,
+        )
+    )).scalar_one_or_none()
+    if existing is not None:
+        my_label = await _account_label_from_snapshot(db, tenant_id, existing.my_qbo_account_id)
+        return PairOut(
+            pair_group_id=str(existing.pair_group_id),
+            my_qbo_account_id=existing.my_qbo_account_id,
+            my_account_label=my_label,
+            counterparty_tenant_id=str(existing.counterparty_tenant_id),
+            counterparty_clerk_org_id=existing.counterparty_clerk_org_id,
+            counterparty_label=existing.counterparty_label,
+            counterparty_qbo_account_id=existing.counterparty_qbo_account_id,
+            notes=existing.notes,
+            created_at=existing.created_at.isoformat(),
+        )
+
+    # Look up the counterparty tenant's display info so we can build the
+    # cached label for both halves of the pair.
+    cp_tenant = (await db.execute(
+        select(Tenant).where(Tenant.id == cp_tenant_uuid),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if cp_tenant is None:
+        raise HTTPException(404, "Counterparty workspace not found.")
+
+    cp_conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == cp_tenant_uuid),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    cp_company_name = (cp_conn.company_name if cp_conn else None) or cp_tenant.name
+
+    # Look up the current tenant info for the mirror row's label
+    my_tenant = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    my_conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    my_company_name = (my_conn.company_name if my_conn else None) or (my_tenant.name if my_tenant else "Workspace")
+
+    # Account labels from snapshots
+    cp_account_label = await _account_label_from_snapshot(db, cp_tenant_uuid, body.counterparty_qbo_account_id)
+    my_account_label = await _account_label_from_snapshot(db, tenant_id, body.my_qbo_account_id)
+
+    # Build both halves
+    pair_group = uuid.uuid4()
+
+    my_side = IntercompanyPair(
+        tenant_id=tenant_id,
+        pair_group_id=pair_group,
+        my_qbo_account_id=body.my_qbo_account_id,
+        counterparty_tenant_id=cp_tenant_uuid,
+        counterparty_clerk_org_id=cp_tenant.clerk_org_id,
+        counterparty_qbo_account_id=body.counterparty_qbo_account_id,
+        counterparty_label=f"{cp_company_name} · {cp_account_label}",
+        notes=body.notes,
+        created_by=user.id,
+    )
+
+    cp_side = IntercompanyPair(
+        tenant_id=cp_tenant_uuid,
+        pair_group_id=pair_group,
+        my_qbo_account_id=body.counterparty_qbo_account_id,
+        counterparty_tenant_id=tenant_id,
+        counterparty_clerk_org_id=(my_tenant.clerk_org_id if my_tenant else ""),
+        counterparty_qbo_account_id=body.my_qbo_account_id,
+        counterparty_label=f"{my_company_name} · {my_account_label}",
+        notes=body.notes,
+        created_by=user.id,
+    )
+
+    db.add(my_side)
+    db.add(cp_side)
+    await db.commit()
+    await db.refresh(my_side)
+
+    return PairOut(
+        pair_group_id=str(my_side.pair_group_id),
+        my_qbo_account_id=my_side.my_qbo_account_id,
+        my_account_label=my_account_label,
+        counterparty_tenant_id=str(my_side.counterparty_tenant_id),
+        counterparty_clerk_org_id=my_side.counterparty_clerk_org_id,
+        counterparty_label=my_side.counterparty_label,
+        counterparty_qbo_account_id=my_side.counterparty_qbo_account_id,
+        notes=my_side.notes,
+        created_at=my_side.created_at.isoformat(),
+    )
+
+
+@router.delete("/pairs/{pair_group_id}")
+async def delete_pair(
+    pair_group_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delete BOTH halves of the pair_group (across tenants)."""
+    # Look up both halves (skip tenant filter — pair belongs to two tenants)
+    halves = list((await db.execute(
+        select(IntercompanyPair).where(IntercompanyPair.pair_group_id == pair_group_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all())
+    if not halves:
+        raise HTTPException(404, "Pair not found.")
+
+    # Authorize: at least one half must be in a tenant the user has access to
+    accessible = await _user_accessible_tenant_ids(db, user)
+    if not any(h.tenant_id in accessible for h in halves):
+        raise HTTPException(403, "You don't have access to this pair.")
+
+    for h in halves:
+        await db.delete(h)
+    await db.commit()
+    return {"ok": True, "deleted": len(halves)}
+
+
+# ── /eliminations ──────────────────────────────────────────────────────────
+
+@router.get("/eliminations", response_model=EliminationsResponse)
+async def get_eliminations(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> EliminationsResponse:
+    """
+    For every pair this tenant participates in: pull both sides'
+    period-end balance and compute the elimination diff.
+
+    Convention: balances are stored signed (debit-positive) in the
+    snapshot. An IC AR (asset, debit) on Entity A should equal the
+    NEGATIVE of the IC AP (liability, credit) on Entity B. So:
+        diff = my_bal + cp_bal
+    A "matched" pair has diff ≈ 0. A "mismatch" has |diff| > 1.
+    """
+    try:
+        pe = date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(400, "period_end must be YYYY-MM-DD.")
+
+    # Pull all pairs visible to this tenant (just our half is enough)
+    pairs = list((await db.execute(
+        select(IntercompanyPair)
+    )).scalars().all())
+
+    rows_out: list[EliminationRow] = []
+    matched = 0
+    mismatch = 0
+    total_to_elim = Decimal("0")
+
+    # Defensive: skip pairs where user lost cross-tenant access
+    accessible = await _user_accessible_tenant_ids(db, user)
+
+    for p in pairs:
+        if p.counterparty_tenant_id not in accessible:
+            continue
+
+        my_bal = await _balance_at_period_end(db, tenant_id, p.my_qbo_account_id, pe)
+        cp_bal = await _balance_at_period_end(db, p.counterparty_tenant_id, p.counterparty_qbo_account_id, pe)
+
+        my_label = await _account_label_from_snapshot(db, tenant_id, p.my_qbo_account_id)
+
+        if my_bal is None or cp_bal is None:
+            status_str = "one_side_missing"
+            diff = my_bal or Decimal("0")  # whichever side we have
+            if cp_bal is not None:
+                diff = (my_bal or Decimal("0")) + cp_bal
+            mismatch += 1
+        else:
+            diff = (my_bal + cp_bal).quantize(Decimal("0.01"))
+            # $1 tolerance to absorb rounding from QBO
+            if abs(diff) <= Decimal("1.00"):
+                status_str = "matched"
+                matched += 1
+                total_to_elim += abs(my_bal)
+            else:
+                status_str = "mismatch"
+                mismatch += 1
+
+        rows_out.append(EliminationRow(
+            pair_group_id=str(p.pair_group_id),
+            my_qbo_account_id=p.my_qbo_account_id,
+            my_account_label=my_label,
+            my_balance=str((my_bal or Decimal("0")).quantize(Decimal("0.01"))),
+            counterparty_tenant_id=str(p.counterparty_tenant_id),
+            counterparty_label=p.counterparty_label,
+            counterparty_balance=str((cp_bal or Decimal("0")).quantize(Decimal("0.01"))),
+            diff=str(diff.quantize(Decimal("0.01"))),
+            status=status_str,
+        ))
+
+    return EliminationsResponse(
+        period_end=pe.isoformat(),
+        rows=rows_out,
+        totals={
+            "matched_count":     matched,
+            "mismatch_count":    mismatch,
+            "total_to_eliminate": str(total_to_elim.quantize(Decimal("0.01"))),
+        },
+    )
+
+
+# ── /consolidated-tb ───────────────────────────────────────────────────────
+
+@router.get("/consolidated-tb", response_model=ConsolidatedTbResponse)
+async def get_consolidated_tb(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> ConsolidatedTbResponse:
+    """
+    Roll up the GL snapshot from every paired entity at period_end,
+    apply elimination amounts to paired IC accounts, return a single
+    consolidated view.
+
+    Scope: only the current tenant + tenants this tenant has at least
+    one pair with (so we don't accidentally consolidate unrelated
+    workspaces the user happens to also be a member of).
+    """
+    try:
+        pe = date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(400, "period_end must be YYYY-MM-DD.")
+
+    # Collect the set of tenants in this consolidation = current tenant + its pair counterparties.
+    pairs = list((await db.execute(select(IntercompanyPair))).scalars().all())
+    accessible = await _user_accessible_tenant_ids(db, user)
+    cp_tenants = {p.counterparty_tenant_id for p in pairs if p.counterparty_tenant_id in accessible}
+    consol_tenants: set[uuid.UUID] = {tenant_id} | cp_tenants
+
+    # Pull tenant display info
+    tenants = (await db.execute(
+        select(Tenant).where(Tenant.id.in_(consol_tenants)),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    tenant_by_id = {t.id: t for t in tenants}
+
+    conns = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id.in_(consol_tenants)),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    conn_by_tid = {c.tenant_id: c for c in conns}
+
+    company_name = lambda tid: (
+        (conn_by_tid.get(tid).company_name if conn_by_tid.get(tid) else None)
+        or (tenant_by_id.get(tid).name if tenant_by_id.get(tid) else "Workspace")
+    )
+
+    # Build elimination amount map per (tenant_id, qbo_account_id):
+    # for each matched pair, the amount we eliminate from each side.
+    # Convention: eliminate the absolute balance from BOTH sides (so
+    # the IC AR on A nets to 0 and the IC AP on B nets to 0).
+    elim_by_acct: dict[tuple[uuid.UUID, str], Decimal] = {}
+    for p in pairs:
+        if p.counterparty_tenant_id not in accessible:
+            continue
+        my_bal = await _balance_at_period_end(db, tenant_id, p.my_qbo_account_id, pe)
+        cp_bal = await _balance_at_period_end(db, p.counterparty_tenant_id, p.counterparty_qbo_account_id, pe)
+        if my_bal is None or cp_bal is None:
+            continue
+        diff = (my_bal + cp_bal).quantize(Decimal("0.01"))
+        if abs(diff) > Decimal("1.00"):
+            continue  # mismatch — don't eliminate
+        # eliminate full signed balance on each side so it nets to 0
+        elim_by_acct[(tenant_id, p.my_qbo_account_id)] = -my_bal
+        elim_by_acct[(p.counterparty_tenant_id, p.counterparty_qbo_account_id)] = -cp_bal
+
+    # Pull latest snapshot per (tenant, qbo_account_id) AT OR BEFORE period_end
+    snap_rows = (await db.execute(
+        select(GlBalanceSnapshot)
+        .where(
+            GlBalanceSnapshot.tenant_id.in_(consol_tenants),
+            GlBalanceSnapshot.period_end <= pe,
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    latest: dict[tuple[uuid.UUID, str], GlBalanceSnapshot] = {}
+    for s in snap_rows:
+        key = (s.tenant_id, s.qbo_account_id)
+        prior = latest.get(key)
+        if prior is None or s.period_end > prior.period_end:
+            latest[key] = s
+
+    # Map QBO AccountType → high-level FS category for grouping
+    def fs_cat(t: str) -> str:
+        t = (t or "").lower()
+        if t in ("bank", "accounts receivable", "other current asset", "fixed asset", "other asset"):
+            return "Assets"
+        if t in ("credit card", "accounts payable", "other current liability", "long term liability"):
+            return "Liabilities"
+        if t == "equity":
+            return "Equity"
+        if t in ("income", "other income"):
+            return "Revenue"
+        if t in ("expense", "cost of goods sold", "other expense"):
+            return "Expenses"
+        return "Other"
+
+    rows_out: list[ConsolidatedRow] = []
+    raw_by_cat: dict[str, Decimal] = {}
+    elim_by_cat: dict[str, Decimal] = {}
+
+    for (tid, qid), snap in latest.items():
+        cat = fs_cat(snap.account_type)
+        elim_amount = elim_by_acct.get((tid, qid), Decimal("0"))
+        consol = (snap.balance + elim_amount).quantize(Decimal("0.01"))
+        raw_by_cat[cat] = raw_by_cat.get(cat, Decimal("0")) + snap.balance
+        elim_by_cat[cat] = elim_by_cat.get(cat, Decimal("0")) + elim_amount
+
+        label = f"{(snap.account_number or '').strip()} {snap.account_name}".strip()
+        rows_out.append(ConsolidatedRow(
+            fs_category=cat,
+            account_label=label,
+            tenant_id=str(tid),
+            company_name=company_name(tid),
+            qbo_account_id=qid,
+            raw_balance=str(snap.balance.quantize(Decimal("0.01"))),
+            elimination=str(elim_amount.quantize(Decimal("0.01"))),
+            consolidated=str(consol),
+            is_eliminated_row=(elim_amount != Decimal("0")),
+        ))
+
+    # Sort: category order then company then account_label
+    cat_order = {"Assets": 1, "Liabilities": 2, "Equity": 3, "Revenue": 4, "Expenses": 5, "Other": 9}
+    rows_out.sort(key=lambda r: (
+        cat_order.get(r.fs_category, 9), r.company_name.lower(), r.account_label.lower()
+    ))
+
+    companies_out = [
+        {"tenant_id": str(tid), "name": company_name(tid)}
+        for tid in consol_tenants
+    ]
+    companies_out.sort(key=lambda c: c["name"].lower())
+
+    totals: dict = {}
+    for cat in ("Assets", "Liabilities", "Equity", "Revenue", "Expenses"):
+        raw = raw_by_cat.get(cat, Decimal("0")).quantize(Decimal("0.01"))
+        elim = elim_by_cat.get(cat, Decimal("0")).quantize(Decimal("0.01"))
+        totals[cat] = {
+            "raw":          str(raw),
+            "elimination":  str(elim),
+            "consolidated": str((raw + elim).quantize(Decimal("0.01"))),
+        }
+
+    return ConsolidatedTbResponse(
+        period_end=pe.isoformat(),
+        companies=companies_out,
+        rows=rows_out,
+        totals=totals,
+    )
+
+
+# ── Excel exports ──────────────────────────────────────────────────────────
+
+@router.get("/eliminations.xlsx")
+async def export_eliminations_xlsx(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Excel export of the eliminations report."""
+    from io import BytesIO
+
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+
+    from modules.exports.xlsx_builder import (
+        add_sheet_title,
+        freeze_header,
+        register_styles,
+        set_column_widths,
+        write_row,
+        write_table_header,
+    )
+
+    data = await get_eliminations(tenant_id, user, period_end, db)
+
+    wb = Workbook()
+    register_styles(wb)
+    ws = wb.active
+    if ws is None:
+        ws = wb.create_sheet("Eliminations")
+    ws.title = "Eliminations"
+
+    hdr_row = add_sheet_title(ws, "Intercompany Eliminations",
+                              subtitle=f"Period end: {data.period_end}")
+
+    headers = ["Status", "My account", "My balance", "Counterparty", "Counterparty balance", "Diff"]
+    write_table_header(ws, hdr_row, headers)
+    set_column_widths(ws, [12, 38, 16, 42, 18, 16])
+
+    r = hdr_row + 1
+    for row in data.rows:
+        status_label = {
+            "matched": "Matched",
+            "mismatch": "Mismatch",
+            "one_side_missing": "Side missing",
+        }.get(row.status, row.status)
+        write_row(ws, r, [
+            (status_label,            "nx_cell_text"),
+            (row.my_account_label,    "nx_cell_text"),
+            (Decimal(row.my_balance), "nx_cell_money"),
+            (row.counterparty_label,  "nx_cell_text"),
+            (Decimal(row.counterparty_balance), "nx_cell_money"),
+            (Decimal(row.diff),       "nx_cell_money"),
+        ])
+        r += 1
+
+    # Totals row
+    write_row(ws, r, [
+        ("Total to eliminate", "nx_total_label"),
+        ("",                   "nx_total_label"),
+        ("",                   "nx_total_label"),
+        (f"{data.totals.get('matched_count', 0)} matched · {data.totals.get('mismatch_count', 0)} mismatch", "nx_total_label"),
+        ("",                   "nx_total_label"),
+        (Decimal(data.totals.get("total_to_eliminate", "0")), "nx_total_money"),
+    ])
+
+    freeze_header(ws, hdr_row)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"intercompany_eliminations_{data.period_end}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/consolidated-tb.xlsx")
+async def export_consolidated_tb_xlsx(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Excel export of the consolidated TB with elimination column."""
+    from io import BytesIO
+
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+
+    from modules.exports.xlsx_builder import (
+        add_sheet_title,
+        freeze_header,
+        register_styles,
+        set_column_widths,
+        write_row,
+        write_table_header,
+    )
+
+    data = await get_consolidated_tb(tenant_id, user, period_end, db)
+
+    wb = Workbook()
+    register_styles(wb)
+    ws = wb.active
+    if ws is None:
+        ws = wb.create_sheet("Consolidated TB")
+    ws.title = "Consolidated TB"
+
+    subtitle = (
+        f"Period end: {data.period_end} · "
+        f"Entities: {', '.join(c['name'] for c in data.companies)}"
+    )
+    hdr_row = add_sheet_title(ws, "Consolidated Trial Balance", subtitle=subtitle)
+
+    headers = ["Category", "Company", "Account", "Raw balance", "Elimination", "Consolidated"]
+    write_table_header(ws, hdr_row, headers)
+    set_column_widths(ws, [14, 28, 36, 16, 16, 18])
+
+    r = hdr_row + 1
+    current_cat: str | None = None
+    for row in data.rows:
+        # Insert blank separator + category header on category change
+        if row.fs_category != current_cat:
+            current_cat = row.fs_category
+            # blank row keeps the section break visible
+            write_row(ws, r, [("", "nx_cell_text") for _ in range(6)])
+            r += 1
+
+        write_row(ws, r, [
+            (row.fs_category,             "nx_cell_text"),
+            (row.company_name,            "nx_cell_text"),
+            (row.account_label,           "nx_cell_text"),
+            (Decimal(row.raw_balance),    "nx_cell_money"),
+            (Decimal(row.elimination),    "nx_cell_money"),
+            (Decimal(row.consolidated),   "nx_cell_money"),
+        ])
+        r += 1
+
+    # Category totals
+    r += 1
+    for cat in ("Assets", "Liabilities", "Equity", "Revenue", "Expenses"):
+        t = data.totals.get(cat) or {}
+        if not t:
+            continue
+        write_row(ws, r, [
+            (f"Total {cat}",                 "nx_total_label"),
+            ("",                              "nx_total_label"),
+            ("",                              "nx_total_label"),
+            (Decimal(t.get("raw", "0")),     "nx_total_money"),
+            (Decimal(t.get("elimination", "0")), "nx_total_money"),
+            (Decimal(t.get("consolidated", "0")), "nx_total_money"),
+        ])
+        r += 1
+
+    freeze_header(ws, hdr_row)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"consolidated_tb_{data.period_end}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

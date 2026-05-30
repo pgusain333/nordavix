@@ -108,4 +108,158 @@ async function getTransactions(qboAccountId: string, periodEnd: string): Promise
   return data
 }
 
-export const icApi = { getOverview, autoDetect, aiDetect, autoClassify, upsertMark, deleteMark, getTransactions }
+// ── Cross-tenant pairing + eliminations ───────────────────────────────────
+
+export interface AccessibleAccount {
+  qbo_account_id: string
+  account_number: string
+  account_name:   string
+  account_type:   string
+  kind:           IcKind
+  counterparty:   string | null
+}
+
+export interface AccessibleCompany {
+  tenant_id:     string
+  clerk_org_id:  string
+  name:          string
+  company_name:  string | null
+  qbo_connected: boolean
+  ic_accounts:   AccessibleAccount[]
+}
+
+export interface IcPair {
+  pair_group_id:               string
+  my_qbo_account_id:           string
+  my_account_label:            string
+  counterparty_tenant_id:      string
+  counterparty_clerk_org_id:   string
+  counterparty_label:          string
+  counterparty_qbo_account_id: string
+  notes:                       string | null
+  created_at:                  string
+}
+
+export interface EliminationRow {
+  pair_group_id:               string
+  my_qbo_account_id:           string
+  my_account_label:            string
+  my_balance:                  string
+  counterparty_tenant_id:      string
+  counterparty_label:          string
+  counterparty_balance:        string
+  diff:                        string
+  status:                      "matched" | "mismatch" | "one_side_missing"
+}
+
+export interface EliminationsResponse {
+  period_end: string
+  rows:       EliminationRow[]
+  totals: {
+    matched_count:       number
+    mismatch_count:      number
+    total_to_eliminate:  string
+  }
+}
+
+export interface ConsolidatedRow {
+  fs_category:        string
+  account_label:      string
+  tenant_id:          string
+  company_name:       string
+  qbo_account_id:     string
+  raw_balance:        string
+  elimination:        string
+  consolidated:       string
+  is_eliminated_row:  boolean
+}
+
+export interface ConsolidatedTbResponse {
+  period_end: string
+  companies:  { tenant_id: string; name: string }[]
+  rows:       ConsolidatedRow[]
+  totals: Record<string, { raw: string; elimination: string; consolidated: string }>
+}
+
+async function listAccessibleCompanies(): Promise<{ companies: AccessibleCompany[] }> {
+  const { data } = await apiClient.get<{ companies: AccessibleCompany[] }>(
+    "/api/intercompany/accessible-companies",
+  )
+  return data
+}
+
+async function listPairs(): Promise<IcPair[]> {
+  const { data } = await apiClient.get<IcPair[]>("/api/intercompany/pairs")
+  return data
+}
+
+async function createPair(body: {
+  my_qbo_account_id: string
+  counterparty_tenant_id: string
+  counterparty_qbo_account_id: string
+  notes?: string | null
+}): Promise<IcPair> {
+  const { data } = await apiClient.post<IcPair>("/api/intercompany/pairs", body)
+  return data
+}
+
+async function deletePair(pairGroupId: string): Promise<void> {
+  await apiClient.delete(`/api/intercompany/pairs/${encodeURIComponent(pairGroupId)}`)
+}
+
+async function getEliminations(periodEnd: string): Promise<EliminationsResponse> {
+  const { data } = await apiClient.get<EliminationsResponse>("/api/intercompany/eliminations", {
+    params: { period_end: periodEnd },
+  })
+  return data
+}
+
+async function getConsolidatedTb(periodEnd: string): Promise<ConsolidatedTbResponse> {
+  const { data } = await apiClient.get<ConsolidatedTbResponse>("/api/intercompany/consolidated-tb", {
+    params: { period_end: periodEnd },
+  })
+  return data
+}
+
+/**
+ * Download a binary export (Eliminations Excel or Consolidated TB Excel).
+ * Mirrors the pattern used by the recon Excel export — fetch as Blob,
+ * trigger a browser download via an anchor element, revoke the URL.
+ */
+async function downloadExport(path: string, periodEnd: string, filename: string): Promise<void> {
+  const resp = await apiClient.get(path, {
+    params: { period_end: periodEnd },
+    responseType: "blob",
+  })
+  const url = URL.createObjectURL(resp.data as Blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+async function downloadEliminationsXlsx(periodEnd: string): Promise<void> {
+  return downloadExport(
+    "/api/intercompany/eliminations.xlsx",
+    periodEnd,
+    `intercompany_eliminations_${periodEnd}.xlsx`,
+  )
+}
+
+async function downloadConsolidatedTbXlsx(periodEnd: string): Promise<void> {
+  return downloadExport(
+    "/api/intercompany/consolidated-tb.xlsx",
+    periodEnd,
+    `consolidated_tb_${periodEnd}.xlsx`,
+  )
+}
+
+export const icApi = {
+  getOverview, autoDetect, aiDetect, autoClassify, upsertMark, deleteMark, getTransactions,
+  listAccessibleCompanies, listPairs, createPair, deletePair,
+  getEliminations, getConsolidatedTb,
+  downloadEliminationsXlsx, downloadConsolidatedTbXlsx,
+}

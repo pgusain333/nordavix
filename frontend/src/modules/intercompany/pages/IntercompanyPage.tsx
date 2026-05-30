@@ -31,11 +31,29 @@ import {
   AlertCircle,
   X,
   Pencil,
+  Link2,
+  Unlink,
+  Download,
+  CheckCircle2,
+  AlertTriangle,
+  CircleSlash,
+  Calculator,
+  Layers,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
-import { icApi, type IcAccount, type IcKind } from "@/modules/intercompany/api"
+import {
+  icApi,
+  type IcAccount,
+  type IcKind,
+  type AccessibleCompany,
+  type IcPair,
+  type EliminationRow,
+  type ConsolidatedRow,
+} from "@/modules/intercompany/api"
 import { useQboConnection } from "@/modules/flux/hooks"
+
+type Tab = "accounts" | "eliminations" | "consolidated"
 
 function fmtMoney(s: string | number | null | undefined): string {
   if (s === null || s === undefined || s === "") return "—"
@@ -60,11 +78,26 @@ const KIND_META: Record<IcKind, { label: string; fg: string; bg: string }> = {
 export function IntercompanyPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const [tab, setTab] = useState<Tab>("accounts")
   const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
   const [search, setSearch] = useState("")
   const [editingAccount, setEditingAccount] = useState<IcAccount | null>(null)
   const [addingNew, setAddingNew] = useState(false)
   const [drawerAccount, setDrawerAccount] = useState<IcAccount | null>(null)
+  // Pair-with picker — opens when user clicks Pair on an unpaired row,
+  // or Unpair on a paired one.
+  const [pairingAccount, setPairingAccount] = useState<IcAccount | null>(null)
+
+  // Pairs list, keyed by my_qbo_account_id for fast row lookup
+  const { data: pairs = [] } = useQuery({
+    queryKey: ["intercompany-pairs"],
+    queryFn:  () => icApi.listPairs(),
+  })
+  const pairByAccountId = useMemo(() => {
+    const m: Record<string, IcPair> = {}
+    for (const p of pairs) m[p.my_qbo_account_id] = p
+    return m
+  }, [pairs])
 
   const { data: qbo } = useQboConnection()
   const { data: overview, isLoading } = useQuery({
@@ -174,6 +207,38 @@ export function IntercompanyPage() {
         </div>
       </motion.div>
 
+      {/* ── Tabs strip ─────────────────────────────────────────────── */}
+      <div className="px-4 sm:px-8" style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-1 max-w-7xl mx-auto">
+          {([
+            { id: "accounts",    label: "Accounts",         icon: Building2 },
+            { id: "eliminations",label: "Eliminations",     icon: Calculator },
+            { id: "consolidated",label: "Consolidated TB",  icon: Layers },
+          ] as { id: Tab; label: string; icon: typeof Building2 }[]).map((t) => {
+            const Icon = t.icon
+            const active = tab === t.id
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className="inline-flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors"
+                style={{
+                  color:        active ? "var(--text)" : "var(--text-muted)",
+                  borderColor:  active ? "var(--green)" : "transparent",
+                }}>
+                <Icon size={13} strokeWidth={1.8} /> {t.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {tab === "eliminations" && (
+        <EliminationsView periodEnd={periodEnd} qboReady={!!qbo} />
+      )}
+      {tab === "consolidated" && (
+        <ConsolidatedView periodEnd={periodEnd} qboReady={!!qbo} />
+      )}
+
+      {tab === "accounts" && (
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
 
         {/* Auto-detect result toast — green when something matched, amber
@@ -407,6 +472,26 @@ export function IntercompanyPage() {
                             </td>
                             <td className="px-3 py-3">
                               <div className="flex items-center justify-end gap-1">
+                                {(() => {
+                                  const pair = pairByAccountId[a.qbo_account_id]
+                                  return pair ? (
+                                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold"
+                                      style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+                                      title={`Paired with ${pair.counterparty_label}`}>
+                                      <Link2 size={10} strokeWidth={2} />
+                                      <span className="hidden lg:inline truncate max-w-[180px]">
+                                        {pair.counterparty_label}
+                                      </span>
+                                      <span className="lg:hidden">Paired</span>
+                                    </span>
+                                  ) : (
+                                    <Button size="sm" variant="outline"
+                                      icon={<Link2 size={11} strokeWidth={1.8} />}
+                                      onClick={() => setPairingAccount(a)}>
+                                      <span className="hidden md:inline">Pair</span>
+                                    </Button>
+                                  )
+                                })()}
                                 <Button size="sm" variant="outline"
                                   icon={<Eye size={11} strokeWidth={1.8} />}
                                   onClick={() => setDrawerAccount(a)}>
@@ -430,6 +515,7 @@ export function IntercompanyPage() {
           </>
         )}
       </div>
+      )}
 
       {/* Mark/edit modal */}
       <AnimatePresence>
@@ -440,6 +526,21 @@ export function IntercompanyPage() {
             onSaved={() => {
               setEditingAccount(null); setAddingNew(false)
               qc.invalidateQueries({ queryKey: ["intercompany-overview"] })
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Pair-with picker modal */}
+      <AnimatePresence>
+        {pairingAccount && (
+          <PairPickerModal
+            account={pairingAccount}
+            existingPair={pairByAccountId[pairingAccount.qbo_account_id]}
+            onClose={() => setPairingAccount(null)}
+            onSaved={() => {
+              setPairingAccount(null)
+              qc.invalidateQueries({ queryKey: ["intercompany-pairs"] })
             }}
           />
         )}
@@ -725,3 +826,444 @@ function TransactionsDrawer({ account, periodEnd, onClose }:
 
 // Stub to silence unused imports lint — Pencil reserved for future inline-edit polish.
 void Pencil
+
+// ── EliminationsView ──────────────────────────────────────────────────────
+//
+// Per-pair table showing both sides' period-end balance + the diff. A
+// "matched" pair (|diff| ≤ $1) is what we eliminate on consolidation;
+// a "mismatch" needs investigation before consolidation.
+
+function EliminationsView({ periodEnd, qboReady }: { periodEnd: string; qboReady: boolean }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["intercompany-eliminations", periodEnd],
+    queryFn:  () => icApi.getEliminations(periodEnd),
+    enabled:  qboReady,
+    staleTime: 30_000,
+  })
+
+  const [downloading, setDownloading] = useState(false)
+  async function handleDownload() {
+    if (downloading) return
+    setDownloading(true)
+    try { await icApi.downloadEliminationsXlsx(periodEnd) }
+    finally { setDownloading(false) }
+  }
+
+  return (
+    <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-base font-bold text-theme">Eliminations</h2>
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+            For every paired account: both sides&apos; balance at {periodEnd} and the elimination diff.
+            Matched pairs eliminate cleanly; mismatched pairs need investigation.
+          </p>
+        </div>
+        <Button size="sm" variant="outline"
+          icon={<Download size={12} strokeWidth={1.8} />}
+          loading={downloading} disabled={!data || data.rows.length === 0}
+          onClick={handleDownload}>
+          Export Excel
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="py-16 flex items-center justify-center"><Spinner /></div>
+      ) : !data || data.rows.length === 0 ? (
+        <div className="rounded-xl p-10 text-center"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+          <div className="h-14 w-14 mx-auto rounded-full flex items-center justify-center mb-4"
+            style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+            <Calculator size={26} strokeWidth={1.6} />
+          </div>
+          <p className="text-base font-semibold text-theme mb-1">No pairs yet</p>
+          <p className="text-sm max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+            Pair an IC account in this workspace with the matching account in another
+            connected workspace. Open the Accounts tab → click <strong>Pair</strong> on any row.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <Kpi label="Matched"   value={String(data.totals.matched_count)}   tone="var(--green)" sub="eliminate cleanly" />
+            <Kpi label="Mismatch"  value={String(data.totals.mismatch_count)}  tone="#dc2626"      sub="investigate" />
+            <Kpi label="To eliminate" value={fmtMoney(data.totals.total_to_eliminate)} tone="var(--text)" sub="matched pairs" />
+          </div>
+
+          <div className="rounded-xl overflow-hidden"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[900px]">
+                <thead>
+                  <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
+                    {[
+                      { label: "Status", w: "120px" },
+                      { label: "My account",  w: "auto" },
+                      { label: "My balance",  w: "130px", right: true },
+                      { label: "Counterparty", w: "auto" },
+                      { label: "Counterparty balance", w: "150px", right: true },
+                      { label: "Diff", w: "130px", right: true },
+                    ].map((h, i) => (
+                      <th key={i}
+                        className="text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5"
+                        style={{ color: "var(--text-muted)", textAlign: h.right ? "right" : "left", width: h.w }}>
+                        {h.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((r) => <EliminationRowView key={r.pair_group_id} row={r} />)}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function EliminationRowView({ row }: { row: EliminationRow }) {
+  const StatusIcon = row.status === "matched" ? CheckCircle2
+                    : row.status === "mismatch" ? AlertTriangle : CircleSlash
+  const statusColor = row.status === "matched" ? "var(--green)"
+                    : row.status === "mismatch" ? "#dc2626" : "var(--text-muted)"
+  const statusLabel = row.status === "matched" ? "Matched"
+                    : row.status === "mismatch" ? "Mismatch" : "Side missing"
+  const diff = parseFloat(row.diff)
+  return (
+    <tr style={{ borderBottom: "1px solid var(--border)" }}>
+      <td className="px-3 py-3">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+          style={{ background: row.status === "matched" ? "var(--green-subtle)" : "var(--surface-2)", color: statusColor }}>
+          <StatusIcon size={11} strokeWidth={2} /> {statusLabel}
+        </span>
+      </td>
+      <td className="px-3 py-3 text-sm font-medium text-theme">{row.my_account_label}</td>
+      <td className="px-3 py-3 text-right tabular-nums font-semibold text-theme">
+        {fmtMoney(row.my_balance)}
+      </td>
+      <td className="px-3 py-3 text-sm" style={{ color: "var(--text-2)" }}>{row.counterparty_label}</td>
+      <td className="px-3 py-3 text-right tabular-nums font-semibold text-theme">
+        {fmtMoney(row.counterparty_balance)}
+      </td>
+      <td className="px-3 py-3 text-right tabular-nums text-sm"
+        style={{ color: Math.abs(diff) <= 1 ? "var(--green)" : "#dc2626", fontWeight: 600 }}>
+        {fmtMoney(row.diff)}
+      </td>
+    </tr>
+  )
+}
+
+// ── ConsolidatedView ───────────────────────────────────────────────────────
+//
+// Combined TB across the current tenant + every tenant we have at least
+// one pair with. The "Elimination" column carries the elim amount for
+// paired IC accounts; "Consolidated" = Raw + Elimination.
+
+function ConsolidatedView({ periodEnd, qboReady }: { periodEnd: string; qboReady: boolean }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["intercompany-consolidated", periodEnd],
+    queryFn:  () => icApi.getConsolidatedTb(periodEnd),
+    enabled:  qboReady,
+    staleTime: 30_000,
+  })
+
+  const [downloading, setDownloading] = useState(false)
+  async function handleDownload() {
+    if (downloading) return
+    setDownloading(true)
+    try { await icApi.downloadConsolidatedTbXlsx(periodEnd) }
+    finally { setDownloading(false) }
+  }
+
+  // Group rows by fs_category for sectioned rendering
+  const grouped = useMemo(() => {
+    const g: Record<string, ConsolidatedRow[]> = {}
+    for (const r of data?.rows ?? []) {
+      (g[r.fs_category] ??= []).push(r)
+    }
+    return g
+  }, [data])
+
+  const CAT_ORDER = ["Assets", "Liabilities", "Equity", "Revenue", "Expenses", "Other"]
+
+  return (
+    <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-base font-bold text-theme">Consolidated trial balance</h2>
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+            All paired entities combined at {periodEnd}, with intercompany balances eliminated.
+            {data && data.companies.length > 0 && (
+              <>{" · "}<span className="font-medium" style={{ color: "var(--text-2)" }}>
+                Entities: {data.companies.map((c) => c.name).join(", ")}
+              </span></>
+            )}
+          </p>
+        </div>
+        <Button size="sm" variant="outline"
+          icon={<Download size={12} strokeWidth={1.8} />}
+          loading={downloading} disabled={!data || data.rows.length === 0}
+          onClick={handleDownload}>
+          Export Excel
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="py-16 flex items-center justify-center"><Spinner /></div>
+      ) : !data || data.rows.length === 0 ? (
+        <div className="rounded-xl p-10 text-center"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+          <div className="h-14 w-14 mx-auto rounded-full flex items-center justify-center mb-4"
+            style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+            <Layers size={26} strokeWidth={1.6} />
+          </div>
+          <p className="text-base font-semibold text-theme mb-1">Nothing to consolidate yet</p>
+          <p className="text-sm max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+            Sync recons in each entity to build the GL snapshot, then pair IC accounts so
+            we know what to eliminate. The consolidated view appears here once both are done.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-xl overflow-hidden"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[900px]">
+              <thead>
+                <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
+                  {[
+                    { label: "Company", w: "180px" },
+                    { label: "Account", w: "auto" },
+                    { label: "Raw",          w: "120px", right: true },
+                    { label: "Elimination",  w: "130px", right: true },
+                    { label: "Consolidated", w: "140px", right: true },
+                  ].map((h, i) => (
+                    <th key={i}
+                      className="text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5"
+                      style={{ color: "var(--text-muted)", textAlign: h.right ? "right" : "left", width: h.w }}>
+                      {h.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {CAT_ORDER.filter((cat) => grouped[cat]?.length).map((cat) => {
+                  const rows = grouped[cat]
+                  const totals = data.totals[cat] ?? { raw: "0", elimination: "0", consolidated: "0" }
+                  return (
+                    <Fragment key={cat}>
+                      <tr style={{ background: "var(--surface-2)" }}>
+                        <td colSpan={5}
+                          className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider"
+                          style={{ color: "var(--text-2)" }}>
+                          {cat}
+                        </td>
+                      </tr>
+                      {rows.map((r) => {
+                        const elim = parseFloat(r.elimination)
+                        return (
+                          <tr key={`${r.tenant_id}-${r.qbo_account_id}`}
+                            style={{ borderBottom: "1px solid var(--border)" }}>
+                            <td className="px-3 py-2.5 text-xs" style={{ color: "var(--text-2)" }}>
+                              {r.company_name}
+                            </td>
+                            <td className="px-3 py-2.5 text-sm text-theme">{r.account_label}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums">{fmtMoney(r.raw_balance)}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums"
+                              style={{ color: elim !== 0 ? "#dc2626" : "var(--text-muted)" }}>
+                              {elim !== 0 ? fmtMoney(r.elimination) : "—"}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-theme">
+                              {fmtMoney(r.consolidated)}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      <tr style={{ background: "var(--surface-2)", borderBottom: "2px solid var(--border-strong)" }}>
+                        <td colSpan={2}
+                          className="px-3 py-2 text-[11px] font-bold text-right uppercase tracking-wide"
+                          style={{ color: "var(--text-2)" }}>
+                          Total {cat}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-bold text-theme">{fmtMoney(totals.raw)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-bold" style={{ color: parseFloat(totals.elimination) !== 0 ? "#dc2626" : "var(--text-muted)" }}>
+                          {parseFloat(totals.elimination) !== 0 ? fmtMoney(totals.elimination) : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-bold text-theme">{fmtMoney(totals.consolidated)}</td>
+                      </tr>
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── PairPickerModal ────────────────────────────────────────────────────────
+//
+// Two-step cascading selection: pick a company you have access to, then
+// pick an IC account in that company. Save → POST /pairs which writes
+// both halves of the pair in one tx.
+
+function PairPickerModal({ account, existingPair, onClose, onSaved }:
+  { account: IcAccount; existingPair: IcPair | undefined;
+    onClose: () => void; onSaved: () => void }
+) {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({
+    queryKey: ["intercompany-accessible-companies"],
+    queryFn:  () => icApi.listAccessibleCompanies(),
+    staleTime: 60_000,
+  })
+
+  const [tenantId, setTenantId] = useState<string>("")
+  const [cpAccountId, setCpAccountId] = useState<string>("")
+
+  const companies: AccessibleCompany[] = data?.companies ?? []
+  const selectedCompany = companies.find((c) => c.tenant_id === tenantId)
+
+  const createMut = useMutation({
+    mutationFn: () => icApi.createPair({
+      my_qbo_account_id: account.qbo_account_id,
+      counterparty_tenant_id: tenantId,
+      counterparty_qbo_account_id: cpAccountId,
+    }),
+    onSuccess: () => onSaved(),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: () => icApi.deletePair(existingPair!.pair_group_id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["intercompany-pairs"] })
+      onClose()
+    },
+  })
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.4)" }} onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
+        transition={{ duration: 0.15 }}
+        className="w-full max-w-lg rounded-xl p-5 space-y-4"
+        style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
+        onClick={(e) => e.stopPropagation()}>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-theme">Pair with another company</h3>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+              Link <span className="font-medium text-theme">{account.account_number} {account.account_name}</span>
+              {" "}with the matching IC account in another workspace you have access to.
+            </p>
+          </div>
+          <button onClick={onClose} className="h-7 w-7 rounded-md flex items-center justify-center"
+            style={{ color: "var(--text-muted)" }}>
+            <X size={14} strokeWidth={1.8} />
+          </button>
+        </div>
+
+        {existingPair ? (
+          <div className="rounded-lg p-4"
+            style={{ background: "var(--green-subtle)", border: "1px solid var(--green)" }}>
+            <div className="flex items-center gap-2">
+              <Link2 size={14} strokeWidth={2} style={{ color: "var(--green)" }} />
+              <span className="text-sm font-semibold" style={{ color: "var(--green)" }}>Currently paired</span>
+            </div>
+            <p className="text-xs mt-1 ml-6" style={{ color: "var(--text-2)" }}>
+              {existingPair.counterparty_label}
+            </p>
+            <div className="mt-3 flex justify-end">
+              <Button size="sm" variant="outline"
+                icon={<Unlink size={11} strokeWidth={1.8} />}
+                loading={deleteMut.isPending}
+                onClick={() => { if (confirm("Unpair these accounts? This removes both sides.")) deleteMut.mutate() }}
+                style={{ color: "#b91c1c" }}>
+                Unpair
+              </Button>
+            </div>
+          </div>
+        ) : isLoading ? (
+          <div className="py-10 flex items-center justify-center"><Spinner /></div>
+        ) : companies.length === 0 ? (
+          <div className="rounded-lg p-4 text-center"
+            style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+            <p className="text-sm text-theme">No other workspaces available</p>
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+              To pair, you need access to at least one other Nordavix workspace.
+              Ask an admin of the other entity to add you, or create a workspace for them.
+            </p>
+          </div>
+        ) : (
+          <>
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Counterparty company
+              </span>
+              <select value={tenantId} onChange={(e) => { setTenantId(e.target.value); setCpAccountId("") }}
+                className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}>
+                <option value="">Choose a workspace…</option>
+                {companies.map((c) => (
+                  <option key={c.tenant_id} value={c.tenant_id}>
+                    {c.company_name || c.name}
+                    {!c.qbo_connected && " (QBO not connected)"}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {selectedCompany && (
+              <label className="block">
+                <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                  Matching IC account in {selectedCompany.company_name || selectedCompany.name}
+                </span>
+                {selectedCompany.ic_accounts.length === 0 ? (
+                  <p className="text-xs mt-2 italic" style={{ color: "var(--text-muted)" }}>
+                    That workspace hasn&apos;t marked any IC accounts yet. Switch to that workspace
+                    and run Auto-detect there first.
+                  </p>
+                ) : (
+                  <select value={cpAccountId} onChange={(e) => setCpAccountId(e.target.value)}
+                    className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
+                    style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}>
+                    <option value="">Choose an IC account…</option>
+                    {selectedCompany.ic_accounts.map((a) => (
+                      <option key={a.qbo_account_id} value={a.qbo_account_id}>
+                        {a.account_number} {a.account_name} ({a.kind})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </label>
+            )}
+
+            {createMut.error ? (
+              <p className="text-xs" style={{ color: "#b91c1c" }}>
+                {((createMut.error as { message?: string })?.message) ?? "Couldn't pair."}
+              </p>
+            ) : null}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button size="sm"
+                disabled={!tenantId || !cpAccountId}
+                loading={createMut.isPending}
+                onClick={() => createMut.mutate()}>
+                Save pair
+              </Button>
+            </div>
+          </>
+        )}
+      </motion.div>
+    </motion.div>
+  )
+}
