@@ -51,8 +51,36 @@ async function getOverview(periodEnd: string): Promise<IcOverview> {
   return data
 }
 
-async function autoDetect(): Promise<{ added: number; classified: number }> {
-  const { data } = await apiClient.post<{ added: number; classified: number }>("/api/intercompany/auto-detect")
+export interface AutoDetectResult {
+  added:          number
+  classified:     number
+  /** Total balance-sheet accounts QBO returned for scanning. */
+  scanned:        number
+  /** How many matched the IC name patterns this run. */
+  matched:        number
+  /** Already-tracked accounts that scanner skipped. */
+  already_marked: number
+  /** Up to 5 account names that DIDN'T match — diagnostic only. */
+  skipped_sample: string[]
+}
+
+export interface AiDetectResult {
+  added:           number
+  scanned:         number
+  /** How many candidates Claude returned (before confidence filter). */
+  ai_candidates:   number
+  already_marked:  number
+  /** Candidates Claude flagged but at confidence < 0.6 — skipped. */
+  skipped_lowconf: number
+}
+
+async function autoDetect(): Promise<AutoDetectResult> {
+  const { data } = await apiClient.post<AutoDetectResult>("/api/intercompany/auto-detect")
+  return data
+}
+
+async function aiDetect(): Promise<AiDetectResult> {
+  const { data } = await apiClient.post<AiDetectResult>("/api/intercompany/ai-detect")
   return data
 }
 
@@ -80,4 +108,4 @@ async function getTransactions(qboAccountId: string, periodEnd: string): Promise
   return data
 }
 
-export const icApi = { getOverview, autoDetect, autoClassify, upsertMark, deleteMark, getTransactions }
+export const icApi = { getOverview, autoDetect, aiDetect, autoClassify, upsertMark, deleteMark, getTransactions }

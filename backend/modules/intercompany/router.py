@@ -79,19 +79,50 @@ class MarkIn(BaseModel):
 
 # Case-insensitive substrings — if an account's name contains any of these
 # AND its account type is a balance-sheet account, it's likely IC. Tuned to
-# avoid common false positives ("loan" matches everything, hence the
-# more-specific variants only).
+# catch the common real-world naming conventions (spelled out, abbreviated,
+# plural, with/without separators) while avoiding obvious false positives.
+#
+# Coverage:
+#   * Spelled out:   intercompany / inter-company / inter company
+#   * Abbreviated:   interco / inter-co / inter co / intco
+#   * Due to/from:   "Due to Parent Co", "Due from Sub LLC"
+#   * I/C:           i/c, i.c., i.c
+#   * IC + noun:     "IC Payable", "IC Receivables" (plural too)
+#   * Related party: "Loan from Parent", "Note Receivable - HoldCo",
+#                    "Subsidiary Loan", "Affiliate Receivables",
+#                    "Investment in Subsidiary", "Holding Co Balance"
+#   * Generic:       "Related party"
 _IC_PATTERNS = [
-    r"\bintercompany\b",
-    r"\binter-company\b",
-    r"\bdue\s+to\b",
-    r"\bdue\s+from\b",
+    # Spelled out with optional separator (space or hyphen) between "inter"
+    # and "company". Matches "Intercompany Payables", "Inter-company Loan",
+    # "Inter Company Receivable".
+    r"\binter[\s\-]?company\b",
+    # Abbreviated form — "interco", "inter-co", "inter co", "intco". Both
+    # parts must be word-bounded so we don't fire on "internet co" or
+    # "interior".
+    r"\binter[\s\-]?co\b",
+    r"\bintco\b",
+    # Universal IC phrasing — "Due to X", "Due from X". The X is usually
+    # the counterparty name (parsed in pass 2).
+    r"\bdue\s+(to|from)\b",
+    # Slash / dot abbreviations  — "i/c", "i.c.", "i.c"
     r"\bi/c\b",
-    r"\bi\.c\.\b",
-    r"\bic\s+(receivable|payable|loan)\b",
-    r"\bloan\s+to\s+(subsidiary|parent|affiliate|sister)\b",
-    r"\bloan\s+from\s+(subsidiary|parent|affiliate|sister)\b",
-    r"\baffiliate\s+(receivable|payable)\b",
+    r"\bi\.c\.?\b",
+    # "IC [payable|receivable|loan|balance|account]" with optional plural
+    # — fixes the bug where "IC Payables" wasn't matching "payable\b".
+    r"\bic\s+(receivable|payable|loan|balance|account)s?\b",
+    # Related-party / affiliate phrasings — most flexible bucket. Catches
+    # noun-then-related-entity and related-entity-then-noun, with up to
+    # 20 chars of separator (preposition, dash, colon, etc.) between them.
+    # Examples it catches:
+    #   "Loan from Parent", "Note Receivable - HoldCo",
+    #   "Payable to Sister Co", "Investment in Subsidiary"
+    #   "Subsidiary Loan", "Affiliate Receivables",
+    #   "Parent Payable", "HoldCo Balance"
+    r"\b(note|loan|advance|payable|receivable|balance|investment)\b.{0,20}\b(subsidiary|parent|affiliate|sister|holdco|holding|related\s+party)\b",
+    r"\b(subsidiary|parent|affiliate|sister|holdco|holding)\b.{0,20}\b(receivable|payable|loan|advance|balance|investment)s?\b",
+    # Generic "Related party" catch-all
+    r"\brelated\s+part(y|ies)\b",
 ]
 _IC_REGEX = re.compile("|".join(_IC_PATTERNS), re.IGNORECASE)
 
@@ -267,14 +298,29 @@ async def auto_detect(
 
     added = 0
     classified = 0
+    # Diagnostic counters — surfaced in the response so the user can see
+    # what the scanner did. Critical for debugging "why didn't it find my
+    # account?" — if scanned=0 the QBO query failed; if scanned>0 and
+    # matched=0 the naming doesn't fit any pattern.
+    scanned = len(accts)
+    already_marked = 0
+    matched_total = 0
+    skipped_examples: list[str] = []
     new_marks: list[IntercompanyAccount] = []
     for a in accts:
         qid = str(a.get("Id") or "")
-        if not qid or qid in existing_ids:
-            continue
         name = str(a.get("Name") or "")
-        if not _IC_REGEX.search(name):
+        if not qid:
             continue
+        if qid in existing_ids:
+            already_marked += 1
+            continue
+        if not _IC_REGEX.search(name):
+            # Keep up to 10 non-matching names for diagnostic purposes
+            if len(skipped_examples) < 10:
+                skipped_examples.append(name)
+            continue
+        matched_total += 1
 
         # Heuristic counterparty from the account name: strip the
         # "Due to / Due from / Intercompany — " prefix and take the rest.
@@ -322,7 +368,17 @@ async def auto_detect(
                 classified += 1
 
     await db.commit()
-    return {"added": added, "classified": classified}
+    return {
+        "added":          added,
+        "classified":     classified,
+        "scanned":        scanned,
+        "matched":        matched_total,
+        "already_marked": already_marked,
+        # First few unmatched names — gives the user a hint about whether
+        # the scanner ran successfully but their naming convention isn't
+        # in the pattern list yet.
+        "skipped_sample": skipped_examples[:5],
+    }
 
 
 @router.post("/marks")
@@ -373,6 +429,194 @@ async def delete_mark(
     await db.delete(row)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/ai-detect")
+async def ai_detect(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    AI-powered IC detection — pass the whole chart of accounts to Claude
+    and let it identify intercompany accounts that the regex auto-detect
+    missed. Useful for non-standard naming ("Loan – HoldCo", "Owner
+    Investment – Sub", "Mgmt Fee Receivable - Parent", etc).
+
+    Marks any account with AI confidence ≥ 0.6, auto_detected=True, and
+    writes the AI's reasoning into the notes field. Existing marks
+    aren't touched. Returns summary so the UI can render results.
+    """
+    import json as _json
+
+    import anthropic as _anthropic
+
+    from core.config import settings as _settings
+    from modules.recons.overview import _list_balance_sheet_accounts
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(409, "QuickBooks isn't connected.")
+
+    accts = await _list_balance_sheet_accounts(conn, db)
+    existing = list((await db.execute(select(IntercompanyAccount))).scalars().all())
+    existing_ids = {m.qbo_account_id for m in existing}
+
+    # Only send accounts that aren't already marked — saves tokens and
+    # avoids reclassifying. If the user wants to re-evaluate an existing
+    # mark they can delete it first.
+    scan_pool = [
+        {
+            "id":   str(a.get("Id") or ""),
+            "name": str(a.get("Name") or ""),
+            "type": str(a.get("AccountType") or ""),
+            "num":  str(a.get("AcctNum") or ""),
+        }
+        for a in accts
+        if str(a.get("Id") or "") and str(a.get("Id") or "") not in existing_ids
+    ]
+
+    if not scan_pool:
+        return {
+            "added":           0,
+            "scanned":         len(accts),
+            "ai_candidates":   0,
+            "already_marked":  len(existing),
+            "skipped_lowconf": 0,
+        }
+
+    # ── Build the prompt ──────────────────────────────────────────────
+    system_prompt = """\
+You are a senior accountant reviewing a company's Chart of Accounts.
+
+Your job: identify GL accounts that record INTERCOMPANY (related party)
+transactions — balances with a parent, subsidiary, sister entity,
+affiliate, or owner-controlled related party. These accounts are
+typically eliminated on consolidation.
+
+Common signals:
+  * Names containing: Intercompany, Inter-co, I/C, IC, Due to/from,
+    Affiliate, Subsidiary, Parent, HoldCo, Holding, Sister Co,
+    Related party
+  * "Investment in [SubName]", "Note Receivable – [EntityName]",
+    "Loan to/from [EntityName]" where the entity is a related party
+  * Owner / member loan / advance accounts in closely held entities
+  * "Management Fee Receivable/Payable" where it's an inter-entity flow
+  * Account names containing what looks like another LLC / Inc name
+    when paired with words like Loan, Payable, Receivable, Investment
+
+NOT intercompany:
+  * Customer A/R, Trade A/P (unless name explicitly says related party)
+  * Bank, Credit Card, Fixed Assets (unless name signals IC)
+  * Operating Expense / Income / standard equity accounts
+  * Generic accruals, prepaids without an entity name
+
+You will respond with a single JSON object:
+{
+  "matches": [
+    {
+      "id":            "<account id from input>",
+      "confidence":    <0.0 to 1.0 — how sure>,
+      "kind":          "<receivable | payable | unknown>",
+      "counterparty":  "<entity name extracted from account name, or null>",
+      "reason":        "<one short sentence>"
+    }
+  ]
+}
+
+Be conservative. Confidence ≥ 0.6 means you would flag this account in
+a real audit prep. Confidence < 0.6 means it's a maybe — leave it out.
+Empty list is acceptable.
+"""
+
+    lines = []
+    for i, a in enumerate(scan_pool):
+        lines.append(
+            f'{i}. id="{a["id"]}" num="{a["num"]}" name="{a["name"]}" type="{a["type"]}"'
+        )
+    user_msg = (
+        f"Review these {len(scan_pool)} accounts and return your "
+        f"JSON matches array.\n\n" + "\n".join(lines)
+    )
+
+    client = _anthropic.Anthropic(api_key=_settings.anthropic_api_key)
+    try:
+        resp = client.messages.create(
+            model=_settings.anthropic_model,
+            max_tokens=4000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+    except Exception:
+        logger.exception("IC ai-detect: Claude call failed")
+        raise HTTPException(502, "AI scan failed. Try again in a moment.")
+
+    text = "".join(
+        getattr(b, "text", "") for b in resp.content
+        if getattr(b, "type", None) == "text"
+    )
+    text = re.sub(r"^```(?:json)?\s*|\s*```\s*$", "", text.strip(),
+                  flags=re.IGNORECASE | re.MULTILINE)
+
+    try:
+        parsed = _json.loads(text)
+        matches = parsed.get("matches") if isinstance(parsed, dict) else None
+        if not isinstance(matches, list):
+            matches = []
+    except Exception:
+        logger.exception("IC ai-detect: JSON parse failed (text head): %s", text[:300])
+        matches = []
+
+    # Build a quick lookup from id back to its source account so we can
+    # set kind defaults and look up the name for notes.
+    pool_by_id = {a["id"]: a for a in scan_pool}
+
+    added = 0
+    skipped_lowconf = 0
+    for m in matches:
+        if not isinstance(m, dict):
+            continue
+        qid = str(m.get("id") or "")
+        if not qid or qid not in pool_by_id or qid in existing_ids:
+            continue
+        try:
+            conf = float(m.get("confidence") or 0)
+        except Exception:
+            conf = 0.0
+        if conf < 0.6:
+            skipped_lowconf += 1
+            continue
+
+        kind = str(m.get("kind") or "").lower()
+        if kind not in ("receivable", "payable", "unknown"):
+            kind = _kind_for_account_type(pool_by_id[qid]["type"])
+
+        cp = str(m.get("counterparty") or "").strip() or None
+        reason = str(m.get("reason") or "").strip()
+        notes = f"AI-detected (conf {conf:.0%}): {reason}" if reason else None
+
+        db.add(IntercompanyAccount(
+            qbo_account_id=qid,
+            counterparty=cp,
+            kind=kind,
+            auto_detected=True,
+            notes=notes,
+            created_by=user.id,
+        ))
+        existing_ids.add(qid)
+        added += 1
+
+    await db.commit()
+    return {
+        "added":           added,
+        "scanned":         len(accts),
+        "ai_candidates":   len(matches),
+        "already_marked":  len(existing),
+        "skipped_lowconf": skipped_lowconf,
+    }
 
 
 @router.post("/auto-classify")

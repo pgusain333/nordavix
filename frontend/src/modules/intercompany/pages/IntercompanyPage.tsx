@@ -27,6 +27,7 @@ import {
   Trash2,
   Edit2,
   Wand2,
+  Sparkles,
   AlertCircle,
   X,
   Pencil,
@@ -75,6 +76,14 @@ export function IntercompanyPage() {
 
   const autoDetectMut = useMutation({
     mutationFn: () => icApi.autoDetect(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["intercompany-overview"] }),
+  })
+
+  // AI scan — falls back to Claude when name patterns miss accounts
+  // with non-standard naming ("Loan – HoldCo", "Owner Investment – Sub",
+  // etc.). Marks high-confidence matches (≥0.6) directly.
+  const aiDetectMut = useMutation({
+    mutationFn: () => icApi.aiDetect(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["intercompany-overview"] }),
   })
 
@@ -149,6 +158,14 @@ export function IntercompanyPage() {
               title="Scan QBO for accounts whose names look like intercompany (Due to/from, Intercompany, etc.)">
               Auto-detect
             </Button>
+            <Button size="sm" variant="outline"
+              icon={<Sparkles size={14} strokeWidth={1.8} />}
+              loading={aiDetectMut.isPending}
+              onClick={() => aiDetectMut.mutate()}
+              disabled={!qbo}
+              title="Use AI to analyze your whole chart of accounts. Catches accounts with non-standard names (e.g. 'Loan – HoldCo')">
+              AI Scan
+            </Button>
             <Button size="sm" icon={<Plus size={12} strokeWidth={1.8} />}
               onClick={() => setAddingNew(true)} disabled={!qbo}>
               Mark account
@@ -159,20 +176,71 @@ export function IntercompanyPage() {
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
 
-        {/* Auto-detect success toast — explains both detection + classification */}
+        {/* Auto-detect result toast — green when something matched, amber
+            "scanned N, matched 0" diagnostic when nothing did so the user
+            knows the scanner actually ran. The amber path tells them to
+            try AI Scan, which is the natural next step. */}
         <AnimatePresence>
-          {autoDetectMut.isSuccess && autoDetectMut.data && autoDetectMut.data.added > 0 && (
+          {autoDetectMut.isSuccess && autoDetectMut.data && (
             <motion.div
+              key="auto-toast"
               initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
               className="rounded-lg px-4 py-2.5 text-xs"
-              style={{ background: "var(--green-subtle)", border: "1px solid var(--green)", color: "var(--green)" }}>
-              Marked {autoDetectMut.data.added} new IC account
-              {autoDetectMut.data.added === 1 ? "" : "s"} based on QBO names
-              {autoDetectMut.data.classified > 0 && (
-                <> · auto-classified counterparty for {autoDetectMut.data.classified} of them
-                {" "}(from transaction entity names + account-name parsing)</>
+              style={
+                autoDetectMut.data.added > 0
+                  ? { background: "var(--green-subtle)", border: "1px solid var(--green)", color: "var(--green)" }
+                  : { background: "#fef3c7", border: "1px solid #f59e0b", color: "#92400e" }
+              }>
+              {autoDetectMut.data.added > 0 ? (
+                <>
+                  Marked {autoDetectMut.data.added} new IC account
+                  {autoDetectMut.data.added === 1 ? "" : "s"} based on QBO names
+                  {autoDetectMut.data.classified > 0 && (
+                    <> · auto-classified counterparty for {autoDetectMut.data.classified}</>
+                  )}
+                  {" "}(scanned {autoDetectMut.data.scanned} balance-sheet accounts).
+                </>
+              ) : (
+                <>
+                  Scanned {autoDetectMut.data.scanned} balance-sheet accounts —
+                  {autoDetectMut.data.already_marked > 0 && (
+                    <> {autoDetectMut.data.already_marked} already tracked,</>
+                  )}
+                  {" "}none matched IC name patterns. If you have IC accounts under non-standard
+                  names, click <strong>AI Scan</strong> instead.
+                </>
               )}
-              . Edit any row to refine.
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* AI-detect result toast */}
+        <AnimatePresence>
+          {aiDetectMut.isSuccess && aiDetectMut.data && (
+            <motion.div
+              key="ai-toast"
+              initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+              className="rounded-lg px-4 py-2.5 text-xs"
+              style={
+                aiDetectMut.data.added > 0
+                  ? { background: "rgba(168, 85, 247, 0.08)", border: "1px solid #a855f7", color: "#7c3aed" }
+                  : { background: "#fef3c7", border: "1px solid #f59e0b", color: "#92400e" }
+              }>
+              {aiDetectMut.data.added > 0 ? (
+                <>
+                  <Sparkles size={11} strokeWidth={2} className="inline mr-1 -mt-0.5" />
+                  AI marked {aiDetectMut.data.added} new IC account
+                  {aiDetectMut.data.added === 1 ? "" : "s"} (out of {aiDetectMut.data.ai_candidates} candidate
+                  {aiDetectMut.data.ai_candidates === 1 ? "" : "s"}, {aiDetectMut.data.skipped_lowconf} low-confidence).
+                  Each row has the AI&apos;s reasoning in notes — review and refine.
+                </>
+              ) : (
+                <>
+                  AI scanned {aiDetectMut.data.scanned} accounts and didn&apos;t find anything
+                  that looks intercompany. If you know an account IS intercompany, use
+                  <strong> Mark account</strong> to flag it manually.
+                </>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
