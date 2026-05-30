@@ -1841,11 +1841,12 @@ export function ReconciliationsDashboard() {
       {/* The manual-subledger editor now opens inline as an expanded row
           inside the table (see InlineSubledgerForm). No modal needed. */}
 
-      {/* Right-side detail drawer (preview pattern, behind a view-mode
-          toggle). When the user picks "Drawer" mode, clicking any
-          account row opens this instead of expanding the inline
-          accordion. Prev/Next arrows + ←/→ keys flip between accounts;
-          ESC closes. URL hash keeps it open across refresh. */}
+      {/* Right-side detail drawer. Picked when the user toggles "Drawer"
+          mode above the table. Embeds the same InlineSubledgerForm the
+          inline accordion uses — so the deep workflow (subledger build-
+          up, reconciling items, evidence, AI commentary) is 1:1 with no
+          drift risk. Sticky footer at the bottom holds the maker/checker
+          actions (Mark prepared / Approve / Re-open). */}
       <AccountDetailDrawer
         account={
           drawerAcctId
@@ -1857,6 +1858,88 @@ export function ReconciliationsDashboard() {
         readOnly={isClosed}
         onNavigate={(a) => setDrawerAcctId(a.qbo_id)}
         onClose={() => setDrawerAcctId(null)}
+        renderReconcileBody={(a) => (
+          <InlineSubledgerForm
+            account={a}
+            periodEnd={periodEnd}
+            saving={subledgerMut.isPending}
+            readOnly={isClosed}
+            onSave={(total, source, items) => {
+              subledgerMut.mutate({ qboId: a.qbo_id, total, source, items })
+              if (a.review_status !== "approved" && a.review_status !== "reviewed") {
+                setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })
+              }
+            }}
+            onAutoSave={(total, source, items) => {
+              subledgerMut.mutate({
+                qboId: a.qbo_id, total, source, items, autoSave: true,
+              })
+            }}
+            onClear={() =>
+              subledgerMut.mutate({ qboId: a.qbo_id, total: null, source: null, items: [] })
+            }
+            onClose={() => setDrawerAcctId(null)}
+          />
+        )}
+        renderFooter={(a) => (
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 text-[10.5px]"
+              style={{ color: "var(--text-muted)" }}>
+              <span className="font-semibold uppercase tracking-wider">Status</span>
+              <span className="px-1.5 py-0.5 rounded font-bold uppercase tracking-wider"
+                style={{
+                  background:
+                    a.review_status === "approved" ? "rgba(16, 185, 129, 0.12)" :
+                    a.review_status === "reviewed" ? "rgba(59, 130, 246, 0.12)" :
+                    a.review_status === "flagged"  ? "rgba(239, 68, 68, 0.12)"  :
+                                                     "var(--surface-2)",
+                  color:
+                    a.review_status === "approved" ? "#047857" :
+                    a.review_status === "reviewed" ? "#1d4ed8" :
+                    a.review_status === "flagged"  ? "#b91c1c" :
+                                                     "var(--text-muted)",
+                }}>
+                {a.review_status}
+              </span>
+            </div>
+            {!isClosed && (
+              <div className="flex items-center gap-1.5">
+                {/* Re-open: only when row has been signed off */}
+                {a.review_status === "approved" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={<RotateCcw size={12} strokeWidth={1.8} />}
+                    loading={setStatusMut.isPending}
+                    onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "pending" })}>
+                    Re-open
+                  </Button>
+                )}
+                {/* Mark prepared: when row is in the open queue */}
+                {(a.review_status === "pending" || a.review_status === "flagged") && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
+                    loading={setStatusMut.isPending}
+                    onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })}>
+                    Mark prepared
+                  </Button>
+                )}
+                {/* Approve: when row is Prepared, ready for reviewer sign-off */}
+                {a.review_status === "reviewed" && (
+                  <Button
+                    size="sm"
+                    icon={<ShieldCheck size={12} strokeWidth={1.8} />}
+                    loading={setStatusMut.isPending}
+                    onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "approved" })}>
+                    Approve
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       />
     </div>
   )
