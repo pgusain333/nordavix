@@ -127,6 +127,25 @@ export function AccountDetailDrawer({
     return () => window.removeEventListener("keydown", handler)
   }, [account, prevAcct, nextAcct, onNavigate, onClose])
 
+  // Push the page content aside on desktop. We don't want the drawer
+  // to OVERLAY the dashboard — that hides KPI cards + the accounts list
+  // behind it. Instead we publish the drawer's current width as a CSS
+  // custom property on <body> so the page-level scroll container can
+  // add a matching `padding-right` with a tweened transition. On mobile
+  // we skip this (the drawer takes the whole sheet + a backdrop, which
+  // is the right pattern there).
+  useEffect(() => {
+    if (!account) return
+    const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches
+    if (!isDesktop) return
+    document.body.style.setProperty("--detail-drawer-width", `${Math.min(width, window.innerWidth)}px`)
+    document.body.classList.add("detail-drawer-open")
+    return () => {
+      document.body.style.removeProperty("--detail-drawer-width")
+      document.body.classList.remove("detail-drawer-open")
+    }
+  }, [account, width])
+
   // Drag-to-resize. Mousedown on the left-edge handle begins tracking;
   // mousemove updates the width state; mouseup persists it. We clamp to
   // [MIN_WIDTH, 85% of viewport] so the user can't accidentally hide

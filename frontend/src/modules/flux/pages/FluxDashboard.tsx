@@ -375,7 +375,17 @@ export function FluxDashboard() {
   // FluxMonthIndex is now the single navigation surface for analyses.)
 
   return (
-    <div className="flex h-full overflow-hidden relative">
+    <div
+      className="flex h-full overflow-hidden relative"
+      style={{
+        // When the variance detail drawer is open on desktop it sets
+        // --detail-drawer-width on <body>. We shrink the page by that
+        // width so the analysis filters + variance table stay visible
+        // alongside the drawer instead of disappearing under it.
+        // Mobile leaves the var unset → padding stays 0.
+        paddingRight: "var(--detail-drawer-width, 0px)",
+        transition: "padding-right 280ms cubic-bezier(0.32, 0.72, 0, 1)",
+      }}>
       {/* ANALYSES sidebar removed — FluxMonthIndex is the navigation
           surface now. FluxDashboard is a focused single-analysis view,
           reached via the month-list page (or a direct deep link). */}

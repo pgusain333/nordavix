@@ -112,6 +112,22 @@ export function VarianceDetailDrawer({
     return () => window.removeEventListener("keydown", handler)
   }, [row, prevRow, nextRow, onNavigate, onClose])
 
+  // Push page content aside on desktop instead of overlaying it.
+  // Same CSS-custom-property pattern as AccountDetailDrawer so the
+  // FluxDashboard page-level scroll container can add a matching
+  // `padding-right`. Mobile keeps the overlay+backdrop pattern.
+  useEffect(() => {
+    if (!row) return
+    const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches
+    if (!isDesktop) return
+    document.body.style.setProperty("--detail-drawer-width", `${Math.min(width, window.innerWidth)}px`)
+    document.body.classList.add("detail-drawer-open")
+    return () => {
+      document.body.style.removeProperty("--detail-drawer-width")
+      document.body.classList.remove("detail-drawer-open")
+    }
+  }, [row, width])
+
   // Drag-to-resize: same pattern as the recon drawer.
   const resizingRef = useRef(false)
   const onResizeStart = useCallback((e: React.MouseEvent) => {

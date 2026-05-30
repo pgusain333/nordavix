@@ -818,7 +818,20 @@ export function ReconciliationsDashboard() {
   // elsewhere, but no UI path opens it on a row click now.
 
   return (
-    <div ref={pageScrollRef} className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
+    <div
+      ref={pageScrollRef}
+      className="flex flex-col h-full overflow-y-auto"
+      style={{
+        background: "var(--bg)",
+        // When the detail drawer is open on desktop it sets
+        // --detail-drawer-width on <body>. We pad the page by that
+        // width so the dashboard cards + accounts table stay visible
+        // alongside the drawer instead of disappearing under it. The
+        // transition matches the drawer's spring feel so things land
+        // together. Mobile leaves the var unset, so padding stays 0.
+        paddingRight: "var(--detail-drawer-width, 0px)",
+        transition: "padding-right 280ms cubic-bezier(0.32, 0.72, 0, 1)",
+      }}>
       {/* AI-working overlay — covers the page while the agentic preparer
           runs. Includes a Stop button that signals cooperative cancel
           to the backend (current account commits, then the run exits). */}
