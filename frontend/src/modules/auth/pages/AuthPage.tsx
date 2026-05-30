@@ -229,67 +229,82 @@ export function AuthPage({ mode }: Props) {
           </span>
         </div>
 
-        {/* Form column — scrollable when content exceeds viewport
-            (Clerk's multi-step flow can grow taller than a phone
-            screen; the old `flex items-center` hid the top of the
-            form when that happened, with no way to scroll back to it).
-            The wrapper uses `min-h-full flex items-center` so the
-            form stays vertically centered when there's room, but
-            falls back to natural top-aligned scrolling when there
-            isn't. Removed the motion fade-in — toggling sign-in ↔
-            sign-up unmounts + remounts this column, so the fade
-            replayed every time and read as a stutter. */}
-        <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 sm:py-10">
-          <div className="min-h-full flex items-center justify-center">
-            <div className="w-full max-w-md">
-              {/* Our own header */}
-              <h2 className="text-2xl sm:text-3xl font-bold leading-tight" style={{ color: "var(--text)" }}>
-                {isSignIn ? "Welcome back" : "Create your account"}
-              </h2>
-              <p className="text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-                {isSignIn
-                  ? "Sign in to keep closing your books with AI."
-                  : "Free during early access. No credit card needed."}
-              </p>
+        {/* Form column.
+            Layout rationale (this was the real bug):
+              - Old approach used `min-h-full flex items-center`. When
+                the form grew taller than the viewport (Clerk's email →
+                verify → password steps, or any field error adding
+                height), `items-center` re-centered the WHOLE form
+                vertically every render. Combined with the browser's
+                auto-scroll-to-focused-input, this clipped labels at
+                the top of the visible area (the "PASSWORD" with the
+                "P" cut off).
+              - New approach: natural top-aligned scrolling. The form
+                always starts at the top of the column with a stable
+                top padding. If content exceeds height, it scrolls
+                normally — no auto-recentering on height change.
+              - `scrollPaddingTop` reserves space at the top so when
+                the browser scrolls a focused input into view, it
+                leaves enough room for the input's label above it. */}
+        <div
+          className="flex-1 overflow-y-auto px-4 sm:px-8 pt-8 sm:pt-14 pb-10"
+          style={{ scrollPaddingTop: 96 }}
+        >
+          <div className="w-full max-w-md mx-auto">
+            {/* Our own header */}
+            <h2 className="text-2xl sm:text-3xl font-bold leading-tight" style={{ color: "var(--text)" }}>
+              {isSignIn ? "Welcome back" : "Create your account"}
+            </h2>
+            <p className="text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
+              {isSignIn
+                ? "Sign in to keep closing your books with AI."
+                : "Free during early access. No credit card needed."}
+            </p>
 
-              {/* Clerk form, styled to match */}
-              <div className="mt-7">
-                {isSignIn ? (
-                  <SignIn
-                    appearance={appearance}
-                    routing="path"
-                    path="/sign-in"
-                    signUpUrl={`/sign-up${searchSuffix}`}
-                    fallbackRedirectUrl="/app"
-                  />
-                ) : (
-                  <SignUp
-                    appearance={appearance}
-                    routing="path"
-                    path="/sign-up"
-                    signInUrl={`/sign-in${searchSuffix}`}
-                    fallbackRedirectUrl="/app"
-                  />
-                )}
-              </div>
-
-              {/* Our own mode toggle — Clerk's footer is hidden */}
-              <p className="mt-6 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-                {isSignIn ? "New to Nordavix? " : "Already have an account? "}
-                <Link to={`${otherPath}${searchSuffix}`}
-                  className="font-semibold hover:underline"
-                  style={{ color: "var(--green)" }}>
-                  {isSignIn ? "Create an account" : "Sign in"}
-                </Link>
-              </p>
-
-              <p className="mt-8 text-center text-[11px]" style={{ color: "var(--text-muted)" }}>
-                By {isSignIn ? "signing in" : "creating an account"} you agree to our
-                {" "}<a href="/terms" className="hover:underline" style={{ color: "var(--text-2)" }}>Terms</a>{" "}
-                and{" "}
-                <a href="/privacy" className="hover:underline" style={{ color: "var(--text-2)" }}>Privacy Policy</a>.
-              </p>
+            {/* Clerk form, styled to match.
+                Stable min-height prevents the visible "flash" when
+                Clerk transitions between steps (email → verification
+                → password). Without it, the column visually shrinks
+                during the swap and the page content below jumps up,
+                then settles when the new step renders. min-h holds
+                the frame steady so only the inner form content
+                changes — the layout around it stays still. */}
+            <div className="mt-7" style={{ minHeight: 380 }}>
+              {isSignIn ? (
+                <SignIn
+                  appearance={appearance}
+                  routing="path"
+                  path="/sign-in"
+                  signUpUrl={`/sign-up${searchSuffix}`}
+                  fallbackRedirectUrl="/app"
+                />
+              ) : (
+                <SignUp
+                  appearance={appearance}
+                  routing="path"
+                  path="/sign-up"
+                  signInUrl={`/sign-in${searchSuffix}`}
+                  fallbackRedirectUrl="/app"
+                />
+              )}
             </div>
+
+            {/* Our own mode toggle — Clerk's footer is hidden */}
+            <p className="mt-6 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+              {isSignIn ? "New to Nordavix? " : "Already have an account? "}
+              <Link to={`${otherPath}${searchSuffix}`}
+                className="font-semibold hover:underline"
+                style={{ color: "var(--green)" }}>
+                {isSignIn ? "Create an account" : "Sign in"}
+              </Link>
+            </p>
+
+            <p className="mt-8 text-center text-[11px]" style={{ color: "var(--text-muted)" }}>
+              By {isSignIn ? "signing in" : "creating an account"} you agree to our
+              {" "}<a href="/terms" className="hover:underline" style={{ color: "var(--text-2)" }}>Terms</a>{" "}
+              and{" "}
+              <a href="/privacy" className="hover:underline" style={{ color: "var(--text-2)" }}>Privacy Policy</a>.
+            </p>
           </div>
         </div>
       </section>
