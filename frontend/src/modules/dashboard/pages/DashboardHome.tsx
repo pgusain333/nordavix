@@ -55,6 +55,7 @@ import { useBooksStatus } from "@/modules/recons/hooks"
 import { workspaceApi } from "@/modules/workspace/api"
 import { Button, Spinner } from "@/core/ui/components"
 import { humanize } from "@/core/ui/utils"
+import { BooksClosedCelebration } from "@/modules/dashboard/components/BooksClosedCelebration"
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -94,6 +95,7 @@ function timeAgo(iso: string | null | undefined): string {
 
 export function DashboardHome() {
   const { user } = useUser()
+  const { organization } = useOrganization()  // for company name on the close celebration
   const navigate = useNavigate()
   const qc       = useQueryClient()
   // Selected month drives every KPI + action card on this page. Changing it
@@ -119,6 +121,18 @@ export function DashboardHome() {
     const t = setTimeout(() => setCloseMsg(null), 4_000)
     return () => clearTimeout(t)
   }, [closeMsg])
+
+  // "Books Closed" celebration card — the screenshottable moment that
+  // fires the instant a controller closes a period. Stats are captured
+  // at close time (not derived live) so the card is stable while the
+  // user is screenshotting / sharing, even as backend re-syncs run
+  // in the background.
+  const [celebration, setCelebration] = useState<{
+    monthLabel:  string
+    periodEnd:   string
+    stats:       { reconsTied: number; totalAccounts: number; aiAssisted: number; auditReady: number }
+    companyName: string | null
+  } | null>(null)
 
   // Current user's role — gates the Close-books button on the
   // close-progress card to admins only.
@@ -282,6 +296,24 @@ export function DashboardHome() {
   const closeMut = useMutation({
     mutationFn: () => reconsApi.closePeriod(period),
     onSuccess: () => {
+      // Capture stats RIGHT NOW from the live overview, before the
+      // invalidations below trigger refetches that could replace the
+      // numbers mid-celebration. Snapshot-then-fire-modal pattern.
+      const accounts = overview?.accounts ?? []
+      const stats = {
+        totalAccounts: accounts.length,
+        reconsTied:    accounts.filter((a) => a.review_status === "approved").length,
+        aiAssisted:    accounts.filter((a) => !!a.ai_commentary).length,
+        auditReady:    accounts.filter((a) => (a.evidence_count ?? 0) > 0).length,
+      }
+      setCelebration({
+        monthLabel,
+        periodEnd: period,
+        stats,
+        companyName: organization?.name ?? null,
+      })
+      // Quieter inline banner stays so the dashboard shows the closed
+      // state once the user dismisses the celebration card.
       setCloseMsg({ kind: "ok", text: `Books closed for ${monthLabel}.` })
       qc.invalidateQueries({ queryKey: ["period-tracker"] })
       qc.invalidateQueries({ queryKey: ["books-status"] })
@@ -950,6 +982,21 @@ export function DashboardHome() {
             onClick={() => navigate("/app/reconciliations/overrides")} />
         </div>
       </div>
+
+      {/* "Books Closed" celebration modal — fires the moment the
+          close mutation succeeds. The card is the screenshottable
+          moment that controllers naturally share. Stats are captured
+          server-side at close time so the numbers stay stable while
+          the user is sharing (background refetches won't move them). */}
+      <BooksClosedCelebration
+        open={celebration !== null}
+        monthLabel={celebration?.monthLabel ?? ""}
+        periodEnd={celebration?.periodEnd ?? ""}
+        stats={celebration?.stats ?? { reconsTied: 0, totalAccounts: 0, aiAssisted: 0, auditReady: 0 }}
+        userName={user?.firstName ?? user?.fullName ?? null}
+        companyName={celebration?.companyName ?? null}
+        onClose={() => setCelebration(null)}
+      />
     </div>
   )
 }
