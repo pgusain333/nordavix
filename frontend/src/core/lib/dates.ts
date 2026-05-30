@@ -45,6 +45,24 @@ export function formatDate(d: DateLike): string {
 }
 
 /**
+ * Format as MM-DD-YYYY hh:mm AM/PM in the user's local time. Used for
+ * timestamps that need the time component (approval stamps, note
+ * creation, audit entries, AI generation time). Same anti-locale-
+ * ambiguity reasoning as formatDate — we control the layout, the
+ * browser doesn't.
+ */
+export function formatDateTime(d: DateLike): string {
+  const dt = toDate(d)
+  if (!dt) return ""
+  const date = formatDate(dt)
+  let hours = dt.getHours()
+  const ampm = hours >= 12 ? "PM" : "AM"
+  hours = hours % 12
+  if (hours === 0) hours = 12
+  return `${date} ${pad2(hours)}:${pad2(dt.getMinutes())} ${ampm}`
+}
+
+/**
  * Optional long form for high-prominence dates (e.g., "March 15, 2024" on
  * the close-confirmation banner). Most places should use formatDate; only
  * use this when the extra readability is worth the extra width.

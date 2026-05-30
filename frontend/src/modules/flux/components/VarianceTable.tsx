@@ -21,7 +21,7 @@ import {
   type SortingState,
 } from "@tanstack/react-table"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { formatDate } from "@/core/lib/dates"
+import { formatDate, formatDateTime } from "@/core/lib/dates"
 import {
   CheckCircle2,
   Check,
@@ -1159,7 +1159,7 @@ function NarrativePanel({
             {row.approved_at && (
               <p className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--green)" }}>
                 <CheckCircle2 size={11} strokeWidth={2} />
-                Approved on {new Date(row.approved_at).toLocaleString()}
+                Approved on {formatDateTime(row.approved_at)}
               </p>
             )}
             <div className="flex items-center gap-2">
@@ -1315,7 +1315,7 @@ function AiCommentaryPanel({ commentary }: { commentary: AiCommentaryShape }) {
 
       <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
         Generated {commentary.generated_at
-          ? new Date(commentary.generated_at).toLocaleString()
+          ? formatDateTime(commentary.generated_at)
           : "(unknown)"}
       </p>
     </div>
@@ -1609,7 +1609,7 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance, fsCategory }:
                         style={t.is_checked
                           ? { background: "var(--green)", color: "#fff" }
                           : { background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border-strong)" }}
-                        title={t.is_checked ? `Checked${t.checked_at ? ` on ${new Date(t.checked_at).toLocaleString()}` : ""}` : "Mark as checked"}
+                        title={t.is_checked ? `Checked${t.checked_at ? ` on ${formatDateTime(t.checked_at)}` : ""}` : "Mark as checked"}
                       >
                         {t.is_checked ? <CheckCircle2 size={12} strokeWidth={2.2} /> : <Check size={12} strokeWidth={2.2} />}
                       </button>

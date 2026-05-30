@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { formatDate } from "@/core/lib/dates"
+import { formatDate, formatDateTime } from "@/core/lib/dates"
 import {
   ArrowLeft,
   CheckCircle2,
@@ -221,7 +221,7 @@ export function ReconciliationDetail() {
         {recon.approved_by && recon.approved_at && (
           <p className="text-xs mt-3 flex items-center gap-1.5" style={{ color: "var(--green)" }}>
             <CheckCircle2 size={12} strokeWidth={2} />
-            Approved on {new Date(recon.approved_at).toLocaleString()}
+            Approved on {formatDateTime(recon.approved_at)}
           </p>
         )}
         {recon.error_detail && (
@@ -367,7 +367,7 @@ export function ReconciliationDetail() {
                     {selectedItem.approved_by && selectedItem.approved_at && (
                       <p className="text-[11px] mt-3 flex items-center gap-1.5" style={{ color: "var(--green)" }}>
                         <CheckCircle2 size={11} strokeWidth={2} />
-                        Approved on {new Date(selectedItem.approved_at).toLocaleString()}
+                        Approved on {formatDateTime(selectedItem.approved_at)}
                       </p>
                     )}
                   </div>
@@ -458,7 +458,7 @@ export function ReconciliationDetail() {
                           style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
                           <p className="text-xs whitespace-pre-wrap text-theme">{n.body}</p>
                           <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
-                            {new Date(n.created_at).toLocaleString()}
+                            {formatDateTime(n.created_at)}
                           </p>
                         </li>
                       ))}

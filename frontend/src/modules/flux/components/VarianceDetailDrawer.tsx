@@ -33,6 +33,7 @@ import {
 } from "lucide-react"
 
 import type { VarianceRow } from "@/modules/flux/api"
+import { formatDateTime } from "@/core/lib/dates"
 
 const TABS = [
   { id: "summary",      label: "Summary",      icon: Sparkles },
@@ -562,7 +563,7 @@ function SummaryTab({ row }: { row: VarianceRow }) {
         <Card title="Approved" icon={<ShieldCheck size={13} strokeWidth={1.8} />}>
           <div className="text-[12px] text-theme">
             {row.approved_by && <>By {row.approved_by} · </>}
-            {new Date(row.approved_at).toLocaleString()}
+            {formatDateTime(row.approved_at)}
           </div>
         </Card>
       )}

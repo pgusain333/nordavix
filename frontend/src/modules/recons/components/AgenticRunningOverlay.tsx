@@ -19,7 +19,9 @@ interface Props {
   periodLabel?:  string | null
   /** Disables the Stop button (e.g. while the cancel request is in flight). */
   cancelling?:   boolean
-  onStop:        () => void
+  /** When omitted, the Stop button is hidden — used for per-row runs
+   *  that can't be safely cancelled mid-prompt. */
+  onStop?:       () => void
   /** Override the rotating status lines for non-reconciliation contexts. */
   statusLines?:  string[]
   /** Override the heading (defaults to "AI is working"). */
@@ -160,7 +162,8 @@ export function AgenticRunningOverlay({
               </AnimatePresence>
             </div>
 
-            {/* Stop button */}
+            {/* Stop button — only when the parent supplied a handler. */}
+            {onStop && (<>
             <button
               type="button"
               onClick={onStop}
@@ -191,6 +194,7 @@ export function AgenticRunningOverlay({
               Stops after the current account finishes — any work already
               committed stays. Click Run AI again to resume.
             </p>
+            </>)}
           </motion.div>
         </motion.div>
       )}

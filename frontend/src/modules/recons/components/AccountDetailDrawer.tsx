@@ -38,6 +38,7 @@ import {
 } from "lucide-react"
 
 import type { OverviewAccount } from "@/modules/recons/api"
+import { formatDateTime } from "@/core/lib/dates"
 
 const TABS = [
   { id: "summary",     label: "Summary",     icon: Sparkles  },
@@ -631,7 +632,7 @@ function SummaryTab({ account }: { account: OverviewAccount }) {
             By {account.reviewed_by}
             {account.reviewed_at && (
               <span style={{ color: "var(--text-muted)" }}>
-                {" "}· {new Date(account.reviewed_at).toLocaleString()}
+                {" "}· {formatDateTime(account.reviewed_at)}
               </span>
             )}
           </div>

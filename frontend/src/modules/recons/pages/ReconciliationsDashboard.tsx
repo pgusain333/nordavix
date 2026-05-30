@@ -21,7 +21,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { formatDate, formatDateLong } from "@/core/lib/dates"
+import { formatDate, formatDateLong, formatDateTime } from "@/core/lib/dates"
 import {
   RefreshCw,
   AlertTriangle,
@@ -62,6 +62,7 @@ import {
 } from "@/modules/recons/api"
 import { workspaceApi } from "@/modules/workspace/api"
 import { useUserNames } from "@/modules/workspace/hooks"
+import { apiClient } from "@/core/api/client"
 import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
 import {
   AccountDetailDrawer,
@@ -492,6 +493,35 @@ export function ReconciliationsDashboard() {
     await syncMut.mutateAsync().catch(() => { /* error handled in onError */ })
   }
 
+  // Period Excel export — calls /api/exports/period?period_end=...
+  // Returns the multi-sheet close-package workbook. Parses the
+  // Content-Disposition for the canonical filename so downloads land
+  // as e.g. "Acme_close_2026-04-30.xlsx" instead of a generic name.
+  const exportPeriodMut = useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.get<Blob>("/api/exports/period", {
+        params:       { period_end: periodEnd },
+        responseType: "blob",
+      })
+      let filename = `nordavix_close_${periodEnd}.xlsx`
+      const cd = res.headers?.["content-disposition"] as string | undefined
+      if (cd) {
+        const m = cd.match(/filename="?([^"]+)"?/i)
+        if (m && m[1]) filename = m[1]
+      }
+      const url = URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setSyncMsg(`Excel export failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
+    },
+  })
+
   // Auto-dismiss banner after 4 seconds
   useEffect(() => {
     if (!syncMsg) return
@@ -824,11 +854,16 @@ export function ReconciliationsDashboard() {
       {/* AI-working overlay — covers the page while the agentic preparer
           runs. Includes a Stop button that signals cooperative cancel
           to the backend (current account commits, then the run exits). */}
+      {/* Same overlay fires for BOTH the bulk Agentic run AND any
+          single-row Run AI click — the user expects the same "AI is
+          working" feedback no matter how they triggered it. Per-row
+          runs don't have a Stop button (they're short, atomic, and
+          the backend can't safely cancel mid-prompt). */}
       <AgenticRunningOverlay
-        open={runAgenticMut.isPending}
+        open={runAgenticMut.isPending || rowAgenticMut.isPending}
         periodLabel={periodEnd}
         cancelling={cancelAgenticMut.isPending}
-        onStop={() => cancelAgenticMut.mutate()}
+        onStop={runAgenticMut.isPending ? () => cancelAgenticMut.mutate() : undefined}
       />
 
       {/* ── Header (compact: tighter padding, icon-only back, sized to
@@ -889,6 +924,22 @@ export function ReconciliationsDashboard() {
               title="Re-pull from QuickBooks"
             >
               <span className="hidden sm:inline">{syncMut.isPending ? "Syncing…" : "Sync"}</span>
+            </Button>
+            {/* Period Excel export — builds the multi-sheet close package
+                workbook for this period (cover · reconciliations · all
+                5 schedules · 90-day audit log). Same endpoint as
+                Settings → Data exports, just with the period pre-filled
+                from the dashboard's date picker so the user doesn't
+                have to pick it twice. */}
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<Download size={14} strokeWidth={1.8} />}
+              loading={exportPeriodMut.isPending}
+              onClick={() => exportPeriodMut.mutate()}
+              title="Download the close package for this period as Excel (.xlsx)"
+            >
+              <span className="hidden sm:inline">{exportPeriodMut.isPending ? "Building…" : "Excel"}</span>
             </Button>
             {/* Agentic Mode — AI acts as preparer on every open account.
                 One-shot per click; gated to a synced, unlocked period. */}
@@ -1995,7 +2046,7 @@ function VerificationBadge({
         </p>
       )}
       <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
-        Confidence: {v.confidence} · Verified {new Date(v.verified_at).toLocaleString()}
+        Confidence: {v.confidence} · Verified {formatDateTime(v.verified_at)}
       </p>
     </div>
   )
@@ -3158,7 +3209,7 @@ function AiCommentaryCard({ commentary }: {
         </span>
         <span className="ml-auto text-[10px] italic" style={{ color: "var(--text-muted)" }}>
           Generated {(() => {
-            try { return new Date(commentary.generated_at).toLocaleString() }
+            try { return formatDateTime(commentary.generated_at) }
             catch { return commentary.generated_at }
           })()}
         </span>

@@ -20,7 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { formatDate, formatDateLong } from "@/core/lib/dates"
+import { formatDate, formatDateLong, formatDateTime } from "@/core/lib/dates"
 import {
   Plus,
   AlertCircle,
@@ -574,7 +574,7 @@ export function FluxDashboard() {
               selectedTb.approved_at ? (
                 <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
                   style={{ background: "var(--green-subtle)", color: "var(--green)" }}
-                  title={`Approved on ${new Date(selectedTb.approved_at).toLocaleString()}`}
+                  title={`Approved on ${formatDateTime(selectedTb.approved_at)}`}
                 >
                   <CheckCircle2 size={11} strokeWidth={2} />
                   Approved

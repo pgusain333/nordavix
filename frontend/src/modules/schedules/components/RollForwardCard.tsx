@@ -10,6 +10,7 @@
 import { motion } from "framer-motion"
 import { ArrowRight, CheckCircle2, Save } from "lucide-react"
 import { Button } from "@/core/ui/components"
+import { formatDateTime } from "@/core/lib/dates"
 import type { Snapshot } from "@/modules/schedules/types"
 
 interface Props {
@@ -122,7 +123,7 @@ export function RollForwardCard({
       <p className="text-[10px] mt-3" style={{ color: "var(--text-muted)" }}>
         {snapshot.item_count} active item{snapshot.item_count === 1 ? "" : "s"} contributing.
         {alreadyCommitted && snapshot.committed_at && (
-          <> Committed {new Date(snapshot.committed_at).toLocaleString()}.</>
+          <> Committed {formatDateTime(snapshot.committed_at)}.</>
         )}
       </p>
     </motion.div>
