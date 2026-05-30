@@ -55,16 +55,26 @@ function prefetchRoute(path: string): void {
   }
 }
 
+// Order (per spec):
+//   Dashboard → Tasks → Connections → Schedules → Flux → Intercompany
+//   → Reconciliations → Insights → Financial Package → Team
+// Rationale: connections sets up data sources, then the close mechanics
+// flow in the order they typically run during a month-end: schedules
+// (commit prepaid/accrual/etc balances), flux (variance analysis on
+// the synced TB), intercompany (eliminate IC), reconciliations (tie
+// out balance-sheet accounts), insights (analytical review), then
+// the financial package (output deliverable). Team is admin / settings-
+// adjacent and sits last.
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard",          path: "/app",                 icon: LayoutDashboard, available: true  },
   { label: "Close Tasks",        path: "/app/tasks",           icon: CheckSquare,     available: true  },
   { label: "Connections",        path: "/app/connections",     icon: Plug,            available: true  },
-  { label: "Flux Analysis",      path: "/app/flux",            icon: BarChart3,       available: true  },
-  { label: "Reconciliations",    path: "/app/reconciliations", icon: Scale,           available: true  },
   { label: "Schedules",          path: "/app/schedules",       icon: ClipboardList,   available: true  },
+  { label: "Flux Analysis",      path: "/app/flux",            icon: BarChart3,       available: true  },
   { label: "Intercompany",       path: "/app/intercompany",    icon: ArrowLeftRight,  available: true  },
-  { label: "Financial Package",  path: "/app/financials",      icon: BookOpen,        available: true  },
+  { label: "Reconciliations",    path: "/app/reconciliations", icon: Scale,           available: true  },
   { label: "Insights",           path: "/app/insights",        icon: Lightbulb,       available: true  },
+  { label: "Financial Package",  path: "/app/financials",      icon: BookOpen,        available: true  },
   { label: "Team",               path: "/app/team",            icon: Users,           available: true  },
   { label: "Workpapers",         path: "/app/workpapers",      icon: FileText,        available: false },
 ]

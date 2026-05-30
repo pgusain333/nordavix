@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     # True = sandbox (development), False = production
     qbo_sandbox: bool = True
 
+    # ── Email (Resend) ─────────────────────────────────────────────────
+    # Used by the feedback endpoint to notify hello@nordavix.com when
+    # a user submits via the in-app dialog. Empty string disables email
+    # entirely — the feedback still saves to the DB, we just skip the
+    # email step. To enable, sign up at resend.com, verify a domain,
+    # then set RESEND_API_KEY + RESEND_FROM_EMAIL on Fly.
+    resend_api_key:    str = ""
+    resend_from_email: str = "Nordavix Feedback <feedback@nordavix.com>"
+    feedback_to_email: str = "hello@nordavix.com"
+
     @field_validator("database_url")
     @classmethod
     def require_asyncpg_driver(cls, v: str) -> str:
@@ -70,6 +80,12 @@ class Settings(BaseSettings):
     @property
     def qbo_enabled(self) -> bool:
         return bool(self.qbo_client_id and self.qbo_client_secret)
+
+    @property
+    def email_enabled(self) -> bool:
+        """True when we have everything we need to send transactional
+        email via Resend. False → email-side effects no-op silently."""
+        return bool(self.resend_api_key and self.resend_from_email)
 
     @property
     def qbo_environment(self) -> str:

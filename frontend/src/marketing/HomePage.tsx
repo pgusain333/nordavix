@@ -612,10 +612,22 @@ function CloseLoopHero() {
   // computed against a fixed 440px canvas — on mobile the SVG shrank
   // but the absolute-positioned divs stayed at the 440px coordinates,
   // pushing them off-canvas. Percentages fix that.
-  const CX_PCT = 50   // center x as % of container
-  const CY_PCT = 50   // center y as % of container
+  //
+  // Optical-center nudge: each icon has a label dangling BELOW it,
+  // so the cluster's visual mass is bottom-heavy. Math-centering at
+  // 50/50 makes the whole ring read as offset down + right. Shift the
+  // ring up + left a couple percent so the eye reads it as centered.
+  // The SVG circle below uses matching (cx, cy) so the dotted ring
+  // travels with the icons; the orbiting particle's offsetPath also
+  // matches.
+  const CX_PCT = 48
+  const CY_PCT = 47
   const R_PCT  = 36   // ring radius as % of container (leaves room
                       // for the node card width + label below)
+  // Matching SVG coordinates (viewBox 440 wide). 48% = 211, 47% = 207.
+  const RING_CX = 211
+  const RING_CY = 207
+  const RING_R  = 160
   const { ref, inView } = useInView<HTMLDivElement>(0.2)
 
   return (
@@ -660,12 +672,12 @@ function CloseLoopHero() {
                   but the SVG element fills its container — the viewBox
                   scaling handles everything. */}
               <svg viewBox="0 0 440 440" className="w-full h-full" preserveAspectRatio="xMidYMid meet">
-                <circle cx={220} cy={220} r={160} fill="none"
+                <circle cx={RING_CX} cy={RING_CY} r={RING_R} fill="none"
                   stroke="var(--border)" strokeWidth="1" strokeDasharray="4 4" />
                 <motion.circle r="6" fill="var(--green)"
                   style={{
                     filter: "drop-shadow(0 0 6px var(--green))",
-                    offsetPath: `path("M 380 220 A 160 160 0 1 1 60 220 A 160 160 0 1 1 380 220")`,
+                    offsetPath: `path("M ${RING_CX + RING_R} ${RING_CY} A ${RING_R} ${RING_R} 0 1 1 ${RING_CX - RING_R} ${RING_CY} A ${RING_R} ${RING_R} 0 1 1 ${RING_CX + RING_R} ${RING_CY}")`,
                   }}
                   animate={{ offsetDistance: ["0%", "100%"] }}
                   transition={{ duration: 12, repeat: Infinity, ease: "linear" }} />
@@ -711,8 +723,13 @@ function CloseLoopHero() {
                 )
               })}
 
-              {/* Center label — also responsive */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              {/* Center label — anchored to the same optical-center as
+                  the icons + dotted ring (48% x, 47% y) so it sits in
+                  the actual middle of the visual cluster, not the
+                  math middle of the container. */}
+              <div
+                className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2"
+                style={{ left: `${CX_PCT}%`, top: `${CY_PCT}%` }}>
                 <div className="text-center">
                   <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] mb-0.5 sm:mb-1"
                     style={{ color: "var(--text-muted)" }}>
