@@ -516,9 +516,26 @@ export function ReconciliationsDashboard() {
       a.click()
       URL.revokeObjectURL(url)
     },
-    onError: (err: unknown) => {
-      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
-      setSyncMsg(`Excel export failed: ${ex.response?.data?.detail ?? ex.message ?? "Unknown error"}`)
+    onError: async (err: unknown) => {
+      // With responseType:"blob" axios returns the error body as a Blob,
+      // so the usual `response.data.detail` is empty. Read the Blob as
+      // text and try to JSON-parse the FastAPI HTTPException payload.
+      const ex = err as {
+        response?: { data?: Blob | { detail?: string }; statusText?: string }
+        message?: string
+      }
+      let detail: string | null = null
+      const data = ex.response?.data
+      if (data instanceof Blob) {
+        try {
+          const text = await data.text()
+          const parsed = JSON.parse(text) as { detail?: string }
+          detail = parsed.detail ?? null
+        } catch { /* not JSON — leave detail null */ }
+      } else if (data && typeof data === "object" && "detail" in data) {
+        detail = (data as { detail?: string }).detail ?? null
+      }
+      setSyncMsg(`Excel export failed: ${detail ?? ex.response?.statusText ?? ex.message ?? "Unknown error"}`)
     },
   })
 

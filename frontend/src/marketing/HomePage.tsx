@@ -671,7 +671,16 @@ function CloseLoopHero() {
                   transition={{ duration: 12, repeat: Infinity, ease: "linear" }} />
               </svg>
 
-              {/* Nodes positioned in % of the container so they scale */}
+              {/* Nodes positioned in % of the container so they scale.
+                  The icon BOX gets centered on the calculated point —
+                  not the icon+label column. Before, the column
+                  included the label height so `-translate-y-1/2`
+                  pulled the icon center upward by half the label
+                  height, which made the whole ring of icons sit
+                  visibly inside the dotted SVG circle. Now the label
+                  is absolutely positioned below the icon and doesn't
+                  affect centering math. Tighter alignment on mobile
+                  too, where label-induced offset was largest. */}
               {NODES.map((n, i) => {
                 const angle = (i / NODES.length) * Math.PI * 2 - Math.PI / 2
                 const leftPct = CX_PCT + R_PCT * Math.cos(angle)
@@ -684,17 +693,17 @@ function CloseLoopHero() {
                     transition={{ delay: 0.1 + i * 0.08, duration: 0.5, ease: "easeOut" }}
                     className="absolute -translate-x-1/2 -translate-y-1/2"
                     style={{ left: `${leftPct}%`, top: `${topPct}%` }}>
-                    <div className="flex flex-col items-center">
-                      <div className="h-11 w-11 sm:h-12 sm:w-12 lg:h-14 lg:w-14 rounded-2xl flex items-center justify-center mb-1 sm:mb-1.5"
-                        style={{
-                          background: "var(--surface)",
-                          border: `1.5px solid ${n.color}`,
-                          color: n.color,
-                          boxShadow: `0 6px 16px -4px ${n.color}40`,
-                        }}>
-                        <n.Icon size={18} strokeWidth={1.8} />
-                      </div>
-                      <span className="text-[10px] sm:text-[11px] font-semibold text-theme whitespace-nowrap">
+                    <div className="relative h-11 w-11 sm:h-12 sm:w-12 lg:h-14 lg:w-14 rounded-2xl flex items-center justify-center"
+                      style={{
+                        background: "var(--surface)",
+                        border: `1.5px solid ${n.color}`,
+                        color: n.color,
+                        boxShadow: `0 6px 16px -4px ${n.color}40`,
+                      }}>
+                      <n.Icon size={18} strokeWidth={1.8} />
+                      {/* Label floats below the icon; its size doesn't
+                          push the icon's visual center off the ring. */}
+                      <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1 text-[10px] sm:text-[11px] font-semibold text-theme whitespace-nowrap">
                         {n.label}
                       </span>
                     </div>

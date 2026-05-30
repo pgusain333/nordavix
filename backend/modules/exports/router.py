@@ -93,11 +93,17 @@ async def export_period_workbook(
             company_name=company_name,
             generated_by_name=generated_by,
         )
-    except Exception:
+    except Exception as exc:
+        # Surface the error class + short message so the frontend can
+        # show "Excel export failed: <reason>" instead of a generic 500.
+        # Per-sheet failures don't reach here (period_workbook now
+        # swallows them and inserts a placeholder sheet); this catches
+        # only the unrecoverable shell-level failure (e.g. workbook
+        # save errored, cover sheet broke). Full traceback in logs.
         logger.exception("Period workbook build failed")
         raise HTTPException(
             status_code=500,
-            detail="Could not build the export workbook. Check server logs.",
+            detail=f"Could not build the workbook ({type(exc).__name__}: {str(exc)[:200]}).",
         )
 
     fname_company = _safe_filename_segment(company_name) or "Nordavix"

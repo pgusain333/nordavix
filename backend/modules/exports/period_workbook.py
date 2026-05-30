@@ -54,7 +54,15 @@ async def build_period_workbook(
     company_name: str,
     generated_by_name: str,
 ) -> bytes:
-    """Build the workbook + return the raw bytes ready to stream."""
+    """Build the workbook + return the raw bytes ready to stream.
+
+    Each section is wrapped in its own try/except so one failed sheet
+    (e.g. a schedule with a stale column, an audit-log permission
+    issue) doesn't 500 the whole download. Failed sheets show a
+    one-line "could not load" placeholder + the error class name; the
+    full traceback is logged server-side so we can debug without
+    blocking the user.
+    """
     wb = Workbook()
     register_styles(wb)
 
@@ -64,18 +72,47 @@ async def build_period_workbook(
 
     _build_cover_sheet(wb, company_name=company_name, period_end=period_end,
                        generated_by=generated_by_name)
-    await _build_recons_sheet(wb, db, tenant_id, period_end)
-    await _build_prepaids_sheet(wb, db, tenant_id, period_end)
-    await _build_accruals_sheet(wb, db, tenant_id, period_end)
-    await _build_fixed_assets_sheet(wb, db, tenant_id, period_end)
-    await _build_leases_sheet(wb, db, tenant_id, period_end)
-    await _build_loans_sheet(wb, db, tenant_id, period_end)
-    await _build_audit_log_sheet(wb, db, tenant_id, period_end)
+
+    sections = [
+        ("Reconciliations", _build_recons_sheet),
+        ("Prepaids",        _build_prepaids_sheet),
+        ("Accruals",        _build_accruals_sheet),
+        ("Fixed Assets",    _build_fixed_assets_sheet),
+        ("Leases",          _build_leases_sheet),
+        ("Loans",           _build_loans_sheet),
+        ("Audit Log",       _build_audit_log_sheet),
+    ]
+    for label, builder in sections:
+        try:
+            await builder(wb, db, tenant_id, period_end)
+        except Exception as exc:
+            logger.exception("Period export: %s sheet build failed", label)
+            _build_error_sheet(wb, label, exc)
 
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
     return buf.read()
+
+
+def _build_error_sheet(wb: Workbook, label: str, exc: Exception) -> None:
+    """Drop a placeholder sheet so the user knows something failed
+    but the rest of the workbook still downloads. Keeps the sheet
+    order intact so saved-file references don't shift."""
+    ws = wb.create_sheet(label)
+    ws.column_dimensions["A"].width = 60
+    ws["A1"] = label
+    ws["A1"].style = "nx_h2"
+    ws["A3"] = "Could not build this section."
+    ws["A3"].style = "nx_label"
+    ws["A4"] = f"Reason: {type(exc).__name__}: {str(exc)[:200]}"
+    ws["A4"].style = "nx_cell_muted"
+    ws["A6"] = (
+        "The rest of the workbook downloaded normally. If this keeps "
+        "happening, share this filename + the period with support; the "
+        "full traceback is in the server logs."
+    )
+    ws["A6"].style = "nx_cell_muted"
 
 
 # ── Sheet 1: Cover ─────────────────────────────────────────────────────
