@@ -1,27 +1,33 @@
 """
-Prepaid detector — finds potential prepaid items hiding in expense
-accounts using QBO GL data + Claude classification.
+Prepaid detector — finds prepaid items hiding in expense accounts.
 
-Flow:
-  1) Pull active expense-typed accounts from QBO.
-  2) Filter to prepaid-prone accounts by name keyword match
-     (Insurance, Rent, Software, Subscription, Membership, License,
-     Retainer, Dues, etc.) — keeps the AI call short.
-  3) For each candidate account, pull GL transactions in the period.
-  4) Drop txns below the materiality floor and any already represented
+Architecture (v2 — Option 1 from the design review):
+  1) Pull every active expense-typed account from QBO.
+  2) ONE GeneralLedger report call covering ALL those accounts (auto-
+     batched at 50 accounts per call inside qbo_gl helper).
+  3) Drop txns below the materiality floor and any already represented
      by an existing PrepaidCandidate (re-scan idempotency).
-  5) Send the surviving txns to Claude with a structured prompt asking
-     it to identify which look like prepaid items and propose vendor /
-     service period / amortization method / confidence / reasoning.
-  6) Persist the AI's "likely prepaid" rows as PrepaidCandidate.
+  4) Hand the whole surviving list to Claude (chunked at 150 per call
+     if needed) and let Claude decide what's a prepaid. Claude returns
+     is_prepaid + vendor + service_start + service_months + method +
+     confidence + reasoning per item.
+  5) Persist Claude's "is_prepaid=true" picks as PrepaidCandidate rows.
 
-Returns the freshly-persisted candidates plus the total scanned and
-the count already-existing so the UI can render "Found 3 new, 5
-previously seen" feedback.
+Why this shape (vs. the prior v1 with account-name keyword filter +
+memo regex):
+  * The keyword/regex pre-filters kept missing real prepaids posted to
+    generic expense accounts (e.g. a $24K "Machine maintenance for 12
+    months" booked to "Repairs and Maintenance"). Every miss required
+    another keyword.
+  * Claude is the smart filter — it explicitly returns is_prepaid=false
+    for non-prepaids, so widening the funnel doesn't produce false
+    positives. The cost is ~$0.10-0.20 in tokens per scan: negligible.
+  * One GL pull beats 50+ per-account pulls. The scan is faster AND
+    no longer rate-limit sensitive on large charts.
 
 No background queue — synchronous within the request. The scan
-typically completes in 5-15s depending on # of expense accounts and
-txns; the UI shows a spinner on the "Scan GL for prepaids" button.
+typically completes in 5-15s; the UI shows a spinner on the "Scan GL
+for prepaids" button.
 """
 from __future__ import annotations
 
@@ -39,7 +45,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
-from core.qbo_gl import pull_gl_transactions
+
+# pull_gl_transactions (single-account) used to drive a per-account loop
+# here; v2 of the scanner uses pull_gl_transactions_multi imported lazily
+# inside scan_for_prepaid_candidates so the rest of the file isn't
+# touched on simple imports.
 from models.prepaid_candidate import PrepaidCandidate
 from models.qbo_connection import QboConnection
 
@@ -49,82 +59,38 @@ _client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
 # ── Heuristics ──────────────────────────────────────────────────────────
-
-# Account-name keywords that flag an expense account as worth scanning.
-# Broadened (was previously biased too far toward precision) so we catch
-# prepaids that hide in plain expense accounts — "Maintenance",
-# "Repairs and Maintenance", "Consulting Fees" — not just the canonical
-# "Maintenance Contract" style names. The AI is the final filter (says
-# is_prepaid=false on non-prepaids) so we're safe to widen the funnel.
-_PREPAID_ACCOUNT_KEYWORDS = [
-    # Insurance / occupancy
-    "insurance", "rent", "lease",
-    # SaaS / IT
-    "software", "saas", "subscription", "subscriptions",
-    "hosting", "domain", "cloud",
-    # Membership / dues
-    "membership", "memberships", "dues",
-    # Licenses / permits
-    "license", "licenses", "permit", "permits",
-    # Retainers
-    "retainer", "retainers",
-    # Maintenance / repair / support / service — keep both broad (single
-    # word) and narrow ("X contract") so plain "Maintenance Expense"
-    # OR "Maintenance Contract" both pass.
-    "maintenance", "maintenance contract",
-    "repair", "repairs",
-    "support contract", "service contract", "service agreement",
-    # Warranty / extended coverage
-    "warranty", "warranties",
-    # Professional services frequently paid annually upfront
-    "consulting", "advisory", "professional fees",
-    # Marketing / advertising — annual sponsorships, trade-show booths
-    "advertising", "marketing",
-    # Training / education — annual access passes, certification fees
-    "training", "education",
-    # Tax / audit — annual fees often paid in advance
-    "audit fees", "tax preparation",
-    # Catch any pre-existing "Prepaid X" naming as a courtesy
-    "prepaid",
-]
-
-# Memo-pattern signals — when these appear in a transaction's memo or
-# description, the txn is suspect even if its account didn't make the
-# keyword list. Lets us catch the case where a bookkeeper posts a
-# clearly-annual payment ("Machine maintenance for 12 months") to a
-# generic expense account that wouldn't otherwise be scanned.
-_PREPAID_MEMO_RE = re.compile(
-    r"\b("
-    # "12 months", "2 years", "3 quarters", "6 mo", "1 yr"
-    r"\d+\s*(months?|mo\b|years?|yrs?|quarters?|qtrs?)|"
-    # explicit period language
-    r"annual(ly)?|yearly|quarterly|"
-    r"prepaid|"
-    r"covers?\s+\d+|"
-    r"service\s+period|coverage\s+period|"
-    # validity windows
-    r"valid\s+(through|until|to)|"
-    r"expires?|expiration|"
-    r"renewal|renewed"
-    r")\b",
-    re.IGNORECASE,
-)
-
-
-def _memo_looks_like_prepaid(memo: str) -> bool:
-    """True when the memo contains a prepaid-signal pattern."""
-    return bool(_PREPAID_MEMO_RE.search(memo or ""))
-
+#
+# Previously the detector pre-filtered transactions twice before any AI
+# call:
+#   1) Account-name keyword filter (only accounts whose name contained
+#      one of ~25 hand-curated keywords)
+#   2) Memo-pattern regex on the remaining accounts
+#
+# Both filters were brittle and kept missing real prepaids. The cleaner
+# architecture (this version) is: pull ALL material expense transactions
+# in one GL call, hand the whole list to Claude, let Claude decide.
+# Claude already explicitly returns is_prepaid=false for non-prepaids
+# so the broader funnel can't produce false positives — it just means
+# more tokens spent per scan (~$0.10-0.20, negligible) in exchange for
+# never missing the next bookkeeper's "Machine maintenance for 12
+# months" posted to a generic expense account.
+#
+# What stayed: materiality floor (don't spend AI on $5 office-supplies
+# line), existing-candidate dedup, and the AccountType filter so we
+# only scan income-statement accounts.
 
 # AccountType values we consider for prepaid detection. Income-statement
 # accounts only — these are where a real prepaid invoice would be
 # mistakenly booked direct-to-expense.
 _PREPAID_SCAN_ACCOUNT_TYPES = {"Expense", "Other Expense"}
 
-
-def _looks_like_prepaid_account(name: str) -> bool:
-    n = (name or "").lower()
-    return any(k in n for k in _PREPAID_ACCOUNT_KEYWORDS)
+# Max txns sent to Claude in a single call. The detector's output JSON
+# is ~25-40 tokens per item; at 4000 max_tokens we'd cap around 100
+# items per response. Setting the input chunk at 150 with bumped output
+# gives plenty of headroom for sparse responses and avoids any chance
+# of mid-response truncation.
+_AI_CHUNK_SIZE = 150
+_AI_MAX_TOKENS = 8000
 
 
 # ── Data classes ────────────────────────────────────────────────────────
@@ -176,28 +142,15 @@ async def scan_for_prepaid_candidates(
         return {"scanned_accounts": 0, "scanned_txns": 0, "new_candidates": 0, "open": []}
 
     accounts = accounts_data.get("QueryResponse", {}).get("Account", []) or []
-    # ── 1a) Account-keyword-matched accounts: every txn ≥ materiality
-    #         floor goes to the AI (high recall on known-prepaid-prone
-    #         accounts like Insurance, SaaS, Maintenance).
-    kw_accounts = [
-        a for a in accounts
-        if _looks_like_prepaid_account(a.get("Name", ""))
+    expense_account_ids = [
+        str(a.get("Id") or "") for a in accounts if a.get("Id")
     ]
-    kw_account_ids = {str(a.get("Id") or "") for a in kw_accounts}
-    # ── 1b) Other expense accounts: scanned too, but ONLY txns whose
-    #         MEMO matches a prepaid pattern ("12 months", "annual",
-    #         "prepaid", etc.) get sent to the AI. Catches the case
-    #         where a prepaid was posted to a generic account
-    #         ("Maintenance", "Consulting") that the keyword list
-    #         doesn't recognize — exactly the user-reported bug.
-    other_accounts = [
-        a for a in accounts
-        if str(a.get("Id") or "") not in kw_account_ids
-    ]
+    accounts_by_id: dict[str, dict] = {
+        str(a.get("Id") or ""): a for a in accounts if a.get("Id")
+    }
     logger.info(
-        "Prepaid scan: %d total expense accts (%d match keyword filter, "
-        "%d scanned via memo-pattern fallback)",
-        len(accounts), len(kw_accounts), len(other_accounts),
+        "Prepaid scan: %d active expense accounts in scope (no pre-filter)",
+        len(expense_account_ids),
     )
 
     # ── 2) Existing-candidate dedup set ─────────────────────────────
@@ -209,18 +162,36 @@ async def scan_for_prepaid_candidates(
     )).scalars().all())
     existing_txn_ids = set(existing_rows)
 
-    # ── 3) Pull GL txns per account, build the candidate-txn list ──
-    candidates_to_classify: list[_GlTxnContext] = []
-    scanned_txns_total = 0
-    memo_flagged_count  = 0
+    # ── 3) ONE multi-account GL pull, then filter to material txns ──
+    # Previously this loop hit QBO once per account (50+ calls for a
+    # typical chart). The new helper pulls the entire expense GL in
+    # one report call (batched at 50 accounts internally if needed)
+    # and tags each row with its source account.
+    from core.qbo_gl import pull_gl_transactions_multi
 
-    def _add_candidate(t: dict[str, Any], acct_id: str, acct_name: str) -> None:
+    try:
+        all_txns = await pull_gl_transactions_multi(
+            conn, db, expense_account_ids, period_start, period_end,
+        )
+    except Exception:
+        logger.exception("Prepaid scan: multi-account GL pull failed")
+        all_txns = []
+
+    candidates_to_classify: list[_GlTxnContext] = []
+    for t in all_txns:
         amount = abs(t.get("amount") or Decimal("0"))
         if amount < materiality_floor:
-            return
+            continue
         txn_id = t.get("qbo_txn_id")
         if txn_id and txn_id in existing_txn_ids:
-            return
+            continue
+        acct_id   = str(t.get("qbo_account_id") or "")
+        # Prefer the report's per-row name; fall back to the accounts
+        # lookup if the report didn't surface it for some reason.
+        acct_name = str(
+            t.get("qbo_account_name")
+            or (accounts_by_id.get(acct_id, {}).get("Name") or "")
+        ).strip()
         candidates_to_classify.append(_GlTxnContext(
             qbo_account_id=acct_id,
             qbo_account_name=acct_name,
@@ -231,44 +202,11 @@ async def scan_for_prepaid_candidates(
             vendor=(str(t.get("entity_name")).strip() if t.get("entity_name") else None),
         ))
 
-    # Pass A — keyword-matched accounts: every material txn goes to AI.
-    for a in kw_accounts:
-        acct_id = str(a.get("Id") or "")
-        acct_name = str(a.get("Name") or "")
-        try:
-            txns = await pull_gl_transactions(conn, db, acct_id, period_start, period_end)
-        except Exception:
-            logger.exception("Prepaid scan: GL pull failed for kw account=%s", acct_id)
-            continue
-        scanned_txns_total += len(txns)
-        for t in txns:
-            _add_candidate(t, acct_id, acct_name)
-
-    # Pass B — other expense accounts: only memo-flagged txns. This is
-    # the memo-pattern fallback; it makes more API calls (one per
-    # account) but catches the missed-prepaid-in-generic-account case.
-    # Worst case ~50 extra QBO calls for a 50-account chart; acceptable
-    # for a manually-triggered scan that runs ~once per close cycle.
-    for a in other_accounts:
-        acct_id = str(a.get("Id") or "")
-        acct_name = str(a.get("Name") or "")
-        try:
-            txns = await pull_gl_transactions(conn, db, acct_id, period_start, period_end)
-        except Exception:
-            logger.exception("Prepaid scan: GL pull failed for other account=%s", acct_id)
-            continue
-        scanned_txns_total += len(txns)
-        for t in txns:
-            memo = str(t.get("memo") or "")
-            if not _memo_looks_like_prepaid(memo):
-                continue
-            memo_flagged_count += 1
-            _add_candidate(t, acct_id, acct_name)
-
+    scanned_txns_total = len(all_txns)
     logger.info(
-        "Prepaid scan: %d txns scanned total, %d memo-flagged from non-keyword accounts, "
-        "%d candidates queued for AI",
-        scanned_txns_total, memo_flagged_count, len(candidates_to_classify),
+        "Prepaid scan: %d total expense txns in period, %d above materiality floor "
+        "(%s) and not already seen → queued for AI classification",
+        scanned_txns_total, len(candidates_to_classify), materiality_floor,
     )
 
     new_candidates: list[PrepaidCandidate] = []
@@ -317,16 +255,15 @@ async def scan_for_prepaid_candidates(
     )).scalars().all())
 
     return {
-        # Now reports BOTH passes — keyword-matched + memo-pattern. The
-        # frontend toast can use these to be explicit about what was
-        # scanned ("X kw accounts + Y other accounts via memo fallback").
-        "scanned_accounts":      len(kw_accounts) + len(other_accounts),
-        "scanned_kw_accounts":   len(kw_accounts),
-        "scanned_other_accounts": len(other_accounts),
-        "scanned_txns":          scanned_txns_total,
-        "memo_flagged_txns":     memo_flagged_count,
-        "new_candidates":        len(new_candidates),
-        "open":                  open_rows,
+        # Flat shape now that the scan is one pass instead of two.
+        # The keyword/memo split fields from the prior version are
+        # gone — they no longer mean anything since every material
+        # txn goes to the AI regardless of account name or memo.
+        "scanned_accounts":  len(expense_account_ids),
+        "scanned_txns":      scanned_txns_total,
+        "ai_classified":     len(candidates_to_classify),
+        "new_candidates":    len(new_candidates),
+        "open":              open_rows,
     }
 
 
@@ -383,10 +320,30 @@ is_prepaid=false with low confidence.
 
 def _classify_with_claude(txns: list[_GlTxnContext]) -> list[dict[str, Any]]:
     """
-    Send the txn list to Claude and return its `items` array, padded
-    with empty dicts if the response is malformed or the array length
-    doesn't match (we fail closed — no false positives from bad parsing).
+    Send the txn list to Claude (chunked at _AI_CHUNK_SIZE) and return
+    the merged `items` array. Pads with empty dicts where a chunk
+    failed or returned the wrong length — failing closed prevents the
+    persistence layer from creating bogus candidates when the AI
+    response is malformed.
     """
+    if not txns:
+        return []
+
+    # Chunk on the request side. The old single-call path silently
+    # truncated on >150-ish items because max_tokens couldn't hold the
+    # response. Chunking keeps every call within safe limits AND parallel
+    # chunks could later be parallelized if scan latency becomes a
+    # concern. For now sequential is fine — a typical scan ranges from
+    # one chunk to maybe three.
+    merged: list[dict[str, Any]] = []
+    for start in range(0, len(txns), _AI_CHUNK_SIZE):
+        chunk = txns[start : start + _AI_CHUNK_SIZE]
+        merged.extend(_classify_chunk_with_claude(chunk))
+    return merged
+
+
+def _classify_chunk_with_claude(txns: list[_GlTxnContext]) -> list[dict[str, Any]]:
+    """Single AI call for ≤ _AI_CHUNK_SIZE txns. See _classify_with_claude."""
     if not txns:
         return []
 
@@ -408,7 +365,7 @@ def _classify_with_claude(txns: list[_GlTxnContext]) -> list[dict[str, Any]]:
     try:
         resp = _client.messages.create(
             model=settings.anthropic_model,
-            max_tokens=4000,
+            max_tokens=_AI_MAX_TOKENS,
             system=_DETECTOR_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
         )

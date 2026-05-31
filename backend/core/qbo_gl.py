@@ -114,6 +114,130 @@ def _parse_gl_report(report: dict) -> list[dict]:
     return out
 
 
+# ── Multi-account variant ──────────────────────────────────────────────────
+#
+# pull_gl_transactions covers the canonical single-account case (variance
+# drill-in, subledger detail). For features that need to scan dozens of
+# accounts at once (prepaid detector, missed-accrual scan) doing one call
+# per account is wasteful — QBO's GeneralLedger report accepts a comma-
+# separated `account` parameter and groups the response by account-Section
+# rows. The functions below pull and parse that grouped shape so the
+# caller gets one flat list of txns each tagged with qbo_account_id +
+# qbo_account_name. Batched at 50 accounts per call to stay under URL
+# length limits.
+
+# Max account IDs per call. ~50 × 5-char IDs = ~250 chars in the query
+# string — well under QBO's URL limit. If a tenant has more expense
+# accounts than this we split into multiple calls.
+_GL_MULTI_BATCH = 50
+
+
+async def pull_gl_transactions_multi(
+    conn: QboConnection,
+    db: AsyncSession,
+    qbo_account_ids: list[str],
+    period_start: date,
+    period_end: date,
+) -> list[dict]:
+    """
+    Pull every transaction posted to ANY of `qbo_account_ids` between
+    period_start and period_end (inclusive) in one (or a few batched)
+    GeneralLedger report call(s).
+
+    Returns the same shape as pull_gl_transactions PLUS two fields per
+    row:
+      qbo_account_id   — the account the txn was posted to
+      qbo_account_name — that account's name (from the report header)
+
+    Empty list if no IDs given or every call fails.
+    """
+    if not qbo_account_ids:
+        return []
+
+    # Batch to stay under QBO's URL length limit on the `account` param.
+    if len(qbo_account_ids) > _GL_MULTI_BATCH:
+        out: list[dict] = []
+        for i in range(0, len(qbo_account_ids), _GL_MULTI_BATCH):
+            out.extend(await pull_gl_transactions_multi(
+                conn, db,
+                qbo_account_ids[i : i + _GL_MULTI_BATCH],
+                period_start, period_end,
+            ))
+        return out
+
+    from modules.recons.service import _qbo_get  # lazy: shared helper lives there
+
+    try:
+        report = await _qbo_get(conn, db, "/reports/GeneralLedger", params={
+            "start_date":        period_start.isoformat(),
+            "end_date":          period_end.isoformat(),
+            "account":           ",".join(qbo_account_ids),
+            "accounting_method": "Accrual",
+            "columns":           "tx_date,txn_type,doc_num,name,memo,subt_nat_amount,split_acc",
+            "minorversion":      "65",
+        })
+    except Exception:
+        logger.exception(
+            "Multi-account GeneralLedger pull failed for %d accounts",
+            len(qbo_account_ids),
+        )
+        return []
+
+    return _parse_gl_report_with_account(report)
+
+
+def _parse_gl_report_with_account(report: dict) -> list[dict]:
+    """
+    Like _parse_gl_report but tags each row with the enclosing Section's
+    account_id + account_name (extracted from Section.Header.ColData).
+    Required for multi-account pulls where the same report contains
+    activity for many accounts and the caller needs to know which is
+    which.
+    """
+    cols = report.get("Columns", {}).get("Column", []) or []
+    role_by_idx: dict[int, str] = {}
+    for i, c in enumerate(cols):
+        coltype = (c.get("ColType") or "").strip().lower()
+        title   = (c.get("ColTitle") or "").strip().lower()
+        role = _coltype_to_role(coltype, title)
+        if role:
+            role_by_idx[i] = role
+
+    out: list[dict] = []
+
+    def walk(rows: list[dict], acct_id: str | None, acct_name: str | None) -> None:
+        for r in rows:
+            # When entering an Account-grouped Section, swap context to
+            # that section's account so any data rows inside inherit it.
+            new_id, new_name = acct_id, acct_name
+            if r.get("type") == "Section":
+                hdr = (r.get("Header") or {}).get("ColData") or []
+                if hdr:
+                    hid = hdr[0].get("id")
+                    hval = (hdr[0].get("value") or "").strip()
+                    if hid:
+                        new_id = str(hid)
+                    if hval:
+                        new_name = hval
+
+            sub = r.get("Rows", {}).get("Row", []) or []
+            cd  = r.get("ColData") or []
+            if cd and (r.get("type") == "Data" or not r.get("group")):
+                first_val = (cd[0].get("value", "") if cd else "").strip().lower()
+                if first_val not in ("", "beginning balance", "total", "ending balance"):
+                    parsed = _row_to_dict(cd, role_by_idx)
+                    if parsed is not None:
+                        parsed["qbo_account_id"]   = new_id or ""
+                        parsed["qbo_account_name"] = new_name or ""
+                        out.append(parsed)
+            if sub:
+                walk(sub, new_id, new_name)
+
+    walk(report.get("Rows", {}).get("Row", []) or [], None, None)
+    out.sort(key=lambda r: (r.get("txn_date") or date.min), reverse=True)
+    return out
+
+
 def _coltype_to_role(coltype: str, title: str) -> str | None:
     if coltype in ("tx_date", "txndate", "date"):           return "date"
     if coltype in ("txn_type",):                            return "type"
