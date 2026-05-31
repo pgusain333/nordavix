@@ -145,6 +145,19 @@
   }
 }
 
+/* ── Skeleton pulse — used by core/ui/Skeleton.tsx ────────────────────
+   Subtle opacity oscillation that signals "loading" without flashing
+   distracting brightness changes. 1.4 s loop matches the cadence of
+   most React-Query first responses, so the skeleton has time for one
+   visible pulse before real data lands. */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1;   }
+  50%      { opacity: 0.55; }
+}
+.skeleton-pulse {
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
 /* ── Clerk auth form overrides ─────────────────────────────────────────
    Why these live in CSS and not in the appearance prop:
    Clerk applies its default styles last in the cascade, so Tailwind

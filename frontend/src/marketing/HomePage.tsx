@@ -1462,8 +1462,8 @@ function FounderQuote() {
               background: "var(--green-subtle)",
               border: "1.5px solid color-mix(in oklab, var(--green) 40%, transparent)",
             }}>
-            <img src="/logo-mark-dark.svg"  alt="" className="h-6 w-6 dark:hidden" />
-            <img src="/logo-mark-light.svg" alt="" className="h-6 w-6 hidden dark:block" />
+            <img src="/logo-mark-dark.svg"  alt="" className="h-6 w-6 dark:hidden" loading="lazy" />
+            <img src="/logo-mark-light.svg" alt="" className="h-6 w-6 hidden dark:block" loading="lazy" />
           </div>
           <div className="text-left">
             <p className="text-sm font-bold text-theme">The Founding CPA</p>

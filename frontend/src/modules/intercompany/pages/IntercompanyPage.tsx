@@ -41,7 +41,9 @@ import {
   Layers,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { SkeletonTable } from "@/core/ui/Skeleton"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { useEscapeClose } from "@/core/hooks/useEscapeClose"
 import {
   icApi,
   type IcAccount,
@@ -578,6 +580,9 @@ function Kpi({ label, value, tone, sub }: { label: string; value: string; tone: 
 function MarkModal({ existing, onClose, onSaved }:
   { existing: IcAccount | null; onClose: () => void; onSaved: () => void }
 ) {
+  // Escape closes the modal — standard modal contract across the app.
+  useEscapeClose(onClose)
+
   const qc = useQueryClient()
   const [qboId, setQboId]       = useState(existing?.qbo_account_id ?? "")
   const [counterparty, setCp]   = useState(existing?.counterparty ?? "")
@@ -735,6 +740,8 @@ function MarkModal({ existing, onClose, onSaved }:
 function TransactionsDrawer({ account, periodEnd, onClose }:
   { account: IcAccount; periodEnd: string; onClose: () => void }
 ) {
+  useEscapeClose(onClose)
+
   const { data, isLoading } = useQuery({
     queryKey: ["intercompany-txns", account.qbo_account_id, periodEnd],
     queryFn:  () => icApi.getTransactions(account.qbo_account_id, periodEnd),
@@ -773,7 +780,14 @@ function TransactionsDrawer({ account, periodEnd, onClose }:
 
         <div className="flex-1 overflow-y-auto">
           {isLoading ? (
-            <div className="py-16 flex items-center justify-center"><Spinner /></div>
+            // Skeleton rows that mimic the real transaction table so
+            // the drawer doesn't flash an empty pane while the network
+            // request lands. Column widths roughly match the real
+            // columns (Type / # / Date / Entity / Memo / Amount).
+            <SkeletonTable
+              rows={6}
+              columns={["12%", "8%", "12%", "18%", "30%", "14%"]}
+            />
           ) : !data || data.rows.length === 0 ? (
             <div className="px-6 py-12 text-center text-sm" style={{ color: "var(--text-muted)" }}>
               No transactions posted to this account in {periodEnd.slice(0, 7)}.
@@ -1115,6 +1129,8 @@ function PairPickerModal({ account, existingPair, onClose, onSaved }:
   { account: IcAccount; existingPair: IcPair | undefined;
     onClose: () => void; onSaved: () => void }
 ) {
+  useEscapeClose(onClose)
+
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ["intercompany-accessible-companies"],

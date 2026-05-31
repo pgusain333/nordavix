@@ -593,7 +593,7 @@ function MarketingFooter() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
           <div className="md:col-span-2">
             <div className="flex items-center gap-2 mb-3">
-              <img src="/logo-mark-dark.svg" alt="Nordavix" className="h-7 w-7" />
+              <img src="/logo-mark-dark.svg" alt="Nordavix" className="h-7 w-7" loading="lazy" />
               <span className="font-bold text-white">nordavix<span style={{ color: "var(--green)" }}>.</span></span>
             </div>
             <p className="text-sm text-slate-500 leading-relaxed max-w-xs">

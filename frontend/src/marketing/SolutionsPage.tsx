@@ -315,8 +315,8 @@ function CloseLoop() {
                   </motion.div>
                 ) : (
                   <>
-                    <img src="/logo-mark-dark.svg"  alt="" className="h-8 w-8 mb-1 dark:hidden" />
-                    <img src="/logo-mark-light.svg" alt="" className="h-8 w-8 mb-1 hidden dark:block" />
+                    <img src="/logo-mark-dark.svg"  alt="" className="h-8 w-8 mb-1 dark:hidden" loading="lazy" />
+                    <img src="/logo-mark-light.svg" alt="" className="h-8 w-8 mb-1 hidden dark:block" loading="lazy" />
                     <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
                       Hover a stage
                     </p>

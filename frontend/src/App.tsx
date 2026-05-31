@@ -10,6 +10,7 @@ import { AuthPage } from "@/modules/auth/pages/AuthPage"
 import { TopProgressBar } from "@/core/ui/TopProgressBar"
 import { CookieBanner } from "@/core/consent/CookieBanner"
 import { Spinner } from "@/core/ui/components"
+import { MOTION, EASE } from "@/core/motion"
 
 // ── Code-split heavy app modules ─────────────────────────────────────────
 // Anything not on the critical first-paint path gets pulled into its
@@ -89,7 +90,7 @@ function AppRoutes() {
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -6 }}
-        transition={{ duration: 0.18, ease: "easeOut" }}
+        transition={{ duration: MOTION.DEFAULT, ease: EASE.OUT }}
         className="h-full"
       >
         <Suspense fallback={<RouteLoader />}>
