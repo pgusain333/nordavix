@@ -19,10 +19,35 @@ import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
+import { AiDetectFixedAssetBanner } from "@/modules/schedules/components/AiDetectFixedAssetBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
-import type { FixedAssetItem } from "@/modules/schedules/types"
+import { formatDate } from "@/core/lib/dates"
+import type { FixedAssetCandidate, FixedAssetItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
+
+/**
+ * Pre-fill payload for the FADialog when the user is capitalizing an
+ * AI-detected candidate. All fields are optional — the dialog falls
+ * back to its blank defaults for anything not provided.
+ */
+interface FixedAssetPrefill {
+  qbo_account_id?:     string
+  description?:        string
+  category?:           string
+  vendor?:             string
+  reference?:          string
+  in_service_date?:    string
+  cost?:               string
+  salvage_value?:      string
+  useful_life_months?: number
+  notes?:              string
+  source?:             "ai-detect"
+  sourceLabel?:        string
+  /** When set, the dialog fires schedulesApi.acceptFixedAssetCandidate
+   * on save so the banner stops re-surfacing the source GL txn. */
+  candidateId?:        string
+}
 
 function defaultPeriodEnd(): string {
   const now = new Date()
@@ -43,8 +68,56 @@ export function FixedAssetsPage() {
   const qc = useQueryClient()
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   const [filterAccount, setFilterAccount] = useState<string>("")
-  const [dialog, setDialog] = useState<{ open: boolean; item?: FixedAssetItem }>({ open: false })
+  const [dialog, setDialog] = useState<{
+    open:    boolean
+    item?:   FixedAssetItem
+    prefill?: FixedAssetPrefill
+  }>({ open: false })
   const [drawerItem, setDrawerItem] = useState<FixedAssetItem | null>(null)
+
+  /**
+   * "Capitalize" click from AiDetectFixedAssetBanner. Opens the FADialog
+   * pre-filled with the candidate's data — including AI-suggested
+   * category (Computer Hardware / Office Furniture / etc.) and useful
+   * life. On save, the dialog ALSO fires the accept API (via
+   * prefill.candidateId → mutation onSuccess) so the banner stops
+   * re-surfacing this txn.
+   *
+   * Account selection intentionally left blank — the candidate's
+   * gl_account_id points to the EXPENSE account where the txn was
+   * mis-booked. The user picks the correct Asset GL account (e.g.
+   * "Computer Hardware — Cost") when saving.
+   */
+  function handleAcceptCandidate(c: FixedAssetCandidate) {
+    const description = c.ai_description
+      || (c.ai_vendor ? `${c.ai_vendor} — ${c.ai_category ?? "fixed asset"}` : null)
+      || c.gl_memo
+      || `Capitalized from ${c.gl_account_name}`
+    const inServiceDate = c.ai_in_service_date || c.gl_txn_date
+    const cost = c.ai_cost ?? c.gl_amount
+
+    setDialog({
+      open: true,
+      prefill: {
+        qbo_account_id:     undefined,  // user picks the Asset GL account
+        description,
+        category:           c.ai_category ?? undefined,
+        vendor:             c.ai_vendor || c.gl_vendor || undefined,
+        in_service_date:    inServiceDate,
+        cost,
+        salvage_value:      c.ai_salvage_value ?? "0",
+        useful_life_months: c.ai_useful_life_months ?? undefined,
+        notes: (
+          `Detected by AI from GL entry on ${formatDate(c.gl_txn_date)}: ` +
+          `$${parseFloat(c.gl_amount).toLocaleString()} to ${c.gl_account_name}.` +
+          (c.ai_reasoning ? `\n\nAI reasoning: ${c.ai_reasoning}` : "")
+        ),
+        source:      "ai-detect",
+        sourceLabel: `AI-detected from ${c.gl_account_name} ($${parseFloat(c.gl_amount).toLocaleString()})`,
+        candidateId: c.id,
+      },
+    })
+  }
 
   const { data: itemsResp, isLoading: itemsLoading } = useQuery({
     queryKey: ["schedules", "fixed_asset", "items", filterAccount],
@@ -93,6 +166,13 @@ export function FixedAssetsPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        {/* AI capitalization-miss detection — scans expense GL for items
+            that should have been capitalized rather than expensed. */}
+        <AiDetectFixedAssetBanner
+          periodEnd={periodEnd}
+          onAccept={handleAcceptCandidate}
+        />
+
         <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker value={filterAccount} onChange={setFilterAccount} mode="filter" label="Cost (asset) GL account" />
@@ -173,8 +253,12 @@ export function FixedAssetsPage() {
 
       <AnimatePresence>
         {dialog.open && (
-          <FADialog existing={dialog.item} initialAccount={filterAccount}
-            onClose={() => setDialog({ open: false })} />
+          <FADialog
+            existing={dialog.item}
+            prefill={dialog.prefill}
+            initialAccount={filterAccount}
+            onClose={() => setDialog({ open: false })}
+          />
         )}
       </AnimatePresence>
 
@@ -227,22 +311,34 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
   )
 }
 
-function FADialog({ existing, onClose, initialAccount }: {
-  existing?: FixedAssetItem; onClose: () => void; initialAccount: string
+function FADialog({ existing, prefill, onClose, initialAccount }: {
+  existing?:       FixedAssetItem
+  prefill?:        FixedAssetPrefill
+  onClose:         () => void
+  initialAccount:  string
 }) {
-  const [account, setAccount] = useState(existing?.qbo_account_id ?? initialAccount)
+  const qc = useQueryClient()
+  // Pre-fill rules:
+  //   - existing wins (we're editing, not creating)
+  //   - prefill provides values for a new item (AI candidate)
+  //   - blank/filter-account is the final fallback for a manual add
+  const [account, setAccount] = useState(existing?.qbo_account_id ?? prefill?.qbo_account_id ?? initialAccount)
   const [accumAccount, setAccumAccount] = useState(existing?.accumulated_dep_qbo_account_id ?? "")
-  const [description, setDescription] = useState(existing?.description ?? "")
-  const [category, setCategory] = useState(existing?.category ?? "")
-  const [vendor, setVendor] = useState(existing?.vendor ?? "")
-  const [reference, setReference] = useState(existing?.reference ?? "")
-  const [inService, setInService] = useState(existing?.in_service_date ?? "")
-  const [cost, setCost] = useState(existing?.cost ?? "")
-  const [salvage, setSalvage] = useState(existing?.salvage_value ?? "0")
-  const [life, setLife] = useState(existing?.useful_life_months?.toString() ?? "60")
+  const [description, setDescription] = useState(existing?.description ?? prefill?.description ?? "")
+  const [category, setCategory] = useState(existing?.category ?? prefill?.category ?? "")
+  const [vendor, setVendor] = useState(existing?.vendor ?? prefill?.vendor ?? "")
+  const [reference, setReference] = useState(existing?.reference ?? prefill?.reference ?? "")
+  const [inService, setInService] = useState(existing?.in_service_date ?? prefill?.in_service_date ?? "")
+  const [cost, setCost] = useState(existing?.cost ?? prefill?.cost ?? "")
+  const [salvage, setSalvage] = useState(existing?.salvage_value ?? prefill?.salvage_value ?? "0")
+  const [life, setLife] = useState(
+    existing?.useful_life_months?.toString()
+    ?? prefill?.useful_life_months?.toString()
+    ?? "60",
+  )
   const [disposedOn, setDisposedOn] = useState(existing?.disposed_on ?? "")
   const [disposalProceeds, setDisposalProceeds] = useState(existing?.disposal_proceeds ?? "")
-  const [notes, setNotes] = useState(existing?.notes ?? "")
+  const [notes, setNotes] = useState(existing?.notes ?? prefill?.notes ?? "")
   const [error, setError] = useState<string | null>(null)
 
   const optimistic = useScheduleOptimistic("fixed_asset")
@@ -257,7 +353,25 @@ function FADialog({ existing, onClose, initialAccount }: {
       const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       return optimistic.beginCreate({ id: tempId, ...(body as Record<string, unknown>) })
     },
-    onSuccess: () => { onClose() },
+    onSuccess: async (created) => {
+      // If this create came from an AI-detected capitalization candidate,
+      // link the new asset back to the candidate so re-scans skip the
+      // source GL txn. Fire-and-forget — a failure here doesn't block
+      // the create (the asset is already saved).
+      if (!existing && prefill?.candidateId && (created as FixedAssetItem)?.id) {
+        try {
+          await schedulesApi.acceptFixedAssetCandidate(
+            prefill.candidateId,
+            (created as FixedAssetItem).id,
+          )
+          qc.invalidateQueries({ queryKey: ["schedules", "fixed_asset", "ai-candidates"] })
+        } catch {
+          // Non-fatal — the asset exists. Worst case the banner re-
+          // suggests on the next scan; the user can dismiss.
+        }
+      }
+      onClose()
+    },
     onError: (e: unknown, _vars, ctx) => {
       optimistic.rollback(ctx)
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
@@ -298,12 +412,31 @@ function FADialog({ existing, onClose, initialAccount }: {
         style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <div className="px-6 py-4 flex items-center justify-between"
           style={{ borderBottom: "1px solid var(--border)" }}>
-          <h3 className="text-base font-semibold text-theme">{existing ? "Edit asset" : "New fixed asset"}</h3>
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-base font-semibold text-theme">{existing ? "Edit asset" : "New fixed asset"}</h3>
+            {!existing && prefill?.source === "ai-detect" && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+                ✨ AI-detected
+              </span>
+            )}
+          </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-[var(--surface-2)]">
             <X size={16} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
           </button>
         </div>
         <div className="px-6 py-5 space-y-4">
+          {!existing && prefill?.sourceLabel && (
+            <div className="rounded-lg px-3 py-2 text-[11px] flex items-start gap-2"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              <span className="shrink-0 mt-px">✨</span>
+              <span>
+                Pre-filled from <span className="font-semibold">{prefill.sourceLabel}</span>.
+                {" "}Pick the correct Asset GL account, review the category and useful life,
+                then save.
+              </span>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <AccountPicker mode="form" label="Cost (asset) GL account" value={account} onChange={setAccount} />
             <AccountPicker mode="form" label="Accumulated depreciation GL account" value={accumAccount} onChange={setAccumAccount} />

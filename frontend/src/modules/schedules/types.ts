@@ -282,3 +282,51 @@ export interface UnreversedAccrualsList {
   items:      UnreversedAccrual[]
   total:      number
 }
+
+// ── AI fixed-asset detection ───────────────────────────────────────────
+//
+// FA-specific candidate shape. Mirrors PrepaidCandidate but with
+// capitalization-relevant AI fields: ai_description (clean asset name),
+// ai_category (Computer Hardware / Office Furniture / etc.),
+// ai_in_service_date, ai_cost, ai_salvage_value, ai_useful_life_months.
+
+/** One AI-detected potential capitalization from a GL transaction.
+ * Persisted as a row in fixed_asset_candidates. */
+export interface FixedAssetCandidate {
+  id:                    string
+  period_end:            string
+  gl_account_id:         string
+  gl_account_name:       string
+  gl_txn_id:             string | null
+  gl_txn_date:           string
+  gl_amount:             string
+  gl_memo:               string | null
+  gl_vendor:             string | null
+  ai_description:        string | null
+  ai_vendor:             string | null
+  ai_category:           string | null
+  ai_in_service_date:    string | null
+  ai_cost:               string | null
+  ai_salvage_value:      string | null
+  ai_useful_life_months: number | null
+  ai_confidence:         string
+  ai_reasoning:          string | null
+  ai_target_account_id:  string | null
+  status:                "open" | "accepted" | "dismissed" | string
+  accepted_item_id:      string | null
+  created_at:            string | null
+}
+
+export interface FixedAssetScanResult {
+  scanned_accounts: number
+  scanned_txns:     number
+  ai_classified?:   number
+  new_candidates:   number
+  cap_threshold?:   string
+  candidates:       FixedAssetCandidate[]
+}
+
+export interface FixedAssetCandidatesList {
+  status:     string
+  candidates: FixedAssetCandidate[]
+}

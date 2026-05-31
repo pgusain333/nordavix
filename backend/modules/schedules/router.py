@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
+from models.fixed_asset_candidate import FixedAssetCandidate
 from models.missed_accrual_candidate import MissedAccrualCandidate
 from models.prepaid_candidate import PrepaidCandidate
 from models.qbo_connection import QboConnection
@@ -50,6 +51,7 @@ from modules.schedules.ai.accrual_detector import (
     find_unreversed_accruals,
     scan_for_missed_accruals,
 )
+from modules.schedules.ai.fixed_asset_detector import scan_for_fixed_asset_candidates
 from modules.schedules.ai.prepaid_detector import scan_for_prepaid_candidates
 
 logger = logging.getLogger(__name__)
@@ -1371,3 +1373,175 @@ async def accrual_ai_unreversed(
         "items":      rows,
         "total":      len(rows),
     }
+
+
+# ── AI fixed-asset detection ────────────────────────────────────────────
+#
+# Mirrors the prepaid AI endpoints (scan / list / dismiss / accept).
+# Identifies expense-account transactions that should have been
+# capitalized as fixed assets per US-GAAP (tangible asset, useful life
+# > 1 year, cost ≥ cap threshold). See fixed_asset_detector.py for the
+# detailed capitalization logic and the Claude prompt.
+
+def _serialize_fa_candidate(row: FixedAssetCandidate) -> dict:
+    return {
+        "id":                    str(row.id),
+        "period_end":            row.period_end.isoformat(),
+        "gl_account_id":         row.gl_account_id,
+        "gl_account_name":       row.gl_account_name,
+        "gl_txn_id":             row.gl_txn_id,
+        "gl_txn_date":           row.gl_txn_date.isoformat(),
+        "gl_amount":             str(row.gl_amount),
+        "gl_memo":               row.gl_memo,
+        "gl_vendor":             row.gl_vendor,
+        "ai_description":        row.ai_description,
+        "ai_vendor":             row.ai_vendor,
+        "ai_category":           row.ai_category,
+        "ai_in_service_date":    row.ai_in_service_date.isoformat() if row.ai_in_service_date else None,
+        "ai_cost":               str(row.ai_cost) if row.ai_cost is not None else None,
+        "ai_salvage_value":      str(row.ai_salvage_value) if row.ai_salvage_value is not None else None,
+        "ai_useful_life_months": row.ai_useful_life_months,
+        "ai_confidence":         str(row.ai_confidence),
+        "ai_reasoning":          row.ai_reasoning,
+        "ai_target_account_id":  row.ai_target_account_id,
+        "status":                row.status,
+        "accepted_item_id":      str(row.accepted_item_id) if row.accepted_item_id else None,
+        "created_at":            row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.post("/fixed_asset/ai/scan", dependencies=[Depends(require_role("preparer"))])
+async def fixed_asset_ai_scan(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="YYYY-MM-DD"),
+    cap_threshold: str = Query(
+        "1000.00",
+        description=(
+            "USD capitalization threshold. Anything below is below the de minimis "
+            "safe harbor and won't be considered. IRS allows up to $2,500 "
+            "without AFS, $5,000 with AFS."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Scan the period's expense GL for entries that should have been
+    capitalized as fixed assets. Synchronous (5-15s typical)."""
+    pe = _parse_date(period_end, "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required.")
+    try:
+        threshold = Decimal(cap_threshold)
+    except Exception:
+        raise HTTPException(status_code=400, detail="cap_threshold must be a number.")
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    result = await scan_for_fixed_asset_candidates(
+        conn, db,
+        tenant_id=tenant_id,
+        period_end=pe,
+        cap_threshold=threshold,
+    )
+    return {
+        "scanned_accounts": result["scanned_accounts"],
+        "scanned_txns":     result["scanned_txns"],
+        "ai_classified":    result.get("ai_classified", 0),
+        "new_candidates":   result["new_candidates"],
+        "cap_threshold":    str(threshold),
+        "candidates":       [_serialize_fa_candidate(r) for r in result["open"]],
+    }
+
+
+@router.get("/fixed_asset/ai/candidates")
+async def fixed_asset_ai_candidates(
+    tenant_id: CurrentTenantId,
+    status: str = Query("open", description="open | accepted | dismissed | all"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """List FixedAssetCandidate rows. Defaults to open. Used by the
+    banner on FixedAssetsPage to render without forcing a fresh scan."""
+    q = select(FixedAssetCandidate).where(FixedAssetCandidate.tenant_id == tenant_id)
+    if status != "all":
+        q = q.where(FixedAssetCandidate.status == status)
+    q = q.order_by(
+        FixedAssetCandidate.ai_confidence.desc(),
+        FixedAssetCandidate.gl_amount.desc(),
+    )
+    rows = list((await db.execute(q)).scalars().all())
+    return {
+        "status":     status,
+        "candidates": [_serialize_fa_candidate(r) for r in rows],
+    }
+
+
+@router.post("/fixed_asset/ai/candidates/{candidate_id}/dismiss",
+             dependencies=[Depends(require_role("preparer"))])
+async def fixed_asset_ai_dismiss(
+    candidate_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """User clicked 'Not a fixed asset'. The candidate is silenced —
+    future scans won't re-surface this txn (matched by gl_txn_id)."""
+    try:
+        cid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate id.")
+    row = (await db.execute(
+        select(FixedAssetCandidate).where(
+            FixedAssetCandidate.tenant_id == tenant_id,
+            FixedAssetCandidate.id == cid,
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+    row.status = "dismissed"
+    row.status_changed_at = _datetime.utcnow()
+    row.status_changed_by = uuid.UUID(str(user.id)) if user else None
+    await db.commit()
+    return {"id": str(row.id), "status": row.status}
+
+
+@router.post("/fixed_asset/ai/candidates/{candidate_id}/accept",
+             dependencies=[Depends(require_role("preparer"))])
+async def fixed_asset_ai_accept(
+    candidate_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    body: dict = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Called by the frontend after it creates a ScheduleFixedAsset
+    from the candidate. Records the linkage so re-scans skip the txn.
+    Body: { schedule_item_id: "UUID" }."""
+    try:
+        cid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate id.")
+    raw_item_id = (body or {}).get("schedule_item_id")
+    item_uuid: uuid.UUID | None = None
+    if raw_item_id:
+        try:
+            item_uuid = uuid.UUID(str(raw_item_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="schedule_item_id must be a UUID.")
+    row = (await db.execute(
+        select(FixedAssetCandidate).where(
+            FixedAssetCandidate.tenant_id == tenant_id,
+            FixedAssetCandidate.id == cid,
+        )
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+    row.status = "accepted"
+    row.status_changed_at = _datetime.utcnow()
+    row.status_changed_by = uuid.UUID(str(user.id)) if user else None
+    row.accepted_item_id = item_uuid
+    await db.commit()
+    return {"id": str(row.id), "status": row.status, "accepted_item_id": str(item_uuid) if item_uuid else None}

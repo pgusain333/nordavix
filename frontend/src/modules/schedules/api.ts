@@ -8,7 +8,9 @@
 import { apiClient } from "@/core/api/client"
 import type {
   AccrualItem,
+  FixedAssetCandidatesList,
   FixedAssetItem,
+  FixedAssetScanResult,
   LeaseItem,
   LoanItem,
   MissedAccrualCandidatesList,
@@ -365,6 +367,50 @@ async function listUnreversedAccruals(periodEnd: string): Promise<UnreversedAccr
   return data
 }
 
+// ── AI fixed-asset detection ────────────────────────────────────────────
+
+/** Run the AI capitalization scan against the current period's expense GL.
+ * cap_threshold defaults to $1,000 (typical small-business de minimis).
+ * Synchronous — 5-15s typical. */
+async function scanForFixedAssetCandidates(
+  periodEnd: string,
+  capThreshold = "1000.00",
+): Promise<FixedAssetScanResult> {
+  const { data } = await apiClient.post<FixedAssetScanResult>(
+    "/api/schedules/fixed_asset/ai/scan",
+    null,
+    { params: { period_end: periodEnd, cap_threshold: capThreshold } },
+  )
+  return data
+}
+
+async function listFixedAssetCandidates(
+  status: "open" | "accepted" | "dismissed" | "all" = "open",
+): Promise<FixedAssetCandidatesList> {
+  const { data } = await apiClient.get<FixedAssetCandidatesList>(
+    "/api/schedules/fixed_asset/ai/candidates",
+    { params: { status } },
+  )
+  return data
+}
+
+async function dismissFixedAssetCandidate(id: string): Promise<{ id: string; status: string }> {
+  const { data } = await apiClient.post<{ id: string; status: string }>(
+    `/api/schedules/fixed_asset/ai/candidates/${id}/dismiss`,
+  )
+  return data
+}
+
+async function acceptFixedAssetCandidate(
+  id: string, scheduleItemId: string | null,
+): Promise<{ id: string; status: string }> {
+  const { data } = await apiClient.post<{ id: string; status: string }>(
+    `/api/schedules/fixed_asset/ai/candidates/${id}/accept`,
+    { schedule_item_id: scheduleItemId },
+  )
+  return data
+}
+
 /**
  * Backend slugs for /api/exports/schedules/{slug}. The frontend uses the
  * ScheduleType enum (`prepaid`, `accrual`, ...) — this map converts to
@@ -438,6 +484,11 @@ export const schedulesApi = {
   dismissMissedAccrualCandidate,
   acceptMissedAccrualCandidate,
   listUnreversedAccruals,
+  // Fixed-asset AI
+  scanForFixedAssetCandidates,
+  listFixedAssetCandidates,
+  dismissFixedAssetCandidate,
+  acceptFixedAssetCandidate,
   // Excel export
   downloadScheduleExcel,
 }
