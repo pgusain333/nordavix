@@ -159,6 +159,17 @@ export function ReconciliationDetail() {
     "Account"
   const periodLabel = formatDate(recon.period_end)
 
+  // Strict variance gate — no approval (header-level or per-entity)
+  // until SL ties to GL. 1¢ tolerance absorbs floating-point rounding
+  // on Decimal sums. The full-recon Approve button (header) checks the
+  // overall net difference; the per-entity Approve button checks each
+  // customer/vendor's difference independently below.
+  const VARIANCE_TOLERANCE = 0.01
+  const reconHasVariance = Math.abs(parseFloat(recon.difference) || 0) > VARIANCE_TOLERANCE
+  const reconVarianceTooltip = reconHasVariance
+    ? "Net difference is not zero. Clear the variance (post the missing JE in QuickBooks, re-sync, or add reconciling items) before approving."
+    : undefined
+
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
       {/* Header */}
@@ -194,7 +205,10 @@ export function ReconciliationDetail() {
             </Button>
             {!recon.approved_by && (
               <Button size="sm" icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
-                loading={approveRecon.isPending} onClick={() => approveRecon.mutate()}>
+                loading={approveRecon.isPending}
+                disabled={reconHasVariance}
+                onClick={() => approveRecon.mutate()}
+                title={reconVarianceTooltip}>
                 Approve reconciliation
               </Button>
             )}
@@ -214,9 +228,25 @@ export function ReconciliationDetail() {
           <SummaryTile label="GL Total" value={fmtMoney(recon.gl_total)} />
           <SummaryTile label="Subledger Total" value={fmtMoney(recon.subledger_total)} />
           <SummaryTile label="Net Difference" value={fmtMoney(recon.difference)}
-            tone={Math.abs(parseFloat(recon.difference)) > 100 ? "#dc2626" : "var(--green)"} />
+            tone={reconHasVariance ? "#dc2626" : "var(--green)"} />
           <SummaryTile label="Entities" value={String(detail.items.length)} />
         </div>
+
+        {/* Variance block — surfaces the gate visibly so the user
+            knows why the Approve button is disabled without hunting
+            for the tooltip. */}
+        {reconHasVariance && !recon.approved_by && (
+          <div className="mt-3 rounded-lg px-3 py-2 text-[11px] flex items-start gap-2"
+            style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+            <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
+            <span>
+              <span className="font-semibold">Approval blocked — net difference is {fmtMoney(recon.difference)}.</span>{" "}
+              Post the missing journal entries in QuickBooks (Schedules &gt; Scan GL banners suggest the exact
+              Dr/Cr to use), click Re-sync, or add reconciling items that net the gap to zero. Approval
+              unlocks the moment variance hits zero.
+            </span>
+          </div>
+        )}
 
         {recon.approved_by && recon.approved_at && (
           <p className="text-xs mt-3 flex items-center gap-1.5" style={{ color: "var(--green)" }}>
@@ -338,14 +368,29 @@ export function ReconciliationDetail() {
                         >
                           {selectedItem.ai_commentary ? "Regenerate AI" : "Generate AI commentary"}
                         </Button>
-                        {selectedItem.status !== "approved" && (
-                          <Button size="sm" icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
-                            loading={setStatus.isPending}
-                            onClick={() => setStatus.mutate({ itemId: selectedItem.id, status: "approved" })}
-                          >
-                            Approve
-                          </Button>
-                        )}
+                        {selectedItem.status !== "approved" && (() => {
+                          // Per-entity variance gate: this customer/vendor's
+                          // own difference must be zero before approving the
+                          // row. Independent of the recon-level gate above —
+                          // an AR/AP recon can have some rows balanced and
+                          // others not; reviewers should still be able to
+                          // sign off on the balanced ones individually.
+                          const entityHasVariance =
+                            Math.abs(parseFloat(selectedItem.difference) || 0) > VARIANCE_TOLERANCE
+                          const entityTooltip = entityHasVariance
+                            ? "This entity's variance must be zero before approval. Investigate unmatched / unapplied / duplicate items in the panels below, or post a correcting JE in QuickBooks + re-sync."
+                            : undefined
+                          return (
+                            <Button size="sm" icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
+                              loading={setStatus.isPending}
+                              disabled={entityHasVariance}
+                              onClick={() => setStatus.mutate({ itemId: selectedItem.id, status: "approved" })}
+                              title={entityTooltip}
+                            >
+                              Approve
+                            </Button>
+                          )
+                        })()}
                         {selectedItem.status !== "flagged" && (
                           <Button size="sm" variant="outline" icon={<Flag size={12} strokeWidth={1.8} />}
                             loading={setStatus.isPending}

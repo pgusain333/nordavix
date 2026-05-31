@@ -16,12 +16,13 @@ import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
-  Sparkles, ScanLine, Plus, AlertCircle, CheckCircle2, RefreshCw,
+  Sparkles, ScanLine, Plus, AlertCircle, CheckCircle2, RefreshCw, ChevronDown, ChevronRight,
 } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
 import { schedulesApi } from "@/modules/schedules/api"
+import { SuggestedJePreview } from "@/modules/schedules/components/SuggestedJePreview"
 import type { MissedAccrualCandidate } from "@/modules/schedules/types"
 
 interface Props {
@@ -200,6 +201,7 @@ function MissedAccrualRow({
   onDismiss:   () => void
   isDismissing: boolean
 }) {
+  const [showJe, setShowJe] = useState(false)
   const paidAmt = parseFloat(candidate.gl_amount) || 0
   const accrueAmt = parseFloat(candidate.ai_suggested_amount ?? candidate.gl_amount) || paidAmt
   const conf = parseFloat(candidate.ai_confidence) || 0
@@ -246,6 +248,17 @@ function MissedAccrualRow({
               AI: {candidate.ai_reasoning}
             </p>
           )}
+          <button
+            type="button"
+            onClick={() => setShowJe((v) => !v)}
+            className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider transition-colors hover:opacity-80"
+            style={{ color: "#7c3aed" }}
+          >
+            {showJe
+              ? <><ChevronDown size={11} strokeWidth={2} /> Hide suggested entries</>
+              : <><ChevronRight size={11} strokeWidth={2} /> Show suggested journal entries</>
+            }
+          </button>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button
@@ -270,6 +283,7 @@ function MissedAccrualRow({
           </button>
         </div>
       </div>
+      {showJe && <SuggestedJePreview kind="missed_accrual" candidate={candidate} />}
     </div>
   )
 }

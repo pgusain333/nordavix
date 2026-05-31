@@ -755,6 +755,25 @@ export function ReconciliationsDashboard() {
     return c
   }, [overview])
 
+  // Strict variance gate: an account with non-zero |variance| cannot be
+  // moved to Prepared or Approved. 1¢ tolerance to absorb floating-point
+  // rounding (Decimal-on-server returns string; parseFloat occasionally
+  // lands at 0.0000000000001 etc). Per the close-process rule: a recon
+  // is only "done" when SL ties to GL exactly, or the gap is documented
+  // as a reconciling item that ZEROS the variance.
+  const VARIANCE_TOLERANCE = 0.01
+  const selectedAccountsWithVariance = useMemo(() => {
+    if (!overview) return [] as OverviewAccount[]
+    return overview.accounts.filter(
+      (a) => selected.has(a.qbo_id)
+          && Math.abs(parseFloat(a.variance) || 0) > VARIANCE_TOLERANCE,
+    )
+  }, [overview, selected])
+  const blockedByVariance = selectedAccountsWithVariance.length > 0
+  const blockedTooltip = blockedByVariance
+    ? `${selectedAccountsWithVariance.length} selected account${selectedAccountsWithVariance.length === 1 ? "" : "s"} still have a non-zero variance. Clear it (post the missing JEs in QBO + re-sync, or add a reconciling item) before marking prepared or approving.`
+    : ""
+
   function inBucket(a: OverviewAccount): boolean {
     if (statusBucket === "all") return true
     if (statusBucket === "approved") return a.review_status === "approved"
@@ -1410,19 +1429,31 @@ export function ReconciliationsDashboard() {
                 <>
                   {/* Bulk-action toolbar — only when rows are selected */}
                   {selected.size > 0 && (
+                    <>
                     <div className="px-4 py-2 flex items-center gap-2 flex-wrap"
-                      style={{ background: "var(--green-subtle)", borderBottom: "1px solid var(--border)" }}>
-                      <span className="text-[11px] font-semibold" style={{ color: "var(--green)" }}>
+                      style={{
+                        background: blockedByVariance ? "#fef2f2" : "var(--green-subtle)",
+                        borderBottom: "1px solid var(--border)",
+                      }}>
+                      <span className="text-[11px] font-semibold"
+                        style={{ color: blockedByVariance ? "#991b1b" : "var(--green)" }}>
                         {selected.size} selected
                       </span>
                       {/* Mark prepared — open to all roles. Preparers'
                           actual workflow IS marking accounts prepared
                           (maker side of maker/checker). Backend role
                           gate matches: reviewed is open, approved +
-                          flagged stay reviewer/admin only. */}
+                          flagged stay reviewer/admin only.
+                          Variance gate: blocked when ANY selected
+                          account has |variance| > 1¢. A recon can only
+                          progress when SL ties to GL or the gap is
+                          documented via a reconciling item that
+                          zeros it. */}
                       <Button size="sm" variant="outline" icon={<Eye size={11} strokeWidth={1.8} />}
                         loading={bulkStatusMut.isPending}
+                        disabled={blockedByVariance}
                         onClick={() => bulkStatusMut.mutate("reviewed")}
+                        title={blockedByVariance ? blockedTooltip : undefined}
                       >
                         Mark prepared
                       </Button>
@@ -1430,10 +1461,15 @@ export function ReconciliationsDashboard() {
                         <>
                           <Button size="sm" icon={<CheckCircle2 size={11} strokeWidth={1.8} />}
                             loading={bulkStatusMut.isPending}
+                            disabled={blockedByVariance}
                             onClick={() => bulkStatusMut.mutate("approved")}
+                            title={blockedByVariance ? blockedTooltip : undefined}
                           >
                             Approve
                           </Button>
+                          {/* Flag is informational ("needs reviewer attention")
+                              and not blocked by variance — flagging is exactly
+                              the right move when variance won't clear easily. */}
                           <Button size="sm" variant="outline" icon={<AlertTriangle size={11} strokeWidth={1.8} />}
                             loading={bulkStatusMut.isPending}
                             onClick={() => bulkStatusMut.mutate("flagged")}
@@ -1462,6 +1498,21 @@ export function ReconciliationsDashboard() {
                         Clear selection
                       </button>
                     </div>
+                    {blockedByVariance && (
+                      <div className="px-4 py-2 text-[11px] flex items-start gap-2"
+                        style={{ background: "#fef2f2", color: "#991b1b", borderBottom: "1px solid #fecaca" }}>
+                        <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
+                        <span>
+                          <span className="font-semibold">Variance must be zero before approval.</span>{" "}
+                          {selectedAccountsWithVariance.length} selected{" "}
+                          {selectedAccountsWithVariance.length === 1 ? "account is" : "accounts are"} still out of balance.
+                          Post the missing JE in QuickBooks (the Schedules &gt; Scan GL banners suggest the entries),
+                          click Re-sync, or add a reconciling item that explains the gap. Once variance hits zero,
+                          Mark prepared and Approve unlock automatically.
+                        </span>
+                      </div>
+                    )}
+                    </>
                   )}
 
                   <div className="overflow-x-auto">
@@ -1897,27 +1948,45 @@ export function ReconciliationsDashboard() {
                     Re-open
                   </Button>
                 )}
-                {/* Mark prepared: when row is in the open queue */}
-                {(a.review_status === "pending" || a.review_status === "flagged") && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
-                    loading={setStatusMut.isPending}
-                    onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })}>
-                    Mark prepared
-                  </Button>
-                )}
-                {/* Approve: when row is Prepared, ready for reviewer sign-off */}
-                {a.review_status === "reviewed" && (
-                  <Button
-                    size="sm"
-                    icon={<ShieldCheck size={12} strokeWidth={1.8} />}
-                    loading={setStatusMut.isPending}
-                    onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "approved" })}>
-                    Approve
-                  </Button>
-                )}
+                {/* Mark prepared: when row is in the open queue.
+                    Strict variance gate — disabled when |variance| > 1¢
+                    so a row can never be marked prepared while still
+                    out of balance. The drawer footer + the dashboard
+                    Variance column will both surface the gap. */}
+                {(() => {
+                  const rowVarianceBlocked = Math.abs(parseFloat(a.variance) || 0) > VARIANCE_TOLERANCE
+                  const rowVarianceTooltip = rowVarianceBlocked
+                    ? "Variance must be cleared before marking prepared. Post the missing JE in QuickBooks (Schedules > Scan GL suggests entries), re-sync, or add a reconciling item that zeros the gap."
+                    : undefined
+                  return (
+                    <>
+                      {(a.review_status === "pending" || a.review_status === "flagged") && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
+                          loading={setStatusMut.isPending}
+                          disabled={rowVarianceBlocked}
+                          onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })}
+                          title={rowVarianceTooltip}>
+                          Mark prepared
+                        </Button>
+                      )}
+                      {/* Approve: when row is Prepared, ready for reviewer sign-off */}
+                      {a.review_status === "reviewed" && (
+                        <Button
+                          size="sm"
+                          icon={<ShieldCheck size={12} strokeWidth={1.8} />}
+                          loading={setStatusMut.isPending}
+                          disabled={rowVarianceBlocked}
+                          onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "approved" })}
+                          title={rowVarianceTooltip}>
+                          Approve
+                        </Button>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
             )}
           </div>
