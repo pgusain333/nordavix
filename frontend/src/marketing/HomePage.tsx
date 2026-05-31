@@ -308,11 +308,19 @@ function Hero() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.05 }}
-              className="font-bold text-theme leading-[1.05] tracking-tight"
-              style={{ fontSize: "clamp(36px, 6.5vw, 64px)" }}>
+              className="font-bold leading-[1.05] tracking-tight"
+              // White text — banner artwork is dark/burgundy so theme-
+              // aware text-theme would render dark and disappear into
+              // the image. A subtle text-shadow keeps the headline
+              // crisp where the image has hot spots.
+              style={{
+                fontSize: "clamp(36px, 6.5vw, 64px)",
+                color: "#FFFFFF",
+                textShadow: "0 1px 12px rgba(0,0,0,0.35)",
+              }}>
               Close the books{" "}
               <span className="relative inline-block">
-                <span style={{ color: "var(--green)" }}>in days,</span>
+                <span style={{ color: "var(--green)", textShadow: "0 1px 12px rgba(0,0,0,0.45)" }}>in days,</span>
                 <svg className="absolute -bottom-2 left-0 w-full h-2 print:hidden" viewBox="0 0 200 8" preserveAspectRatio="none">
                   <motion.path
                     d="M0 4 Q 50 0, 100 4 T 200 4"
@@ -331,7 +339,12 @@ function Hero() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.15 }}
               className="mt-6 text-base sm:text-lg leading-relaxed max-w-xl mx-auto lg:mx-0"
-              style={{ color: "var(--text-2)" }}>
+              // Slightly softer than pure white (88%) so the body copy
+              // sits a half-step behind the headline visually.
+              style={{
+                color: "rgba(255,255,255,0.88)",
+                textShadow: "0 1px 8px rgba(0,0,0,0.30)",
+              }}>
               Nordavix is the AI-native close platform for controllers and CPA firms.
               Reconcile every balance-sheet account, explain every material variance,
               and lock the period — without the spreadsheet swivel-chair.
@@ -352,12 +365,17 @@ function Hero() {
                 Start free — no card required <ArrowRight size={15} strokeWidth={2.2} />
               </Link>
               <Link to="/solutions"
-                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold transition-all hover:bg-[var(--surface-2)]"
+                // Secondary CTA: white text + semi-transparent white
+                // border so it reads as a glass button against the
+                // dark banner. Hover lifts the bg to a soft white film.
+                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold transition-all"
                 style={{
                   background: "transparent",
-                  border: "1px solid var(--border-strong)",
-                  color: "var(--text)",
-                }}>
+                  border: "1px solid rgba(255,255,255,0.35)",
+                  color: "#FFFFFF",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.10)" }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent" }}>
                 Take the product tour
               </Link>
             </motion.div>
@@ -368,7 +386,10 @@ function Hero() {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.4 }}
               className="mt-8 flex items-center justify-center lg:justify-start gap-4 text-xs"
-              style={{ color: "var(--text-muted)" }}>
+              style={{
+                color: "rgba(255,255,255,0.75)",
+                textShadow: "0 1px 6px rgba(0,0,0,0.30)",
+              }}>
               <div className="flex items-center gap-1">
                 {[0, 1, 2, 3, 4].map((i) => (
                   <Star key={i} size={12} fill="currentColor" style={{ color: "#f59e0b" }} />
