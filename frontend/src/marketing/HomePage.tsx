@@ -256,18 +256,20 @@ function Hero() {
           backgroundRepeat: "no-repeat",
         }}
       />
-      {/* Scrim — kept light so the banner artwork stays clearly
-          visible (it's the whole reason there's an image). The
-          gradient gets stronger toward the bottom so the body copy +
-          CTAs sit on a near-opaque surface for readability, while the
-          headline area at top still shows the image clearly. Dark
-          mode swaps to a matching dark scrim. */}
+      {/* Scrim — minimal at the top so the banner artwork shows
+          through cleanly (it's the whole point of the image), then
+          ramps up toward the bottom only enough to keep the body
+          copy + CTAs readable against the busiest part of the
+          composition. Previously the top was 0.30 alpha which washed
+          the image out; now it starts fully transparent and the
+          gradient does its work only in the lower half. Dark mode
+          mirrors the same curve in deep-ink tones. */}
       <div
         aria-hidden="true"
         className="absolute inset-0 pointer-events-none dark:hidden"
         style={{
           background:
-            "linear-gradient(180deg, rgba(255, 252, 248, 0.30) 0%, rgba(255, 252, 248, 0.55) 55%, rgba(255, 252, 248, 0.92) 100%)",
+            "linear-gradient(180deg, rgba(255, 252, 248, 0) 0%, rgba(255, 252, 248, 0.20) 55%, rgba(255, 252, 248, 0.70) 100%)",
         }}
       />
       <div
@@ -275,7 +277,7 @@ function Hero() {
         className="absolute inset-0 pointer-events-none hidden dark:block"
         style={{
           background:
-            "linear-gradient(180deg, rgba(14, 17, 18, 0.55) 0%, rgba(14, 17, 18, 0.75) 55%, rgba(14, 17, 18, 0.95) 100%)",
+            "linear-gradient(180deg, rgba(14, 17, 18, 0.20) 0%, rgba(14, 17, 18, 0.45) 55%, rgba(14, 17, 18, 0.85) 100%)",
         }}
       />
 
