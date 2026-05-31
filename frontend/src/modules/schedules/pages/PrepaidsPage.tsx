@@ -95,6 +95,23 @@ function dailyRateLabel(total: string, start: string, end: string): string {
   return `$${rate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}/day`
 }
 
+/**
+ * Per-row label for the "Monthly" column. Honors the item's saved
+ * amortization_method so editing the method via the pencil icon visibly
+ * updates the table without a refresh:
+ *
+ *   straight_line → "$X" (total / months, even monthly recognition)
+ *   daily_rate    → "$Y/day" (months would vary by length; daily rate
+ *                   is the truthful headline number — matches what the
+ *                   drawer KPI strip shows for the same method)
+ */
+function rateLabelForMethod(item: PrepaidItem): string {
+  if (item.amortization_method === "daily_rate") {
+    return dailyRateLabel(item.total_amount, item.start_date, item.end_date)
+  }
+  return monthlyAmount(item.total_amount, item.start_date, item.end_date)
+}
+
 export function PrepaidsPage() {
   const qc = useQueryClient()
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
@@ -299,7 +316,9 @@ export function PrepaidsPage() {
           <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
             <p className="text-sm font-semibold text-theme">Prepaid items</p>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              Each item is amortized straight-line over its [start → end] window.
+              Each item is amortized over its [start → end] window per the
+              method picked in the editor (straight-line monthly or
+              days-based daily rate).
             </p>
           </div>
           {itemsLoading ? (
@@ -345,7 +364,7 @@ export function PrepaidsPage() {
                           {it.start_date} → {it.end_date}
                         </span>
                       </Td>
-                      <Td right tabular>{monthlyAmount(it.total_amount, it.start_date, it.end_date)}</Td>
+                      <Td right tabular>{rateLabelForMethod(it)}</Td>
                       <Td>
                         <div className="inline-flex items-center gap-1.5 justify-end w-full">
                           <button

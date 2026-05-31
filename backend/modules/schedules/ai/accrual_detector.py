@@ -2,16 +2,30 @@
 Accrual AI helpers — two distinct features:
 
 (a) scan_for_missed_accruals
-    Pulls GL transactions hitting expense accounts in the month AFTER
-    the viewed period_end (plus the first 15 days of the month after
-    THAT, to catch invoices that arrive 2-6 weeks late) and asks
-    Claude which ones look like services performed in the viewed
-    period_end's month. Each likely-missed accrual becomes a
-    MissedAccrualCandidate row for the user to accept / dismiss.
+    Architecture (v2 — Option 1, mirrors the prepaid detector):
+      1) Pull every active expense-typed account from QBO.
+      2) ONE GeneralLedger report call covering ALL those accounts for
+         the LATE-INVOICE WINDOW ONLY (auto-batched at 50 accounts per
+         call inside qbo_gl helper).
+      3) Drop txns below the materiality floor and any already
+         represented by an existing MissedAccrualCandidate.
+      4) Hand the whole surviving list to Claude (chunked at 150 per
+         call) and let Claude decide what's a missed accrual for the
+         target period_end.
+      5) Persist Claude's positive picks as MissedAccrualCandidate rows.
 
-    The "scan window" mirrors what a real CPA does during month-end
-    close: 1-2 weeks into next month they look back at incoming
-    invoices for anything dated for the prior month's service.
+    SCAN WINDOW is intentionally narrow — first day after period_end
+    through day 15 of the month AFTER that (≈ 4-6 weeks). We never
+    dump a full year of GL to Claude. This mirrors a real CPA's
+    month-end close: 1-2 weeks into next month they look back at
+    incoming invoices for anything dated for the prior month's
+    service. A longer window would balloon token cost without adding
+    real precision (legit late invoices arrive within ~6 weeks; older
+    ones surface as audit prior-period adjustments, not accruals).
+
+    No keyword/regex pre-filter — Claude is the smart filter and
+    already returns is_missed_accrual=false for non-accruals, so the
+    wide funnel can't produce false positives.
 
 (d) find_unreversed_accruals
     Pure-SQL: returns every active, not-reversed accrual whose
@@ -40,7 +54,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
-from core.qbo_gl import pull_gl_transactions
+from core.qbo_gl import pull_gl_transactions, pull_gl_transactions_multi
 from models.missed_accrual_candidate import MissedAccrualCandidate
 from models.qbo_connection import QboConnection
 from models.schedule import ScheduleAccrual
@@ -55,6 +69,12 @@ _client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 # Expense account types we'll consider. Both regular and "other"
 # operating expenses since accruals frequently hide in either.
 _SCAN_ACCOUNT_TYPES = {"Expense", "Other Expense", "Cost of Goods Sold"}
+
+# Max txns sent to Claude in a single call. Same convention as the
+# prepaid detector — sparse output (~25-40 tokens / item), 8000-token
+# response cap gives headroom for a 150-item input.
+_AI_CHUNK_SIZE = 150
+_AI_MAX_TOKENS = 8000
 
 
 @dataclass
@@ -111,8 +131,14 @@ async def scan_for_missed_accruals(
         return {"scanned_accounts": 0, "scanned_txns": 0, "new_candidates": 0, "open": []}
 
     accounts = data.get("QueryResponse", {}).get("Account", []) or []
-    logger.info("Missed-accrual scan: %d expense accts × %s-%s window",
-                len(accounts), scan_start, scan_end)
+    expense_account_ids = [str(a.get("Id") or "") for a in accounts if a.get("Id")]
+    accounts_by_id: dict[str, dict] = {
+        str(a.get("Id") or ""): a for a in accounts if a.get("Id")
+    }
+    logger.info(
+        "Missed-accrual scan: %d expense accts × %s-%s window (late-invoice only)",
+        len(expense_account_ids), scan_start, scan_end,
+    )
 
     # ── 2) Existing-candidate dedup set ────────────────────────────
     existing_ids = set((await db.execute(
@@ -122,34 +148,49 @@ async def scan_for_missed_accruals(
         )
     )).scalars().all())
 
-    # ── 3) Per-account GL pull, build the candidate-txn list ───────
+    # ── 3) ONE multi-account GL pull for the late-invoice window ───
+    # Previously this loop hit QBO once per account. The v2 helper
+    # pulls every expense account's activity for the narrow scan
+    # window in a single report call (batched at 50 accounts
+    # internally) and tags each row with its source account.
+    #
+    # The scan window is the late-invoice month — NOT the full year.
+    # That keeps Claude's token cost bounded even for tenants with
+    # large transaction volumes.
+    try:
+        all_txns = await pull_gl_transactions_multi(
+            conn, db, expense_account_ids, scan_start, scan_end,
+        )
+    except Exception:
+        logger.exception("Missed-accrual scan: multi-account GL pull failed")
+        all_txns = []
+
     candidates_to_classify: list[_GlTxnContext] = []
-    scanned_txns_total = 0
-    for a in accounts:
-        acct_id = str(a.get("Id") or "")
-        acct_name = str(a.get("Name") or "")
-        try:
-            txns = await pull_gl_transactions(conn, db, acct_id, scan_start, scan_end)
-        except Exception:
-            logger.exception("Missed-accrual scan: GL pull failed for acct=%s", acct_id)
+    for t in all_txns:
+        amount = abs(t.get("amount") or Decimal("0"))
+        if amount < materiality_floor:
             continue
-        scanned_txns_total += len(txns)
-        for t in txns:
-            amount = abs(t.get("amount") or Decimal("0"))
-            if amount < materiality_floor:
-                continue
-            txn_id = t.get("qbo_txn_id")
-            if txn_id and txn_id in existing_ids:
-                continue
-            candidates_to_classify.append(_GlTxnContext(
-                qbo_account_id=acct_id,
-                qbo_account_name=acct_name,
-                txn_id=str(txn_id) if txn_id else None,
-                txn_date=t.get("txn_date") or scan_start,
-                amount=amount,
-                memo=str(t.get("memo") or "").strip(),
-                vendor=(str(t.get("entity_name")).strip() if t.get("entity_name") else None),
-            ))
+        txn_id = t.get("qbo_txn_id")
+        if txn_id and txn_id in existing_ids:
+            continue
+        acct_id   = str(t.get("qbo_account_id") or "")
+        # Prefer the report's per-row name; fall back to the accounts
+        # lookup if the report didn't surface one (shouldn't happen
+        # but cheap to guard).
+        acct_name = str(
+            t.get("qbo_account_name")
+            or (accounts_by_id.get(acct_id, {}).get("Name") or "")
+        ).strip()
+        candidates_to_classify.append(_GlTxnContext(
+            qbo_account_id=acct_id,
+            qbo_account_name=acct_name,
+            txn_id=str(txn_id) if txn_id else None,
+            txn_date=t.get("txn_date") or scan_start,
+            amount=amount,
+            memo=str(t.get("memo") or "").strip(),
+            vendor=(str(t.get("entity_name")).strip() if t.get("entity_name") else None),
+        ))
+    scanned_txns_total = len(all_txns)
 
     new_candidates: list[MissedAccrualCandidate] = []
     if candidates_to_classify:
@@ -198,8 +239,9 @@ async def scan_for_missed_accruals(
     )).scalars().all())
 
     return {
-        "scanned_accounts": len(accounts),
+        "scanned_accounts": len(expense_account_ids),
         "scanned_txns":     scanned_txns_total,
+        "ai_classified":    len(candidates_to_classify),
         "scan_window":      [scan_start.isoformat(), scan_end.isoformat()],
         "new_candidates":   len(new_candidates),
         "open":             open_rows,
@@ -265,6 +307,24 @@ miss one than to flood the user with false positives.
 def _classify_missed_with_claude(
     txns: list[_GlTxnContext], target_period_end: date,
 ) -> list[dict[str, Any]]:
+    """Chunked wrapper around the per-call classifier.
+
+    Splits the candidate list into _AI_CHUNK_SIZE-sized chunks so very
+    busy expense-GL months can't blow past Claude's max_tokens output
+    cap mid-response. Returns one dict per input txn, in order.
+    """
+    if not txns:
+        return []
+    merged: list[dict[str, Any]] = []
+    for start in range(0, len(txns), _AI_CHUNK_SIZE):
+        chunk = txns[start : start + _AI_CHUNK_SIZE]
+        merged.extend(_classify_missed_chunk_with_claude(chunk, target_period_end))
+    return merged
+
+
+def _classify_missed_chunk_with_claude(
+    txns: list[_GlTxnContext], target_period_end: date,
+) -> list[dict[str, Any]]:
     if not txns:
         return []
 
@@ -289,7 +349,7 @@ def _classify_missed_with_claude(
     try:
         resp = _client.messages.create(
             model=settings.anthropic_model,
-            max_tokens=4000,
+            max_tokens=_AI_MAX_TOKENS,
             system=_DETECTOR_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
         )
