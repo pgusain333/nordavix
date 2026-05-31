@@ -67,6 +67,7 @@ import {
 } from "@/modules/recons/components/AccountDetailDrawer"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
+import { InitialRecordingSuggestionsPanel } from "@/modules/schedules/components/InitialRecordingSuggestionsPanel"
 import {
   PrepaidSuggestionsPanel,
   prepaidTxnId,
@@ -2565,6 +2566,20 @@ function InlineSubledgerForm({
           </span>
         </div>
       )}
+
+      {/* ── Initial-recording suggestions (FIRST-MONTH JE reminders) ──
+          Aggregates inception-flavored line items across all 5 schedule
+          types whose start/origination date falls in this period — and
+          renders the Dr/Cr JE the user needs to POST IN QUICKBOOKS so
+          the GL recognizes the BS amount that Nordavix's subledger
+          build-up is already counting. Without this, the recon shows a
+          variance the user can't reconcile away (SL has the prepaid /
+          asset / liability but GL doesn't yet).
+          Renders nothing if no items start in this period. */}
+      <InitialRecordingSuggestionsPanel
+        qboAccountId={account.qbo_id}
+        periodEnd={periodEnd}
+      />
 
       {/* ── Prepaids schedule suggestions ────────────────────────────
           When this account has prepaid items committed in the Schedules
