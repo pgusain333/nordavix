@@ -794,6 +794,35 @@ export function DashboardHome() {
                 {monthLabel}
               </span>
             </div>
+            {/* Reconciliation progress bar — moved out of the Month-End
+                Close Progress card and into the module tile so it
+                lives next to that module's own counts + drill-in.
+                Shows X of Y accounts approved across this period. */}
+            {(() => {
+              const reconPct = buckets.total === 0
+                ? 0
+                : Math.round((buckets.approved / buckets.total) * 100)
+              const barColor = reconPct === 100
+                ? "var(--green)"
+                : reconPct >= 50 ? "#3b82f6" : "#f59e0b"
+              return (
+                <div className="px-4 pt-3 pb-3" style={{ borderBottom: "1px solid var(--border)" }}>
+                  <div className="flex items-center justify-between text-[11px] mb-1.5">
+                    <span style={{ color: "var(--text-muted)" }}>
+                      Reconciliation progress
+                    </span>
+                    <span className="tabular-nums font-semibold" style={{ color: "var(--text-2)" }}>
+                      {buckets.approved} / {buckets.total} approved · {reconPct}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.06)" }}>
+                    <div className="h-full rounded-full transition-all"
+                      style={{ width: `${reconPct}%`, background: barColor }} />
+                  </div>
+                </div>
+              )
+            })()}
+
             {/* Buckets summary */}
             <div className="grid grid-cols-3 divide-x" style={{ borderBottom: "1px solid var(--border)" }}>
               <BucketTile label="Open" count={buckets.open} fg="#b91c1c" bg="#fef2f2" />
@@ -885,6 +914,37 @@ export function DashboardHome() {
                 {monthLabel}
               </span>
             </div>
+            {/* Flux progress bar — moved out of the Month-End Close
+                Progress card and into the module tile. Uses the same
+                fluxStatus values the close-gate logic uses, so this
+                bar and the aggregated bar above always agree. */}
+            {(() => {
+              const fluxApproved = Math.max(0, fluxStatus.total - fluxStatus.unapprovedCount)
+              const fluxPct = fluxStatus.total === 0
+                ? 0
+                : Math.round((fluxApproved / fluxStatus.total) * 100)
+              const barColor = fluxPct === 100
+                ? "var(--green)"
+                : fluxPct >= 50 ? "#3b82f6" : "#f59e0b"
+              return (
+                <div className="px-4 pt-3 pb-3" style={{ borderBottom: "1px solid var(--border)" }}>
+                  <div className="flex items-center justify-between text-[11px] mb-1.5">
+                    <span style={{ color: "var(--text-muted)" }}>
+                      Flux progress
+                    </span>
+                    <span className="tabular-nums font-semibold" style={{ color: "var(--text-2)" }}>
+                      {fluxStatus.total === 0
+                        ? "Not started"
+                        : `${fluxApproved} / ${fluxStatus.total} approved · ${fluxPct}%`}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.06)" }}>
+                    <div className="h-full rounded-full transition-all"
+                      style={{ width: `${fluxStatus.total === 0 ? 0 : fluxPct}%`, background: barColor }} />
+                  </div>
+                </div>
+              )
+            })()}
             <div className="px-4 py-3">
               {monthlyFlux.length === 0 ? (
                 <div className="py-6 text-center">
@@ -1117,7 +1177,6 @@ function CloseProgressCard({
   // can render synchronously off the cached tracker payload.
   const counts = trackerEntry?.counts ?? { pending: 0, reviewed: 0, approved: 0, flagged: 0 }
   const total = trackerEntry?.total ?? 0
-  const openCount = counts.pending  // "open" = unreviewed accounts
 
   // ── State 1: closed ─────────────────────────────────────────────
   if (status === "closed") {
@@ -1180,9 +1239,12 @@ function CloseProgressCard({
     ? 0
     : Math.round((tasksApproved / tasksTotal) * 100)
 
-  // Per-row percentages used by the breakdown bars below.
-  const reconPct = total === 0 ? 0 : Math.round((counts.approved / total) * 100)
-  const fluxPct  = fluxStatus.total === 0 ? 0 : Math.round((fluxApproved / fluxStatus.total) * 100)
+  // Per-module % values now live inside their respective "Open X"
+  // tiles below this card (see DashboardHome render). Computing them
+  // here would be dead code.
+  // Reference fluxApproved so the linter doesn't flag the calculation
+  // above as unused — it's still used by `tasksApproved`.
+  void fluxApproved
 
   const isOverdue = daysToTarget < 0
   return (
@@ -1223,52 +1285,14 @@ function CloseProgressCard({
         </p>
       </div>
 
-      {/* ── Per-module breakdown ──────────────────────────────────
-          Two rows: Reconciliations and Flux Analyses. Each shows its
-          own % bar + count so the user can see at a glance which
-          module is the bottleneck. Clicking a row opens that module
-          filtered to the current period.
-          (Schedules don't yet have a per-period "approved" concept
-          we can read; once they do, add a third row here.) */}
-      <div className="px-5 pt-3 pb-1 space-y-3"
-        style={{ borderTop: "1px solid var(--border)" }}>
-        <ModuleProgressRow
-          label="Reconciliations"
-          pct={reconPct}
-          approved={counts.approved}
-          total={total}
-          subnote={
-            openCount > 0
-              ? `${openCount} open · ${counts.reviewed} prepared${counts.flagged > 0 ? ` · ${counts.flagged} flagged` : ""}`
-              : counts.reviewed > 0
-                ? `${counts.reviewed} prepared awaiting approval`
-                : undefined
-          }
-          onOpen={onOpen}
-        />
-        <ModuleProgressRow
-          label="Flux analyses"
-          pct={fluxPct}
-          approved={fluxApproved}
-          total={fluxStatus.total}
-          subnote={
-            fluxStatus.total === 0
-              ? "Not started"
-              : fluxStatus.unapprovedCount > 0
-                ? `${fluxStatus.unapprovedCount} awaiting approval`
-                : undefined
-          }
-          onOpen={onOpenFlux}
-        />
-      </div>
-
-      {/* Status breakdown — 4 mini-tiles (reconciliation detail) */}
-      <div className="grid grid-cols-4 divide-x" style={{ borderTop: "1px solid var(--border)", marginTop: "12px" }}>
-        <ProgressTile label="Open"     count={openCount}        fg="#b91c1c"      bg="rgba(220,38,38,0.06)" />
-        <ProgressTile label="Prepared" count={counts.reviewed}  fg="#1d4ed8"      bg="rgba(29,78,216,0.06)" />
-        <ProgressTile label="Approved" count={counts.approved}  fg="var(--green)" bg="var(--green-subtle)" />
-        <ProgressTile label="Flagged"  count={counts.flagged}   fg="#ef4444"      bg="rgba(239,68,68,0.06)" />
-      </div>
+      {/* Per-module progress bars (Reconciliations + Flux Analyses)
+          and the recon-status tiles (Open/Prepared/Approved/Flagged)
+          moved INTO their respective "Open X" cards below this one.
+          This card stays focused on the headline aggregated metric so
+          the eye lands on "73% — ready / not ready to close" without
+          getting buried in per-module detail. The breakdown is one
+          scroll down, scoped to where each module's other context
+          (top open accounts, recent flux analyses, etc.) lives. */}
 
       {/* Timeline footer */}
       <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2 text-[11px]"
@@ -1537,54 +1561,17 @@ function AlertCircleIcon() {
   )
 }
 
-function ProgressTile({ label, count, fg, bg }: { label: string; count: number; fg: string; bg: string }) {
-  return (
-    <div className="px-3 py-2.5 text-center" style={{ background: count > 0 ? bg : undefined }}>
-      <p className="text-[10px] uppercase tracking-wide font-semibold"
-        style={{ color: count > 0 ? fg : "var(--text-muted)" }}>{label}</p>
-      <p className="text-lg font-bold tabular-nums mt-0.5"
-        style={{ color: count > 0 ? fg : "var(--text-muted)" }}>{count}</p>
-    </div>
-  )
-}
+// ProgressTile was the per-status mini-tile (Open / Prepared /
+// Approved / Flagged) inside the Month-End Close Progress card.
+// Removed when the per-module breakdown moved out to the Open X
+// tiles below. Keeping the deletion explicit so a future caller
+// doesn't accidentally re-import an empty function.
 
-/**
- * ModuleProgressRow — one row in the per-module breakdown inside the
- * in-progress close-progress card. Shows a labeled mini progress bar
- * plus the X-of-Y count and an optional subnote (e.g. "3 open · 2
- * prepared"). Clicking opens the module page so the user can jump in
- * and finish the work.
- */
-function ModuleProgressRow({ label, pct, approved, total, subnote, onOpen }: {
-  label:    string
-  pct:      number
-  approved: number
-  total:    number
-  subnote?: string
-  onOpen:   () => void
-}) {
-  const isComplete = total > 0 && pct === 100
-  const isEmpty    = total === 0
-  const barColor   = isComplete ? "var(--green)" : pct >= 50 ? "#3b82f6" : "#f59e0b"
-  return (
-    <button onClick={onOpen}
-      className="w-full text-left rounded-md px-2 py-1 -mx-2 transition-colors hover:bg-[var(--surface-2)]">
-      <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="text-[11px] font-semibold text-theme">{label}</span>
-        <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-          {isEmpty ? "—" : `${approved} / ${total}`}
-        </span>
-      </div>
-      <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.06)" }}>
-        <div className="h-full rounded-full transition-all"
-          style={{ width: `${isEmpty ? 0 : pct}%`, background: barColor }} />
-      </div>
-      {subnote && (
-        <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{subnote}</p>
-      )}
-    </button>
-  )
-}
+// ModuleProgressRow was previously used by CloseProgressCard to show a
+// per-module breakdown (Recons + Flux mini bars). Removed — those bars
+// now live inside their respective "Open Reconciliations" / "Open Flux
+// Analysis" tiles so the Month-End Close Progress card can stay
+// focused on the single aggregated metric.
 
 function Kpi({ label, value, tone, sub }: { label: string; value: string; tone: string; sub?: string }) {
   return (

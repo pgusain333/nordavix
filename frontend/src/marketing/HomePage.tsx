@@ -214,9 +214,51 @@ function Navbar() {
 
 // ─── Hero — split layout with live AI Commentary card ─────────────────────
 
+/**
+ * HomepageBanner — full-width hero banner image that sits just below
+ * the navbar and above the Hero text. Reads from /homepage-banner.png
+ * (a 16:9 brand image — burgundy 3D geometric composition chosen to
+ * tie into the Founder Quote card's burgundy theme).
+ *
+ * To swap the image: replace frontend/public/homepage-banner.png with
+ * a new file of the same name. No code change needed — Vite serves
+ * /public/* at the root path. Recommended size: 2000 × 700 px or
+ * larger 16:9, optimized as PNG/JPEG (~150 KB).
+ *
+ * The aspect ratio is fixed via CSS so layout doesn't shift while the
+ * image loads. background-image keeps it responsive without an extra
+ * <img> reflow on viewport changes.
+ */
+function HomepageBanner() {
+  return (
+    <section
+      aria-hidden="true"
+      className="w-full pt-16"
+      style={{ background: "var(--bg)" }}>
+      <div
+        className="w-full bg-center bg-cover bg-no-repeat"
+        style={{
+          backgroundImage: "url('/homepage-banner.png')",
+          // 16:9 ratio held by aspect-ratio CSS — keeps it crisp at any
+          // viewport width without a layout-shift while the image is
+          // still downloading.
+          aspectRatio: "16 / 5",
+          // Cap height so on ultrawide monitors the banner doesn't
+          // dominate the fold. On mobile it stays at the 16:5 ratio.
+          maxHeight: "420px",
+          // Soft fade into the page bg at the bottom edge so the Hero
+          // section feels continuous instead of butt-joined.
+          maskImage: "linear-gradient(to bottom, black 75%, transparent 100%)",
+          WebkitMaskImage: "linear-gradient(to bottom, black 75%, transparent 100%)",
+        }}
+      />
+    </section>
+  )
+}
+
 function Hero() {
   return (
-    <section className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 px-6 overflow-hidden">
+    <section className="relative pt-12 pb-20 sm:pt-16 sm:pb-28 px-6 overflow-hidden">
       {/* Gradient mesh background — animated subtly */}
       <GradientMesh />
 
@@ -1442,34 +1484,65 @@ function FinalCTA() {
 // ─── Founder quote (intermission) ──────────────────────────────────────────
 
 function FounderQuote() {
+  // Burgundy palette — chosen to harmonize with the homepage banner
+  // image (red/cream 3D cubes). Solid background, white type, high
+  // contrast for scannability. The card sits in normal flow on a
+  // theme-aware surface so it works in both light and dark mode.
+  const BURGUNDY        = "#8B1538"
+  const BURGUNDY_DEEPER = "#6B0F2A"
+  const WHITE           = "#FFFFFF"
+  const WHITE_70        = "rgba(255, 255, 255, 0.78)"
+
   return (
-    <section className="px-6 py-20 sm:py-28">
-      <div className="max-w-3xl mx-auto text-center">
-        <Quote size={32} strokeWidth={1.5} style={{ color: "var(--green)" }} className="mx-auto mb-5" />
-        <blockquote className="font-bold leading-[1.25] tracking-tight text-theme mb-6"
-          style={{ fontSize: "clamp(22px, 3.5vw, 32px)" }}>
-          "I closed books for ten years with fourteen spreadsheets
-          and a praying heart. There had to be something better.
-          So I built it."
-        </blockquote>
-        {/* Attribution — no name on purpose. The credential is the point:
-            a practicing CPA who's been on the wrong end of every close
-            you've ever lived through. Logo doubles as the avatar so the
-            brand mark is what the eye lands on. */}
-        <div className="inline-flex items-center gap-3">
-          <div className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0"
-            style={{
-              background: "var(--green-subtle)",
-              border: "1.5px solid color-mix(in oklab, var(--green) 40%, transparent)",
-            }}>
-            <img src="/logo-mark-dark.svg"  alt="" className="h-6 w-6 dark:hidden" loading="lazy" />
-            <img src="/logo-mark-light.svg" alt="" className="h-6 w-6 hidden dark:block" loading="lazy" />
-          </div>
-          <div className="text-left">
-            <p className="text-sm font-bold text-theme">The Founding CPA</p>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Built Nordavix from inside a real close team
-            </p>
+    <section className="px-6 py-20 sm:py-24">
+      <div className="max-w-3xl mx-auto">
+        <div className="rounded-2xl px-8 sm:px-12 py-12 sm:py-16 text-center relative overflow-hidden"
+          style={{
+            background: `linear-gradient(135deg, ${BURGUNDY} 0%, ${BURGUNDY_DEEPER} 100%)`,
+            boxShadow: "0 12px 32px rgba(139, 21, 56, 0.25)",
+          }}>
+          {/* Subtle decorative pattern in the corner — same geometric
+              language as the homepage banner so the page reads as one
+              visual family. Opacity stays low so it doesn't compete
+              with the quote. */}
+          <svg className="absolute -right-12 -top-12 opacity-[0.08] pointer-events-none"
+            width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="founder-quote-grid" width="20" height="20" patternUnits="userSpaceOnUse">
+                <path d="M 20 0 L 0 0 0 20" fill="none" stroke={WHITE} strokeWidth="1" />
+              </pattern>
+            </defs>
+            <rect width="200" height="200" fill="url(#founder-quote-grid)" />
+          </svg>
+
+          <Quote size={32} strokeWidth={1.5} style={{ color: WHITE_70 }} className="mx-auto mb-5 relative" />
+          <blockquote className="font-bold leading-[1.25] tracking-tight mb-7 relative"
+            style={{ fontSize: "clamp(22px, 3.5vw, 32px)", color: WHITE }}>
+            "I closed books for ten years with fourteen spreadsheets
+            and a praying heart. There had to be something better.
+            So I built it."
+          </blockquote>
+          {/* Attribution — pseudonymous byline. The credential is the
+              point: a practicing CPA who's been on the wrong end of
+              every close you've ever lived through. White-on-burgundy
+              avatar chip with the brand mark stays readable on the
+              gradient. */}
+          <div className="inline-flex items-center gap-3 relative">
+            <div className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0"
+              style={{
+                background: "rgba(255, 255, 255, 0.12)",
+                border: "1.5px solid rgba(255, 255, 255, 0.35)",
+              }}>
+              {/* light-on-dark logo always — we're on a burgundy background
+                  regardless of the page theme. */}
+              <img src="/logo-mark-light.svg" alt="" className="h-6 w-6" loading="lazy" />
+            </div>
+            <div className="text-left">
+              <p className="text-sm font-bold" style={{ color: WHITE }}>The Founding CPA</p>
+              <p className="text-xs" style={{ color: WHITE_70 }}>
+                Built Nordavix from inside a real close team
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -1502,6 +1575,7 @@ export function HomePage() {
         jsonLd={[faqSchemaObj, crumbs]}
       />
       <Navbar />
+      <HomepageBanner />
       <Hero />
       <TrustStrip />
       <CloseLoopHero />
