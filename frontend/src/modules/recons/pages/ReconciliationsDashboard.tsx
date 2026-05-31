@@ -1827,15 +1827,28 @@ export function ReconciliationsDashboard() {
         }
         accounts={filteredAccounts}
         periodEnd={periodEnd}
+        // Lock the drawer when the period is closed OR the specific
+        // account is already approved. Approved rows are signed off —
+        // opening one should never auto-save changes underneath the
+        // user. To edit an approved row they must click "Reopen" in
+        // the footer first, which flips status back to pending.
         readOnly={isClosed}
         onNavigate={(a) => setDrawerAcctId(a.qbo_id)}
         onClose={() => setDrawerAcctId(null)}
         renderReconcileBody={(a, section) => (
           <InlineSubledgerForm
+            // key={qbo_id} forces a fresh mount when the user navigates
+            // Next/Prev between accounts in the drawer. Without it the
+            // form retained the PREVIOUS account's selectedItemMap,
+            // computed a wrong subledger off the new account's GL +
+            // old items, and the next tick auto-saved that garbage
+            // back to the server — visible as phantom variances on
+            // rows the user only "clicked through".
+            key={a.qbo_id}
             account={a}
             periodEnd={periodEnd}
             saving={subledgerMut.isPending}
-            readOnly={isClosed}
+            readOnly={isClosed || a.review_status === "approved"}
             // The form stays mounted across tab swaps — the section
             // prop just toggles visibility of sub-sections via CSS.
             // No remount, no query refetch, no state loss.
@@ -1843,19 +1856,26 @@ export function ReconciliationsDashboard() {
             hideHeader
             hideFooter
             onSave={(total, source, items) => {
+              // Defense in depth: even if a stale form somehow tries
+              // to save against an approved row, refuse the write.
+              if (a.review_status === "approved") return
               subledgerMut.mutate({ qboId: a.qbo_id, total, source, items })
-              if (a.review_status !== "approved" && a.review_status !== "reviewed") {
+              // TS knows "approved" is impossible here from the early
+              // return above — only check the remaining terminal state.
+              if (a.review_status !== "reviewed") {
                 setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })
               }
             }}
             onAutoSave={(total, source, items) => {
+              if (a.review_status === "approved") return
               subledgerMut.mutate({
                 qboId: a.qbo_id, total, source, items, autoSave: true,
               })
             }}
-            onClear={() =>
+            onClear={() => {
+              if (a.review_status === "approved") return
               subledgerMut.mutate({ qboId: a.qbo_id, total: null, source: null, items: [] })
-            }
+            }}
             onClose={() => setDrawerAcctId(null)}
           />
         )}
@@ -2176,15 +2196,21 @@ function InlineSubledgerForm({
   // backend's reconciling_items array via the optimistic patch), reset
   // the form's local selectedItemMap to match the new account state so
   // the ticks disappear immediately without requiring close + reopen.
+  //
+  // Also resync on account.qbo_id change — when the drawer navigates
+  // Next/Prev between accounts the parent now passes key={qbo_id} so
+  // the form remounts. This effect is the belt-and-suspenders for any
+  // case the parent re-uses the form across accounts without a key.
   useEffect(() => {
     const m: Record<string, ReconcilingItem> = {}
     for (const it of account.reconciling_items ?? []) m[it.txn_id] = it
     setSelectedItemMap(m)
     skipFirstAutoSave.current = true
-    // Only resync on status change — re-running every render would
-    // clobber the user's in-flight ticks before the debounced save fires.
+    // Only resync on identity / status change — re-running every render
+    // would clobber the user's in-flight ticks before the debounced
+    // save fires.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account.review_status])
+  }, [account.qbo_id, account.review_status])
 
   function toggleItem(item: ReconcilingItem) {
     setSelectedItemMap((prev) => {
