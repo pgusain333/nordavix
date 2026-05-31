@@ -2,18 +2,32 @@
  * PrepaidAmortizationDrawer — right-to-left slide-in showing the full
  * amortization schedule + journal entry preview for one prepaid item.
  *
- * Math is all days-based (matches the backend). Computed client-side
- * from the item's existing fields — no API call. Each period_end is
- * the last day of a calendar month in [start_date, end_date].
+ * Math respects item.amortization_method:
+ *
+ *   "daily_rate"    — each row = (total / total_days) × days in that
+ *                     month overlapping the coverage window. Precise
+ *                     down to the day; partial months are pro-rated.
+ *
+ *   "straight_line" — total / number_of_months_in_window, applied
+ *                     evenly to every month. The last month absorbs
+ *                     any rounding residual so cumulative ties to
+ *                     `total` exactly. Standard CPA convention: every
+ *                     calendar month overlapping the window gets the
+ *                     full monthly amount, regardless of partial-month
+ *                     coverage. "Day count" on each row is still shown
+ *                     for context but doesn't drive the math.
+ *
+ * Computed client-side from the item's fields — no API call. Each
+ * period_end is the last day of a calendar month in [start, end].
  *
  * The drawer renders two stacked sections:
- *   1. Month-by-month schedule (period_end · days · amount · cumulative · remaining)
- *   2. Journal-entry preview for the current period (Dr expense / Cr prepaid)
+ *   1. Journal-entry preview for the current period
+ *   2. Month-by-month schedule
  */
 import { useMemo } from "react"
 import { motion } from "framer-motion"
 import { X, FileText, CheckCircle2 } from "lucide-react"
-import type { PrepaidItem } from "@/modules/schedules/types"
+import type { PrepaidItem, PrepaidAmortMethod } from "@/modules/schedules/types"
 
 interface Props {
   item:     PrepaidItem
@@ -27,6 +41,21 @@ interface ScheduleRow {
   cumulative:   number
   remaining:    number
   is_current?:  boolean   // marked when this row is the "today" month
+}
+
+interface ScheduleResult {
+  rows:           ScheduleRow[]
+  method:         PrepaidAmortMethod
+  /** Days-based daily rate — populated for both methods so the KPI
+   *  strip can show it as context, but only drives row amounts when
+   *  method === "daily_rate". */
+  dailyRate:      number
+  /** Straight-line monthly amount — populated for both methods so the
+   *  KPI strip can show it; drives row amounts when method ===
+   *  "straight_line". */
+  monthlyAmount:  number
+  totalDays:      number
+  totalMonths:    number
 }
 
 function lastOfMonth(year: number, month: number): Date {
@@ -47,30 +76,66 @@ function fmt(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-/** Build the period-by-period schedule using calendar-month buckets + days-based math. */
-function buildSchedule(item: PrepaidItem): { rows: ScheduleRow[]; dailyRate: number; totalDays: number } {
+/**
+ * Build the period-by-period schedule honoring the item's
+ * amortization_method. See file-top docstring for math details.
+ */
+function buildSchedule(item: PrepaidItem): ScheduleResult {
+  const method: PrepaidAmortMethod = item.amortization_method === "straight_line"
+    ? "straight_line"
+    : "daily_rate"
+
   const total = parseFloat(item.total_amount) || 0
   const start = new Date(item.start_date + "T00:00:00")
   const end   = new Date(item.end_date   + "T00:00:00")
   const totalDays = daysInclusive(start, end) || 1
   const dailyRate = total / totalDays
 
+  // Count calendar months in the coverage window (inclusive of both
+  // endpoints). Jan 15 → Dec 14 = 12 months; Jan 1 → Jan 31 = 1 month.
+  const totalMonths = Math.max(
+    1,
+    (end.getFullYear() - start.getFullYear()) * 12
+      + (end.getMonth() - start.getMonth())
+      + 1,
+  )
+  // Straight-line monthly is exact total / months. Per-row rounding to
+  // cents may leave a residual cent or two; we apply that to the last
+  // row so cumulative ties to `total` perfectly.
+  const monthlyAmount = total / totalMonths
+
   const rows: ScheduleRow[] = []
-  // Cursor walks first → last month of the coverage window.
   let cursor = new Date(start.getFullYear(), start.getMonth(), 1)
   const finalMonthStart = new Date(end.getFullYear(), end.getMonth(), 1)
 
   const today = new Date()
   const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1)
   let cumulative = 0
+  let rowIndex = 0
 
   while (cursor <= finalMonthStart) {
     const monthEnd = lastOfMonth(cursor.getFullYear(), cursor.getMonth())
-    const periodStart = cursor < start ? new Date(cursor) : new Date(cursor)
-    const overlapStart = periodStart < start ? start : periodStart
-    const overlapEnd   = monthEnd  > end   ? end   : monthEnd
+    const overlapStart = cursor < start ? start : cursor
+    const overlapEnd   = monthEnd > end  ? end   : monthEnd
     const days = daysInclusive(overlapStart, overlapEnd)
-    const amount = days > 0 ? Math.round(dailyRate * days * 100) / 100 : 0
+
+    let amount: number
+    if (method === "straight_line") {
+      // Every month in the window gets the SAME monthly amount —
+      // partial first/last months still get the full monthly amount
+      // per standard CPA convention. The last row absorbs any cent of
+      // rounding residual so total ties exactly.
+      const isLastRow = cursor.getTime() === finalMonthStart.getTime()
+      if (isLastRow) {
+        amount = Math.round((total - cumulative) * 100) / 100
+      } else {
+        amount = Math.round(monthlyAmount * 100) / 100
+      }
+    } else {
+      // daily_rate: precise per-day math, partial months pro-rated.
+      amount = days > 0 ? Math.round(dailyRate * days * 100) / 100 : 0
+    }
+
     cumulative = Math.round((cumulative + amount) * 100) / 100
     const remaining = Math.round((total - cumulative) * 100) / 100
     rows.push({
@@ -82,16 +147,36 @@ function buildSchedule(item: PrepaidItem): { rows: ScheduleRow[]; dailyRate: num
       is_current: cursor.getTime() === currentMonthStart.getTime(),
     })
     cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+    rowIndex++
   }
+  void rowIndex  // reserved for future debug-only callouts
 
-  return { rows, dailyRate, totalDays }
+  return { rows, method, dailyRate, monthlyAmount, totalDays, totalMonths }
 }
 
 export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
-  const { rows, dailyRate, totalDays } = useMemo(() => buildSchedule(item), [item])
+  const { rows, method, dailyRate, monthlyAmount, totalDays, totalMonths } =
+    useMemo(() => buildSchedule(item), [item])
   const total = parseFloat(item.total_amount) || 0
   const currentRow = rows.find((r) => r.is_current) ?? rows[0]
   const finishedCount = rows.filter((r) => r.cumulative >= total - 0.005).length
+
+  // Method-driven labels. These thread through the header kicker, KPI
+  // strip, JE memo, and explainer note so every part of the drawer
+  // says the same thing as the math it just rendered.
+  const isStraightLine = method === "straight_line"
+  const methodLabel  = isStraightLine ? "straight-line" : "days-based"
+  const methodKicker = isStraightLine
+    ? "Amortization schedule · straight-line"
+    : "Amortization schedule · days-based"
+  // The KPI tile beside Total — flips between Monthly (straight-line)
+  // and Daily rate (days-based) so the headline number always matches
+  // how the rows are being computed.
+  const rateLabel = isStraightLine ? "Monthly" : "Daily rate"
+  const rateValue = isStraightLine ? fmt(monthlyAmount) : fmt(dailyRate)
+  const periodCountLabel = isStraightLine
+    ? `${totalMonths} month${totalMonths === 1 ? "" : "s"}`
+    : `${totalDays} day${totalDays === 1 ? "" : "s"}`
 
   return (
     <>
@@ -127,7 +212,7 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
               <FileText size={15} strokeWidth={1.8} style={{ color: "#1d4ed8" }} />
               <p className="text-[10px] font-semibold uppercase tracking-wider"
                 style={{ color: "#1d4ed8" }}>
-                Amortization schedule · days-based
+                {methodKicker}
               </p>
             </div>
             <h2 className="text-base font-bold text-theme truncate">{item.description}</h2>
@@ -148,8 +233,16 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
         <div className="px-5 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3"
           style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
           <Kpi label="Total" value={fmt(total)} />
-          <Kpi label="Days" value={totalDays.toString()} />
-          <Kpi label="Daily rate" value={fmt(dailyRate)} />
+          {/* Period count flips between Days (daily_rate) and Months
+              (straight_line) so the figure beside Total matches the
+              denominator the rate is calculated against. */}
+          <Kpi
+            label={isStraightLine ? "Months" : "Days"}
+            value={isStraightLine ? totalMonths.toString() : totalDays.toString()}
+          />
+          {/* Rate tile is the headline number the method uses: Monthly
+              for straight-line, Daily rate for days-based. */}
+          <Kpi label={rateLabel} value={rateValue} />
           <Kpi label="Periods" value={`${finishedCount} / ${rows.length} done`} />
         </div>
 
@@ -160,7 +253,11 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
             <section>
               <p className="text-[10px] font-semibold uppercase tracking-wider mb-2"
                 style={{ color: "var(--text-muted)" }}>
-                Journal entry · {currentRow.period_end} ({currentRow.days} days)
+                Journal entry · {currentRow.period_end}
+                {" "}
+                {isStraightLine
+                  ? `(straight-line · 1 of ${totalMonths} months)`
+                  : `(${currentRow.days} days)`}
               </p>
               <div className="rounded-lg overflow-hidden"
                 style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -196,7 +293,11 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
                 </table>
                 <div className="px-3 py-2 text-[10px]"
                   style={{ background: "var(--surface-2)", color: "var(--text-muted)", borderTop: "1px solid var(--border)" }}>
-                  Memo: amortize {item.description} for {currentRow.days} days at {fmt(dailyRate)}/day.
+                  Memo: amortize {item.description}
+                  {" — "}
+                  {isStraightLine
+                    ? <>1/{totalMonths} of {fmt(total)} ({fmt(monthlyAmount)}) · straight-line</>
+                    : <>{currentRow.days} day{currentRow.days === 1 ? "" : "s"} at {fmt(dailyRate)}/day</>}.
                 </div>
               </div>
             </section>
@@ -262,8 +363,22 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
               </table>
             </div>
             <p className="text-[10px] mt-2" style={{ color: "var(--text-muted)" }}>
-              Days-based: each row's amortization = daily_rate ({fmt(dailyRate)}) × days in that
-              calendar month overlapping the coverage window. Sums to {fmt(total)} over {totalDays} days.
+              {isStraightLine ? (
+                <>
+                  Straight-line ({methodLabel}): each row = total ({fmt(total)}) ÷
+                  {" "}{totalMonths} months = {fmt(monthlyAmount)} per month. Every
+                  calendar month in the coverage window gets the same amount; the
+                  last row absorbs any cent of rounding so cumulative ties to the
+                  total exactly. Day counts are shown for context only — they don't
+                  drive the math on this method.
+                </>
+              ) : (
+                <>
+                  Days-based ({methodLabel}): each row's amortization = daily rate
+                  ({fmt(dailyRate)}) × days in that calendar month overlapping the
+                  coverage window. Sums to {fmt(total)} over {periodCountLabel}.
+                </>
+              )}
             </p>
           </section>
         </div>
