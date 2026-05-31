@@ -214,59 +214,53 @@ function Navbar() {
 
 // ─── Hero — split layout with live AI Commentary card ─────────────────────
 
-/**
- * HomepageBanner — full-width hero banner image that sits just below
- * the navbar and above the Hero text. Reads from
- * /homepage-banner.jpg (a burgundy 3D geometric composition chosen
- * to tie into the Founder Quote card's burgundy theme).
- *
- * To swap the image: replace frontend/public/homepage-banner.jpg with
- * a new file of the same name. No code change needed — Vite serves
- * /public/* at the root path. Recommended: 16:7 to 16:9 image,
- * optimized JPEG ~150-300 KB.
- *
- * The aspect ratio is fixed via CSS so layout doesn't shift while the
- * image loads. background-image keeps it responsive without an extra
- * <img> reflow on viewport changes.
- */
-function HomepageBanner() {
-  return (
-    <section
-      aria-hidden="true"
-      className="w-full pt-16"
-      style={{ background: "var(--bg)" }}>
-      <div
-        className="w-full bg-center bg-cover bg-no-repeat"
-        style={{
-          // The committed file is .jpg — keep filename + extension as
-          // the contract. Anyone swapping the image just overwrites
-          // /public/homepage-banner.jpg, no code change.
-          backgroundImage: "url('/homepage-banner.jpg')",
-          // 16:7 (≈2.29:1) lands between "thin marketing strip" and
-          // "full hero". Shows more of the artwork than 16:5 did
-          // (the original is roughly 14:9 so 16:7 keeps most of the
-          // composition visible) without forcing the Hero text below
-          // the fold. Held by aspect-ratio CSS — zero layout shift.
-          aspectRatio: "16 / 7",
-          // Cap on ultrawide monitors so the banner doesn't dominate
-          // the viewport on a 4K screen. Below the cap the banner
-          // stays at the 16:7 ratio.
-          maxHeight: "520px",
-          // Soft fade into the page bg at the bottom edge so the Hero
-          // section feels continuous instead of butt-joined.
-          maskImage: "linear-gradient(to bottom, black 82%, transparent 100%)",
-          WebkitMaskImage: "linear-gradient(to bottom, black 82%, transparent 100%)",
-        }}
-      />
-    </section>
-  )
-}
+// HomepageBanner was a standalone strip above the Hero — confusing
+// when the user wanted the image as the Hero's background with
+// headline overlaid. Removed; the banner now lives inside Hero.
 
 function Hero() {
   return (
-    <section className="relative pt-12 pb-20 sm:pt-16 sm:pb-28 px-6 overflow-hidden">
-      {/* Gradient mesh background — animated subtly */}
-      <GradientMesh />
+    <section className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 px-6 overflow-hidden">
+      {/* ── Full-bleed hero background ──────────────────────────────
+          Banner image (red-cube composition from
+          /public/homepage-banner.jpg) covers the entire hero. A soft
+          light scrim sits ON TOP of the image so the headline + body
+          copy stay readable against the cream/burgundy artwork.
+          The image is fixed at 100% width with center positioning;
+          on mobile the focal point stays centered so the visual still
+          reads as a banner instead of edge-cropping to one cube. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage: "url('/homepage-banner.jpg')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }}
+      />
+      {/* Scrim — kept light so the banner artwork stays clearly
+          visible (it's the whole reason there's an image). The
+          gradient gets stronger toward the bottom so the body copy +
+          CTAs sit on a near-opaque surface for readability, while the
+          headline area at top still shows the image clearly. Dark
+          mode swaps to a matching dark scrim. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none dark:hidden"
+        style={{
+          background:
+            "linear-gradient(180deg, rgba(255, 252, 248, 0.30) 0%, rgba(255, 252, 248, 0.55) 55%, rgba(255, 252, 248, 0.92) 100%)",
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none hidden dark:block"
+        style={{
+          background:
+            "linear-gradient(180deg, rgba(14, 17, 18, 0.55) 0%, rgba(14, 17, 18, 0.75) 55%, rgba(14, 17, 18, 0.95) 100%)",
+        }}
+      />
 
       <div className="max-w-6xl mx-auto relative">
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
@@ -375,32 +369,10 @@ function Hero() {
 
 // Subtle animated gradient mesh for the hero background. Pure CSS / SVG so
 // it doesn't tax the GPU — just two soft radial blobs that breathe.
-function GradientMesh() {
-  return (
-    <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
-      <motion.div
-        className="absolute rounded-full"
-        style={{
-          top: "-20%", left: "-10%", width: "60%", height: "60%",
-          background: "radial-gradient(circle, var(--green-subtle) 0%, transparent 60%)",
-          filter: "blur(40px)",
-        }}
-        animate={{ scale: [1, 1.1, 1], opacity: [0.7, 1, 0.7] }}
-        transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className="absolute rounded-full"
-        style={{
-          bottom: "-30%", right: "-10%", width: "55%", height: "55%",
-          background: "radial-gradient(circle, color-mix(in oklab, var(--green) 18%, transparent) 0%, transparent 60%)",
-          filter: "blur(60px)",
-        }}
-        animate={{ scale: [1.1, 1, 1.1], opacity: [0.5, 0.8, 0.5] }}
-        transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
-      />
-    </div>
-  )
-}
+// GradientMesh used to provide the animated radial-gradient backdrop
+// when the Hero had no image. Removed — the banner image now is the
+// backdrop. Two layered scrims in Hero handle text readability in
+// both light and dark mode.
 
 // The centerpiece — a fake but realistic Nordavix variance row with a
 // typewriter-animated AI commentary. Lifts gently to add depth. Updates
@@ -1589,7 +1561,9 @@ export function HomePage() {
         jsonLd={[faqSchemaObj, crumbs]}
       />
       <Navbar />
-      <HomepageBanner />
+      {/* Hero now embeds the banner image as its full background.
+          (The standalone HomepageBanner strip was confusing — user
+          wanted the headline OVER the image, not under it.) */}
       <Hero />
       <TrustStrip />
       <CloseLoopHero />
