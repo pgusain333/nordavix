@@ -94,23 +94,20 @@ function Navbar() {
         }}>
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5 group">
-            {/* When scrolled (burgundy header), force the dark-bg logo
-                variant — its light strokes read as white on burgundy.
-                When NOT scrolled, retain the original theme-aware
-                dual-image pattern so the logo adapts to light/dark
-                mode on the transparent header. */}
-            {scrolled ? (
-              <img src="/logo-mark-light.svg" alt="Nordavix"
-                className="h-8 w-8 transition-transform group-hover:scale-105" />
-            ) : (
-              <>
-                <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden transition-transform group-hover:scale-105" />
-                <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block transition-transform group-hover:scale-105" />
-              </>
-            )}
+            {/* HomePage navbar always renders the light-strokes logo
+                variant in WHITE — even when not scrolled, because the
+                Hero banner artwork behind the transparent header is
+                dark, and the theme-aware dark variant would disappear
+                into it. When scrolled (burgundy header) the same logo
+                still reads cleanly. */}
+            <img src="/logo-mark-light.svg" alt="Nordavix"
+              className="h-8 w-8 transition-transform group-hover:scale-105" />
             <span className="font-bold text-lg tracking-tight"
-              style={{ color: scrolled ? "#FFFFFF" : "var(--text)" }}>
-              nordavix<span style={{ color: scrolled ? "rgba(255,255,255,0.85)" : "var(--green)" }}>.</span>
+              style={{
+                color: "#FFFFFF",
+                textShadow: scrolled ? "none" : "0 1px 8px rgba(0,0,0,0.35)",
+              }}>
+              nordavix<span style={{ color: "rgba(255,255,255,0.85)" }}>.</span>
             </span>
           </Link>
 
@@ -122,11 +119,15 @@ function Navbar() {
               { label: "Beta",      to: "#pricing",   external: true  },
               { label: "FAQ",       to: "#faq",       external: true  },
             ].map((it) => {
-              const baseColor   = scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)"
-              const hoverColor  = scrolled ? "#FFFFFF" : "var(--text)"
+              // Both states (scrolled + not-scrolled) sit on dark
+              // surfaces — burgundy or the dark banner. White-with-
+              // text-shadow keeps contrast in either case.
+              const baseColor  = "rgba(255,255,255,0.85)"
+              const hoverColor = "#FFFFFF"
+              const textShadow = scrolled ? "none" : "0 1px 6px rgba(0,0,0,0.35)"
               const props = {
                 className: "text-sm font-medium transition-colors",
-                style: { color: baseColor },
+                style: { color: baseColor, textShadow },
                 onMouseEnter: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = hoverColor },
                 onMouseLeave: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = baseColor },
               } as const
@@ -146,9 +147,12 @@ function Navbar() {
               ) : (
                 <>
                   <Link to="/sign-in" className="text-sm px-4 py-2 transition-colors"
-                    style={{ color: scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.color = scrolled ? "#FFFFFF" : "var(--text)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.color = scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)")}>
+                    style={{
+                      color: "rgba(255,255,255,0.85)",
+                      textShadow: scrolled ? "none" : "0 1px 6px rgba(0,0,0,0.35)",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = "#FFFFFF")}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.85)")}>
                     Sign in
                   </Link>
                   <Link to="/sign-up"
@@ -165,11 +169,12 @@ function Navbar() {
             <button onClick={() => setMobileOpen(true)}
               className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg transition-colors"
               style={{
-                // Transparent at all times (per design ask). Icon color
-                // flips to white on the burgundy header for contrast.
+                // Transparent at all times (per design ask). Icon stays
+                // white in both states since both backdrops are dark
+                // (banner artwork at top, burgundy header on scroll).
                 background: "transparent",
-                color: scrolled ? "#FFFFFF" : "var(--text-2)",
-                border: `1px solid ${scrolled ? "rgba(255,255,255,0.25)" : "var(--border)"}`,
+                color: "#FFFFFF",
+                border: "1px solid rgba(255,255,255,0.25)",
               }}
               aria-label="Open menu">
               <Menu size={18} strokeWidth={1.8} />
