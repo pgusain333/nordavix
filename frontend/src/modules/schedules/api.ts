@@ -275,6 +275,69 @@ async function getPrepaidAlerts(periodEnd: string, expiringWithinDays = 60): Pro
   return data
 }
 
+// ── Import existing prepaids from QBO (onboarding helper) ──────────────
+
+/** Proposed/created item shape returned by the import-from-qbo endpoint.
+ * Mirrors the SchedulePrepaid create body so the dialog can display
+ * each row before the user confirms. `qbo_txn_id` is informational. */
+export interface PrepaidImportProposed {
+  qbo_account_id:      string
+  description:         string
+  vendor:              string | null
+  reference:           string | null
+  invoice_date:        string | null
+  total_amount:        string
+  start_date:          string
+  end_date:            string
+  amortization_method: "straight_line" | "daily_rate" | string
+  qbo_txn_id?:         string | null
+}
+
+export interface PrepaidImportPreview {
+  preview:         true
+  would_create:    number
+  skipped:         number
+  lookback_months: number
+  items:           PrepaidImportProposed[]
+}
+
+export interface PrepaidImportResult {
+  preview: false
+  created: number
+  skipped: number
+  items:   PrepaidItem[]
+}
+
+async function previewImportPrepaidFromQbo(
+  qboAccountId: string,
+  lookbackMonths = 12,
+): Promise<PrepaidImportPreview> {
+  const { data } = await apiClient.post<PrepaidImportPreview>(
+    "/api/schedules/prepaid/import-qbo",
+    {
+      qbo_account_id:  qboAccountId,
+      lookback_months: lookbackMonths,
+      preview_only:    true,
+    },
+  )
+  return data
+}
+
+async function importPrepaidsFromQbo(
+  qboAccountId: string,
+  lookbackMonths = 12,
+): Promise<PrepaidImportResult> {
+  const { data } = await apiClient.post<PrepaidImportResult>(
+    "/api/schedules/prepaid/import-qbo",
+    {
+      qbo_account_id:  qboAccountId,
+      lookback_months: lookbackMonths,
+      preview_only:    false,
+    },
+  )
+  return data
+}
+
 // ── AI prepaid detection (Phase 2) ────────────────────────────────────────
 
 /** Run the AI scan against the current period's expense-account GL.
@@ -474,6 +537,10 @@ export const schedulesApi = {
   getLeaseSuggestions,
   getLoanSuggestions,
   getPrepaidAlerts,
+  // Onboarding helpers
+  previewImportPrepaidFromQbo,
+  importPrepaidsFromQbo,
+  // AI prepaid detection
   scanForPrepaidCandidates,
   listPrepaidCandidates,
   dismissPrepaidCandidate,

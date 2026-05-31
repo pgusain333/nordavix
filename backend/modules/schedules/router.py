@@ -1046,6 +1046,199 @@ def _serialize_candidate(row: PrepaidCandidate) -> dict:
     }
 
 
+# ── Import existing prepaids from QBO ─────────────────────────────────
+#
+# First-month onboarding helper. When a tenant starts using Nordavix
+# they typically already have prepaid items sitting on their QBO BS
+# in an "Other Current Assets" / "Prepaid Expenses" account. Rather
+# than re-entering each one by hand, we offer to pull the historical
+# GL entries from that account, propose a SchedulePrepaid per debit,
+# and bulk-create on confirm.
+#
+# Preview-then-confirm flow:
+#   1) Frontend POSTs preview_only=true → returns proposed items
+#      with sensible defaults (12-month term from txn date).
+#   2) User reviews the list, clicks "Import N items".
+#   3) Frontend POSTs preview_only=false → creates the SchedulePrepaid
+#      rows and returns the persisted serializations.
+#
+# Dedup: existing items on the same account with matching
+# (description, total_amount, start_date) are skipped so re-running
+# the import doesn't duplicate.
+
+
+def _next_year_minus_one_day(d: _date) -> _date:
+    """End date for a 1-year prepaid starting on `d`. Lands on the
+    same calendar day next year minus one (so Jan 15 → Jan 14 next
+    year, giving a 12-month coverage window exactly)."""
+    try:
+        target = _date(d.year + 1, d.month, d.day)
+    except ValueError:
+        # Leap-day fallback (Feb 29 → Feb 28)
+        target = _date(d.year + 1, d.month, 28)
+    return target - _timedelta(days=1)
+
+
+@router.post("/prepaid/import-qbo", dependencies=[Depends(require_role("preparer"))])
+async def prepaid_import_qbo(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Bulk-import prepaids from a QBO BS account.
+
+    Body: {
+      qbo_account_id:  str,   # the prepaid asset account
+      lookback_months: int,   # how far back to scan (default 12)
+      preview_only:    bool,  # true = dry-run, just return proposals
+    }
+    """
+    qbo_id = ((body or {}).get("qbo_account_id") or "").strip()
+    if not qbo_id:
+        raise HTTPException(status_code=400, detail="qbo_account_id is required.")
+    try:
+        lookback = int((body or {}).get("lookback_months") or 12)
+    except Exception:
+        raise HTTPException(status_code=400, detail="lookback_months must be an integer.")
+    if lookback < 1 or lookback > 60:
+        raise HTTPException(status_code=400, detail="lookback_months must be between 1 and 60.")
+    preview_only = bool((body or {}).get("preview_only") or False)
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    from core.qbo_gl import pull_gl_transactions
+
+    end = _date.today()
+    start = end - _timedelta(days=lookback * 30)
+
+    try:
+        txns = await pull_gl_transactions(conn, db, qbo_id, start, end)
+    except Exception:
+        logger.exception("Prepaid import-from-QBO: GL pull failed for acct=%s", qbo_id)
+        raise HTTPException(status_code=502, detail="QBO GL pull failed. Try again.")
+
+    # Dedup against existing items on the same account. Match on
+    # (description_lower, total_amount, start_date) — strict enough to
+    # catch true duplicates without skipping renewals that share a
+    # vendor but have different dates/amounts.
+    existing = list((await db.execute(
+        select(SchedulePrepaid).where(
+            SchedulePrepaid.tenant_id == tenant_id,
+            SchedulePrepaid.qbo_account_id == qbo_id,
+        )
+    )).scalars().all())
+    existing_keys = {
+        (e.description.strip().lower(), str(e.total_amount), e.start_date.isoformat())
+        for e in existing
+        if e.description and e.start_date is not None
+    }
+
+    proposed: list[dict] = []
+    skipped = 0
+    for t in txns:
+        amount_raw = t.get("amount") or Decimal("0")
+        # Debits only — credits on a prepaid asset are amortization
+        # reductions / writeoffs, not new prepaid additions.
+        if amount_raw <= 0:
+            continue
+        amount = Decimal(amount_raw)
+        txn_date = t.get("txn_date")
+        if not txn_date:
+            continue
+
+        memo = (t.get("memo") or "").strip()[:200]
+        vendor = (t.get("entity_name") or "").strip()
+        description = memo or (vendor and f"{vendor} — prepaid") or "Prepaid (imported from QBO)"
+
+        key = (description.strip().lower(), str(amount), txn_date.isoformat())
+        if key in existing_keys:
+            skipped += 1
+            continue
+
+        proposed.append({
+            "qbo_account_id":      qbo_id,
+            "description":         description[:255],
+            "vendor":              (vendor[:255] if vendor else None),
+            "reference":           ((t.get("txn_number") or "")[:100] or None),
+            "invoice_date":        txn_date,
+            "total_amount":        amount,
+            "start_date":          txn_date,
+            # Default 12-month coverage — user adjusts in the table
+            # afterward. We pick this default because the vast majority
+            # of small-business prepaids (insurance, SaaS, maintenance
+            # contracts) are 12-month policies.
+            "end_date":            _next_year_minus_one_day(txn_date),
+            "amortization_method": "straight_line",
+            "qbo_txn_id":          t.get("qbo_txn_id"),
+        })
+
+    # Sort by date desc so the most recent additions show first.
+    proposed.sort(key=lambda p: p["start_date"], reverse=True)
+
+    if preview_only:
+        return {
+            "preview":       True,
+            "would_create":  len(proposed),
+            "skipped":       skipped,
+            "lookback_months": lookback,
+            "items":         [_serialize_proposed_prepaid(p) for p in proposed],
+        }
+
+    # Create the items
+    user_uuid = uuid.UUID(str(user.id)) if user else None
+    created: list[SchedulePrepaid] = []
+    for p in proposed:
+        row = SchedulePrepaid(
+            tenant_id=tenant_id,
+            qbo_account_id=p["qbo_account_id"],
+            description=p["description"],
+            vendor=p["vendor"],
+            reference=p["reference"],
+            notes=f"Imported from QBO ({p.get('qbo_txn_id') or 'no-txn-id'}) on {_date.today().isoformat()}.",
+            is_active=True,
+            created_by=user_uuid,
+            invoice_date=p["invoice_date"],
+            total_amount=p["total_amount"],
+            start_date=p["start_date"],
+            end_date=p["end_date"],
+            amortization_method=p["amortization_method"],
+        )
+        db.add(row)
+        created.append(row)
+    if created:
+        await db.commit()
+        for c in created:
+            await db.refresh(c)
+
+    return {
+        "preview":  False,
+        "created":  len(created),
+        "skipped":  skipped,
+        "items":    [_serialize("prepaid", r) for r in created],
+    }
+
+
+def _serialize_proposed_prepaid(p: dict) -> dict:
+    return {
+        "qbo_account_id":      p["qbo_account_id"],
+        "description":         p["description"],
+        "vendor":              p["vendor"],
+        "reference":           p["reference"],
+        "invoice_date":        p["invoice_date"].isoformat() if p["invoice_date"] else None,
+        "total_amount":        str(p["total_amount"]),
+        "start_date":          p["start_date"].isoformat(),
+        "end_date":            p["end_date"].isoformat(),
+        "amortization_method": p["amortization_method"],
+        "qbo_txn_id":          p.get("qbo_txn_id"),
+    }
+
+
 @router.post("/prepaid/ai/scan", dependencies=[Depends(require_role("preparer"))])
 async def prepaid_ai_scan(
     tenant_id: CurrentTenantId,

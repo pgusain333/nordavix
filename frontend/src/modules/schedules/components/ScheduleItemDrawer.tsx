@@ -239,6 +239,21 @@ function FaBody({ item, monthly, rows }: { item: FixedAssetItem; monthly: number
         { label: "Useful life",   value: `${item.useful_life_months} mo` },
       ]} />
 
+      {/* Initial recording — asset acquisition. Posted ONCE at the
+          in-service date. Capitalizes the asset on the BS against
+          cash / AP (or reclassifies from an expense account if the
+          item was originally mis-expensed — the AI-detect banner
+          handles that flow). Single render at the top of the drawer,
+          never duplicates inside the per-period schedule rows. */}
+      {cost > 0 && (
+        <Section title={`Initial recording entry (${item.in_service_date})`}>
+          <JeTable rows={[
+            { account: `Fixed Asset${item.category ? ` — ${item.category}` : ""} (BS)`, debit: cost, credit: null },
+            { account: "Cash / Accounts Payable (BS)", debit: null, credit: cost, indent: true },
+          ]} memo={`Capitalize ${item.description}${item.vendor ? ` from ${item.vendor}` : ""} — in service ${item.in_service_date}.`} />
+        </Section>
+      )}
+
       <Section title="Monthly journal entry">
         <JeTable rows={[
           { account: "Depreciation Expense (P&L)", debit: monthly,  credit: null },

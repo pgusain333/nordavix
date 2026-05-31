@@ -25,6 +25,7 @@ import { PrepaidAmortizationDrawer } from "@/modules/schedules/components/Prepai
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { RenewalAlertsBanner } from "@/modules/schedules/components/RenewalAlertsBanner"
 import { AiDetectBanner } from "@/modules/schedules/components/AiDetectBanner"
+import { ImportPrepaidsFromQboBanner } from "@/modules/schedules/components/ImportPrepaidsFromQboBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import { formatDate } from "@/core/lib/dates"
@@ -268,6 +269,17 @@ export function PrepaidsPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        {/* First-month onboarding — pull existing prepaid items from
+            the QBO BS account and bulk-create them as Nordavix
+            schedule items. Only visible when an account is selected
+            (the import is per-account scoped). Shown as a prominent
+            CTA when there are zero items for this account; demotes
+            to a quieter secondary action once items exist. */}
+        <ImportPrepaidsFromQboBanner
+          qboAccountId={filterAccount}
+          existingItemCount={items.length}
+        />
+
         {/* AI detect banner (Phase 2) — scans expense GL for likely
             prepaid items hiding as one-time expenses. User-triggered. */}
         <AiDetectBanner

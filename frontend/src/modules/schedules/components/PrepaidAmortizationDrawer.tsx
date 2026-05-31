@@ -248,6 +248,59 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
 
         {/* Body — scrollable */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {/* Initial recording JE — posted ONCE at item inception.
+              Recognizes the prepaid asset on the BS and clears cash
+              (or sets up the payable if accrued). Shown at the top of
+              the drawer as standing documentation of what should be
+              booked when the item is first added. Single render — does
+              NOT repeat in every monthly row of the schedule table. */}
+          {total > 0 && (
+            <section>
+              <p className="text-[10px] font-semibold uppercase tracking-wider mb-2"
+                style={{ color: "var(--text-muted)" }}>
+                Initial recording entry · {item.invoice_date ?? item.start_date}
+                {" "}(post once at inception)
+              </p>
+              <div className="rounded-lg overflow-hidden"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr style={{ background: "var(--surface-2)" }}>
+                      <th className="text-left px-3 py-1.5 font-semibold"
+                        style={{ color: "var(--text-muted)" }}>Account</th>
+                      <th className="text-right px-3 py-1.5 font-semibold"
+                        style={{ color: "var(--text-muted)" }}>Debit</th>
+                      <th className="text-right px-3 py-1.5 font-semibold"
+                        style={{ color: "var(--text-muted)" }}>Credit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style={{ borderTop: "1px solid var(--border)" }}>
+                      <td className="px-3 py-2 text-theme">Prepaid Asset (BS)</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold text-theme">
+                        {fmt(total)}
+                      </td>
+                      <td className="px-3 py-2 text-right" style={{ color: "var(--text-muted)" }}>—</td>
+                    </tr>
+                    <tr style={{ borderTop: "1px solid var(--border)" }}>
+                      <td className="px-3 py-2 text-theme pl-6">Cash / Accounts Payable (BS)</td>
+                      <td className="px-3 py-2 text-right" style={{ color: "var(--text-muted)" }}>—</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold text-theme">
+                        {fmt(total)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div className="px-3 py-2 text-[10px]"
+                  style={{ background: "var(--surface-2)", color: "var(--text-muted)", borderTop: "1px solid var(--border)" }}>
+                  Memo: Record prepaid {item.description}
+                  {item.vendor && <> from {item.vendor}</>}
+                  {" — "}coverage {item.start_date} → {item.end_date}.
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* Current period JE preview */}
           {currentRow && currentRow.amount > 0 && (
             <section>
