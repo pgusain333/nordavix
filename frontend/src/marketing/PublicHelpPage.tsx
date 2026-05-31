@@ -9,16 +9,28 @@
  * The shared <HelpContent /> component does the heavy lifting; this
  * file is just the layout shell.
  */
+import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { motion } from "framer-motion"
 import { ArrowRight, BookOpen, ExternalLink } from "lucide-react"
 
 import { HelpContent } from "@/modules/help/HelpContent"
-import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { MarketingFooter } from "@/marketing/MarketingFooter"
 import { SEO, breadcrumbSchema } from "@/marketing/seo/SEO"
 
 export function PublicHelpPage() {
+  // Burgundy-on-scroll header behavior — mirrors Home / Solutions /
+  // Blog / Legal so the marketing chrome is identical across the site.
+  // Theme toggle was removed from this top bar per the site-wide rule
+  // that theme toggling belongs in the footer only (MarketingFooter
+  // already renders one).
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 10)
+    window.addEventListener("scroll", onScroll, { passive: true })
+    return () => window.removeEventListener("scroll", onScroll)
+  }, [])
+
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <SEO
@@ -31,29 +43,39 @@ export function PublicHelpPage() {
         ])}
       />
       {/* ── Marketing header ── */}
-      <header className="sticky top-0 z-30 border-b backdrop-blur"
+      <header className="sticky top-0 z-30 border-b transition-colors duration-300"
         style={{
-          background: "color-mix(in oklab, var(--surface) 88%, transparent)",
-          borderColor: "var(--border)",
+          background: scrolled ? "#8B1538" : "color-mix(in oklab, var(--surface) 88%, transparent)",
+          borderColor: scrolled ? "rgba(255,255,255,0.10)" : "var(--border)",
         }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
-            <img src="/logo-mark-dark.svg" alt="Nordavix" className="h-7 w-7 dark:hidden" />
-            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-7 w-7 hidden dark:block" />
-            <span className="text-lg font-semibold tracking-tight text-theme">
-              nordavix<span style={{ color: "var(--green)" }}>.</span>
+            {scrolled ? (
+              <img src="/logo-mark-light.svg" alt="Nordavix" className="h-7 w-7" />
+            ) : (
+              <>
+                <img src="/logo-mark-dark.svg" alt="Nordavix" className="h-7 w-7 dark:hidden" />
+                <img src="/logo-mark-light.svg" alt="Nordavix" className="h-7 w-7 hidden dark:block" />
+              </>
+            )}
+            <span className="text-lg font-semibold tracking-tight"
+              style={{ color: scrolled ? "#FFFFFF" : "var(--text)" }}>
+              nordavix<span style={{ color: scrolled ? "rgba(255,255,255,0.85)" : "var(--green)" }}>.</span>
             </span>
           </Link>
           <div className="flex items-center gap-3">
-            <Link to="/" className="text-sm font-medium hidden sm:inline-flex items-center"
-              style={{ color: "var(--text-2)" }}>
+            <Link to="/" className="text-sm font-medium hidden sm:inline-flex items-center transition-colors"
+              style={{ color: scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = scrolled ? "#FFFFFF" : "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)")}>
               Home
             </Link>
-            <Link to="/solutions" className="text-sm font-medium hidden sm:inline-flex items-center"
-              style={{ color: "var(--text-2)" }}>
+            <Link to="/solutions" className="text-sm font-medium hidden sm:inline-flex items-center transition-colors"
+              style={{ color: scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = scrolled ? "#FFFFFF" : "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)")}>
               Solutions
             </Link>
-            <ThemeToggle />
             <Link to="/sign-in"
               className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold text-white transition-opacity hover:opacity-90"
               style={{ background: "var(--green)" }}>

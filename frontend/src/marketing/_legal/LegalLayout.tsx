@@ -491,32 +491,49 @@ function MarketingNavbar() {
     <>
       <nav className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 print:hidden ${
         scrolled
-          ? "backdrop-blur-md border-b shadow-sm py-3"
+          ? "border-b shadow-sm py-3"
           : "backdrop-blur-sm py-5"
       }`}
         style={{
-          background: scrolled ? "var(--surface)" : "transparent",
-          borderColor: scrolled ? "var(--border)" : "transparent",
+          // Brand burgundy when scrolled — consistent across all
+          // marketing pages (Home / Solutions / Legal / Help / Blog).
+          background: scrolled ? "#8B1538" : "transparent",
+          borderColor: scrolled ? "rgba(255,255,255,0.10)" : "transparent",
         }}>
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
           <button onClick={() => navigate("/")} className="flex items-center gap-2.5">
-            <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
-            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
-            <span className="font-bold text-lg tracking-tight text-theme">
-              nordavix<span style={{ color: "var(--green)" }}>.</span>
+            {scrolled ? (
+              <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8" />
+            ) : (
+              <>
+                <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden" />
+                <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block" />
+              </>
+            )}
+            <span className="font-bold text-lg tracking-tight"
+              style={{ color: scrolled ? "#FFFFFF" : "var(--text)" }}>
+              nordavix<span style={{ color: scrolled ? "rgba(255,255,255,0.85)" : "var(--green)" }}>.</span>
             </span>
           </button>
 
           <div className="hidden md:flex items-center gap-8">
-            <Link to="/" className="text-sm transition-colors" style={{ color: "var(--text-2)" }}>
-              Home
-            </Link>
-            <Link to="/solutions" className="text-sm transition-colors" style={{ color: "var(--text-2)" }}>
-              Solutions
-            </Link>
-            <a href="/#pricing" className="text-sm transition-colors" style={{ color: "var(--text-2)" }}>
-              Pricing
-            </a>
+            {[
+              { label: "Home",      to: "/",          external: false },
+              { label: "Solutions", to: "/solutions", external: false },
+              { label: "Pricing",   to: "/#pricing",  external: true  },
+            ].map((it) => {
+              const base = scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)"
+              const hover = scrolled ? "#FFFFFF" : "var(--text)"
+              const props = {
+                className: "text-sm transition-colors",
+                style: { color: base },
+                onMouseEnter: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = hover },
+                onMouseLeave: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = base },
+              } as const
+              return it.external
+                ? <a key={it.label} href={it.to} {...props}>{it.label}</a>
+                : <Link key={it.label} to={it.to} {...props}>{it.label}</Link>
+            })}
           </div>
 
           <div className="flex items-center gap-3">
@@ -528,7 +545,10 @@ function MarketingNavbar() {
                 </Link>
               ) : (
                 <>
-                  <Link to="/sign-in" className="text-sm px-4 py-2 transition-colors" style={{ color: "var(--text-2)" }}>
+                  <Link to="/sign-in" className="text-sm px-4 py-2 transition-colors"
+                    style={{ color: scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = scrolled ? "#FFFFFF" : "var(--text)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)")}>
                     Sign in
                   </Link>
                   <Link to="/sign-up" className="text-sm font-semibold text-white px-4 py-2 rounded-lg transition-opacity hover:opacity-90"
@@ -539,8 +559,12 @@ function MarketingNavbar() {
               )}
             </div>
             <button onClick={() => setMobileOpen(true)}
-              className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg"
-              style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
+              className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg transition-colors"
+              style={{
+                background: "transparent",
+                color: scrolled ? "#FFFFFF" : "var(--text-2)",
+                border: `1px solid ${scrolled ? "rgba(255,255,255,0.25)" : "var(--border)"}`,
+              }}
               aria-label="Open menu">
               <Menu size={18} strokeWidth={1.8} />
             </button>

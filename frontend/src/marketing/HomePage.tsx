@@ -82,48 +82,58 @@ function Navbar() {
     <>
       <nav className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${
         scrolled
-          ? "py-3 border-b backdrop-blur-md"
+          ? "py-3 border-b"
           : "py-5"
       }`}
         style={{
-          background: scrolled ? "color-mix(in oklab, var(--surface) 92%, transparent)" : "transparent",
-          borderColor: scrolled ? "var(--border)" : "transparent",
+          // BRAND_BURGUNDY = "#8B1538" (matches FounderQuote palette).
+          // When scrolled: solid burgundy header with white logo + nav
+          // links — high-contrast brand statement on every marketing page.
+          background: scrolled ? "#8B1538" : "transparent",
+          borderColor: scrolled ? "rgba(255,255,255,0.10)" : "transparent",
         }}>
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5 group">
-            <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden transition-transform group-hover:scale-105" />
-            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block transition-transform group-hover:scale-105" />
-            <span className="font-bold text-lg tracking-tight text-theme">
-              nordavix<span style={{ color: "var(--green)" }}>.</span>
+            {/* When scrolled (burgundy header), force the dark-bg logo
+                variant — its light strokes read as white on burgundy.
+                When NOT scrolled, retain the original theme-aware
+                dual-image pattern so the logo adapts to light/dark
+                mode on the transparent header. */}
+            {scrolled ? (
+              <img src="/logo-mark-light.svg" alt="Nordavix"
+                className="h-8 w-8 transition-transform group-hover:scale-105" />
+            ) : (
+              <>
+                <img src="/logo-mark-dark.svg"  alt="Nordavix" className="h-8 w-8 dark:hidden transition-transform group-hover:scale-105" />
+                <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 hidden dark:block transition-transform group-hover:scale-105" />
+              </>
+            )}
+            <span className="font-bold text-lg tracking-tight"
+              style={{ color: scrolled ? "#FFFFFF" : "var(--text)" }}>
+              nordavix<span style={{ color: scrolled ? "rgba(255,255,255,0.85)" : "var(--green)" }}>.</span>
             </span>
           </Link>
 
           <div className="hidden md:flex items-center gap-8">
-            <Link to="/solutions" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
-              Solutions
-            </Link>
-            <a href="#features" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
-              Features
-            </a>
-            <Link to="/blog" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
-              Blog
-            </Link>
-            <a href="#pricing" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
-              Beta
-            </a>
-            <a href="#faq" className="text-sm font-medium transition-colors" style={{ color: "var(--text-2)" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
-              FAQ
-            </a>
+            {[
+              { label: "Solutions", to: "/solutions", external: false },
+              { label: "Features",  to: "#features",  external: true  },
+              { label: "Blog",      to: "/blog",      external: false },
+              { label: "Beta",      to: "#pricing",   external: true  },
+              { label: "FAQ",       to: "#faq",       external: true  },
+            ].map((it) => {
+              const baseColor   = scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)"
+              const hoverColor  = scrolled ? "#FFFFFF" : "var(--text)"
+              const props = {
+                className: "text-sm font-medium transition-colors",
+                style: { color: baseColor },
+                onMouseEnter: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = hoverColor },
+                onMouseLeave: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = baseColor },
+              } as const
+              return it.external
+                ? <a key={it.label} href={it.to} {...props}>{it.label}</a>
+                : <Link key={it.label} to={it.to} {...props}>{it.label}</Link>
+            })}
           </div>
 
           <div className="flex items-center gap-3">
@@ -135,9 +145,10 @@ function Navbar() {
                 </Link>
               ) : (
                 <>
-                  <Link to="/sign-in" className="text-sm px-4 py-2 transition-colors" style={{ color: "var(--text-2)" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}>
+                  <Link to="/sign-in" className="text-sm px-4 py-2 transition-colors"
+                    style={{ color: scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = scrolled ? "#FFFFFF" : "var(--text)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = scrolled ? "rgba(255,255,255,0.85)" : "var(--text-2)")}>
                     Sign in
                   </Link>
                   <Link to="/sign-up"
@@ -152,8 +163,14 @@ function Navbar() {
               )}
             </div>
             <button onClick={() => setMobileOpen(true)}
-              className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg"
-              style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
+              className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg transition-colors"
+              style={{
+                // Transparent at all times (per design ask). Icon color
+                // flips to white on the burgundy header for contrast.
+                background: "transparent",
+                color: scrolled ? "#FFFFFF" : "var(--text-2)",
+                border: `1px solid ${scrolled ? "rgba(255,255,255,0.25)" : "var(--border)"}`,
+              }}
               aria-label="Open menu">
               <Menu size={18} strokeWidth={1.8} />
             </button>
