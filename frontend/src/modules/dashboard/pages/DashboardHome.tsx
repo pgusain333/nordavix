@@ -43,6 +43,7 @@ import {
   Clock,
   ShieldCheck,
   Lock,
+  Unlock,
   Circle,
   CalendarCheck,
   Lightbulb,
@@ -335,6 +336,36 @@ export function DashboardHome() {
   function handleCloseBooks() {
     if (!confirm(`Close the books for ${monthLabel}? Once locked, reviewers and preparers can't edit anything for this period.`)) return
     closeMut.mutate()
+  }
+
+  // Reopen-books mutation. Moved here from the Reconciliations dashboard
+  // so close + reopen sit at the same place — the month-end close
+  // progress card on the main dashboard is the single source of truth
+  // for period lifecycle actions. Admin-only at the API + UI level.
+  const reopenMut = useMutation({
+    mutationFn: () => reconsApi.reopenPeriod(period),
+    onSuccess: () => {
+      setCloseMsg({ kind: "ok", text: `Books reopened for ${monthLabel}.` })
+      qc.invalidateQueries({ queryKey: ["period-tracker"] })
+      qc.invalidateQueries({ queryKey: ["books-status"] })
+      qc.invalidateQueries({ queryKey: ["recons-overview", period] })
+      qc.invalidateQueries({ queryKey: ["closed-periods"] })
+      qc.invalidateQueries({ queryKey: ["tasks"] })
+      qc.invalidateQueries({ queryKey: ["dashboard-audit"] })
+    },
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      setCloseMsg({ kind: "err", text: ex.response?.data?.detail ?? ex.message ?? "Could not reopen period" })
+    },
+  })
+
+  function handleReopenBooks() {
+    if (!confirm(
+      `Reopen the books for ${monthLabel}?\n\n` +
+      `This unlocks every account in this period for editing. ` +
+      `Use this only to fix something — then re-approve and close again.`
+    )) return
+    reopenMut.mutate()
   }
 
   // Recons buckets — open / reviewed / approved counts derived from the overview.
@@ -715,6 +746,8 @@ export function DashboardHome() {
           onCloseBooks={handleCloseBooks}
           closing={closeMut.isPending}
           closeMsg={closeMsg}
+          onReopenBooks={handleReopenBooks}
+          reopening={reopenMut.isPending}
           fluxStatus={fluxStatus}
           onOpenFlux={() => navigate(`/app/flux/analyses?period=${period}`)}
         />
@@ -1022,6 +1055,7 @@ export function DashboardHome() {
 function CloseProgressCard({
   monthLabel, period, trackerEntry, onOpen,
   isAdmin, blocker, onCloseBooks, closing, closeMsg,
+  onReopenBooks, reopening,
   fluxStatus, onOpenFlux,
 }: {
   monthLabel: string
@@ -1051,6 +1085,12 @@ function CloseProgressCard({
   onCloseBooks: () => void
   closing: boolean
   closeMsg: { kind: "ok" | "err"; text: string } | null
+  // Reopen lives here so close + reopen are the same surface — the user
+  // used to have to navigate back to Reconciliations to reopen, which
+  // hid the lifecycle action behind a module the period might no longer
+  // be focused on.
+  onReopenBooks: () => void
+  reopening: boolean
   // Flux gate state — the server also requires every flux analysis for
   // the month to be approved before closing. Surface this in the UI so
   // the admin knows why the Close button is disabled.
@@ -1090,6 +1130,10 @@ function CloseProgressCard({
         approvedCount={counts.approved}
         total={total}
         onOpen={onOpen}
+        isAdmin={isAdmin}
+        onReopenBooks={onReopenBooks}
+        reopening={reopening}
+        fluxTotal={fluxStatus.total}
       />
     )
   }
@@ -1120,6 +1164,26 @@ function CloseProgressCard({
   }
 
   // ── State 3: in progress (the meat) ─────────────────────────────
+  //
+  // Progress now reflects ALL close tasks for the month, not just
+  // reconciliations. Two task families today:
+  //   1. Reconciliations — each account that needs to tie out
+  //   2. Flux analyses — each TB-vs-prior comparison that needs
+  //                       commentary + approval
+  // Aggregating both into a single % matches how the close gate
+  // server-side already works (require all recon + all flux approved
+  // before allowing closePeriod).
+  const fluxApproved = Math.max(0, fluxStatus.total - fluxStatus.unapprovedCount)
+  const tasksTotal    = total + fluxStatus.total
+  const tasksApproved = counts.approved + fluxApproved
+  const overallPct    = tasksTotal === 0
+    ? 0
+    : Math.round((tasksApproved / tasksTotal) * 100)
+
+  // Per-row percentages used by the breakdown bars below.
+  const reconPct = total === 0 ? 0 : Math.round((counts.approved / total) * 100)
+  const fluxPct  = fluxStatus.total === 0 ? 0 : Math.round((fluxApproved / fluxStatus.total) * 100)
+
   const isOverdue = daysToTarget < 0
   return (
     <div className="rounded-xl overflow-hidden"
@@ -1134,30 +1198,72 @@ function CloseProgressCard({
         </div>
         <span className="inline-flex items-center gap-1 text-xs font-bold tabular-nums px-2 py-0.5 rounded-full"
           style={{
-            background: pct === 100 ? "var(--green-subtle)" : "var(--surface-2)",
-            color: pct === 100 ? "var(--green)" : "var(--text-2)",
+            background: overallPct === 100 ? "var(--green-subtle)" : "var(--surface-2)",
+            color: overallPct === 100 ? "var(--green)" : "var(--text-2)",
           }}>
-          {pct}% approved
+          {overallPct}% approved
         </span>
       </div>
 
-      {/* Progress bar */}
+      {/* Aggregated progress bar — covers BOTH reconciliations and
+          flux analyses so the bar matches what the close gate cares
+          about. The per-module bars below break down where the work
+          is concentrated. */}
       <div className="px-5 pt-4 pb-2">
         <div className="h-2 w-full rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.08)" }}>
           <div className="h-full rounded-full transition-all"
             style={{
-              width: `${pct}%`,
-              background: pct === 100 ? "var(--green)" : pct >= 50 ? "#3b82f6" : "#f59e0b",
+              width: `${overallPct}%`,
+              background: overallPct === 100 ? "var(--green)" : overallPct >= 50 ? "#3b82f6" : "#f59e0b",
             }} />
         </div>
         <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-          {counts.approved} of {total} accounts approved
-          {pct === 100 && <> · ready to lock the books</>}
+          {tasksApproved} of {tasksTotal} task{tasksTotal === 1 ? "" : "s"} approved
+          {overallPct === 100 && <> · ready to lock the books</>}
         </p>
       </div>
 
-      {/* Status breakdown — 4 mini-tiles */}
-      <div className="grid grid-cols-4 divide-x" style={{ borderTop: "1px solid var(--border)" }}>
+      {/* ── Per-module breakdown ──────────────────────────────────
+          Two rows: Reconciliations and Flux Analyses. Each shows its
+          own % bar + count so the user can see at a glance which
+          module is the bottleneck. Clicking a row opens that module
+          filtered to the current period.
+          (Schedules don't yet have a per-period "approved" concept
+          we can read; once they do, add a third row here.) */}
+      <div className="px-5 pt-3 pb-1 space-y-3"
+        style={{ borderTop: "1px solid var(--border)" }}>
+        <ModuleProgressRow
+          label="Reconciliations"
+          pct={reconPct}
+          approved={counts.approved}
+          total={total}
+          subnote={
+            openCount > 0
+              ? `${openCount} open · ${counts.reviewed} prepared${counts.flagged > 0 ? ` · ${counts.flagged} flagged` : ""}`
+              : counts.reviewed > 0
+                ? `${counts.reviewed} prepared awaiting approval`
+                : undefined
+          }
+          onOpen={onOpen}
+        />
+        <ModuleProgressRow
+          label="Flux analyses"
+          pct={fluxPct}
+          approved={fluxApproved}
+          total={fluxStatus.total}
+          subnote={
+            fluxStatus.total === 0
+              ? "Not started"
+              : fluxStatus.unapprovedCount > 0
+                ? `${fluxStatus.unapprovedCount} awaiting approval`
+                : undefined
+          }
+          onOpen={onOpenFlux}
+        />
+      </div>
+
+      {/* Status breakdown — 4 mini-tiles (reconciliation detail) */}
+      <div className="grid grid-cols-4 divide-x" style={{ borderTop: "1px solid var(--border)", marginTop: "12px" }}>
         <ProgressTile label="Open"     count={openCount}        fg="#b91c1c"      bg="rgba(220,38,38,0.06)" />
         <ProgressTile label="Prepared" count={counts.reviewed}  fg="#1d4ed8"      bg="rgba(29,78,216,0.06)" />
         <ProgressTile label="Approved" count={counts.approved}  fg="var(--green)" bg="var(--green-subtle)" />
@@ -1303,6 +1409,7 @@ function CloseProgressCard({
 
 function ClosedStateCard({
   monthLabel, period, closedAt, approvedCount, total, onOpen,
+  isAdmin, onReopenBooks, reopening, fluxTotal,
 }: {
   monthLabel: string
   period: string
@@ -1310,6 +1417,14 @@ function ClosedStateCard({
   approvedCount: number
   total: number
   onOpen: () => void
+  /** When true, surface the Reopen books button. Non-admins see a
+   *  view-only badge + the closure summary; they CAN'T reopen. */
+  isAdmin: boolean
+  onReopenBooks: () => void
+  reopening: boolean
+  /** Total flux analyses for the month — used in the "what was closed"
+   *  summary line alongside the accounts count. */
+  fluxTotal: number
 }) {
   const [execError, setExecError] = useState<string | null>(null)
   const execMut = useMutation({
@@ -1344,6 +1459,18 @@ function ClosedStateCard({
           <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
             {closedAt && <>Closed on {closedAt} · </>}
             {approvedCount} of {total} account{total === 1 ? "" : "s"} approved
+            {fluxTotal > 0 && (
+              <> · {fluxTotal} flux analysis{fluxTotal === 1 ? "" : "es"} approved</>
+            )}
+            {!isAdmin && (
+              <>
+                {" · "}
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                  style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+                  <Lock size={9} strokeWidth={2.5} /> View only
+                </span>
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1365,6 +1492,23 @@ function ClosedStateCard({
           >
             {execMut.isPending ? "Generating…" : "Download executive report"}
           </Button>
+          {/* Reopen books — admin only. Moved here from the recons
+              dashboard so close + reopen sit in one place: this card
+              is the single source of truth for period lifecycle.
+              Non-admins see the "View only" badge above instead. */}
+          {isAdmin && (
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<Unlock size={12} strokeWidth={1.8} />}
+              loading={reopening}
+              onClick={onReopenBooks}
+              style={{ borderColor: "#f59e0b", color: "#b45309" }}
+              title="Reopen this period — everyone can edit again until you re-close"
+            >
+              {reopening ? "Reopening…" : "Reopen books"}
+            </Button>
+          )}
         </div>
       </div>
       {execError && (
@@ -1401,6 +1545,44 @@ function ProgressTile({ label, count, fg, bg }: { label: string; count: number; 
       <p className="text-lg font-bold tabular-nums mt-0.5"
         style={{ color: count > 0 ? fg : "var(--text-muted)" }}>{count}</p>
     </div>
+  )
+}
+
+/**
+ * ModuleProgressRow — one row in the per-module breakdown inside the
+ * in-progress close-progress card. Shows a labeled mini progress bar
+ * plus the X-of-Y count and an optional subnote (e.g. "3 open · 2
+ * prepared"). Clicking opens the module page so the user can jump in
+ * and finish the work.
+ */
+function ModuleProgressRow({ label, pct, approved, total, subnote, onOpen }: {
+  label:    string
+  pct:      number
+  approved: number
+  total:    number
+  subnote?: string
+  onOpen:   () => void
+}) {
+  const isComplete = total > 0 && pct === 100
+  const isEmpty    = total === 0
+  const barColor   = isComplete ? "var(--green)" : pct >= 50 ? "#3b82f6" : "#f59e0b"
+  return (
+    <button onClick={onOpen}
+      className="w-full text-left rounded-md px-2 py-1 -mx-2 transition-colors hover:bg-[var(--surface-2)]">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[11px] font-semibold text-theme">{label}</span>
+        <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+          {isEmpty ? "—" : `${approved} / ${total}`}
+        </span>
+      </div>
+      <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.06)" }}>
+        <div className="h-full rounded-full transition-all"
+          style={{ width: `${isEmpty ? 0 : pct}%`, background: barColor }} />
+      </div>
+      {subnote && (
+        <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{subnote}</p>
+      )}
+    </button>
   )
 }
 

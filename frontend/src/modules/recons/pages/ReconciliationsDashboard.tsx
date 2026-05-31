@@ -280,29 +280,10 @@ export function ReconciliationsDashboard() {
       })
   }, [tracker, periodEnd])
 
-  // Close-period mutation lives on the main dashboard now (the
-  // Close-Books button moved out of this header). Reopen stays here
-  // because an admin should be able to unlock the period from inside
-  // the closed-state banner without navigating back to the dashboard.
-  const reopenMut = useMutation({
-    mutationFn: () => reconsApi.reopenPeriod(periodEnd),
-    onSuccess: () => {
-      setSyncMsg(`Period ${periodEnd} reopened.`)
-      qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
-      qc.invalidateQueries({ queryKey: ["closed-periods"] })
-      // The dashboard tiles + side nav badges read from these —
-      // invalidate so the month-end close progress card re-lights when
-      // a previously-closed period is reopened.
-      qc.invalidateQueries({ queryKey: ["period-tracker"] })
-      qc.invalidateQueries({ queryKey: ["books-status"] })
-      qc.invalidateQueries({ queryKey: ["tasks"] })
-      qc.invalidateQueries({ queryKey: ["dashboard-audit"] })
-    },
-    onError: (err: unknown) => {
-      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
-      setSyncMsg(`Sync failed: ${ex.response?.data?.detail ?? ex.message ?? "Could not reopen period"}`)
-    },
-  })
+  // Close-period AND reopen-period both live on the main dashboard's
+  // Month-End Close Progress card now — they're the single source of
+  // truth for period lifecycle. The recons dashboard surfaces the
+  // closed-state read-only banner but no longer owns either action.
 
   // Agentic mode — AI runs as a preparer across every open account in
   // the period. One-shot per click (no background scheduling). On
@@ -976,25 +957,10 @@ export function ReconciliationsDashboard() {
                 <span className="hidden sm:inline">{resetAgenticMut.isPending ? "Resetting…" : "Reset AI"}</span>
               </Button>
             )}
-            {/* Close-books action moved to the main dashboard's
-                Month-End Close Progress card — it lives next to the
-                month tracker where you decide a month is finished.
-                Reopen stays here so an admin can unlock from inside
-                the closed-period banner without bouncing back to the
-                dashboard. */}
-            {isAdmin && isClosed && (
-              <Button
-                size="sm"
-                variant="outline"
-                icon={<Unlock size={14} strokeWidth={1.8} />}
-                loading={reopenMut.isPending}
-                onClick={() => reopenMut.mutate()}
-                style={{ borderColor: "#f59e0b", color: "#b45309" }}
-                title="Reopen the books for this period — admins can edit again"
-              >
-                <span className="hidden sm:inline">Reopen books</span>
-              </Button>
-            )}
+            {/* Close + Reopen both live on the main dashboard's
+                Month-End Close Progress card. When this period is
+                closed, the read-only banner below tells the user
+                where to go. */}
             <Button
               size="sm"
               variant="outline"
@@ -1213,14 +1179,16 @@ export function ReconciliationsDashboard() {
                 )}
               </div>
               {isAdmin && (
+                // Reopen lives on the dashboard's Month-End Close
+                // Progress card now. Send the admin there with one click.
                 <Button
                   size="sm"
                   variant="outline"
                   icon={<Unlock size={12} strokeWidth={1.8} />}
-                  loading={reopenMut.isPending}
-                  onClick={() => reopenMut.mutate()}
-                  style={{ borderColor: "#f59e0b", color: "#b45309" }}>
-                  Reopen
+                  onClick={() => navigate("/app")}
+                  style={{ borderColor: "#f59e0b", color: "#b45309" }}
+                  title="Go to the dashboard to reopen this period">
+                  Reopen on dashboard
                 </Button>
               )}
             </div>
