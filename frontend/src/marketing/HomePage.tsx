@@ -94,20 +94,18 @@ function Navbar() {
         }}>
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5 group">
-            {/* HomePage navbar always renders the light-strokes logo
-                variant in WHITE — even when not scrolled, because the
-                Hero banner artwork behind the transparent header is
-                dark, and the theme-aware dark variant would disappear
-                into it. When scrolled (burgundy header) the same logo
-                still reads cleanly. */}
+            {/* HomePage navbar always renders the light-strokes logo +
+                wordmark in WHITE. The Hero behind the transparent
+                header is solid burgundy (#8B1538) and the scrolled
+                header is the same burgundy — both states are dark, so
+                white reads cleanly in either case. Wordmark dot is
+                pure white too (no 85% knock-down) so the wordmark
+                renders as one uniform white shape. */}
             <img src="/logo-mark-light.svg" alt="Nordavix"
               className="h-8 w-8 transition-transform group-hover:scale-105" />
             <span className="font-bold text-lg tracking-tight"
-              style={{
-                color: "#FFFFFF",
-                textShadow: scrolled ? "none" : "0 1px 8px rgba(0,0,0,0.35)",
-              }}>
-              nordavix<span style={{ color: "rgba(255,255,255,0.85)" }}>.</span>
+              style={{ color: "#FFFFFF" }}>
+              nordavix<span style={{ color: "#FFFFFF" }}>.</span>
             </span>
           </Link>
 
@@ -119,15 +117,15 @@ function Navbar() {
               { label: "Beta",      to: "#pricing",   external: true  },
               { label: "FAQ",       to: "#faq",       external: true  },
             ].map((it) => {
-              // Both states (scrolled + not-scrolled) sit on dark
-              // surfaces — burgundy or the dark banner. White-with-
-              // text-shadow keeps contrast in either case.
+              // Both states (scrolled + not-scrolled) sit on the same
+              // burgundy surface — the Hero behind the transparent
+              // header is also #8B1538. White text reads cleanly with
+              // no shadow needed.
               const baseColor  = "rgba(255,255,255,0.85)"
               const hoverColor = "#FFFFFF"
-              const textShadow = scrolled ? "none" : "0 1px 6px rgba(0,0,0,0.35)"
               const props = {
                 className: "text-sm font-medium transition-colors",
-                style: { color: baseColor, textShadow },
+                style: { color: baseColor },
                 onMouseEnter: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = hoverColor },
                 onMouseLeave: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = baseColor },
               } as const
@@ -147,10 +145,7 @@ function Navbar() {
               ) : (
                 <>
                   <Link to="/sign-in" className="text-sm px-4 py-2 transition-colors"
-                    style={{
-                      color: "rgba(255,255,255,0.85)",
-                      textShadow: scrolled ? "none" : "0 1px 6px rgba(0,0,0,0.35)",
-                    }}
+                    style={{ color: "rgba(255,255,255,0.85)" }}
                     onMouseEnter={(e) => (e.currentTarget.style.color = "#FFFFFF")}
                     onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.85)")}>
                     Sign in
@@ -236,56 +231,21 @@ function Navbar() {
 
 // ─── Hero — split layout with live AI Commentary card ─────────────────────
 
-// HomepageBanner was a standalone strip above the Hero — confusing
-// when the user wanted the image as the Hero's background with
-// headline overlaid. Removed; the banner now lives inside Hero.
+// Hero background was previously a /public/homepage-banner.jpg image
+// with light/dark scrims layered on top for text legibility. Replaced
+// with a flat burgundy fill (#8B1538) that exactly matches the
+// scrolled-state navbar, so the page reads as one continuous burgundy
+// surface from the top of the viewport down through the Hero — no
+// seam between header and Hero in either scroll state.
 
 function Hero() {
   return (
-    <section className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 px-6 overflow-hidden">
-      {/* ── Full-bleed hero background ──────────────────────────────
-          Banner image (red-cube composition from
-          /public/homepage-banner.jpg) covers the entire hero. A soft
-          light scrim sits ON TOP of the image so the headline + body
-          copy stay readable against the cream/burgundy artwork.
-          The image is fixed at 100% width with center positioning;
-          on mobile the focal point stays centered so the visual still
-          reads as a banner instead of edge-cropping to one cube. */}
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          backgroundImage: "url('/homepage-banner.jpg')",
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundRepeat: "no-repeat",
-        }}
-      />
-      {/* Scrim — minimal at the top so the banner artwork shows
-          through cleanly (it's the whole point of the image), then
-          ramps up toward the bottom only enough to keep the body
-          copy + CTAs readable against the busiest part of the
-          composition. Previously the top was 0.30 alpha which washed
-          the image out; now it starts fully transparent and the
-          gradient does its work only in the lower half. Dark mode
-          mirrors the same curve in deep-ink tones. */}
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 pointer-events-none dark:hidden"
-        style={{
-          background:
-            "linear-gradient(180deg, rgba(255, 252, 248, 0) 0%, rgba(255, 252, 248, 0.20) 55%, rgba(255, 252, 248, 0.70) 100%)",
-        }}
-      />
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 pointer-events-none hidden dark:block"
-        style={{
-          background:
-            "linear-gradient(180deg, rgba(14, 17, 18, 0.20) 0%, rgba(14, 17, 18, 0.45) 55%, rgba(14, 17, 18, 0.85) 100%)",
-        }}
-      />
-
+    <section
+      className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 px-6 overflow-hidden"
+      // BRAND_BURGUNDY — same hex as the scrolled Navbar background.
+      // No image, no scrim; just a clean color field for the white
+      // headline + AI card to sit on.
+      style={{ background: "#8B1538" }}>
       <div className="max-w-6xl mx-auto relative">
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           {/* Left: copy */}
@@ -314,18 +274,16 @@ function Hero() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.05 }}
               className="font-bold leading-[1.05] tracking-tight"
-              // White text — banner artwork is dark/burgundy so theme-
-              // aware text-theme would render dark and disappear into
-              // the image. A subtle text-shadow keeps the headline
-              // crisp where the image has hot spots.
+              // White text on flat burgundy — no shadow needed for
+              // contrast (previous shadow was there to mask hot spots
+              // in the banner image, which is now gone).
               style={{
                 fontSize: "clamp(36px, 6.5vw, 64px)",
                 color: "#FFFFFF",
-                textShadow: "0 1px 12px rgba(0,0,0,0.35)",
               }}>
               Close the books{" "}
               <span className="relative inline-block">
-                <span style={{ color: "var(--green)", textShadow: "0 1px 12px rgba(0,0,0,0.45)" }}>in days,</span>
+                <span style={{ color: "var(--green)" }}>in days,</span>
                 <svg className="absolute -bottom-2 left-0 w-full h-2 print:hidden" viewBox="0 0 200 8" preserveAspectRatio="none">
                   <motion.path
                     d="M0 4 Q 50 0, 100 4 T 200 4"
@@ -346,10 +304,7 @@ function Hero() {
               className="mt-6 text-base sm:text-lg leading-relaxed max-w-xl mx-auto lg:mx-0"
               // Slightly softer than pure white (88%) so the body copy
               // sits a half-step behind the headline visually.
-              style={{
-                color: "rgba(255,255,255,0.88)",
-                textShadow: "0 1px 8px rgba(0,0,0,0.30)",
-              }}>
+              style={{ color: "rgba(255,255,255,0.88)" }}>
               Nordavix is the AI-native close platform for controllers and CPA firms.
               Reconcile every balance-sheet account, explain every material variance,
               and lock the period — without the spreadsheet swivel-chair.
@@ -372,7 +327,7 @@ function Hero() {
               <Link to="/solutions"
                 // Secondary CTA: white text + semi-transparent white
                 // border so it reads as a glass button against the
-                // dark banner. Hover lifts the bg to a soft white film.
+                // burgundy field. Hover lifts the bg to a soft white film.
                 className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold transition-all"
                 style={{
                   background: "transparent",
@@ -391,10 +346,7 @@ function Hero() {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.4 }}
               className="mt-8 flex items-center justify-center lg:justify-start gap-4 text-xs"
-              style={{
-                color: "rgba(255,255,255,0.75)",
-                textShadow: "0 1px 6px rgba(0,0,0,0.30)",
-              }}>
+              style={{ color: "rgba(255,255,255,0.75)" }}>
               <div className="flex items-center gap-1">
                 {[0, 1, 2, 3, 4].map((i) => (
                   <Star key={i} size={12} fill="currentColor" style={{ color: "#f59e0b" }} />
@@ -411,13 +363,6 @@ function Hero() {
     </section>
   )
 }
-
-// Subtle animated gradient mesh for the hero background. Pure CSS / SVG so
-// it doesn't tax the GPU — just two soft radial blobs that breathe.
-// GradientMesh used to provide the animated radial-gradient backdrop
-// when the Hero had no image. Removed — the banner image now is the
-// backdrop. Two layered scrims in Hero handle text readability in
-// both light and dark mode.
 
 // The centerpiece — a fake but realistic Nordavix variance row with a
 // typewriter-animated AI commentary. Lifts gently to add depth. Updates
