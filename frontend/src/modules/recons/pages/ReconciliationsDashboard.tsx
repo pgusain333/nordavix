@@ -19,7 +19,7 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { formatDateLong, formatDateTime } from "@/core/lib/dates"
 import {
@@ -80,7 +80,7 @@ import {
   ScheduleLinePanel,
   lineTxnId,
 } from "@/modules/schedules/components/ScheduleLinePanel"
-import type { ScheduleLineSuggestion } from "@/modules/schedules/api"
+import { schedulesApi, type ScheduleLineSuggestion } from "@/modules/schedules/api"
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
 
@@ -2243,6 +2243,146 @@ function InlineSubledgerForm({
   const selectedItemsRef = useRef(selectedItemMap)
   selectedItemsRef.current = selectedItemMap
 
+  // ── Auto-flow schedule items as reconciling items ──────────────────
+  //
+  // The 5 per-account schedule endpoints (prepaid/accrual/FA/lease/loan)
+  // are the AUTHORITATIVE subledger source for accounts that have any
+  // schedule items mapped. Pre-tick every schedule line so the user
+  // doesn't have to manually check them in the Suggestions tab — the
+  // schedule IS the subledger, full stop.
+  //
+  // Pulls all 5 queries in parallel. React Query shares cache with the
+  // per-type panels below so this is zero duplicate work. Auto-merges
+  // into selectedItemMap on first arrival per (qbo_id, period_end) —
+  // never clobbers user toggles after that (the keyed ref guards
+  // against re-running on every render).
+  const scheduleQueries = useQueries({
+    queries: [
+      {
+        queryKey: ["schedules", "prepaid", "suggestions", account.qbo_id, periodEnd],
+        queryFn:  () => schedulesApi.getPrepaidSuggestions(account.qbo_id, periodEnd),
+        staleTime: 60_000,
+      },
+      {
+        queryKey: ["schedules", "accrual", "suggestions", account.qbo_id, periodEnd],
+        queryFn:  () => schedulesApi.getAccrualSuggestions(account.qbo_id, periodEnd),
+        staleTime: 60_000,
+      },
+      {
+        queryKey: ["schedules", "fixed_asset", "suggestions", account.qbo_id, periodEnd],
+        queryFn:  () => schedulesApi.getFixedAssetSuggestions(account.qbo_id, periodEnd),
+        staleTime: 60_000,
+      },
+      {
+        queryKey: ["schedules", "lease", "suggestions", account.qbo_id, periodEnd],
+        queryFn:  () => schedulesApi.getLeaseSuggestions(account.qbo_id, periodEnd),
+        staleTime: 60_000,
+      },
+      {
+        queryKey: ["schedules", "loan", "suggestions", account.qbo_id, periodEnd],
+        queryFn:  () => schedulesApi.getLoanSuggestions(account.qbo_id, periodEnd),
+        staleTime: 60_000,
+      },
+    ],
+  })
+  // Once-per-account-period guard so we don't re-merge on every render —
+  // only when the user navigates to a different account or period.
+  const autoFlowedKeyRef = useRef<string>("")
+  useEffect(() => {
+    const key = `${account.qbo_id}__${periodEnd}`
+    const allSettled = scheduleQueries.every((q) => q.isSuccess || q.isError)
+    if (!allSettled) return
+    if (autoFlowedKeyRef.current === key) return  // already merged this round
+    autoFlowedKeyRef.current = key
+
+    const [prepaidQ, accrualQ, faQ, leaseQ, loanQ] = scheduleQueries
+    const additions: Record<string, ReconcilingItem> = {}
+
+    for (const s of prepaidQ.data?.items ?? []) {
+      if (s.fully_amortized) continue
+      const id = prepaidTxnId(s)
+      additions[id] = {
+        txn_id:     id,
+        txn_type:   "Prepaid amortization",
+        txn_number: s.reference ?? "",
+        txn_date:   s.start_date,
+        amount:     s.unamortized_at_period_end,
+        memo:       `${s.description} · unamortized as of ${periodEnd} (schedule)`,
+        entity:     s.vendor ?? "",
+      }
+    }
+    for (const s of accrualQ.data?.items ?? []) {
+      const id = accrualTxnId(s)
+      additions[id] = {
+        txn_id:     id,
+        txn_type:   s.line_kind === "accrual" ? "Accrual" : "Accrual reversal",
+        txn_number: s.reference ?? "",
+        txn_date:   s.line_date,
+        amount:     s.amount,
+        memo:       `${s.description} · ${s.line_kind === "accrual" ? "accrued" : "reversed"} ${s.line_date} (schedule)`,
+        entity:     s.vendor ?? "",
+      }
+    }
+    for (const s of faQ.data?.items ?? []) {
+      const id = lineTxnId("fixed_asset", s)
+      additions[id] = {
+        txn_id:     id,
+        txn_type:   `Fixed asset · ${s.line_kind}`,
+        txn_number: s.reference ?? "",
+        txn_date:   s.line_date,
+        amount:     s.amount,
+        memo:       `${s.description} · ${s.line_kind} ${s.line_date} (schedule)`,
+        entity:     s.vendor ?? "",
+      }
+    }
+    for (const s of leaseQ.data?.items ?? []) {
+      const id = lineTxnId("lease", s)
+      additions[id] = {
+        txn_id:     id,
+        txn_type:   `Lease · ${s.line_kind}`,
+        txn_number: s.reference ?? "",
+        txn_date:   s.line_date,
+        amount:     s.amount,
+        memo:       `${s.description} · ${s.line_kind} ${s.line_date} (schedule)`,
+        entity:     s.vendor ?? "",
+      }
+    }
+    for (const s of loanQ.data?.items ?? []) {
+      const id = lineTxnId("loan", s)
+      additions[id] = {
+        txn_id:     id,
+        txn_type:   `Loan · ${s.line_kind}`,
+        txn_number: s.reference ?? "",
+        txn_date:   s.line_date,
+        amount:     s.amount,
+        memo:       `${s.description} · ${s.line_kind} ${s.line_date} (schedule)`,
+        entity:     s.vendor ?? "",
+      }
+    }
+
+    if (Object.keys(additions).length === 0) return  // not a schedule-backed account
+
+    setSelectedItemMap((prev) => {
+      // Schedule items are authoritative. If an existing entry in prev
+      // shares a txn_id with our additions, the addition wins (latest
+      // computed balance from the schedule). Non-schedule entries
+      // (manual / QBO drill-in) are preserved as-is — the user may
+      // have added them on purpose for non-schedule reconciling
+      // items (e.g. a bank fee miscategorization).
+      return { ...prev, ...additions }
+    })
+  }, [scheduleQueries, account.qbo_id, periodEnd])
+
+  /** True when any schedule has at least one item for this account —
+   *  drives the UI's "schedule-backed" treatment (locked checkboxes,
+   *  re-labeled help banner). */
+  const isScheduleBacked =
+    (scheduleQueries[0].data?.items?.length ?? 0) > 0
+    || (scheduleQueries[1].data?.items?.length ?? 0) > 0
+    || (scheduleQueries[2].data?.items?.length ?? 0) > 0
+    || (scheduleQueries[3].data?.items?.length ?? 0) > 0
+    || (scheduleQueries[4].data?.items?.length ?? 0) > 0
+
   // External resync: when something outside the form changes the row's
   // review_status (most commonly: Reset to pending, which clears the
   // backend's reconciling_items array via the optimistic patch), reset
@@ -2553,16 +2693,32 @@ function InlineSubledgerForm({
           accordion stays uncluttered. */}
       {visibleSection === "suggestions" && (
         <div className="rounded-md px-3 py-2 mb-3 text-[11px] flex items-start gap-2"
-          style={{ background: "var(--surface)", border: "1px dashed var(--border-strong)", color: "var(--text-muted)" }}>
-          <Sparkles size={12} strokeWidth={1.8} style={{ color: "var(--green)", marginTop: 2, flexShrink: 0 }} />
+          style={{
+            background: isScheduleBacked ? "var(--green-subtle)" : "var(--surface)",
+            border: `1px ${isScheduleBacked ? "solid" : "dashed"} ${isScheduleBacked ? "var(--green)" : "var(--border-strong)"}`,
+            color: isScheduleBacked ? "var(--green)" : "var(--text-muted)",
+          }}>
+          <Sparkles size={12} strokeWidth={1.8} style={{ color: isScheduleBacked ? "var(--green)" : "var(--green)", marginTop: 2, flexShrink: 0 }} />
           <span>
-            <strong style={{ color: "var(--text)" }}>What's here:</strong>{" "}
-            line items the Schedules module already tracks for this
-            account + period — prepaid amortization, accrual / reversal
-            deltas, fixed-asset depreciation, lease and loan postings.
-            Click any toggle to add it as a reconciling item; the
-            subledger build-up picks it up automatically. Empty if no
-            schedules touch this account.
+            {isScheduleBacked ? (
+              <>
+                <strong style={{ color: "var(--green)" }}>Nordavix Schedules is the subledger for this account.</strong>{" "}
+                Every line below is auto-included in the reconciling-items
+                list and contributes to the subledger build-up — no manual
+                ticking required. To change what flows here, edit the items
+                in the Schedules module. The Items tab below shows the same
+                rows alongside any non-schedule reconciling items you
+                manually add.
+              </>
+            ) : (
+              <>
+                <strong style={{ color: "var(--text)" }}>What's here:</strong>{" "}
+                line items the Schedules module would track for this
+                account + period — prepaid amortization, accrual / reversal
+                deltas, fixed-asset depreciation, lease and loan postings.
+                Empty if no schedules touch this account.
+              </>
+            )}
           </span>
         </div>
       )}
@@ -2593,6 +2749,7 @@ function InlineSubledgerForm({
         periodEnd={periodEnd}
         selectedIds={new Set(Object.keys(selectedItemMap))}
         readOnly={readOnly}
+        autoIncluded={isScheduleBacked}
         onToggle={(s, nextChecked) => {
           const id = prepaidTxnId(s)
           setSelectedItemMap((prev) => {
@@ -2646,6 +2803,7 @@ function InlineSubledgerForm({
         periodEnd={periodEnd}
         selectedIds={new Set(Object.keys(selectedItemMap))}
         readOnly={readOnly}
+        autoIncluded={isScheduleBacked}
         onToggle={(s, nextChecked) => {
           const id = accrualTxnId(s)
           setSelectedItemMap((prev) => {
@@ -2702,6 +2860,7 @@ function InlineSubledgerForm({
           periodEnd={periodEnd}
           selectedIds={new Set(Object.keys(selectedItemMap))}
           readOnly={readOnly}
+          autoIncluded={isScheduleBacked}
           onToggle={(s, scheduleKind, nextChecked) => {
             const id = lineTxnId(scheduleKind, s)
             setSelectedItemMap((prev) => {

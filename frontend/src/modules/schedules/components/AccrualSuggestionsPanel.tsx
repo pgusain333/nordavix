@@ -41,6 +41,10 @@ interface Props {
   /** Bulk select / clear all rows in this panel. */
   onBulkSet:    (suggestions: AccrualSuggestion[], nextChecked: boolean) => void
   readOnly?:    boolean
+  /** When true, schedule items are auto-included by the parent — lock
+   *  the checkboxes and re-label the header. The Accruals schedule is
+   *  the authoritative subledger source for accrued-liability accounts. */
+  autoIncluded?: boolean
 }
 
 /** Stable synthetic txn_id mirroring the parent's storage key. */
@@ -55,8 +59,9 @@ function fmt(s: string): string {
 }
 
 export function AccrualSuggestionsPanel({
-  qboAccountId, periodEnd, selectedIds, onToggle, onBulkSet, readOnly,
+  qboAccountId, periodEnd, selectedIds, onToggle, onBulkSet, readOnly, autoIncluded,
 }: Props) {
+  const lockTicks = !!autoIncluded
   const { data, isLoading } = useQuery({
     queryKey: ["schedules", "accrual", "suggestions", qboAccountId, periodEnd],
     queryFn:  () => schedulesApi.getAccrualSuggestions(qboAccountId, periodEnd),
@@ -116,21 +121,29 @@ export function AccrualSuggestionsPanel({
           borderBottom: "1px solid var(--border)",
         }}>
         <div className="flex items-center gap-2 min-w-0">
-          <BulkSelectCheckbox
-            total={items.length}
-            selected={selectedCount}
-            disabled={readOnly}
-            onChange={(nextChecked) => onBulkSet(items, nextChecked)}
-            title="Select / clear all accrual + reversal lines in this period"
-          />
+          {!lockTicks && (
+            <BulkSelectCheckbox
+              total={items.length}
+              selected={selectedCount}
+              disabled={readOnly}
+              onChange={(nextChecked) => onBulkSet(items, nextChecked)}
+              title="Select / clear all accrual + reversal lines in this period"
+            />
+          )}
           <ClipboardList size={13} strokeWidth={1.8} style={{ color: "#b45309" }} />
           <p className="text-[11px] font-semibold text-theme">
-            Suggested from Accruals schedule
+            {lockTicks ? "From Accruals schedule (auto-included)" : "Suggested from Accruals schedule"}
           </p>
           <span className="text-[10px] px-1.5 py-0.5 rounded"
             style={{ background: "rgba(245, 158, 11, 0.15)", color: "#b45309" }}>
             {items.length} line{items.length === 1 ? "" : "s"} · delta-based
           </span>
+          {lockTicks && (
+            <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              Subledger source
+            </span>
+          )}
         </div>
         <Link to="/app/schedules/accruals" target="_blank" rel="noopener noreferrer"
           className="text-[10px] inline-flex items-center gap-1 hover:underline"
@@ -170,14 +183,19 @@ export function AccrualSuggestionsPanel({
                   <td className="py-2 pr-1">
                     <input
                       type="checkbox"
-                      checked={checked}
-                      disabled={readOnly}
+                      checked={checked || lockTicks}
+                      disabled={readOnly || lockTicks}
                       onChange={(e) => onToggle(it, e.target.checked)}
-                      className="h-3.5 w-3.5 rounded cursor-pointer"
-                      style={{ accentColor: "var(--green)" }}
-                      title={isAccrual
-                        ? "Include the accrual booking in SL"
-                        : "Include the reversal in SL (clears the liability)"}
+                      className="h-3.5 w-3.5 rounded"
+                      style={{
+                        accentColor: "var(--green)",
+                        cursor: lockTicks ? "default" : "pointer",
+                      }}
+                      title={lockTicks
+                        ? "Auto-included from the Accruals schedule — this is the authoritative subledger source for this account"
+                        : isAccrual
+                          ? "Include the accrual booking in SL"
+                          : "Include the reversal in SL (clears the liability)"}
                     />
                   </td>
                   <td className="py-2 pr-3">
@@ -219,8 +237,20 @@ export function AccrualSuggestionsPanel({
       <div className="px-3 py-2 flex items-center justify-between gap-2 flex-wrap"
         style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
         <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-          {selectedCount} of {items.length} selected · net delta{" "}
-          <span className="font-semibold tabular-nums text-theme">{fmt(selectedSum.toString())}</span>
+          {lockTicks ? (
+            <>
+              All {items.length} schedule {items.length === 1 ? "line" : "lines"} auto-included ·
+              net delta{" "}
+              <span className="font-semibold tabular-nums text-theme">
+                {fmt(items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0).toString())}
+              </span>
+            </>
+          ) : (
+            <>
+              {selectedCount} of {items.length} selected · net delta{" "}
+              <span className="font-semibold tabular-nums text-theme">{fmt(selectedSum.toString())}</span>
+            </>
+          )}
         </p>
       </div>
     </div>
