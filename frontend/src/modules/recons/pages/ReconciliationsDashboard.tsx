@@ -1817,6 +1817,10 @@ export function ReconciliationsDashboard() {
             periodEnd={periodEnd}
             saving={subledgerMut.isPending}
             readOnly={isClosed || a.review_status === "approved"}
+            // Distinct from readOnly — the form uses this to show the
+            // right banner copy. "books closed" wins when both apply
+            // since reopening the row alone wouldn't unlock anything.
+            periodClosed={isClosed}
             // The form stays mounted across tab swaps — the section
             // prop just toggles visibility of sub-sections via CSS.
             // No remount, no query refetch, no state loss.
@@ -2066,18 +2070,23 @@ function VerificationBadge({
 type FormSection = "items" | "suggestions" | "evidence" | "ai"
 
 function InlineSubledgerForm({
-  account, periodEnd, saving, readOnly = false, onSave, onClear, onClose, onAutoSave,
+  account, periodEnd, saving, readOnly = false, periodClosed = false,
+  onSave, onClear, onClose, onAutoSave,
   visibleSection, hideHeader, hideFooter,
 }: {
   account: OverviewAccount
   periodEnd: string
   saving: boolean
-  // True when the period is closed — the form renders the same shape
-  // (so users can see what was reconciled) but every mutation surface
-  // is disabled: no ticking QBO items, no manual-item form, no upload,
-  // no Save/Clear/Reconcile button. A small banner at the top makes
-  // the read-only state explicit.
+  /** True when no mutations are allowed at all — either the period is
+   *  closed OR this individual row is approved. Disables every input. */
   readOnly?: boolean
+  /** True ONLY when the period itself is locked (admin closed the
+   *  books). Used to pick the right read-only banner copy: a closed
+   *  period shows "books are closed" (needs admin to reopen the
+   *  period), while a still-open period with an approved row shows
+   *  "account is approved" (the row can be reopened individually).
+   *  Without this, the banner can't tell which case it's in. */
+  periodClosed?: boolean
   onSave: (total: number, source: string | null, items: ReconcilingItem[]) => void
   onClear: () => void
   onClose: () => void
@@ -2405,16 +2414,32 @@ function InlineSubledgerForm({
         </div>
       )}
 
-      {/* Read-only banner — the period is closed, so the form is just a
-          window into what was reconciled. All controls below are
-          disabled; the banner is the explicit "why nothing's clickable". */}
+      {/* Read-only banner — explains WHY nothing's clickable.
+          readOnly fires for two distinct reasons; the copy needs to
+          match the actual cause or the user gets misled (the period
+          isn't necessarily closed just because the row is approved).
+            (a) periodClosed         — admin locked the whole period.
+                Reopen lives on the dashboard's close-progress card.
+            (b) account approved but period open — row was signed off
+                but the period is still active. The row can be
+                reopened individually from the drawer footer. */}
       {readOnly && (
         <div className="rounded-md px-3 py-2 mb-3 flex items-center gap-2 text-[11px]"
           style={{ background: "rgba(245, 158, 11, 0.10)", border: "1px solid rgba(245, 158, 11, 0.40)", color: "#92400e" }}>
           <Lock size={11} strokeWidth={2} />
           <span>
-            The books for {periodEnd} are closed. You can review every reconciling item and
-            attachment, but editing is locked until an admin reopens the period.
+            {periodClosed ? (
+              <>
+                The books for {periodEnd} are closed. You can review every reconciling
+                item and attachment, but editing is locked until an admin reopens the
+                period from the dashboard.
+              </>
+            ) : (
+              <>
+                This account is approved — editing is locked. Click <b>Reopen</b> in
+                the footer (or use <b>Reset to pending</b>) to make changes.
+              </>
+            )}
           </span>
         </div>
       )}
