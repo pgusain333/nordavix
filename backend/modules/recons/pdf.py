@@ -315,6 +315,14 @@ def _reconciliation_table(data: dict) -> Table:
     opening = Decimal(data["opening_balance"])
     items = data.get("reconciling_items") or []
     gl_balance = Decimal(data["gl_balance"])
+    # SAVED subledger balance — this is the number the dashboard
+    # displays and what the variance was computed against when the
+    # account was marked tied/approved. The PDF's job is to PROVE
+    # that number, not silently recompute it as opening + items
+    # (which can differ for AI-prepared rows, manual overrides, or
+    # AR/AP aging where the subledger total doesn't come from the
+    # ticked items).
+    saved_subledger = Decimal(data["subledger_balance"])
 
     # Header
     header = ["Date", "Type", "Ref #", "Memo / Description", "Amount"]
@@ -383,12 +391,38 @@ def _reconciliation_table(data: dict) -> Table:
         ])
     items_end_idx = len(rows) - 1
 
-    # 3. Closing Subledger Balance (= opening + items)
-    closing = opening + items_sum
+    # 3a. Reconcile opening + items to the SAVED subledger. If they
+    # don't match, the saved value came from somewhere other than
+    # ticking these items — AI-prepared closing, manual override, AR/AP
+    # aging total, etc. We insert an explicit "Other adjustments" row
+    # so the math reconciles visibly and the reader can see WHY the
+    # closing isn't just (opening + items).
+    computed_from_items = opening + items_sum
+    adjustment = saved_subledger - computed_from_items
+    adjustment_row_idx: int | None = None
+    if abs(adjustment) >= Decimal("0.01"):
+        rows.append([
+            "", "", "",
+            Paragraph(
+                "Other adjustments to subledger"
+                "<br/><font size='8' color='" + GREY_MID.hexval() + "'>"
+                "Difference between rolled-forward opening + items and "
+                "the recorded subledger balance — typically AR/AP aging, "
+                "AI-prepared closing, or a manual override."
+                "</font>",
+                memo_bold,
+            ),
+            _fmt_money(adjustment),
+        ])
+        adjustment_row_idx = len(rows) - 1
+
+    # 3b. Closing Subledger Balance — the SAVED value, which is what the
+    # dashboard shows and what the variance was computed against. Now
+    # the math always reconciles: opening + items + adjustment = closing.
     rows.append([
         "", "", "",
         Paragraph("Closing Subledger Balance", memo_total),
-        _fmt_money(closing),
+        _fmt_money(saved_subledger),
     ])
     closing_row_idx = len(rows) - 1
 
@@ -400,8 +434,10 @@ def _reconciliation_table(data: dict) -> Table:
     ])
     gl_row_idx = len(rows) - 1
 
-    # 5. Variance — should be $0.00 on a reconciled account
-    variance = gl_balance - closing
+    # 5. Variance — should be $0.00 on a reconciled account.
+    # Computed against the SAVED subledger so the PDF agrees with the
+    # variance on the dashboard row 1:1.
+    variance = gl_balance - saved_subledger
     tied_out = abs(variance) < Decimal("1.00")
     variance_display = _fmt_money(Decimal("0")) if tied_out else _fmt_money(variance)
     # Inline the color in the Paragraph — TEXTCOLOR on a TableStyle
@@ -486,6 +522,19 @@ def _reconciliation_table(data: dict) -> Table:
         cell = rows[idx][-1]
         if cell and cell.startswith("$("):
             style.append(("TEXTCOLOR", (-1, idx), (-1, idx), RED))
+    # "Other adjustments" row (when present) — neutral tint + bold so it
+    # reads as a reconciling step, not just another item. Negative
+    # values get the same red treatment as items for consistency.
+    if adjustment_row_idx is not None:
+        style.append(("BACKGROUND", (0, adjustment_row_idx), (-1, adjustment_row_idx),
+                       colors.Color(0.955, 0.958, 0.97)))
+        style.append(("LINEABOVE",  (0, adjustment_row_idx), (-1, adjustment_row_idx),
+                       0.5, GREY_LIGHT))
+        style.append(("TOPPADDING", (0, adjustment_row_idx), (-1, adjustment_row_idx), 7))
+        style.append(("BOTTOMPADDING", (0, adjustment_row_idx), (-1, adjustment_row_idx), 7))
+        adj_cell = rows[adjustment_row_idx][-1]
+        if adj_cell and adj_cell.startswith("$("):
+            style.append(("TEXTCOLOR", (-1, adjustment_row_idx), (-1, adjustment_row_idx), RED))
     tbl.setStyle(TableStyle(style))
     return tbl
 
