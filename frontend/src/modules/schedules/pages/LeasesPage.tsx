@@ -39,6 +39,47 @@ function fmt(s: string | null | undefined): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+/**
+ * PV of the payment annuity — ASC 842's "initial measurement" of the
+ * lease liability. ROU asset = liability for the simple case (no IDC /
+ * prepayments / incentives), so we use the same number for both.
+ *
+ *   r = rate_annual / 100 / 12               (monthly periodic rate)
+ *   N = inclusive month count(start, end)
+ *   PV(arrears) = pmt × (1 − (1 + r)^−N) / r
+ *   PV(advance) = PV(arrears) × (1 + r)      (first payment is "today")
+ *
+ * Returns null if any input is missing or unparseable — callers treat
+ * that as "can't compute yet" rather than guessing.
+ */
+export function computeLeasePv(
+  monthly: string,
+  discountRate: string,
+  leaseStart: string,
+  leaseEnd: string,
+  timing: "arrears" | "advance",
+): { pv: number; months: number } | null {
+  const pmt = parseFloat(monthly) || 0
+  const rateAnnual = parseFloat(discountRate) || 0
+  if (!pmt || !leaseStart || !leaseEnd) return null
+  const start = new Date(leaseStart + "T00:00:00")
+  const end   = new Date(leaseEnd   + "T00:00:00")
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return null
+  const months = Math.max(
+    1,
+    (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1,
+  )
+  const r = rateAnnual / 100 / 12
+  let pv: number
+  if (r === 0) {
+    pv = pmt * months
+  } else {
+    pv = (pmt * (1 - Math.pow(1 + r, -months))) / r
+    if (timing === "advance") pv = pv * (1 + r)
+  }
+  return { pv: Math.round(pv * 100) / 100, months }
+}
+
 export function LeasesPage() {
   const qc = useQueryClient()
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
@@ -242,62 +283,25 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
   const [monthly, setMonthly] = useState(existing?.monthly_payment ?? "")
   const [useAsc842, setUseAsc842] = useState(!!existing?.initial_liability)
   // ASC 842 doesn't change the PV calculation itself — finance vs
-  // operating only matter for the subsequent JE presentation. We capture
-  // the user's choice for clarity + future use; the calc button below
-  // uses it only to label the result. Default = operating (the more
-  // common case for SMBs).
+  // operating only differ in subsequent JE presentation. Captured for
+  // clarity + future use; doesn't affect what hits the DB today. Default
+  // = operating (the more common case for SMBs).
   const [leaseClass, setLeaseClass] = useState<"operating" | "finance">("operating")
   // Payment timing — arrears (end of period) is the standard assumption;
   // advance (start of period) inflates the PV by (1 + r) since the
   // first payment is made immediately.
   const [paymentTiming, setPaymentTiming] = useState<"arrears" | "advance">("arrears")
   const [discountRate, setDiscountRate] = useState(existing?.discount_rate_pct ?? "")
-  const [rouAsset, setRouAsset] = useState(existing?.initial_rou_asset ?? "")
-  const [liability, setLiability] = useState(existing?.initial_liability ?? "")
   const [notes, setNotes] = useState(existing?.notes ?? "")
   const [error, setError] = useState<string | null>(null)
-  const [calcMsg, setCalcMsg] = useState<string | null>(null)
 
-  /**
-   * PV of payments — present value of an annuity at the monthly discount
-   * rate. Initial Liability and Initial ROU Asset are equal in the
-   * simple case (no IDC / prepayments / incentives). User can adjust
-   * manually after if needed.
-   */
-  function calculatePV(): void {
-    setCalcMsg(null)
-    const pmt = parseFloat(monthly)
-    const rateAnnual = parseFloat(discountRate)
-    const start = leaseStart ? new Date(leaseStart + "T00:00:00") : null
-    const end   = leaseEnd   ? new Date(leaseEnd   + "T00:00:00") : null
-    if (!pmt || !rateAnnual || !start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
-      setError(
-        "To auto-calculate I need: Monthly payment, Discount rate %, Lease start, and Lease end. Fill those four, then click Calculate again."
-      )
-      return
-    }
-    const months = Math.max(1,
-      (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1
-    )
-    const r = rateAnnual / 100 / 12
-    let pv: number
-    if (r === 0) {
-      pv = pmt * months
-    } else {
-      pv = (pmt * (1 - Math.pow(1 + r, -months))) / r
-      if (paymentTiming === "advance") pv = pv * (1 + r)
-    }
-    const rounded = Math.round(pv * 100) / 100
-    setLiability(rounded.toFixed(2))
-    setRouAsset(rounded.toFixed(2))
-    setError(null)
-    setCalcMsg(
-      `Computed PV of ${months} payments of $${pmt.toLocaleString()} at ${rateAnnual}% (${paymentTiming}) = ` +
-      `$${rounded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. ` +
-      `Set as both Initial ROU Asset and Initial Liability. ` +
-      `(${leaseClass === "finance" ? "Finance lease" : "Operating lease"} — same initial measurement; difference is in subsequent JE presentation.)`
-    )
-  }
+  // Live PV preview — recomputed whenever any input changes so the user
+  // sees the exact number that will be persisted as Initial ROU Asset
+  // and Initial Liability on save. NO manual fields, NO button — the
+  // math runs automatically (per user request: "calculate on your own").
+  const pvPreview = useAsc842
+    ? computeLeasePv(monthly, discountRate, leaseStart, leaseEnd, paymentTiming)
+    : null
 
   const optimistic = useScheduleOptimistic("lease")
   const mut = useMutation({
@@ -326,15 +330,44 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
       setError("Account, description, term, and monthly payment are required.")
       return
     }
+
+    // ASC 842 path: compute PV inline and persist as BOTH initial ROU
+    // and initial liability. Pre-validate the inputs PV needs so the
+    // save never silently degrades to cash-basis (the previous bug).
+    let initialRouAsset: string | null = null
+    let initialLiability: string | null = null
+    if (useAsc842) {
+      if (!rouAccount) {
+        setError("Pick a Right-of-use asset GL account for ASC 842 mode.")
+        return
+      }
+      if (!discountRate || !parseFloat(discountRate)) {
+        setError("Discount rate % is required for ASC 842 mode (e.g. 5.25 for the IBR you applied).")
+        return
+      }
+      const calc = computeLeasePv(monthly, discountRate, leaseStart, leaseEnd, paymentTiming)
+      if (!calc) {
+        setError("Could not compute PV — check that monthly payment, discount rate, and term are all valid.")
+        return
+      }
+      initialRouAsset = calc.pv.toFixed(2)
+      initialLiability = calc.pv.toFixed(2)
+    }
+
     mut.mutate({
-      qbo_account_id: account, rou_qbo_account_id: rouAccount || null,
-      description: description.trim(), lessor: lessor.trim() || null,
-      reference: reference.trim() || null,
-      lease_start: leaseStart, lease_end: leaseEnd, monthly_payment: monthly,
-      discount_rate_pct: useAsc842 ? discountRate || null : null,
-      initial_rou_asset: useAsc842 ? rouAsset || null : null,
-      initial_liability: useAsc842 ? liability || null : null,
-      notes: notes.trim() || null, is_active: true,
+      qbo_account_id:     account,
+      rou_qbo_account_id: useAsc842 ? rouAccount : null,
+      description:        description.trim(),
+      lessor:             lessor.trim() || null,
+      reference:          reference.trim() || null,
+      lease_start:        leaseStart,
+      lease_end:          leaseEnd,
+      monthly_payment:    monthly,
+      discount_rate_pct:  useAsc842 ? discountRate : null,
+      initial_rou_asset:  initialRouAsset,
+      initial_liability:  initialLiability,
+      notes:              notes.trim() || null,
+      is_active:          true,
     })
   }
 
@@ -410,33 +443,45 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
                     <option value="advance">Advance (start of month)</option>
                   </select>
                 </Field>
-                <AccountPicker mode="form" label="Right-of-use asset GL account"
+                <AccountPicker mode="form" label="Right-of-use asset GL account *"
                   value={rouAccount} onChange={setRouAccount} />
-                <Field label="Discount rate % (annual, e.g. 5.25)">
+                <Field label="Discount rate % (annual, e.g. 5.25) *">
                   <input type="number" step="0.0001" value={discountRate}
                     onChange={(e) => setDiscountRate(e.target.value)}
                     placeholder="5.25" className={`${inputCls} text-right tabular-nums`} style={inputStyle} />
                 </Field>
-                <Field label="Initial ROU asset">
-                  <input type="number" step="0.01" value={rouAsset}
-                    onChange={(e) => setRouAsset(e.target.value)}
-                    placeholder="PV of payments" className={`${inputCls} text-right tabular-nums`} style={inputStyle} />
-                </Field>
-                <Field label="Initial lease liability">
-                  <input type="number" step="0.01" value={liability}
-                    onChange={(e) => setLiability(e.target.value)}
-                    placeholder="PV of payments" className={`${inputCls} text-right tabular-nums`} style={inputStyle} />
-                </Field>
-                <div className="sm:col-span-2 flex flex-wrap items-center gap-3 pt-1">
-                  <Button size="sm" variant="ghost" type="button" onClick={calculatePV}>
-                    Calculate ROU + Liability from inputs
-                  </Button>
-                  {calcMsg && (
-                    <span className="text-[11px]" style={{ color: "var(--green)" }}>{calcMsg}</span>
+
+                {/* Auto-calculated PV preview — replaces the old manual
+                    ROU + Liability fields and the Calculate button. The
+                    same value (ROU = Liability in the simple case) gets
+                    persisted on save. */}
+                <div className="sm:col-span-2 rounded-lg p-3"
+                  style={{
+                    background: pvPreview ? "var(--green-subtle)" : "var(--surface)",
+                    border: `1px solid ${pvPreview ? "var(--green)" : "var(--border)"}`,
+                  }}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider mb-1"
+                    style={{ color: pvPreview ? "var(--green)" : "var(--text-muted)" }}>
+                    Initial ROU asset &amp; Initial liability (auto-calculated)
+                  </p>
+                  {pvPreview ? (
+                    <>
+                      <p className="text-base font-bold tabular-nums" style={{ color: "var(--green)" }}>
+                        {fmt(pvPreview.pv.toString())}
+                      </p>
+                      <p className="text-[11px] mt-1" style={{ color: "var(--text-2)" }}>
+                        PV of {pvPreview.months} payments of {fmt(monthly)} at {parseFloat(discountRate)}%{" "}
+                        ({paymentTiming}). Saved as BOTH Initial ROU Asset and Initial Liability —
+                        ASC 842 initial measurement is equal in the simple case (no IDC, prepayments,
+                        or incentives).
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                      Fill Monthly payment, Discount rate, Lease start &amp; end above — the PV will
+                      compute automatically here and persist on save. No manual entry needed.
+                    </p>
                   )}
-                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    Needs: Monthly payment, Discount rate, Lease start &amp; end. Computes PV of the payment stream and fills both fields.
-                  </span>
                 </div>
               </div>
             )}
