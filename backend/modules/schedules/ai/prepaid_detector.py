@@ -51,18 +51,70 @@ _client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 # ── Heuristics ──────────────────────────────────────────────────────────
 
 # Account-name keywords that flag an expense account as worth scanning.
-# Conservative — biased toward precision (don't flood the user) over
-# recall. Future: per-tenant override in AI Prefs.
+# Broadened (was previously biased too far toward precision) so we catch
+# prepaids that hide in plain expense accounts — "Maintenance",
+# "Repairs and Maintenance", "Consulting Fees" — not just the canonical
+# "Maintenance Contract" style names. The AI is the final filter (says
+# is_prepaid=false on non-prepaids) so we're safe to widen the funnel.
 _PREPAID_ACCOUNT_KEYWORDS = [
+    # Insurance / occupancy
     "insurance", "rent", "lease",
+    # SaaS / IT
     "software", "saas", "subscription", "subscriptions",
+    "hosting", "domain", "cloud",
+    # Membership / dues
     "membership", "memberships", "dues",
+    # Licenses / permits
     "license", "licenses", "permit", "permits",
+    # Retainers
     "retainer", "retainers",
-    "maintenance contract", "support contract",
+    # Maintenance / repair / support / service — keep both broad (single
+    # word) and narrow ("X contract") so plain "Maintenance Expense"
+    # OR "Maintenance Contract" both pass.
+    "maintenance", "maintenance contract",
+    "repair", "repairs",
+    "support contract", "service contract", "service agreement",
+    # Warranty / extended coverage
     "warranty", "warranties",
-    "prepaid",   # any existing "Prepaid X" naming
+    # Professional services frequently paid annually upfront
+    "consulting", "advisory", "professional fees",
+    # Marketing / advertising — annual sponsorships, trade-show booths
+    "advertising", "marketing",
+    # Training / education — annual access passes, certification fees
+    "training", "education",
+    # Tax / audit — annual fees often paid in advance
+    "audit fees", "tax preparation",
+    # Catch any pre-existing "Prepaid X" naming as a courtesy
+    "prepaid",
 ]
+
+# Memo-pattern signals — when these appear in a transaction's memo or
+# description, the txn is suspect even if its account didn't make the
+# keyword list. Lets us catch the case where a bookkeeper posts a
+# clearly-annual payment ("Machine maintenance for 12 months") to a
+# generic expense account that wouldn't otherwise be scanned.
+_PREPAID_MEMO_RE = re.compile(
+    r"\b("
+    # "12 months", "2 years", "3 quarters", "6 mo", "1 yr"
+    r"\d+\s*(months?|mo\b|years?|yrs?|quarters?|qtrs?)|"
+    # explicit period language
+    r"annual(ly)?|yearly|quarterly|"
+    r"prepaid|"
+    r"covers?\s+\d+|"
+    r"service\s+period|coverage\s+period|"
+    # validity windows
+    r"valid\s+(through|until|to)|"
+    r"expires?|expiration|"
+    r"renewal|renewed"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _memo_looks_like_prepaid(memo: str) -> bool:
+    """True when the memo contains a prepaid-signal pattern."""
+    return bool(_PREPAID_MEMO_RE.search(memo or ""))
+
 
 # AccountType values we consider for prepaid detection. Income-statement
 # accounts only — these are where a real prepaid invoice would be
@@ -124,13 +176,28 @@ async def scan_for_prepaid_candidates(
         return {"scanned_accounts": 0, "scanned_txns": 0, "new_candidates": 0, "open": []}
 
     accounts = accounts_data.get("QueryResponse", {}).get("Account", []) or []
-    scan_accounts = [
+    # ── 1a) Account-keyword-matched accounts: every txn ≥ materiality
+    #         floor goes to the AI (high recall on known-prepaid-prone
+    #         accounts like Insurance, SaaS, Maintenance).
+    kw_accounts = [
         a for a in accounts
         if _looks_like_prepaid_account(a.get("Name", ""))
     ]
+    kw_account_ids = {str(a.get("Id") or "") for a in kw_accounts}
+    # ── 1b) Other expense accounts: scanned too, but ONLY txns whose
+    #         MEMO matches a prepaid pattern ("12 months", "annual",
+    #         "prepaid", etc.) get sent to the AI. Catches the case
+    #         where a prepaid was posted to a generic account
+    #         ("Maintenance", "Consulting") that the keyword list
+    #         doesn't recognize — exactly the user-reported bug.
+    other_accounts = [
+        a for a in accounts
+        if str(a.get("Id") or "") not in kw_account_ids
+    ]
     logger.info(
-        "Prepaid scan: %d total expense accts, %d match prepaid-prone keywords",
-        len(accounts), len(scan_accounts),
+        "Prepaid scan: %d total expense accts (%d match keyword filter, "
+        "%d scanned via memo-pattern fallback)",
+        len(accounts), len(kw_accounts), len(other_accounts),
     )
 
     # ── 2) Existing-candidate dedup set ─────────────────────────────
@@ -145,31 +212,64 @@ async def scan_for_prepaid_candidates(
     # ── 3) Pull GL txns per account, build the candidate-txn list ──
     candidates_to_classify: list[_GlTxnContext] = []
     scanned_txns_total = 0
-    for a in scan_accounts:
+    memo_flagged_count  = 0
+
+    def _add_candidate(t: dict[str, Any], acct_id: str, acct_name: str) -> None:
+        amount = abs(t.get("amount") or Decimal("0"))
+        if amount < materiality_floor:
+            return
+        txn_id = t.get("qbo_txn_id")
+        if txn_id and txn_id in existing_txn_ids:
+            return
+        candidates_to_classify.append(_GlTxnContext(
+            qbo_account_id=acct_id,
+            qbo_account_name=acct_name,
+            txn_id=str(txn_id) if txn_id else None,
+            txn_date=t.get("txn_date") or period_end,
+            amount=amount,
+            memo=str(t.get("memo") or "").strip(),
+            vendor=(str(t.get("entity_name")).strip() if t.get("entity_name") else None),
+        ))
+
+    # Pass A — keyword-matched accounts: every material txn goes to AI.
+    for a in kw_accounts:
         acct_id = str(a.get("Id") or "")
         acct_name = str(a.get("Name") or "")
         try:
             txns = await pull_gl_transactions(conn, db, acct_id, period_start, period_end)
         except Exception:
-            logger.exception("Prepaid scan: GL pull failed for account=%s", acct_id)
+            logger.exception("Prepaid scan: GL pull failed for kw account=%s", acct_id)
             continue
         scanned_txns_total += len(txns)
         for t in txns:
-            amount = abs(t.get("amount") or Decimal("0"))
-            if amount < materiality_floor:
+            _add_candidate(t, acct_id, acct_name)
+
+    # Pass B — other expense accounts: only memo-flagged txns. This is
+    # the memo-pattern fallback; it makes more API calls (one per
+    # account) but catches the missed-prepaid-in-generic-account case.
+    # Worst case ~50 extra QBO calls for a 50-account chart; acceptable
+    # for a manually-triggered scan that runs ~once per close cycle.
+    for a in other_accounts:
+        acct_id = str(a.get("Id") or "")
+        acct_name = str(a.get("Name") or "")
+        try:
+            txns = await pull_gl_transactions(conn, db, acct_id, period_start, period_end)
+        except Exception:
+            logger.exception("Prepaid scan: GL pull failed for other account=%s", acct_id)
+            continue
+        scanned_txns_total += len(txns)
+        for t in txns:
+            memo = str(t.get("memo") or "")
+            if not _memo_looks_like_prepaid(memo):
                 continue
-            txn_id = t.get("qbo_txn_id")
-            if txn_id and txn_id in existing_txn_ids:
-                continue
-            candidates_to_classify.append(_GlTxnContext(
-                qbo_account_id=acct_id,
-                qbo_account_name=acct_name,
-                txn_id=str(txn_id) if txn_id else None,
-                txn_date=t.get("txn_date") or period_end,
-                amount=amount,
-                memo=str(t.get("memo") or "").strip(),
-                vendor=(str(t.get("entity_name")).strip() if t.get("entity_name") else None),
-            ))
+            memo_flagged_count += 1
+            _add_candidate(t, acct_id, acct_name)
+
+    logger.info(
+        "Prepaid scan: %d txns scanned total, %d memo-flagged from non-keyword accounts, "
+        "%d candidates queued for AI",
+        scanned_txns_total, memo_flagged_count, len(candidates_to_classify),
+    )
 
     new_candidates: list[PrepaidCandidate] = []
     if candidates_to_classify:
@@ -217,10 +317,16 @@ async def scan_for_prepaid_candidates(
     )).scalars().all())
 
     return {
-        "scanned_accounts": len(scan_accounts),
-        "scanned_txns":     scanned_txns_total,
-        "new_candidates":   len(new_candidates),
-        "open":             open_rows,
+        # Now reports BOTH passes — keyword-matched + memo-pattern. The
+        # frontend toast can use these to be explicit about what was
+        # scanned ("X kw accounts + Y other accounts via memo fallback").
+        "scanned_accounts":      len(kw_accounts) + len(other_accounts),
+        "scanned_kw_accounts":   len(kw_accounts),
+        "scanned_other_accounts": len(other_accounts),
+        "scanned_txns":          scanned_txns_total,
+        "memo_flagged_txns":     memo_flagged_count,
+        "new_candidates":        len(new_candidates),
+        "open":                  open_rows,
     }
 
 
