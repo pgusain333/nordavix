@@ -45,6 +45,14 @@ from core.db.session import get_db
 from models.account_review_status import AccountReviewStatus
 from models.closed_period import ClosedPeriod
 from models.qbo_connection import QboConnection
+from models.schedule import (
+    ScheduleAccrual,
+    ScheduleFixedAsset,
+    ScheduleLease,
+    ScheduleLoan,
+    SchedulePrepaid,
+    ScheduleSnapshot,
+)
 from models.task_action import TaskAction
 from models.tenant import Tenant
 from models.trial_balance import TrialBalance
@@ -458,6 +466,118 @@ async def _derive_flux_tasks(
     return out
 
 
+# ── Schedule task derivation ─────────────────────────────────────────
+#
+# Five schedule kinds (Prepaid / Accrual / Fixed Asset / Lease / Loan)
+# each get ONE task per open period — the "commit snapshot" step the
+# user takes when their schedule items are reviewed and ready for the
+# month-end close. A kind is "active" for a period when at least one
+# active item of that kind exists in the tenant's schedule. Empty
+# kinds are skipped entirely (no point nagging the user about prepaids
+# they don't have).
+#
+# Completion: task moves to status="approved" when at least one
+# ScheduleSnapshot row exists for (tenant, kind, period_end) with
+# status="committed". Per-account commit completeness is a refinement
+# we can layer on top later if needed — for v1, one commit = done.
+
+_SCHEDULE_KINDS: dict[str, tuple[type, str, str]] = {
+    "prepaid":     (SchedulePrepaid,    "Prepaids",      "/app/schedules/prepaids"),
+    "accrual":     (ScheduleAccrual,    "Accruals",      "/app/schedules/accruals"),
+    "fixed_asset": (ScheduleFixedAsset, "Fixed Assets",  "/app/schedules/fixed-assets"),
+    "lease":       (ScheduleLease,      "Leases",        "/app/schedules/leases"),
+    "loan":        (ScheduleLoan,       "Loans",         "/app/schedules/loans"),
+}
+
+
+def _schedule_key(kind: str, period_end: date) -> str:
+    return f"schedule:{kind}:{period_end.isoformat()}"
+
+
+async def _derive_schedule_tasks(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> list[TaskOut]:
+    """One task per (active_kind, period_end). See module-level docstring
+    for the activation + completion rules."""
+    # Step 1: which kinds have at least one active item? Skip the rest.
+    active_kinds: set[str] = set()
+    for kind, (Model, _human, _route) in _SCHEDULE_KINDS.items():
+        q = select(Model.id).where(Model.is_active == True).limit(1)  # noqa: E712
+        if (await db.execute(q)).scalar_one_or_none() is not None:
+            active_kinds.add(kind)
+    if not active_kinds:
+        return []
+
+    # Step 2: which periods to enumerate? Drive off the same periods
+    # the recon tracker uses (AccountReviewStatus). This guarantees
+    # schedule tasks align with the months the user is actively
+    # closing — no schedule tasks for periods the user hasn't started.
+    periods_q = select(AccountReviewStatus.period_end).distinct()
+    periods = sorted({pe for pe in (await db.execute(periods_q)).scalars().all() if pe})
+    if not periods:
+        return []
+
+    # Step 3: load committed snapshots, index by (kind, period_end).
+    snap_rows = list((await db.execute(
+        select(ScheduleSnapshot).where(ScheduleSnapshot.status == "committed")
+    )).scalars().all())
+    by_kind_period: dict[tuple[str, date], ScheduleSnapshot] = {}
+    for s in snap_rows:
+        key = (s.schedule_type, s.period_end)
+        # First committed snapshot wins for the actor stamps — it's the
+        # one that "completed" the task. Later commits (e.g. additional
+        # accounts) don't shift the completed-at timestamp.
+        if key not in by_kind_period:
+            by_kind_period[key] = s
+
+    out: list[TaskOut] = []
+    for period_end in periods:
+        for kind in sorted(active_kinds):
+            human = _SCHEDULE_KINDS[kind][1]
+            route = _SCHEDULE_KINDS[kind][2]
+            snap = by_kind_period.get((kind, period_end))
+            committed = snap is not None
+            period_label = period_end.strftime("%b %Y")
+            subject = (
+                f"{human} schedule — Commit snapshot · {period_label}"
+            )
+            default_due = _due_date_for(period_end)
+
+            out.append(TaskOut(
+                key=_schedule_key(kind, period_end),
+                source_type="schedule",
+                source_id=kind,
+                period_end=period_end.isoformat(),
+                subject=subject,
+                description=(
+                    "Snapshot committed — schedule entries are locked for this period."
+                    if committed
+                    else "Open the schedule and click 'Commit snapshot' once the items are reviewed for this period."
+                ),
+                severity="info",
+                deep_link=route,
+                status="approved" if committed else "pending",
+                prepared_by=None,
+                prepared_at=None,
+                approved_by=str(snap.committed_by) if snap and snap.committed_by else None,
+                approved_at=snap.committed_at.isoformat() if snap and snap.committed_at else None,
+                due_date=default_due.isoformat() if default_due else None,
+                due_date_overridden=False,
+                assigned_preparer_id=None,
+                assigned_reviewer_id=None,
+                action_id=None,
+                assignee_id=None,
+                notes=None,
+                completed_at=None,
+                dismissed_at=None,
+                priority=None,
+                created_by=None,
+                created_at=None,
+            ))
+    return out
+
+
 async def _load_overlays(db: AsyncSession, tenant_id: uuid.UUID) -> tuple[dict[str, TaskAction], list[TaskAction]]:
     all_rows = list((await db.execute(select(TaskAction))).scalars().all())
     overlays_by_key: dict[str, TaskAction] = {}
@@ -485,8 +605,9 @@ async def list_tasks(
 ) -> TasksResponse:
     """All tasks visible to the current tenant — derived + manual."""
     overlays_by_key, manual_rows = await _load_overlays(db, tenant_id)
-    recon  = await _derive_recon_tasks(db, tenant_id, overlays_by_key)
-    flux   = await _derive_flux_tasks(db, tenant_id, overlays_by_key)
+    recon    = await _derive_recon_tasks(db, tenant_id, overlays_by_key)
+    flux     = await _derive_flux_tasks(db, tenant_id, overlays_by_key)
+    schedule = await _derive_schedule_tasks(db, tenant_id)
 
     manual_tasks: list[TaskOut] = []
     for m in manual_rows:
@@ -525,7 +646,7 @@ async def list_tasks(
             created_at   = m.created_at.isoformat() if m.created_at else None,
         ))
 
-    tasks = recon + flux + manual_tasks
+    tasks = recon + flux + schedule + manual_tasks
     if not include_closed:
         tasks = [t for t in tasks if _is_open(t)]
 
@@ -547,15 +668,17 @@ async def count_open_tasks(
 ) -> dict:
     """Sidebar badge — lightweight counts only."""
     overlays_by_key, manual_rows = await _load_overlays(db, tenant_id)
-    recon = await _derive_recon_tasks(db, tenant_id, overlays_by_key)
-    flux  = await _derive_flux_tasks(db, tenant_id, overlays_by_key)
+    recon    = await _derive_recon_tasks(db, tenant_id, overlays_by_key)
+    flux     = await _derive_flux_tasks(db, tenant_id, overlays_by_key)
+    schedule = await _derive_schedule_tasks(db, tenant_id)
 
     manual_open = [m for m in manual_rows
                    if not m.completed_at and not m.dismissed_at
                    and (not m.snooze_until or m.snooze_until >= date.today())]
-    open_recon = [t for t in recon if _is_open(t)]
-    open_flux  = [t for t in flux  if _is_open(t)]
-    all_open   = open_recon + open_flux
+    open_recon    = [t for t in recon    if _is_open(t)]
+    open_flux     = [t for t in flux     if _is_open(t)]
+    open_schedule = [t for t in schedule if _is_open(t)]
+    all_open   = open_recon + open_flux + open_schedule
     return {
         "open":      len(all_open) + len(manual_open),
         "critical":  sum(1 for t in all_open if t.severity == "critical"),

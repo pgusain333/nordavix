@@ -3,7 +3,7 @@ import { apiClient } from "@/core/api/client"
 // ── Types (mirror backend TaskOut) ────────────────────────────────────────────
 
 export type TaskSeverity   = "info" | "warn" | "critical"
-export type TaskSourceType = "recon_account" | "flux" | "manual"
+export type TaskSourceType = "recon_account" | "flux" | "schedule" | "manual"
 export type TaskStatus     = "pending" | "reviewed" | "approved" | "flagged" | "manual"
 
 export interface Task {

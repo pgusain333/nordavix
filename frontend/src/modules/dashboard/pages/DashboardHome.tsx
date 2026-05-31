@@ -52,6 +52,7 @@ import {
 import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
+import { tasksApi } from "@/modules/tasks/api"
 import { useBooksStatus } from "@/modules/recons/hooks"
 import { workspaceApi } from "@/modules/workspace/api"
 import { Button, Spinner } from "@/core/ui/components"
@@ -209,6 +210,35 @@ export function DashboardHome() {
       allApproved:     monthlyFlux.length > 0 && unapproved.length === 0,
     }
   }, [monthlyFlux])
+
+  // Tasks — pulls ALL tasks (open + completed) so we can count schedule
+  // commit progress for the selected period. Recon + flux progress
+  // continues to come from the lightweight tracker / monthlyFlux above
+  // (cheaper than re-counting from tasks), but schedule tasks only
+  // exist in the tasks API — there's no separate tracker for them.
+  const { data: allTasks } = useQuery({
+    queryKey: ["tasks", "all-with-closed"],
+    queryFn:  () => tasksApi.list(true),
+    enabled:  books?.seeded === true,
+    staleTime: 60_000,
+  })
+  // Schedule-task count for the SELECTED period — drives close progress.
+  // Empty kinds are skipped server-side so the count auto-scales to
+  // whatever schedules the tenant actually has set up.
+  const scheduleStatus = useMemo(() => {
+    if (!allTasks || !period) {
+      return { total: 0, completedCount: 0, allComplete: true }
+    }
+    const scoped = allTasks.filter(
+      (t) => t.source_type === "schedule" && t.period_end === period,
+    )
+    const completed = scoped.filter((t) => t.status === "approved").length
+    return {
+      total:          scoped.length,
+      completedCount: completed,
+      allComplete:    scoped.length === 0 || completed === scoped.length,
+    }
+  }, [allTasks, period])
 
   // Friendly label for the selected month (e.g. "April 2026")
   const monthLabel = useMemo(() => {
@@ -750,6 +780,7 @@ export function DashboardHome() {
           reopening={reopenMut.isPending}
           fluxStatus={fluxStatus}
           onOpenFlux={() => navigate(`/app/flux/analyses?period=${period}`)}
+          scheduleStatus={scheduleStatus}
         />
 
         {/* ── Two big "Open" action cards ────────────────────────
@@ -1117,6 +1148,7 @@ function CloseProgressCard({
   isAdmin, blocker, onCloseBooks, closing, closeMsg,
   onReopenBooks, reopening,
   fluxStatus, onOpenFlux,
+  scheduleStatus,
 }: {
   monthLabel: string
   period: string
@@ -1156,6 +1188,11 @@ function CloseProgressCard({
   // the admin knows why the Close button is disabled.
   fluxStatus: { total: number; unapprovedCount: number; allApproved: boolean }
   onOpenFlux: () => void
+  // Schedule task state — pulled from the canonical /tasks API (one
+  // schedule task per active kind per period, completed when at least
+  // one snapshot is committed for that kind+period). Counts toward the
+  // overall progress bar so committing a schedule moves the dial.
+  scheduleStatus: { total: number; completedCount: number; allComplete: boolean }
 }) {
   // Parse period for date math
   const periodEnd = (() => {
@@ -1224,27 +1261,36 @@ function CloseProgressCard({
 
   // ── State 3: in progress (the meat) ─────────────────────────────
   //
-  // Progress now reflects ALL close tasks for the month, not just
-  // reconciliations. Two task families today:
-  //   1. Reconciliations — each account that needs to tie out
-  //   2. Flux analyses — each TB-vs-prior comparison that needs
-  //                       commentary + approval
-  // Aggregating both into a single % matches how the close gate
-  // server-side already works (require all recon + all flux approved
-  // before allowing closePeriod).
-  const fluxApproved = Math.max(0, fluxStatus.total - fluxStatus.unapprovedCount)
-  const tasksTotal    = total + fluxStatus.total
-  const tasksApproved = counts.approved + fluxApproved
-  const overallPct    = tasksTotal === 0
+  // Progress reflects ALL close tasks for the month, sourced from the
+  // canonical /tasks API. Three task families:
+  //   1. Reconciliations — each BS account that needs to tie out
+  //                         (count from the tracker payload; cheap)
+  //   2. Flux analyses — each TB-vs-prior comparison needing
+  //                       commentary + approval (count from
+  //                       monthlyFlux; cheap)
+  //   3. Schedules — one commit-snapshot task per active schedule kind
+  //                  (Prepaid / Accrual / FA / Lease / Loan), counted
+  //                  from the tasks API since the tracker doesn't
+  //                  know about schedules.
+  // Aggregating into one % matches how the close gate works server-
+  // side (all recon + all flux approved before closePeriod allowed)
+  // and now also surfaces schedule-commit progress so the user sees
+  // their schedule work counted toward the dial.
+  const fluxApproved     = Math.max(0, fluxStatus.total - fluxStatus.unapprovedCount)
+  const scheduleApproved = scheduleStatus.completedCount
+  const tasksTotal       = total + fluxStatus.total + scheduleStatus.total
+  const tasksApproved    = counts.approved + fluxApproved + scheduleApproved
+  const overallPct       = tasksTotal === 0
     ? 0
     : Math.round((tasksApproved / tasksTotal) * 100)
 
   // Per-module % values now live inside their respective "Open X"
   // tiles below this card (see DashboardHome render). Computing them
   // here would be dead code.
-  // Reference fluxApproved so the linter doesn't flag the calculation
-  // above as unused — it's still used by `tasksApproved`.
+  // Reference fluxApproved + scheduleApproved so the linter doesn't
+  // flag them as unused — they're still consumed by `tasksApproved`.
   void fluxApproved
+  void scheduleApproved
 
   const isOverdue = daysToTarget < 0
   return (
