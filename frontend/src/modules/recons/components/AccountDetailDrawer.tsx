@@ -23,6 +23,7 @@ import { useQuery } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   AlertTriangle,
+  Banknote,
   Brain,
   CheckCircle2,
   ChevronLeft,
@@ -43,16 +44,17 @@ import { formatDateTime } from "@/core/lib/dates"
 import { schedulesApi } from "@/modules/schedules/api"
 
 const TABS = [
-  { id: "summary",     label: "Summary",     icon: Sparkles  },
+  { id: "summary",     label: "Summary",     icon: Sparkles },
+  { id: "bank_match",  label: "Bank match",  icon: Banknote, bankOnly: true },
   { id: "items",       label: "Items",       icon: Receipt   },
   { id: "suggestions", label: "Suggestions", icon: Layers    },
   { id: "evidence",    label: "Evidence",    icon: Paperclip },
   { id: "ai",          label: "AI",          icon: Brain     },
 ] as const
 export type DrawerTabId = typeof TABS[number]["id"]
-/** Tab ids that correspond to InlineSubledgerForm sections. Summary is
- *  the drawer's own section, not the form. */
-export type DrawerFormSection = Exclude<DrawerTabId, "summary">
+/** Tab ids that correspond to InlineSubledgerForm sections. Summary
+ *  and bank_match are the drawer's own sections, not the form. */
+export type DrawerFormSection = Exclude<DrawerTabId, "summary" | "bank_match">
 
 interface Props {
   /** Currently open account; null = drawer closed. */
@@ -71,6 +73,10 @@ interface Props {
    *  can call it with the current tab's section filter — that way the
    *  form stays mounted but only the right sections render. */
   renderReconcileBody?: (account: OverviewAccount, section: DrawerFormSection) => React.ReactNode
+  /** Render the bank-rec worksheet (only invoked when the "bank_match"
+   *  tab is active AND the account is a Bank type — the tab itself is
+   *  hidden otherwise). */
+  renderBankBody?: (account: OverviewAccount) => React.ReactNode
   /** Renders a sticky action footer at the bottom of the drawer. The
    *  context object carries flags the footer needs to gate buttons
    *  beyond what's in `account` alone (e.g. has the user reviewed the
@@ -116,7 +122,7 @@ function persistWidth(w: number): void {
 
 export function AccountDetailDrawer({
   account, accounts, periodEnd, readOnly,
-  onNavigate, onClose, renderReconcileBody, renderFooter,
+  onNavigate, onClose, renderReconcileBody, renderBankBody, renderFooter,
 }: Props) {
   const [tab, setTab] = useTabHash(account?.qbo_id ?? null)
   const [width, setWidth] = useState<number>(() => loadWidth())
@@ -383,7 +389,16 @@ export function AccountDetailDrawer({
                   <SummaryTab account={account} />
                 </div>
               </div>
-              <div style={{ display: tab !== "summary" ? "block" : "none" }}>
+              {/* Bank-rec worksheet — only mounts when the tab is
+                  active so the upload queries don't fire for non-bank
+                  accounts (or even for bank accounts the user hasn't
+                  opened this tab on yet). */}
+              {tab === "bank_match" && renderBankBody && (
+                <div className="px-1 py-1">
+                  {renderBankBody(account)}
+                </div>
+              )}
+              <div style={{ display: tab !== "summary" && tab !== "bank_match" ? "block" : "none" }}>
                 {renderReconcileBody ? (
                   // The form decides which sections to actually render
                   // based on its visibleSection prop. The render-prop
@@ -597,6 +612,9 @@ function TabBar({ value, onChange, account, suggestionsBadge }: {
         WebkitOverflowScrolling: "touch",
       }}>
       {TABS.map((t) => {
+        // Hide bank-only tabs unless the account is actually a Bank type.
+        const isBankAcct = (account.account_type || "").toLowerCase().includes("bank")
+        if ((t as { bankOnly?: boolean }).bankOnly && !isBankAcct) return null
         const active = t.id === value
         const Icon = t.icon
         const count = badge[t.id]

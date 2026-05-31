@@ -45,6 +45,7 @@ from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, req
 from core.db.session import get_db
 from core.storage import r2 as r2_storage
 from models.account_review_status import AccountReviewStatus
+from models.bank_statement_txn import BankStatementTxn
 from models.closed_period import ClosedPeriod
 from models.qbo_connection import QboConnection
 from models.reconciliation import (
@@ -3103,3 +3104,282 @@ async def export_reconciliation(
             "Cache-Control": "no-store",
         },
     )
+
+
+# ── Bank reconciliation worksheet ─────────────────────────────────────
+#
+# Bank-type accounts get a dedicated upload + auto-match flow on top
+# of the generic recon drawer. The user uploads their statement (CSV
+# in v1; PDF via Claude OCR in v2), we parse + persist the lines, run
+# the auto-matcher against the period's GL, and surface three buckets:
+#
+#   cleared    — matched bank ↔ GL → no action
+#   bank_only  — on bank, not in GL → user posts a JE in QBO (fees,
+#                interest, NSF). The variance gate stays locked
+#                until the user posts + re-syncs.
+#   gl_only    — in GL, not on bank → outstanding checks / deposits
+#                in transit. These auto-flow as reconciling items so
+#                the worksheet ties to the bank balance.
+#
+# Re-uploading wipes prior rows for (account, period) before inserting
+# the new batch. Idempotent.
+
+_BANK_CSV_EXTS = {"csv", "txt"}
+_BANK_CSV_MAX_BYTES = 5 * 1024 * 1024  # 5 MB — typical statement is <500 KB
+
+
+def _serialize_bank_txn(row: BankStatementTxn) -> dict:
+    return {
+        "id":                str(row.id),
+        "txn_date":          row.txn_date.isoformat(),
+        "amount":            str(row.amount),
+        "description":       row.description,
+        "bank_ref":          row.bank_ref,
+        "match_status":      row.match_status,
+        "matched_gl_txn_id": row.matched_gl_txn_id,
+        "match_confidence":  str(row.match_confidence) if row.match_confidence is not None else None,
+    }
+
+
+@router.post("/account/{qbo_account_id}/bank-statement/upload",
+             dependencies=[Depends(require_role("preparer"))])
+async def upload_bank_statement(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Parse a CSV bank statement, persist the lines, and auto-match
+    against the period's GL. Returns the worksheet buckets."""
+    from datetime import date as _d
+    try:
+        pe = _d.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    await _block_if_closed(db, pe)
+
+    name = file.filename or "statement.csv"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext not in _BANK_CSV_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type .{ext} not allowed. Upload a CSV bank statement.",
+        )
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    if len(raw) > _BANK_CSV_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large ({len(raw):,} bytes). Max 5 MB.",
+        )
+
+    from modules.recons.bank_csv import parse_bank_csv
+
+    parsed = parse_bank_csv(raw, filename=name)
+    if not parsed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Couldn't find any transaction rows in the CSV. Expected a header "
+                "row with Date + Amount (or Debit/Credit) + Description columns."
+            ),
+        )
+
+    # Wipe prior rows for this (account, period) — re-uploads replace.
+    await db.execute(
+        delete(BankStatementTxn).where(
+            BankStatementTxn.tenant_id == tenant_id,
+            BankStatementTxn.qbo_account_id == qbo_account_id,
+            BankStatementTxn.period_end == pe,
+        )
+    )
+
+    # Insert fresh rows
+    user_uuid = uuid.UUID(str(user.id)) if user else None
+    for p in parsed:
+        db.add(BankStatementTxn(
+            tenant_id=tenant_id,
+            qbo_account_id=qbo_account_id,
+            period_end=pe,
+            txn_date=p["txn_date"],
+            amount=p["amount"],
+            description=p.get("description"),
+            bank_ref=p.get("bank_ref"),
+            statement_filename=name,
+            uploaded_by=user_uuid,
+            match_status="unmatched",
+        ))
+    await db.commit()
+
+    # Run match + return worksheet
+    return await _run_bank_match(db, tenant_id, qbo_account_id, pe)
+
+
+@router.get("/account/{qbo_account_id}/bank-statement")
+async def get_bank_statement_worksheet(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return the current bank-rec worksheet for (account, period). If
+    nothing has been uploaded yet, returns an empty-state payload."""
+    from datetime import date as _d
+    try:
+        pe = _d.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    return await _run_bank_match(db, tenant_id, qbo_account_id, pe)
+
+
+@router.delete("/account/{qbo_account_id}/bank-statement",
+               dependencies=[Depends(require_role("preparer"))])
+async def clear_bank_statement(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Wipe all uploaded bank statement rows for (account, period).
+    Used when the user uploaded the wrong statement and wants to start
+    fresh without re-uploading."""
+    from datetime import date as _d
+    try:
+        pe = _d.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    await _block_if_closed(db, pe)
+
+    result = await db.execute(
+        delete(BankStatementTxn).where(
+            BankStatementTxn.tenant_id == tenant_id,
+            BankStatementTxn.qbo_account_id == qbo_account_id,
+            BankStatementTxn.period_end == pe,
+        )
+    )
+    await db.commit()
+    return {"deleted": result.rowcount or 0}
+
+
+async def _run_bank_match(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+    period_end,
+) -> dict:
+    """Shared core: load bank txns + GL txns, run matcher, persist
+    results, return worksheet payload."""
+    from datetime import date as _d
+
+    from modules.recons.bank_match import match_bank_to_gl, summarize
+
+    bank_rows = list((await db.execute(
+        select(BankStatementTxn).where(
+            BankStatementTxn.tenant_id == tenant_id,
+            BankStatementTxn.qbo_account_id == qbo_account_id,
+            BankStatementTxn.period_end == period_end,
+        ).order_by(BankStatementTxn.txn_date)
+    )).scalars().all())
+
+    if not bank_rows:
+        return {
+            "uploaded":  False,
+            "filename":  None,
+            "uploaded_at": None,
+            "cleared":   [],
+            "bank_only": [],
+            "gl_only":   [],
+            "summary":   {
+                "cleared_count": 0, "bank_only_count": 0, "gl_only_count": 0,
+                "cleared_total": "0", "bank_only_total": "0", "gl_only_total": "0",
+            },
+        }
+
+    # Pull GL for the period — full month bracket containing period_end.
+    period_start = _d(period_end.year, period_end.month, 1)
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+
+    gl_txns: list[dict] = []
+    if conn is not None:
+        from core.qbo_gl import pull_gl_transactions
+        try:
+            gl_txns = await pull_gl_transactions(
+                conn, db, qbo_account_id, period_start, period_end,
+            )
+        except Exception:
+            logger.exception("Bank match: GL pull failed for acct=%s", qbo_account_id)
+
+    # Adapt bank rows into matcher's expected dict shape
+    bank_dicts = [
+        {
+            "id":          str(b.id),
+            "txn_date":    b.txn_date,
+            "amount":      b.amount,
+            "description": b.description,
+            "bank_ref":    b.bank_ref,
+        }
+        for b in bank_rows
+    ]
+
+    cleared, bank_only, gl_only = match_bank_to_gl(bank_dicts, gl_txns)
+
+    # Persist match results on the bank rows (cleared.id → matched_gl_txn_id)
+    cleared_by_bank_id = {c["bank"]["id"]: c for c in cleared}
+    for row in bank_rows:
+        m = cleared_by_bank_id.get(str(row.id))
+        if m:
+            row.match_status      = "cleared"
+            row.matched_gl_txn_id = m["gl"].get("qbo_txn_id")
+            row.match_confidence  = Decimal(str(m["score"]))
+        else:
+            row.match_status      = "bank_only"
+            row.matched_gl_txn_id = None
+            row.match_confidence  = None
+    await db.commit()
+
+    # Re-load with fresh stamps
+    bank_rows = list((await db.execute(
+        select(BankStatementTxn).where(
+            BankStatementTxn.tenant_id == tenant_id,
+            BankStatementTxn.qbo_account_id == qbo_account_id,
+            BankStatementTxn.period_end == period_end,
+        ).order_by(BankStatementTxn.txn_date)
+    )).scalars().all())
+
+    def _serialize_gl(g: dict) -> dict:
+        td = g.get("txn_date")
+        return {
+            "qbo_txn_id":  g.get("qbo_txn_id"),
+            "txn_date":    td.isoformat() if td else None,
+            "txn_type":    g.get("txn_type"),
+            "txn_number":  g.get("txn_number"),
+            "amount":      str(g.get("amount") or 0),
+            "memo":        g.get("memo"),
+            "entity_name": g.get("entity_name"),
+        }
+
+    return {
+        "uploaded":    True,
+        "filename":    bank_rows[0].statement_filename if bank_rows else None,
+        "uploaded_at": bank_rows[0].uploaded_at.isoformat() if bank_rows else None,
+        "cleared":     [
+            {
+                "bank":  _serialize_bank_txn(next(b for b in bank_rows if str(b.id) == c["bank"]["id"])),
+                "gl":    _serialize_gl(c["gl"]),
+                "score": c["score"],
+            }
+            for c in cleared
+        ],
+        "bank_only":   [_serialize_bank_txn(b) for b in bank_rows if b.match_status == "bank_only"],
+        "gl_only":     [_serialize_gl(g) for g in gl_only],
+        "summary":     summarize(cleared, bank_only, gl_only),
+    }

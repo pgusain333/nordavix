@@ -660,6 +660,86 @@ async function listAccountEvidence(qboAccountId: string, periodEnd: string): Pro
   return data.evidence
 }
 
+// ── Bank reconciliation worksheet ──────────────────────────────────────
+
+export interface BankStatementRow {
+  id:                string
+  txn_date:          string
+  amount:            string  // signed: + = deposit, − = withdrawal
+  description:       string | null
+  bank_ref:          string | null
+  match_status:      "cleared" | "bank_only" | "unmatched" | string
+  matched_gl_txn_id: string | null
+  match_confidence:  string | null
+}
+
+export interface BankGlRow {
+  qbo_txn_id:  string | null
+  txn_date:    string | null
+  txn_type:    string | null
+  txn_number:  string | null
+  amount:      string  // signed
+  memo:        string | null
+  entity_name: string | null
+}
+
+export interface BankReconWorksheet {
+  uploaded:    boolean
+  filename:    string | null
+  uploaded_at: string | null
+  cleared:     Array<{ bank: BankStatementRow; gl: BankGlRow; score: number }>
+  bank_only:   BankStatementRow[]
+  gl_only:     BankGlRow[]
+  summary: {
+    cleared_count:     number
+    bank_only_count:   number
+    gl_only_count:     number
+    cleared_total:     string
+    bank_only_total:   string
+    gl_only_total:     string
+  }
+}
+
+async function uploadBankStatement(
+  qboAccountId: string,
+  periodEnd: string,
+  file: File,
+): Promise<BankReconWorksheet> {
+  const fd = new FormData()
+  fd.append("file", file)
+  const { data } = await apiClient.post<BankReconWorksheet>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/bank-statement/upload`,
+    fd,
+    {
+      params: { period_end: periodEnd },
+      headers: { "Content-Type": undefined as unknown as string },
+    },
+  )
+  return data
+}
+
+async function getBankWorksheet(
+  qboAccountId: string,
+  periodEnd: string,
+): Promise<BankReconWorksheet> {
+  const { data } = await apiClient.get<BankReconWorksheet>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/bank-statement`,
+    { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
+async function clearBankStatement(
+  qboAccountId: string,
+  periodEnd: string,
+): Promise<{ deleted: number }> {
+  const { data } = await apiClient.delete<{ deleted: number }>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/bank-statement`,
+    { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
 async function uploadAccountEvidence(
   qboAccountId: string,
   periodEnd: string,
@@ -946,6 +1026,10 @@ export const reconsApi = {
   uploadAccountEvidence,
   deleteAccountEvidence,
   getEvidenceDownloadUrl,
+  // Bank reconciliation worksheet
+  uploadBankStatement,
+  getBankWorksheet,
+  clearBankStatement,
   verifyEvidence,
   getPriorOverride,
   getPeriodEntries,

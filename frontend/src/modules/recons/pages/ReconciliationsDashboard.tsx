@@ -68,6 +68,7 @@ import {
 import { useQboConnection } from "@/modules/flux/hooks"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { InitialRecordingSuggestionsPanel } from "@/modules/schedules/components/InitialRecordingSuggestionsPanel"
+import { BankReconWorksheet } from "@/modules/recons/components/BankReconWorksheet"
 import {
   PrepaidSuggestionsPanel,
   prepaidTxnId,
@@ -1855,6 +1856,15 @@ export function ReconciliationsDashboard() {
         readOnly={isClosed}
         onNavigate={(a) => setDrawerAcctId(a.qbo_id)}
         onClose={() => setDrawerAcctId(null)}
+        renderBankBody={(a) => (
+          <BankReconWorksheet
+            key={a.qbo_id}
+            qboAccountId={a.qbo_id}
+            periodEnd={periodEnd}
+            glBalance={a.gl_balance}
+            readOnly={isClosed || a.review_status === "approved"}
+          />
+        )}
         renderReconcileBody={(a, section) => (
           <InlineSubledgerForm
             // key={qbo_id} forces a fresh mount when the user navigates
