@@ -2185,12 +2185,6 @@ function InlineSubledgerForm({
   const selectedItemsRef = useRef(selectedItemMap)
   selectedItemsRef.current = selectedItemMap
 
-  // Shared with the debounced auto-save below: when true, the next
-  // selectedItemMap-driven effect skips writing to the backend. Used
-  // for (a) the very first effect run after mount, and (b) external
-  // resyncs (e.g. Reset to pending) so we don't echo back the clear.
-  const skipFirstAutoSave = useRef(true)
-
   // External resync: when something outside the form changes the row's
   // review_status (most commonly: Reset to pending, which clears the
   // backend's reconciling_items array via the optimistic patch), reset
@@ -2205,10 +2199,10 @@ function InlineSubledgerForm({
     const m: Record<string, ReconcilingItem> = {}
     for (const it of account.reconciling_items ?? []) m[it.txn_id] = it
     setSelectedItemMap(m)
-    skipFirstAutoSave.current = true
     // Only resync on identity / status change — re-running every render
     // would clobber the user's in-flight ticks before the debounced
-    // save fires.
+    // save fires. The auto-save effect below is content-gated so we
+    // don't need a "skip first" counter anymore.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account.qbo_id, account.review_status])
 
@@ -2262,16 +2256,30 @@ function InlineSubledgerForm({
   )
   const computedSubledger = openingBalance + selectedSum
 
-  // Auto-save: every time the user ticks an item (or edits the manual
-  // list), debounce 500ms and push to the backend so the top KPI
-  // cards (which read from the overview snapshot) refresh immediately.
-  // Skips the very first run so opening the form doesn't fire a write.
+  // Auto-save: when the user ticks an item (or edits the manual list)
+  // debounce 500ms and push to the backend so the top KPI cards (which
+  // read from the overview snapshot) refresh immediately.
+  //
+  // Content-gated: we only auto-save when the form's items DIFFER from
+  // what the server already has. That prevents the classic phantom-save
+  // bug — on mount, the resync effect calls setSelectedItemMap with a
+  // new object reference (same items). The reference change triggers
+  // THIS effect, but the items match the server, so we skip the write
+  // and the saved subledger stays intact. Same protection for any
+  // future code path that re-syncs items from the server.
+  //
+  // Hashing keeps the comparison cheap even with many items: same set
+  // of (txn_id, amount, memo) tuples → no save needed.
   useEffect(() => {
-    if (skipFirstAutoSave.current) {
-      skipFirstAutoSave.current = false
-      return
-    }
     if (readOnly || !onAutoSave) return
+    const hash = (items: ReconcilingItem[]) => items
+      .map((it) => `${it.txn_id}:${it.amount}:${it.memo ?? ""}`)
+      .sort()
+      .join("|")
+    const currentHash = hash(Object.values(selectedItemMap))
+    const serverHash  = hash(account.reconciling_items ?? [])
+    if (currentHash === serverHash) return  // matches server → resync, not user edit
+
     const handle = setTimeout(() => {
       const itemsList = Object.values(selectedItemsRef.current)
       const source = itemsList.length === 0
@@ -2280,11 +2288,13 @@ function InlineSubledgerForm({
       onAutoSave(computedSubledger, source, itemsList)
     }, 500)
     return () => clearTimeout(handle)
-    // Deliberately react to selectedItemMap changes only — manual-form
-    // typing doesn't update selectedItemMap until the user clicks Add,
-    // so we won't spam saves while they're filling in a memo.
+    // We deliberately omit `computedSubledger` from the deps because
+    // it changes whenever `prior` resolves — and a prior-query result
+    // changing should NOT trigger a save. The save body reads the
+    // current computedSubledger at fire time from the ref-backed live
+    // closure, so it'll pick up whatever the latest value is.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItemMap])
+  }, [selectedItemMap, account.reconciling_items, readOnly, onAutoSave])
 
   // Manual reconciling item form — for items that don't exist in QBO yet
   // (outstanding bank checks, deposits in transit, journal entries not
