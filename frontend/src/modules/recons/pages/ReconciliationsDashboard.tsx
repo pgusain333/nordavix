@@ -21,7 +21,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { formatDateLong, formatDateTime } from "@/core/lib/dates"
+import { formatDate, formatDateLong, formatDateTime } from "@/core/lib/dates"
 import {
   RefreshCw,
   AlertTriangle,
@@ -68,6 +68,7 @@ import {
 import { useQboConnection } from "@/modules/flux/hooks"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { InitialRecordingSuggestionsPanel } from "@/modules/schedules/components/InitialRecordingSuggestionsPanel"
+import { SchedulePeriodJesPanel } from "@/modules/schedules/components/SchedulePeriodJesPanel"
 import { BankReconWorksheet } from "@/modules/recons/components/BankReconWorksheet"
 import {
   PrepaidSuggestionsPanel,
@@ -3004,6 +3005,20 @@ function InlineSubledgerForm({
           closing total update above). Pulled live from QBO via
           /period-entries. Plus a manual-add form for items not yet
           in QBO (outstanding bank checks, deposits in transit, JEs). */}
+      {/* For schedule-backed accounts (Prepaid / Accrual / FA / Lease /
+          Loan), the Nordavix Schedules module IS the subledger. The
+          per-period JEs from each schedule line ARE the reconciling
+          items here — there's no GL-drill-in tick workflow to run.
+          Render the JE panel; skip the manual-add + GL-txn table. */}
+      {isScheduleBacked && (
+        <SchedulePeriodJesPanel
+          qboAccountId={account.qbo_id}
+          periodEnd={periodEnd}
+        />
+      )}
+
+      {!isScheduleBacked && (
+      <>
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
           <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
@@ -3152,7 +3167,7 @@ function InlineSubledgerForm({
                         </td>
                         <td className="px-2 py-2 text-theme">{r.txn_type}</td>
                         <td className="px-2 py-2 font-mono" style={{ color: "var(--text-2)" }}>{r.txn_number || "—"}</td>
-                        <td className="px-2 py-2" style={{ color: "var(--text-2)" }}>{r.txn_date || "—"}</td>
+                        <td className="px-2 py-2" style={{ color: "var(--text-2)" }}>{r.txn_date ? formatDate(r.txn_date) : "—"}</td>
                         <td className="px-2 py-2 truncate max-w-[120px]" style={{ color: "var(--text-2)" }}>{r.entity || "—"}</td>
                         <td className="px-2 py-2 truncate max-w-[180px]" style={{ color: "var(--text-muted)" }}>{r.memo || "—"}</td>
                         <td className="px-2 py-2 text-right tabular-nums font-medium text-theme">{fmtMoney(r.amount)}</td>
@@ -3172,6 +3187,8 @@ function InlineSubledgerForm({
           blue "Rolled forward from prior period" card that used to live
           here: that information is already on the Opening balance line
           inside the build-up ("Rolled forward from <date>"). */}
+      </>
+      )}{/* /isScheduleBacked guard for the GL-drill-in items block */}
 
       </div>{/* end Items group */}
 

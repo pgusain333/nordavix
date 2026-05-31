@@ -61,6 +61,49 @@ function fmtDisplay(iso: string): string {
   // App-wide standard: MM-DD-YYYY (US, unambiguous when copy-pasted).
   return formatDate(iso) || iso
 }
+
+/**
+ * Parse manually-typed text into ISO YYYY-MM-DD. Accepts the app-wide
+ * MM-DD-YYYY standard plus a few common variants the user might paste:
+ *
+ *   MM-DD-YYYY   → 03-15-2026
+ *   MM/DD/YYYY   → 03/15/2026
+ *   M-D-YYYY     → 3-5-2026  (single-digit month/day)
+ *   M/D/YYYY     → 3/5/2026
+ *   MM-DD-YY     → 03-15-26  (2-digit year — assumes 20YY)
+ *   YYYY-MM-DD   → 2026-03-15 (ISO passthrough for power users)
+ *
+ * Returns null for unparseable text OR dates the calendar can't
+ * actually create (e.g. 02-31-2026). Callers should fall back to the
+ * prior value on null so empty/typo states don't blow up the picker.
+ */
+function parseManualDate(raw: string): string | null {
+  const s = (raw || "").trim()
+  if (!s) return null
+  // ISO passthrough
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return fromIso(s) ? s : null
+  }
+  // MM[-/]DD[-/]YYYY or MM[-/]DD[-/]YY
+  const m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2}|\d{4})$/)
+  if (!m) return null
+  const mo = parseInt(m[1], 10)
+  const da = parseInt(m[2], 10)
+  let yr = parseInt(m[3], 10)
+  if (m[3].length === 2) {
+    // Two-digit year — assume 2000-2099 since this is an accounting
+    // product where users almost never enter 19XX dates by hand.
+    yr += 2000
+  }
+  if (mo < 1 || mo > 12 || da < 1 || da > 31 || yr < 1900 || yr > 2999) return null
+  // Reject impossible calendar dates (Feb 30, Apr 31, etc.) by
+  // round-tripping through Date and verifying.
+  const dt = new Date(yr, mo - 1, da)
+  if (dt.getFullYear() !== yr || dt.getMonth() !== mo - 1 || dt.getDate() !== da) {
+    return null
+  }
+  return toIso(yr, mo - 1, da)
+}
 function daysInMonth(y: number, m: number): number { return new Date(y, m + 1, 0).getDate() }
 function isSameDate(a: { y: number; m: number; d: number }, b: { y: number; m: number; d: number }): boolean {
   return a.y === b.y && a.m === b.m && a.d === b.d
@@ -147,43 +190,123 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
     return false
   }
 
-  const triggerLabel = value ? fmtDisplay(value) : (placeholder ?? "Pick a date")
+  // Manual-entry text input state. Decoupled from `value` so the user
+  // can type a partial date (e.g. "03-1") without us prematurely
+  // overwriting it. Synced FROM `value` whenever it changes externally
+  // and the input isn't focused (so external resets / form pre-fills
+  // land correctly).
+  const [textValue, setTextValue] = useState<string>(value ? fmtDisplay(value) : "")
+  const [textFocused, setTextFocused] = useState(false)
+  useEffect(() => {
+    if (textFocused) return  // don't clobber the user's in-flight typing
+    setTextValue(value ? fmtDisplay(value) : "")
+  }, [value, textFocused])
 
-  // Trigger button styles: a clean default that callers can override or
+  function commitTypedDate(): void {
+    const raw = textValue.trim()
+    if (!raw) {
+      // Empty input = clear the date (only if there was one to begin with)
+      if (value) onChange("")
+      setTextValue("")
+      return
+    }
+    const iso = parseManualDate(raw)
+    if (iso) {
+      // Valid date — emit ISO + reformat the input to the canonical
+      // MM-DD-YYYY display so a typed "3/5/2026" renders back as
+      // "03-05-2026" once the user tabs away.
+      onChange(iso)
+      setTextValue(fmtDisplay(iso))
+      // Jump the calendar view to the typed month so reopening shows it
+      const parsed = fromIso(iso)
+      if (parsed) setView({ y: parsed.y, m: parsed.m })
+    } else {
+      // Unparseable — revert to the prior value (don't strand a typo).
+      setTextValue(value ? fmtDisplay(value) : "")
+    }
+  }
+
+  // Container styles: a clean default that callers can override or
   // merge into via triggerClassName / triggerStyle. Compact mode shrinks
   // padding + drops the min-width for tight inline cells.
   const defaultTriggerClass = compact
-    ? "inline-flex items-center gap-1.5 w-full rounded-md px-2 py-1.5 text-xs outline-none transition-colors hover:bg-[var(--surface)]"
-    : "inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm outline-none transition-colors hover:bg-[var(--surface)]"
+    ? "inline-flex items-center gap-1.5 w-full rounded-md px-2 py-1.5 text-xs outline-none transition-colors"
+    : "inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm outline-none transition-colors"
   const defaultTriggerStyle: React.CSSProperties = {
     background: "var(--surface-2)",
     border: "1px solid var(--border-strong)",
     color: "var(--text)",
     opacity: disabled ? 0.5 : 1,
-    cursor: disabled ? "not-allowed" : "pointer",
+    cursor: disabled ? "not-allowed" : "text",
     minWidth: compact ? 0 : 160,
   }
 
   return (
     <div ref={ref} className={`relative ${className ?? "inline-block"}`} style={style}>
-      <button
-        type="button"
-        onClick={() => !disabled && setOpen(!open)}
-        disabled={disabled}
+      <div
         className={triggerClassName ?? defaultTriggerClass}
         style={{ ...defaultTriggerStyle, ...(triggerStyle ?? {}) }}
-        aria-label="Pick a date"
       >
-        <Calendar size={compact ? 12 : 13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-        <span className={value ? "truncate" : "italic truncate"} style={{ color: value ? "var(--text)" : "var(--text-muted)" }}>
-          {triggerLabel}
-        </span>
-        <ChevronDown
-          size={compact ? 10 : 12} strokeWidth={1.8}
-          className="ml-auto transition-transform shrink-0"
-          style={{ color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "rotate(0)" }}
+        {/* Calendar icon — opens the picker (so users who prefer
+            visual selection have a fast affordance). */}
+        <button
+          type="button"
+          onClick={() => !disabled && setOpen((v) => !v)}
+          disabled={disabled}
+          className="shrink-0 inline-flex items-center justify-center"
+          style={{ color: "var(--text-muted)", cursor: disabled ? "not-allowed" : "pointer" }}
+          aria-label="Open date picker"
+          tabIndex={-1}
+        >
+          <Calendar size={compact ? 12 : 13} strokeWidth={1.8} />
+        </button>
+
+        {/* Editable date text — typed entry in MM-DD-YYYY (also accepts
+            slashes, single-digit, 2-digit year, or ISO passthrough). */}
+        <input
+          type="text"
+          value={textValue}
+          placeholder={placeholder ?? "MM-DD-YYYY"}
+          disabled={disabled}
+          onChange={(e) => setTextValue(e.target.value)}
+          onFocus={() => setTextFocused(true)}
+          onBlur={() => { setTextFocused(false); commitTypedDate() }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              commitTypedDate();
+              (e.target as HTMLInputElement).blur()
+            } else if (e.key === "Escape") {
+              setTextValue(value ? fmtDisplay(value) : "")
+              ;(e.target as HTMLInputElement).blur()
+              setOpen(false)
+            }
+          }}
+          className="flex-1 min-w-0 bg-transparent border-0 outline-none tabular-nums"
+          style={{
+            color: value ? "var(--text)" : "var(--text-muted)",
+            cursor: disabled ? "not-allowed" : "text",
+          }}
+          aria-label="Date (MM-DD-YYYY)"
         />
-      </button>
+
+        {/* Chevron — also opens the picker (mirrors the calendar icon). */}
+        <button
+          type="button"
+          onClick={() => !disabled && setOpen((v) => !v)}
+          disabled={disabled}
+          className="ml-auto shrink-0 inline-flex items-center justify-center transition-transform"
+          style={{
+            color: "var(--text-muted)",
+            transform: open ? "rotate(180deg)" : "rotate(0)",
+            cursor: disabled ? "not-allowed" : "pointer",
+          }}
+          aria-label={open ? "Close date picker" : "Open date picker"}
+          tabIndex={-1}
+        >
+          <ChevronDown size={compact ? 10 : 12} strokeWidth={1.8} />
+        </button>
+      </div>
 
       <AnimatePresence>
         {open && (
