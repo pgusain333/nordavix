@@ -2665,14 +2665,33 @@ function InlineSubledgerForm({
       <div style={sectionStyle("items")}>
 
       {/* ── Compact variance strip ───────────────────────────────────
-          Subledger is now a CALCULATED value: opening (rolled forward)
-          + sum(reconciling items). The strip just surfaces the math so
-          the user can see if there's still a gap to explain. Background
-          uses rgba so it tints correctly in both light and dark themes
-          (the previous #fef2f2 looked washed out on dark surfaces). */}
+          Source of truth for what the strip displays:
+            * While the user hasn't touched the items (read-only rows,
+              first-time opens, approved/prepared rows opened to view),
+              show the SAVED subledger so this strip agrees with the
+              dashboard row 1:1. Otherwise the strip would show phantom
+              variance for accounts where the subledger came from AI,
+              manual override, AR/AP aging, or GL fallback — none of
+              which produce opening + items math that ties.
+            * As soon as the user ticks/unticks anything, switch to
+              the LIVE computed value so they can watch the closing
+              approach GL as they work.
+          Detecting "user is editing" reuses the same content hash the
+          auto-save effect uses, so the two surfaces stay consistent. */}
       {(() => {
         const gl = parseFloat(account.gl_balance)
-        const variance = gl - computedSubledger
+
+        // Hash both sides to detect divergence — matches auto-save logic.
+        const hashItems = (items: ReconcilingItem[]) => items
+          .map((it) => `${it.txn_id}:${it.amount}:${it.memo ?? ""}`)
+          .sort()
+          .join("|")
+        const userIsEditing =
+          hashItems(selectedItems) !== hashItems(account.reconciling_items ?? [])
+
+        const savedSubledger = parseFloat(account.subledger_balance || "0")
+        const displaySubledger = userIsEditing ? computedSubledger : savedSubledger
+        const variance = gl - displaySubledger
         const tiedOut = Math.abs(variance) < 0.5
         const hasGap = !tiedOut
         const Metric = ({ label, value, color }: { label: string; value: string; color?: string }) => (
@@ -2689,7 +2708,7 @@ function InlineSubledgerForm({
               border: `1px solid ${tiedOut ? "var(--green)" : "rgba(220, 38, 38, 0.40)"}`,
             }}>
             <Metric label="GL" value={fmtMoney(account.gl_balance)} />
-            <Metric label="Subledger" value={fmtMoney(computedSubledger)} />
+            <Metric label="Subledger" value={fmtMoney(displaySubledger)} />
             <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
               {tiedOut && <CheckCircle2 size={13} strokeWidth={2.2} style={{ color: "var(--green)" }} />}
               <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
