@@ -19,6 +19,7 @@
  *   re-subscription, no state loss).
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   AlertTriangle,
@@ -39,6 +40,7 @@ import {
 
 import type { OverviewAccount } from "@/modules/recons/api"
 import { formatDateTime } from "@/core/lib/dates"
+import { schedulesApi } from "@/modules/schedules/api"
 
 const TABS = [
   { id: "summary",     label: "Summary",     icon: Sparkles  },
@@ -69,8 +71,24 @@ interface Props {
    *  can call it with the current tab's section filter — that way the
    *  form stays mounted but only the right sections render. */
   renderReconcileBody?: (account: OverviewAccount, section: DrawerFormSection) => React.ReactNode
-  /** Renders a sticky action footer at the bottom of the drawer. */
-  renderFooter?:        (account: OverviewAccount) => React.ReactNode
+  /** Renders a sticky action footer at the bottom of the drawer. The
+   *  context object carries flags the footer needs to gate buttons
+   *  beyond what's in `account` alone (e.g. has the user reviewed the
+   *  Suggestions tab when suggestions exist for this account?). */
+  renderFooter?:        (account: OverviewAccount, ctx: FooterCtx) => React.ReactNode
+}
+
+export interface FooterCtx {
+  /** True when at least one of prepaid/accrual/FA/lease/loan
+   *  per-account suggestion endpoints returns ≥1 item for this
+   *  (account, period). When true, the user must visit the
+   *  Suggestions tab before the footer enables prepare/approve —
+   *  enforced by the consumer via `hasViewedSuggestionsTab`. */
+  hasSuggestions:         boolean
+  /** Sticks at true once the user has clicked the Suggestions tab
+   *  during this drawer-open session. Resets when the account changes
+   *  so a different account starts fresh. */
+  hasViewedSuggestionsTab: boolean
 }
 
 // ── Width persistence ─────────────────────────────────────────────────
@@ -97,11 +115,33 @@ function persistWidth(w: number): void {
 }
 
 export function AccountDetailDrawer({
-  account, accounts, periodEnd: _periodEnd, readOnly,
+  account, accounts, periodEnd, readOnly,
   onNavigate, onClose, renderReconcileBody, renderFooter,
 }: Props) {
   const [tab, setTab] = useTabHash(account?.qbo_id ?? null)
   const [width, setWidth] = useState<number>(() => loadWidth())
+
+  // Suggestions presence — drives the "review Suggestions tab" gate on
+  // the footer. Fires the 5 per-account suggestion queries in parallel.
+  // React Query dedupes against the form's own subsequent fetches, so
+  // the duplicate work is zero (cache hit) once the user opens the
+  // Suggestions tab.
+  const hasSuggestions = useHasSuggestionsForAccount(account?.qbo_id ?? null, periodEnd)
+
+  // Sticky "has user looked at the Suggestions tab" flag. Resets when
+  // the user navigates to a different account so each account gets its
+  // own fresh acknowledgement.
+  const [hasViewedSuggestionsTab, setHasViewedSuggestionsTab] = useState(false)
+  const acctKeyRef = useRef<string | null>(account?.qbo_id ?? null)
+  useEffect(() => {
+    if (acctKeyRef.current !== (account?.qbo_id ?? null)) {
+      acctKeyRef.current = account?.qbo_id ?? null
+      setHasViewedSuggestionsTab(false)
+    }
+  }, [account])
+  useEffect(() => {
+    if (tab === "suggestions") setHasViewedSuggestionsTab(true)
+  }, [tab])
   // Desktop vs mobile layout: desktop slides in from the right and
   // pushes the page content aside; mobile uses a bottom-sheet that
   // covers ~85vh, leaving the dashboard's KPI cards visible at the
@@ -295,7 +335,43 @@ export function AccountDetailDrawer({
               onClose={onClose}
             />
 
-            <TabBar value={tab} onChange={setTab} account={account} />
+            <TabBar
+              value={tab}
+              onChange={setTab}
+              account={account}
+              suggestionsBadge={hasSuggestions && !hasViewedSuggestionsTab}
+            />
+
+            {/* "Review Suggestions" callout — visible whenever there's
+                something in the Suggestions tab the user hasn't opened
+                yet. Hidden once they click into Suggestions. Disappears
+                entirely when no suggestions exist for this account. */}
+            {hasSuggestions && !hasViewedSuggestionsTab && tab !== "suggestions" && (
+              <div
+                className="px-4 py-2 text-[11px] flex items-start gap-2"
+                style={{
+                  background: "rgba(124, 58, 237, 0.08)",
+                  borderBottom: "1px solid var(--border)",
+                  color: "#5b21b6",
+                }}
+              >
+                <Sparkles size={12} strokeWidth={2} className="shrink-0 mt-px" />
+                <span>
+                  <span className="font-semibold">Auto-detected schedule entries are waiting in the Suggestions tab.</span>{" "}
+                  Open that tab to review prepaid amortization, accrual reversals,
+                  fixed-asset depreciation, lease, or loan lines for this account before
+                  marking the recon prepared or approving it.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setTab("suggestions")}
+                  className="ml-auto shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-opacity hover:opacity-90"
+                  style={{ background: "#7c3aed", color: "white" }}
+                >
+                  Open Suggestions
+                </button>
+              </div>
+            )}
 
             {/* Body. Both panels mount; tab toggles visibility via CSS so
                 that switching is instant + state survives. The form's
@@ -331,7 +407,7 @@ export function AccountDetailDrawer({
                   borderTop: "1px solid var(--border-strong)",
                   boxShadow: "0 -4px 12px rgba(0, 0, 0, 0.04)",
                 }}>
-                {renderFooter(account)}
+                {renderFooter(account, { hasSuggestions, hasViewedSuggestionsTab })}
               </div>
             )}
           </motion.aside>
@@ -485,10 +561,14 @@ function IconBtn({
 
 // ── Tabs ───────────────────────────────────────────────────────────────
 
-function TabBar({ value, onChange, account }: {
+function TabBar({ value, onChange, account, suggestionsBadge }: {
   value:    DrawerTabId
   onChange: (v: DrawerTabId) => void
   account:  OverviewAccount
+  /** When true, the Suggestions tab is decorated with a purple dot to
+   *  draw the user's eye — paired with the body-level callout and the
+   *  footer prepare/approve gate to enforce "review before signing". */
+  suggestionsBadge?: boolean
 }) {
   // Light badges for tabs where we know counts cheaply.
   const itemsCount     = account.reconciling_items?.length ?? 0
@@ -545,10 +625,79 @@ function TabBar({ value, onChange, account }: {
                 {count}
               </span>
             )}
+            {t.id === "suggestions" && suggestionsBadge && (
+              <span
+                className="inline-block rounded-full"
+                style={{
+                  width: 7,
+                  height: 7,
+                  background: "#7c3aed",
+                  marginLeft: 2,
+                }}
+                aria-label="Unreviewed suggestions"
+              />
+            )}
           </button>
         )
       })}
     </div>
+  )
+}
+
+// ── Suggestions presence hook ─────────────────────────────────────────
+//
+// "Does this (account, period) have any AI-driven schedule suggestions
+// the user should review before marking the recon prepared / approved?"
+//
+// Fires the 5 per-account suggestion endpoints in parallel. React Query
+// caches each result by (kind, qboId, periodEnd), so when the user
+// later opens the Suggestions tab the form's internal queries hit the
+// same cache and don't re-fetch. Only enabled when `qboId` is set
+// (drawer open).
+
+function useHasSuggestionsForAccount(
+  qboId: string | null,
+  periodEnd: string,
+): boolean {
+  const enabled = !!qboId
+  const prepaid = useQuery({
+    queryKey: ["schedules", "prepaid", "suggestions", qboId, periodEnd],
+    queryFn:  () => schedulesApi.getPrepaidSuggestions(qboId!, periodEnd),
+    enabled,
+    staleTime: 30_000,
+  })
+  const accrual = useQuery({
+    queryKey: ["schedules", "accrual", "suggestions", qboId, periodEnd],
+    queryFn:  () => schedulesApi.getAccrualSuggestions(qboId!, periodEnd),
+    enabled,
+    staleTime: 30_000,
+  })
+  const fa = useQuery({
+    queryKey: ["schedules", "fixed_asset", "suggestions", qboId, periodEnd],
+    queryFn:  () => schedulesApi.getFixedAssetSuggestions(qboId!, periodEnd),
+    enabled,
+    staleTime: 30_000,
+  })
+  const lease = useQuery({
+    queryKey: ["schedules", "lease", "suggestions", qboId, periodEnd],
+    queryFn:  () => schedulesApi.getLeaseSuggestions(qboId!, periodEnd),
+    enabled,
+    staleTime: 30_000,
+  })
+  const loan = useQuery({
+    queryKey: ["schedules", "loan", "suggestions", qboId, periodEnd],
+    queryFn:  () => schedulesApi.getLoanSuggestions(qboId!, periodEnd),
+    enabled,
+    staleTime: 30_000,
+  })
+
+  if (!enabled) return false
+  return (
+    (prepaid.data?.items?.length ?? 0) > 0
+    || (accrual.data?.items?.length ?? 0) > 0
+    || (fa.data?.items?.length ?? 0) > 0
+    || (lease.data?.items?.length ?? 0) > 0
+    || (loan.data?.items?.length ?? 0) > 0
   )
 }
 

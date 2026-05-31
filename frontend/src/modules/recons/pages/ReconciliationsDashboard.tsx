@@ -1902,7 +1902,7 @@ export function ReconciliationsDashboard() {
             onClose={() => setDrawerAcctId(null)}
           />
         )}
-        renderFooter={(a) => (
+        renderFooter={(a, ctx) => (
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-1.5 text-[10.5px]"
               style={{ color: "var(--text-muted)" }}>
@@ -1949,14 +1949,25 @@ export function ReconciliationsDashboard() {
                   </Button>
                 )}
                 {/* Mark prepared: when row is in the open queue.
-                    Strict variance gate — disabled when |variance| > 1¢
-                    so a row can never be marked prepared while still
-                    out of balance. The drawer footer + the dashboard
-                    Variance column will both surface the gap. */}
+                    Two-layer gate:
+                      1) Variance gate — disabled when |variance| > 1¢
+                         so a row can never be marked prepared while
+                         still out of balance.
+                      2) Suggestions-viewed gate — when AI has surfaced
+                         per-account schedule suggestions (prepaid /
+                         accrual / FA / lease / loan), the user must
+                         open the Suggestions tab at least once before
+                         we let them mark prepared or approve. The
+                         drawer body shows a purple callout pushing
+                         them to that tab while the gate is active. */}
                 {(() => {
                   const rowVarianceBlocked = Math.abs(parseFloat(a.variance) || 0) > VARIANCE_TOLERANCE
-                  const rowVarianceTooltip = rowVarianceBlocked
+                  const suggestionsUnreviewed = ctx.hasSuggestions && !ctx.hasViewedSuggestionsTab
+                  const disabled = rowVarianceBlocked || suggestionsUnreviewed
+                  const tooltip = rowVarianceBlocked
                     ? "Variance must be cleared before marking prepared. Post the missing JE in QuickBooks (Schedules > Scan GL suggests entries), re-sync, or add a reconciling item that zeros the gap."
+                    : suggestionsUnreviewed
+                    ? "Open the Suggestions tab first — auto-detected schedule entries are waiting for review."
                     : undefined
                   return (
                     <>
@@ -1966,9 +1977,9 @@ export function ReconciliationsDashboard() {
                           variant="outline"
                           icon={<CheckCircle2 size={12} strokeWidth={1.8} />}
                           loading={setStatusMut.isPending}
-                          disabled={rowVarianceBlocked}
+                          disabled={disabled}
                           onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })}
-                          title={rowVarianceTooltip}>
+                          title={tooltip}>
                           Mark prepared
                         </Button>
                       )}
@@ -1978,9 +1989,9 @@ export function ReconciliationsDashboard() {
                           size="sm"
                           icon={<ShieldCheck size={12} strokeWidth={1.8} />}
                           loading={setStatusMut.isPending}
-                          disabled={rowVarianceBlocked}
+                          disabled={disabled}
                           onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "approved" })}
-                          title={rowVarianceTooltip}>
+                          title={tooltip}>
                           Approve
                         </Button>
                       )}

@@ -265,6 +265,7 @@ function FaBody({ item, monthly, rows }: { item: FixedAssetItem; monthly: number
 
 function LoanBody({ item, payment, rows }: { item: LoanItem; payment: number; rows: Array<{ period_end: string; interest: number; principal: number; balance: number; payment: number }> }) {
   const first = rows[0]
+  const principal = parseFloat(item.original_principal) || 0
   return (
     <>
       <KpiRow cells={[
@@ -273,6 +274,21 @@ function LoanBody({ item, payment, rows }: { item: LoanItem; payment: number; ro
         { label: "Rate", value: `${item.interest_rate_pct}%` },
         { label: "Term", value: `${item.term_months} mo` },
       ]} />
+
+      {/* Initial recording — loan origination. Posted ONCE at the
+          loan_date, before any monthly P+I starts. Recognizes the cash
+          received and the corresponding liability. The drawer always
+          renders the schedule from row 0 = the loan's first month, so
+          this Section appears at the top of the schedule view and never
+          duplicates on later months. */}
+      {first && principal > 0 && (
+        <Section title={`Initial recording entry (${item.loan_date})`}>
+          <JeTable rows={[
+            { account: "Cash (BS)", debit: principal, credit: null },
+            { account: "Loan Payable (BS)", debit: null, credit: principal, indent: true },
+          ]} memo={`Originate ${fmt(principal)} loan${item.lender ? ` from ${item.lender}` : ""} — ${item.description}.`} />
+        </Section>
+      )}
 
       {first && (
         <Section title={`Month 1 journal entry (${first.period_end})`}>
@@ -314,6 +330,22 @@ function LeaseBody({ item, rows, isAsc842 }: { item: LeaseItem; rows: Array<{ pe
           forward (with the full amortization table below), fill in the discount rate
           and initial ROU / liability fields on the item and re-commit the snapshot.
         </div>
+      )}
+
+      {/* Initial recording — ASC 842 initial measurement. Posted ONCE
+          at lease commencement, before any monthly P+I. Recognizes the
+          ROU asset and the corresponding lease liability at the present
+          value of the payment stream. The drawer always renders the
+          schedule from row 0 = the lease's first month, so this Section
+          appears at the top of the schedule view and never duplicates
+          on later months. */}
+      {isAsc842 && rows[0] && item.initial_rou_asset && item.initial_liability && (
+        <Section title={`Initial recording entry (${item.lease_start})`}>
+          <JeTable rows={[
+            { account: "Right-of-use Asset (BS)", debit: parseFloat(item.initial_rou_asset) || 0, credit: null },
+            { account: "Lease Liability (BS)", debit: null, credit: parseFloat(item.initial_liability) || 0, indent: true },
+          ]} memo={`Recognize ROU asset + lease liability at PV of payments — ${item.description} (ASC 842).`} />
+        </Section>
       )}
 
       {isAsc842 && rows[0] && (
