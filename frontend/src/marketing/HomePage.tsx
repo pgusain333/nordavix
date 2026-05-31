@@ -216,14 +216,14 @@ function Navbar() {
 
 /**
  * HomepageBanner — full-width hero banner image that sits just below
- * the navbar and above the Hero text. Reads from /homepage-banner.png
- * (a 16:9 brand image — burgundy 3D geometric composition chosen to
- * tie into the Founder Quote card's burgundy theme).
+ * the navbar and above the Hero text. Reads from
+ * /homepage-banner.jpg (a burgundy 3D geometric composition chosen
+ * to tie into the Founder Quote card's burgundy theme).
  *
- * To swap the image: replace frontend/public/homepage-banner.png with
+ * To swap the image: replace frontend/public/homepage-banner.jpg with
  * a new file of the same name. No code change needed — Vite serves
- * /public/* at the root path. Recommended size: 2000 × 700 px or
- * larger 16:9, optimized as PNG/JPEG (~150 KB).
+ * /public/* at the root path. Recommended: 16:7 to 16:9 image,
+ * optimized JPEG ~150-300 KB.
  *
  * The aspect ratio is fixed via CSS so layout doesn't shift while the
  * image loads. background-image keeps it responsive without an extra
@@ -238,18 +238,24 @@ function HomepageBanner() {
       <div
         className="w-full bg-center bg-cover bg-no-repeat"
         style={{
-          backgroundImage: "url('/homepage-banner.png')",
-          // 16:9 ratio held by aspect-ratio CSS — keeps it crisp at any
-          // viewport width without a layout-shift while the image is
-          // still downloading.
-          aspectRatio: "16 / 5",
-          // Cap height so on ultrawide monitors the banner doesn't
-          // dominate the fold. On mobile it stays at the 16:5 ratio.
-          maxHeight: "420px",
+          // The committed file is .jpg — keep filename + extension as
+          // the contract. Anyone swapping the image just overwrites
+          // /public/homepage-banner.jpg, no code change.
+          backgroundImage: "url('/homepage-banner.jpg')",
+          // 16:7 (≈2.29:1) lands between "thin marketing strip" and
+          // "full hero". Shows more of the artwork than 16:5 did
+          // (the original is roughly 14:9 so 16:7 keeps most of the
+          // composition visible) without forcing the Hero text below
+          // the fold. Held by aspect-ratio CSS — zero layout shift.
+          aspectRatio: "16 / 7",
+          // Cap on ultrawide monitors so the banner doesn't dominate
+          // the viewport on a 4K screen. Below the cap the banner
+          // stays at the 16:7 ratio.
+          maxHeight: "520px",
           // Soft fade into the page bg at the bottom edge so the Hero
           // section feels continuous instead of butt-joined.
-          maskImage: "linear-gradient(to bottom, black 75%, transparent 100%)",
-          WebkitMaskImage: "linear-gradient(to bottom, black 75%, transparent 100%)",
+          maskImage: "linear-gradient(to bottom, black 82%, transparent 100%)",
+          WebkitMaskImage: "linear-gradient(to bottom, black 82%, transparent 100%)",
         }}
       />
     </section>
@@ -1495,8 +1501,13 @@ function FounderQuote() {
 
   return (
     <section className="px-6 py-20 sm:py-24">
-      <div className="max-w-3xl mx-auto">
-        <div className="rounded-2xl px-8 sm:px-12 py-12 sm:py-16 text-center relative overflow-hidden"
+      {/* max-w-6xl matches the Hero, Bento, Pricing, FAQ sections so
+          this card lines up with every other content block on the
+          page. The inner quote text caps at a narrower max-width via
+          its own constraint so the LINE LENGTH stays comfortable for
+          reading even though the CARD is full-width. */}
+      <div className="max-w-6xl mx-auto">
+        <div className="rounded-2xl px-8 sm:px-16 py-14 sm:py-20 text-center relative overflow-hidden"
           style={{
             background: `linear-gradient(135deg, ${BURGUNDY} 0%, ${BURGUNDY_DEEPER} 100%)`,
             boxShadow: "0 12px 32px rgba(139, 21, 56, 0.25)",
@@ -1515,9 +1526,12 @@ function FounderQuote() {
             <rect width="200" height="200" fill="url(#founder-quote-grid)" />
           </svg>
 
-          <Quote size={32} strokeWidth={1.5} style={{ color: WHITE_70 }} className="mx-auto mb-5 relative" />
-          <blockquote className="font-bold leading-[1.25] tracking-tight mb-7 relative"
-            style={{ fontSize: "clamp(22px, 3.5vw, 32px)", color: WHITE }}>
+          <Quote size={36} strokeWidth={1.5} style={{ color: WHITE_70 }} className="mx-auto mb-6 relative" />
+          {/* Quote text is intentionally narrower than the card so the
+              line length stays in the 60-75 char reading sweet spot
+              even when the burgundy card spans the full 6xl width. */}
+          <blockquote className="font-bold leading-[1.25] tracking-tight mb-8 relative max-w-3xl mx-auto"
+            style={{ fontSize: "clamp(24px, 3.5vw, 34px)", color: WHITE }}>
             "I closed books for ten years with fourteen spreadsheets
             and a praying heart. There had to be something better.
             So I built it."
