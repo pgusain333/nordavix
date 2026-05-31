@@ -103,9 +103,33 @@ export function FluxDashboard() {
   useEffect(() => {
     const el = pageScrollRef.current
     if (!el) return
-    const handler = () => setIsKpiCompact(el.scrollTop > 140)
-    el.addEventListener("scroll", handler, { passive: true })
-    return () => el.removeEventListener("scroll", handler)
+    let rafId: number | null = null
+    // Hysteresis prevents the compact ↔ full swap from flapping when
+    // the user scrolls exactly at the threshold. rAF debounce coalesces
+    // multiple scroll events per frame into a single state update —
+    // before this, the handler fired on every wheel notch and React
+    // re-rendered each time, which made the AnimatePresence swap
+    // visibly stutter near the boundary.
+    //   Enter compact at >  80px scroll
+    //   Exit  compact at <  40px scroll
+    //   (40px dead zone)
+    const onScroll = () => {
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        const y = el.scrollTop
+        setIsKpiCompact((prev) => {
+          if (prev && y < 40) return false
+          if (!prev && y > 80) return true
+          return prev
+        })
+      })
+    }
+    el.addEventListener("scroll", onScroll, { passive: true })
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      el.removeEventListener("scroll", onScroll)
+    }
   }, [tbId])  // re-bind when navigating between analyses (ref may swap)
 
   // List of all TBs — only auto-refresh while one is mid-processing.
@@ -1307,10 +1331,13 @@ function FluxKpiStrip({ rows, compact }: { rows: VarianceRow[]; compact: boolean
   //     approval progress bar on the right.
   //   · full    = 4-card grid, each tile its own rounded-xl with the
   //     standard card shadow.
-  // AnimatePresence mode="wait" + initial={false} = fade-and-slide swap
-  // when the user crosses the scroll threshold.
+  // AnimatePresence (default mode="sync") + initial={false} = fade-
+  // and-slide swap when the user crosses the scroll threshold. We
+  // intentionally do NOT use mode="wait" here — that creates a brief
+  // gap while the exiting child unmounts before the entering child
+  // animates in, which surfaces as a flicker at the boundary.
   return (
-    <AnimatePresence mode="wait" initial={false}>
+    <AnimatePresence initial={false}>
       {compact ? (
         <motion.div
           key="flux-kpi-compact"

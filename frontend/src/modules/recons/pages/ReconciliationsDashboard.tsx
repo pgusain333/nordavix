@@ -222,9 +222,31 @@ export function ReconciliationsDashboard() {
   useEffect(() => {
     const el = pageScrollRef.current
     if (!el) return
-    const handler = () => setIsKpiCompact(el.scrollTop > 140)
-    el.addEventListener("scroll", handler, { passive: true })
-    return () => el.removeEventListener("scroll", handler)
+    let rafId: number | null = null
+    // Hysteresis + rAF debounce — fixes a flicker where the compact ↔
+    // full swap would flap when the user scrolled at the threshold. By
+    // requiring the user to cross BACK below 40px to re-expand (vs
+    // entering compact at >80px), we get a 40px dead zone that
+    // eliminates the flap. rAF debounce coalesces wheel notches into
+    // one state update per frame so the AnimatePresence swap fires
+    // at most once per refresh tick.
+    const onScroll = () => {
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        const y = el.scrollTop
+        setIsKpiCompact((prev) => {
+          if (prev && y < 40) return false
+          if (!prev && y > 80) return true
+          return prev
+        })
+      })
+    }
+    el.addEventListener("scroll", onScroll, { passive: true })
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      el.removeEventListener("scroll", onScroll)
+    }
   }, [])
   /** Set of qbo_account_ids the user has checked for bulk actions */
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -1252,7 +1274,12 @@ export function ReconciliationsDashboard() {
               return (
                 <div className="sticky top-0 z-20 -mx-4 sm:-mx-5 px-4 sm:px-5 pt-1 pb-2"
                   style={{ background: "var(--bg)" }}>
-                  <AnimatePresence mode="wait" initial={false}>
+                  {/* Default mode="sync" (no `mode` prop) lets the
+                      exiting + entering motion.divs animate
+                      concurrently — avoids the brief gap that
+                      mode="wait" creates at the scroll boundary, which
+                      surfaced as a visible flicker. */}
+                  <AnimatePresence initial={false}>
                     {isKpiCompact ? (
                       <motion.div
                         key="kpi-compact"
