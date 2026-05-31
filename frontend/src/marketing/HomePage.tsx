@@ -96,15 +96,17 @@ function Navbar() {
           <Link to="/" className="flex items-center gap-2.5 group">
             {/* HomePage navbar always renders the light-strokes logo +
                 wordmark in WHITE. The Hero behind the transparent
-                header is solid burgundy (#8B1538) and the scrolled
-                header is the same burgundy — both states are dark, so
-                white reads cleanly in either case. Wordmark dot is
-                pure white too (no 85% knock-down) so the wordmark
-                renders as one uniform white shape. */}
+                header is burgundy with breathing glow orbs — so a
+                subtle shadow keeps the wordmark crisp when an orb
+                drifts under it. When scrolled (solid burgundy
+                header), drop the shadow — no variation to fight. */}
             <img src="/logo-mark-light.svg" alt="Nordavix"
               className="h-8 w-8 transition-transform group-hover:scale-105" />
             <span className="font-bold text-lg tracking-tight"
-              style={{ color: "#FFFFFF" }}>
+              style={{
+                color: "#FFFFFF",
+                textShadow: scrolled ? "none" : "0 1px 10px rgba(0,0,0,0.40)",
+              }}>
               nordavix<span style={{ color: "#FFFFFF" }}>.</span>
             </span>
           </Link>
@@ -117,15 +119,16 @@ function Navbar() {
               { label: "Beta",      to: "#pricing",   external: true  },
               { label: "FAQ",       to: "#faq",       external: true  },
             ].map((it) => {
-              // Both states (scrolled + not-scrolled) sit on the same
-              // burgundy surface — the Hero behind the transparent
-              // header is also #8B1538. White text reads cleanly with
-              // no shadow needed.
+              // Hero behind the transparent header has breathing glow
+              // orbs that brighten patches — subtle shadow keeps nav
+              // links readable wherever an orb passes under. Drop the
+              // shadow once scrolled onto the solid burgundy bar.
               const baseColor  = "rgba(255,255,255,0.85)"
               const hoverColor = "#FFFFFF"
+              const textShadow = scrolled ? "none" : "0 1px 8px rgba(0,0,0,0.35)"
               const props = {
                 className: "text-sm font-medium transition-colors",
-                style: { color: baseColor },
+                style: { color: baseColor, textShadow },
                 onMouseEnter: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = hoverColor },
                 onMouseLeave: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.color = baseColor },
               } as const
@@ -145,7 +148,10 @@ function Navbar() {
               ) : (
                 <>
                   <Link to="/sign-in" className="text-sm px-4 py-2 transition-colors"
-                    style={{ color: "rgba(255,255,255,0.85)" }}
+                    style={{
+                      color: "rgba(255,255,255,0.85)",
+                      textShadow: scrolled ? "none" : "0 1px 8px rgba(0,0,0,0.35)",
+                    }}
                     onMouseEnter={(e) => (e.currentTarget.style.color = "#FFFFFF")}
                     onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.85)")}>
                     Sign in
@@ -231,21 +237,106 @@ function Navbar() {
 
 // ─── Hero — split layout with live AI Commentary card ─────────────────────
 
-// Hero background was previously a /public/homepage-banner.jpg image
-// with light/dark scrims layered on top for text legibility. Replaced
-// with a flat burgundy fill (#8B1538) that exactly matches the
-// scrolled-state navbar, so the page reads as one continuous burgundy
-// surface from the top of the viewport down through the Hero — no
-// seam between header and Hero in either scroll state.
+// Hero background composition:
+//   Base   — flat #8B1538 burgundy (matches scrolled navbar so the
+//            top of the page reads as one continuous surface).
+//   Layer 1: static radial gradient mesh — light + dark burgundy
+//            blobs + a faint brand-green accent for compositional
+//            anchors. No animation; sets the mood.
+//   Layer 2: three softly-breathing orbs (framer-motion scale +
+//            drift). Heavily blurred so they read as light moving
+//            in the room, not as shapes. ~12-16s loops so the eye
+//            doesn't fixate.
+//   Layer 3: faint white grid at 4% opacity, radially masked so it
+//            fades at the edges — adds a technical feel without
+//            competing with the typography.
+//   Layer 4: cinematic vignette — darkens the corners to focus the
+//            eye on the centered headline + AI card.
+// All layers are pointer-events-none so the CTAs underneath stay
+// clickable.
 
 function Hero() {
   return (
     <section
       className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 px-6 overflow-hidden"
-      // BRAND_BURGUNDY — same hex as the scrolled Navbar background.
-      // No image, no scrim; just a clean color field for the white
-      // headline + AI card to sit on.
       style={{ background: "#8B1538" }}>
+
+      {/* Layer 1 — static radial mesh */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: `
+            radial-gradient(ellipse 60% 50% at 15% 20%, rgba(220, 80, 120, 0.30), transparent 60%),
+            radial-gradient(ellipse 50% 40% at 85% 75%, rgba(40, 5, 20, 0.55), transparent 60%),
+            radial-gradient(ellipse 40% 35% at 70% 15%, rgba(16, 185, 129, 0.10), transparent 55%)
+          `,
+        }}
+      />
+
+      {/* Layer 2 — three breathing orbs */}
+      <motion.div
+        aria-hidden="true"
+        className="absolute pointer-events-none rounded-full"
+        style={{
+          width: 520, height: 520,
+          top: "8%", left: "-12%",
+          background: "radial-gradient(circle, rgba(230, 110, 150, 0.28), transparent 70%)",
+          filter: "blur(48px)",
+        }}
+        animate={{ x: [0, 30, 0], y: [0, -22, 0], scale: [1, 1.08, 1] }}
+        transition={{ duration: 13, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.div
+        aria-hidden="true"
+        className="absolute pointer-events-none rounded-full"
+        style={{
+          width: 620, height: 620,
+          bottom: "-18%", right: "-14%",
+          background: "radial-gradient(circle, rgba(16, 185, 129, 0.16), transparent 70%)",
+          filter: "blur(64px)",
+        }}
+        animate={{ x: [0, -36, 0], y: [0, 28, 0], scale: [1, 1.12, 1] }}
+        transition={{ duration: 16, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.div
+        aria-hidden="true"
+        className="absolute pointer-events-none rounded-full"
+        style={{
+          width: 420, height: 420,
+          top: "38%", right: "18%",
+          background: "radial-gradient(circle, rgba(255, 255, 255, 0.07), transparent 70%)",
+          filter: "blur(52px)",
+        }}
+        animate={{ x: [0, 22, 0], y: [0, -28, 0] }}
+        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
+      />
+
+      {/* Layer 3 — faint grid (radially masked) */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage: `
+            linear-gradient(rgba(255,255,255,1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px)
+          `,
+          backgroundSize: "64px 64px",
+          opacity: 0.045,
+          maskImage: "radial-gradient(ellipse at center, black 25%, transparent 75%)",
+          WebkitMaskImage: "radial-gradient(ellipse at center, black 25%, transparent 75%)",
+        }}
+      />
+
+      {/* Layer 4 — cinematic vignette */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: "radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.28) 100%)",
+        }}
+      />
+
       <div className="max-w-6xl mx-auto relative">
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           {/* Left: copy */}
@@ -274,16 +365,21 @@ function Hero() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.05 }}
               className="font-bold leading-[1.05] tracking-tight"
-              // White text on flat burgundy — no shadow needed for
-              // contrast (previous shadow was there to mask hot spots
-              // in the banner image, which is now gone).
+              // White text on the abstract burgundy field. The
+              // softly-moving glow orbs vary the local brightness
+              // behind the headline, so a slight text-shadow keeps
+              // every glyph crisp wherever an orb happens to pass.
               style={{
                 fontSize: "clamp(36px, 6.5vw, 64px)",
                 color: "#FFFFFF",
+                textShadow: "0 2px 18px rgba(0,0,0,0.40), 0 1px 2px rgba(0,0,0,0.25)",
               }}>
               Close the books{" "}
               <span className="relative inline-block">
-                <span style={{ color: "var(--green)" }}>in days,</span>
+                <span style={{
+                  color: "var(--green)",
+                  textShadow: "0 2px 18px rgba(0,0,0,0.45), 0 0 24px rgba(16,185,129,0.30)",
+                }}>in days,</span>
                 <svg className="absolute -bottom-2 left-0 w-full h-2 print:hidden" viewBox="0 0 200 8" preserveAspectRatio="none">
                   <motion.path
                     d="M0 4 Q 50 0, 100 4 T 200 4"
@@ -303,8 +399,12 @@ function Hero() {
               transition={{ duration: 0.6, delay: 0.15 }}
               className="mt-6 text-base sm:text-lg leading-relaxed max-w-xl mx-auto lg:mx-0"
               // Slightly softer than pure white (88%) so the body copy
-              // sits a half-step behind the headline visually.
-              style={{ color: "rgba(255,255,255,0.88)" }}>
+              // sits a half-step behind the headline visually. Soft
+              // shadow keeps it legible where the breathing orbs pass.
+              style={{
+                color: "rgba(255,255,255,0.90)",
+                textShadow: "0 1px 10px rgba(0,0,0,0.30)",
+              }}>
               Nordavix is the AI-native close platform for controllers and CPA firms.
               Reconcile every balance-sheet account, explain every material variance,
               and lock the period — without the spreadsheet swivel-chair.
@@ -346,7 +446,10 @@ function Hero() {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.4 }}
               className="mt-8 flex items-center justify-center lg:justify-start gap-4 text-xs"
-              style={{ color: "rgba(255,255,255,0.75)" }}>
+              style={{
+                color: "rgba(255,255,255,0.78)",
+                textShadow: "0 1px 6px rgba(0,0,0,0.25)",
+              }}>
               <div className="flex items-center gap-1">
                 {[0, 1, 2, 3, 4].map((i) => (
                   <Star key={i} size={12} fill="currentColor" style={{ color: "#f59e0b" }} />
