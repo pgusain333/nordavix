@@ -30,7 +30,6 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-
 # 5-day window catches: weekend posting delay, ACH 2-day clear, EOM
 # timing where a check posts in the next month per the bank's cycle.
 _DEFAULT_MAX_DATE_LAG = 5
