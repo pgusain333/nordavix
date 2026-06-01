@@ -277,8 +277,24 @@ def roll_prepaids(items: Iterable[SchedulePrepaid], period_end: date) -> Snapsho
     for it in items:
         if not it.is_active:
             continue
-        # Beginning = unamortized at end of prior period
-        beg = _prepaid_unamortized_as_of(it, prior_period_end)
+        # Beginning balance = unamortized portion ALREADY on the books at
+        # the end of the prior period. CRITICAL guard: an item that starts
+        # THIS period (or later) was not yet on the balance sheet then, so
+        # its beginning is ZERO and its full cost flows in via `additions`.
+        #
+        # Without this guard, _prepaid_unamortized_as_of returns the FULL
+        # total for a not-yet-started item (its "as_of < start_date"
+        # branch returns total, NOT zero — unlike the accrual/lease/loan
+        # balance helpers which return zero before their start). That full
+        # total then double-counts against `additions`, inflating
+        # period_expense: a $12,000 Jan-start prepaid showed
+        #   beginning 12,000 + additions 12,000 − ending 11,000 = 13,000
+        # of "amortization" in its first month instead of the correct
+        #   beginning 0 + additions 12,000 − ending 11,000 = 1,000.
+        if it.start_date > prior_period_end:
+            beg = ZERO
+        else:
+            beg = _prepaid_unamortized_as_of(it, prior_period_end)
         end = _prepaid_unamortized_as_of(it, p_end)
         beginning += beg
         ending += end
