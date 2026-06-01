@@ -26,12 +26,14 @@ export function TopProgressBar() {
   const mutating = useIsMutating()
   const busy = fetching + mutating > 0
 
-  // Debounce visible state — show only if busy for > 150ms (no flicker for
-  // ~instant queries), hide immediately when settled.
+  // Debounce visible state — show only if busy for > 400ms, so quick queries
+  // and background refetches (which now mostly resolve from warm cache) don't
+  // flash the bar. Only genuinely slow work (a live QBO pull, a heavy report)
+  // surfaces it. Hides immediately when settled.
   const [visible, setVisible] = useState(false)
   useEffect(() => {
     if (busy) {
-      const t = setTimeout(() => setVisible(true), 150)
+      const t = setTimeout(() => setVisible(true), 400)
       return () => clearTimeout(t)
     }
     setVisible(false)
