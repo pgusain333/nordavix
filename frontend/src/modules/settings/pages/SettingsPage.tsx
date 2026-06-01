@@ -38,7 +38,7 @@ import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { apiClient } from "@/core/api/client"
 import { formatDate } from "@/core/lib/dates"
-import { workspaceApi, type WorkspaceMember } from "@/modules/workspace/api"
+import { workspaceApi, type WorkspaceMember, type AiUsage } from "@/modules/workspace/api"
 import {
   CompanyForm, readMeta, writeMeta, type CompanyMeta,
 } from "@/modules/onboarding/components/CompanyForm"
@@ -731,6 +731,83 @@ const AI_DEFAULTS: AIPrefs = {
   show_source_citations:   true,
 }
 
+/**
+ * AI usage this month vs the workspace cap. Real backend data (AIUsage ledger).
+ * Shows a spend bar; turns amber/red as the cap approaches so users aren't
+ * surprised by a hard block. When no dollar cap is configured it just reports
+ * the running spend ("tracking only").
+ */
+function AiUsageCard() {
+  const { organization } = useOrganization()
+  const { data, isLoading } = useQuery<AiUsage>({
+    queryKey: ["workspace-ai-usage"],
+    queryFn:  workspaceApi.getAiUsage,
+    enabled:  !!organization,
+    staleTime: 60_000,
+  })
+
+  const hasCap = (data?.cap_usd ?? 0) > 0
+  const spent = data?.spent_usd ?? 0
+  const cap = data?.cap_usd ?? 0
+  const pct = hasCap ? Math.min(100, Math.round((spent / cap) * 100)) : 0
+  const near = hasCap && pct >= 80 && !data?.exceeded
+  const over = !!data?.exceeded
+  const barColor = over ? "#dc2626" : near ? "#d97706" : "var(--green)"
+  const resetLabel = data?.resets_at ? formatDate(data.resets_at) : "—"
+
+  return (
+    <div className="rounded-xl p-4"
+      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+          <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>AI usage this month</p>
+        </div>
+        {hasCap && (
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+            style={{
+              background: over ? "#fef2f2" : near ? "#fffbeb" : "var(--green-subtle)",
+              color:      over ? "#b91c1c" : near ? "#92400e" : "var(--green)",
+            }}>
+            {over ? "Limit reached" : `${pct}% used`}
+          </span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="h-2 rounded-full animate-pulse" style={{ background: "var(--border)" }} />
+      ) : hasCap ? (
+        <>
+          <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
+            <div className="h-full rounded-full transition-all"
+              style={{ width: `${pct}%`, background: barColor }} />
+          </div>
+          <div className="flex items-center justify-between mt-2">
+            <p className="text-[12px]" style={{ color: "var(--text-2)" }}>
+              <span className="font-semibold" style={{ color: "var(--text)" }}>${spent.toFixed(2)}</span>
+              {" "}of ${cap.toFixed(2)}
+            </p>
+            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              Resets {resetLabel}
+            </p>
+          </div>
+          {over && data?.enforced && (
+            <p className="text-[11px] mt-2 inline-flex items-start gap-1" style={{ color: "#b91c1c" }}>
+              <AlertTriangle size={11} strokeWidth={2} className="mt-0.5 shrink-0" />
+              AI features are paused until {resetLabel}. Contact support@nordavix.com if you need a higher limit.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-[12px]" style={{ color: "var(--text-2)" }}>
+          <span className="font-semibold" style={{ color: "var(--text)" }}>${spent.toFixed(2)}</span>
+          {" "}spent this month. No spend limit set — usage is tracked only.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function AIPreferencesSection() {
   const { organization } = useOrganization()
   const storageKey = organization ? `ai_prefs_${organization.id}` : "ai_prefs_default"
@@ -768,6 +845,8 @@ function AIPreferencesSection() {
       badge={<LocalOnlyBadge />}
     >
       <div className="space-y-5">
+        <AiUsageCard />
+
         <PrefGroup title="Agentic Mode">
           <Toggle
             label="Default Agentic Mode ON for new periods"

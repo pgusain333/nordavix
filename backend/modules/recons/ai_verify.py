@@ -189,6 +189,8 @@ def verify_evidence_document(
         system=_VERIFY_SYSTEM,
         messages=[{"role": "user", "content": content}],
     )
+    from core.ai.usage import record_response
+    record_response(response, operation="recon_ai_verify")
 
     raw_text = (response.content[0].text if response.content else "").strip()
     # Strip code fences if the model added any.

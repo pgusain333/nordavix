@@ -32,6 +32,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.ai.guard import enforce_ai_limits
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
 from models.closed_period import ClosedPeriod
@@ -1838,7 +1839,8 @@ async def loan_import_qbo(
     }
 
 
-@router.post("/prepaid/ai/scan", dependencies=[Depends(require_role("preparer"))])
+@router.post("/prepaid/ai/scan",
+             dependencies=[Depends(require_role("preparer")), Depends(enforce_ai_limits)])
 async def prepaid_ai_scan(
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="YYYY-MM-DD"),
@@ -2005,7 +2007,8 @@ def _serialize_missed_accrual(row: MissedAccrualCandidate) -> dict:
     }
 
 
-@router.post("/accrual/ai/scan-missed", dependencies=[Depends(require_role("preparer"))])
+@router.post("/accrual/ai/scan-missed",
+             dependencies=[Depends(require_role("preparer")), Depends(enforce_ai_limits)])
 async def accrual_ai_scan_missed(
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="YYYY-MM-DD — the period_end we're checking for missed accruals."),
@@ -2202,7 +2205,8 @@ def _serialize_fa_candidate(row: FixedAssetCandidate) -> dict:
     }
 
 
-@router.post("/fixed_asset/ai/scan", dependencies=[Depends(require_role("preparer"))])
+@router.post("/fixed_asset/ai/scan",
+             dependencies=[Depends(require_role("preparer")), Depends(enforce_ai_limits)])
 async def fixed_asset_ai_scan(
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="YYYY-MM-DD"),

@@ -72,10 +72,19 @@ async def generate_narrative_async(variance_id: str, tenant_id: str) -> dict[str
     import logging
     logger = logging.getLogger(__name__)
 
+    # This runs as a FastAPI BackgroundTask — AFTER the response is sent, so
+    # outside the request's usage-capture context. Start our own capture and
+    # flush it so the AI cost is still recorded against this tenant.
+    from core.ai.usage import begin_capture, flush_usage
+
     try:
         tid = uuid.UUID(tenant_id)
         current_tenant_id.set(tid)
-        return await _generate(variance_id, tenant_id)
+        begin_capture()
+        try:
+            return await _generate(variance_id, tenant_id)
+        finally:
+            await flush_usage(tid)
     except Exception:
         logger.exception("Variance narrative generation failed (variance=%s)", variance_id)
         # Best-effort: mark the variance as flagged so the UI doesn't poll forever
@@ -234,6 +243,23 @@ async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
         content       = _strip_markdown(response.content[0].text if response.content else "")
         input_tokens  = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
+
+        # Record per-tenant AI usage (this path calls Anthropic directly rather
+        # than via core.ai.client, so record it here). Same pricing as the
+        # shared client; no-op unless a capture is active (it is — the bg task
+        # wrapper started one). Never let tracking break narrative generation.
+        try:
+            from core.ai.usage import record_call
+            _cost = input_tokens / 1_000_000 * 3.00 + output_tokens / 1_000_000 * 15.00
+            record_call(
+                model=settings.anthropic_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost=_cost,
+                operation="flux_narrative",
+            )
+        except Exception:
+            pass
 
         # Confidence heuristic: starts at 0.85, drops with anomalies,
         # bumps up when we have actual transaction evidence to ground the

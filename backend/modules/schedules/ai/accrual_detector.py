@@ -357,6 +357,9 @@ def _classify_missed_chunk_with_claude(
         logger.exception("Missed-accrual detector: Claude call failed")
         return [{}] * len(txns)
 
+    from core.ai.usage import record_response
+    record_response(resp, operation="schedule_accrual_detect")
+
     text = ""
     for block in resp.content:
         if getattr(block, "type", None) == "text":

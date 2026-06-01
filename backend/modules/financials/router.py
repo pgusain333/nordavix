@@ -37,6 +37,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.ai.guard import enforce_ai_limits
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
 from models.closed_period import ClosedPeriod
@@ -771,7 +772,7 @@ async def export_pdf(
         ) from exc
 
 
-@router.get("/executive-report")
+@router.get("/executive-report", dependencies=[Depends(enforce_ai_limits)])
 async def export_executive_report(
     tenant_id: CurrentTenantId,
     user: CurrentUser,           # noqa: ARG001 — currently unused, here for auth + future audit log

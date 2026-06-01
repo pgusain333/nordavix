@@ -52,6 +52,24 @@ class Settings(BaseSettings):
     # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
     internal_task_secret: str = ""
 
+    # ── Rate limiting (Redis-backed, fail-open) ─────────────────────────────
+    # Per-tenant fixed-window limits. The general limit guards the whole API;
+    # the AI limit is stricter and applies only to AI-triggering endpoints.
+    # Fail-open by design: if Redis is unreachable, requests are allowed (a
+    # broken limiter must never take the app down). Tune via env without a
+    # code change; set rate_limit_enabled=false to disable entirely.
+    rate_limit_enabled: bool = True
+    rate_limit_general_per_min: int = 60   # requests/min/tenant across the API
+    rate_limit_ai_per_min: int = 10        # AI-endpoint requests/min/tenant
+
+    # ── Per-tenant AI spend cap (Postgres-backed via AIUsage) ───────────────
+    # A runaway/abuse backstop, not a meter for normal use. Summed over the
+    # calendar month; when a tenant's estimated Anthropic cost reaches the cap
+    # and ai_cap_enforce is true, AI endpoints return 429 until the month
+    # resets. 0 disables the dollar cap (usage is still recorded).
+    ai_monthly_cost_cap_usd: float = 25.0
+    ai_cap_enforce: bool = True
+
     app_env: str = "development"
     debug: bool = False
 

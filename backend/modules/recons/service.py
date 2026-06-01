@@ -1224,6 +1224,8 @@ async def explain_item(
             max_tokens=260,
             messages=[{"role": "user", "content": prompt}],
         )
+        from core.ai.usage import record_response
+        record_response(resp, operation="recon_item_commentary")
         return _strip_markdown(resp.content[0].text if resp.content else "")
     except Exception:
         logger.exception("AI commentary failed for item %s", item.id)
@@ -1268,6 +1270,8 @@ async def explain_recon_summary(
             max_tokens=320,
             messages=[{"role": "user", "content": prompt}],
         )
+        from core.ai.usage import record_response
+        record_response(resp, operation="recon_summary")
         return _strip_markdown(resp.content[0].text if resp.content else "")
     except Exception:
         logger.exception("AI summary failed for recon %s", recon.id)

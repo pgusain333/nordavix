@@ -442,6 +442,9 @@ def _classify_chunk_with_claude(
         logger.exception("FA detector: Claude call failed")
         return [{}] * len(txns)
 
+    from core.ai.usage import record_response
+    record_response(resp, operation="schedule_fa_detect")
+
     # Concat any text blocks (Claude returns content as a list of blocks)
     text = ""
     for block in resp.content:

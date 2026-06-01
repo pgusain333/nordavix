@@ -95,6 +95,21 @@ async function deleteWorkspace(): Promise<DeleteWorkspaceResponse> {
   return data
 }
 
+export interface AiUsage {
+  cap_usd:       number   // 0 = no dollar cap configured
+  spent_usd:     number   // estimated AI spend this calendar month
+  remaining_usd: number   // max(0, cap - spent)
+  exceeded:      boolean   // at/over the cap
+  enforced:      boolean   // whether the cap actually blocks
+  resets_at:     string    // ISO — first instant of next month
+}
+
+/** Current-month AI spend vs the workspace cap (for the Settings usage card). */
+async function getAiUsage(): Promise<AiUsage> {
+  const { data } = await apiClient.get<AiUsage>("/api/workspace/ai-usage")
+  return data
+}
+
 export const workspaceApi = {
   listMembers,
   lookupUsers,
@@ -104,4 +119,5 @@ export const workspaceApi = {
   createInvitation,
   revokeInvitation,
   deleteWorkspace,
+  getAiUsage,
 }

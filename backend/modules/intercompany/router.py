@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.ai.guard import enforce_ai_limits
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
 from models.gl_balance_snapshot import GlBalanceSnapshot
@@ -435,7 +436,7 @@ async def delete_mark(
     return {"ok": True}
 
 
-@router.post("/ai-detect")
+@router.post("/ai-detect", dependencies=[Depends(enforce_ai_limits)])
 async def ai_detect(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
@@ -557,6 +558,9 @@ Empty list is acceptable.
     except Exception:
         logger.exception("IC ai-detect: Claude call failed")
         raise HTTPException(502, "AI scan failed. Try again in a moment.")
+
+    from core.ai.usage import record_response
+    record_response(resp, operation="intercompany_detect")
 
     text = "".join(
         getattr(b, "text", "") for b in resp.content

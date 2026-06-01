@@ -7,9 +7,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from core.ai.usage import begin_capture, flush_usage
 from core.auth.clerk import verify_clerk_token
+from core.config import settings
 from core.db.base import current_tenant_id
 from core.db.session import AsyncSessionLocal
+from core.ratelimit.limiter import check_rate_limit
 from models.tenant import Tenant
 from models.user import User
 
@@ -241,4 +244,26 @@ class TenantMiddleware(BaseHTTPMiddleware):
         request.state.tenant = tenant
         request.state.user = user
 
-        return await call_next(request)
+        # General per-tenant rate limit (fail-open). The stricter AI limit is a
+        # per-endpoint dependency (core.ai.guard); this is the broad backstop.
+        rl = await check_rate_limit(
+            key=f"gen:{tenant.id}",
+            limit=settings.rate_limit_general_per_min,
+            window_seconds=60,
+        )
+        if not rl.allowed:
+            return JSONResponse(
+                {"detail": "Rate limit exceeded. Please slow down and try again shortly.",
+                 "code": "rate_limited"},
+                status_code=429,
+                headers={"Retry-After": str(rl.retry_after)},
+            )
+
+        # Capture AI usage for this request, flush it (to AIUsage) afterward.
+        # try/finally so usage is recorded even if the handler raised after some
+        # AI calls. Background-task AI (flux narratives) flushes itself.
+        begin_capture()
+        try:
+            return await call_next(request)
+        finally:
+            await flush_usage(tenant.id)

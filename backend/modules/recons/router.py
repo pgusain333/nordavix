@@ -40,6 +40,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.ai.guard import enforce_ai_limits
 from core.auth.clerk_users import _format_display_name, get_clerk_user
 from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
@@ -254,7 +255,7 @@ async def reset_agentic_endpoint(
     }
 
 
-@router.post("/agentic/run")
+@router.post("/agentic/run", dependencies=[Depends(enforce_ai_limits)])
 async def run_agentic_endpoint(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
@@ -301,7 +302,7 @@ async def run_agentic_endpoint(
         ) from exc
 
 
-@router.post("/agentic/run-one")
+@router.post("/agentic/run-one", dependencies=[Depends(enforce_ai_limits)])
 async def run_agentic_on_one_account_endpoint(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
@@ -2536,7 +2537,7 @@ async def download_account_evidence(
     return {"download_url": url, "file_name": row.file_name, "mime_type": row.mime_type}
 
 
-@router.post("/evidence/{evidence_id}/verify")
+@router.post("/evidence/{evidence_id}/verify", dependencies=[Depends(enforce_ai_limits)])
 async def verify_account_evidence(
     evidence_id: uuid.UUID,
     tenant_id: CurrentTenantId,
@@ -2989,7 +2990,8 @@ async def set_item_status(
     return item
 
 
-@router.post("/{recon_id}/items/{item_id}/explain", response_model=ReconciliationItemResponse)
+@router.post("/{recon_id}/items/{item_id}/explain", response_model=ReconciliationItemResponse,
+             dependencies=[Depends(enforce_ai_limits)])
 async def explain_item_endpoint(
     recon_id: uuid.UUID,
     item_id: uuid.UUID,
@@ -3023,7 +3025,8 @@ async def explain_item_endpoint(
     return item
 
 
-@router.post("/{recon_id}/explain", response_model=ReconciliationResponse)
+@router.post("/{recon_id}/explain", response_model=ReconciliationResponse,
+             dependencies=[Depends(enforce_ai_limits)])
 async def explain_recon_endpoint(
     recon_id: uuid.UUID,
     tenant_id: CurrentTenantId,

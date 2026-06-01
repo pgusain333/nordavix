@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.ai.guard import enforce_ai_limits
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.config import settings
@@ -388,7 +389,8 @@ async def parse_trial_balance(
 
 # ── Run ─────────────────────────────────────────────────────────────────────────
 
-@router.post("/trial-balances/{tb_id}/run", response_model=FluxRunResponse)
+@router.post("/trial-balances/{tb_id}/run", response_model=FluxRunResponse,
+             dependencies=[Depends(enforce_ai_limits)])
 async def run_flux(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
@@ -651,7 +653,8 @@ async def set_variance_status(
     }
 
 
-@router.post("/trial-balances/{tb_id}/agentic/run")
+@router.post("/trial-balances/{tb_id}/agentic/run",
+             dependencies=[Depends(enforce_ai_limits)])
 async def run_agentic_flux_endpoint(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
@@ -706,7 +709,8 @@ async def cancel_agentic_flux_endpoint(
     return {"cancelled": True, "tb_id": str(tb_id)}
 
 
-@router.post("/trial-balances/{tb_id}/variances/{var_id}/agentic/run")
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/agentic/run",
+             dependencies=[Depends(enforce_ai_limits)])
 async def run_deep_agentic_on_variance(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
@@ -949,7 +953,8 @@ async def toggle_variance_transaction_check(
     }
 
 
-@router.post("/trial-balances/{tb_id}/variances/{var_id}/regenerate")
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/regenerate",
+             dependencies=[Depends(enforce_ai_limits)])
 async def regenerate_variance(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,

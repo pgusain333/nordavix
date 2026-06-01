@@ -64,12 +64,18 @@ def generate_narrative(
     cache_key: str,
     max_tokens: int = 300,
     retries: int = 3,
+    operation: str | None = None,
 ) -> AIResponse:
     """
     Send a prompt to Anthropic and return the response with token tracking.
 
     Retries up to `retries` times on transient API errors with exponential backoff.
     The caller is responsible for checking the cache before calling this function.
+
+    `operation` labels the calling feature (e.g. "flux_narrative", "recon_actions")
+    in the per-tenant AIUsage record. Usage is recorded via a context-scoped buffer
+    (see core.ai.usage) — a no-op unless a capture is active, so this stays safe to
+    call from anywhere.
     """
     # Strip any entity-level PII before the call leaves our system
     safe_system = _strip_pii(system_prompt)
@@ -102,6 +108,20 @@ def generate_narrative(
                 input_tokens / 1_000_000 * _COST_PER_MILLION_INPUT
                 + output_tokens / 1_000_000 * _COST_PER_MILLION_OUTPUT
             )
+            # Record per-tenant usage (no-op unless a capture is active).
+            # Imported lazily to avoid a circular import at module load
+            # (usage → db.session → … ). Never lets a tracking error escape.
+            try:
+                from core.ai.usage import record_call
+                record_call(
+                    model=settings.anthropic_model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost=cost,
+                    operation=operation,
+                )
+            except Exception:
+                pass
             return AIResponse(
                 content=content,
                 input_tokens=input_tokens,

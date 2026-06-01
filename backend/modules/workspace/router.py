@@ -457,6 +457,20 @@ async def lookup_users(
     return {"users": out}
 
 
+@router.get("/ai-usage")
+async def get_ai_usage(
+    tenant_id: CurrentTenantId,
+) -> dict:
+    """
+    Current calendar-month AI spend vs the workspace's cap. Powers the usage
+    indicator in Settings so users can see how much AI budget remains before
+    they hit the limit. Read-only; available to any member.
+    """
+    from core.ai.budget import get_budget_status
+    status = await get_budget_status(tenant_id)
+    return status.as_dict()
+
+
 @router.delete("", dependencies=[Depends(require_role("admin"))])
 async def delete_workspace(
     tenant_id: CurrentTenantId,
