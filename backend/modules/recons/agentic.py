@@ -839,11 +839,20 @@ async def build_variance_commentary(
         confidence=confidence,
     )
 
+    actions = _generate_recon_actions(
+        account_name=account_name, account_number=account_number,
+        account_type=account_type, period_end=period_end,
+        opening=opening, gl_balance=gl_balance, target=gl_balance,
+        items=candidate_items, tied_out=False,
+    )
     return {
         "generated_at":   datetime.now(UTC).isoformat(),
+        "headline":       actions["headline"],
         "confidence":     confidence,
         "checks":         checks,
         "recommendation": recommendation,
+        "recommendations": actions["recommendations"],
+        "item_flags":     actions["item_flags"],
         "narrative":      narrative,
     }
 
@@ -1123,13 +1132,151 @@ async def build_ai_commentary(
         items=items, checks=checks, confidence=confidence,
     )
 
+    actions = _generate_recon_actions(
+        account_name=account_name, account_number=account_number,
+        account_type=account_type, period_end=period_end,
+        opening=opening, gl_balance=gl_balance, target=computed,
+        items=items, tied_out=True,
+    )
     return {
         "generated_at":   datetime.now(UTC).isoformat(),
+        "headline":       actions["headline"],
         "confidence":     confidence,
         "checks":         checks,
         "recommendation": recommendation,
+        "recommendations": actions["recommendations"],
+        "item_flags":     actions["item_flags"],
         "narrative":      narrative,
     }
+
+
+def _generate_recon_actions(
+    *,
+    account_name: str,
+    account_number: str,
+    account_type: str,
+    period_end: date,
+    opening: Decimal,
+    gl_balance: Decimal,
+    target: Decimal,
+    items: list[dict[str, Any]],
+    tied_out: bool,
+) -> dict[str, Any]:
+    """The ACTIONABLE layer of recon commentary. One Claude call, grounded
+    in the actual reconciling items, that thinks like a reviewing
+    accountant and returns:
+      - headline:        one-line verdict
+      - recommendations: concrete next actions (1-4, may be empty if clean)
+      - item_flags:      reconciling items that look UNRELATED, out of
+                         period, or otherwise doubtful — each with the
+                         reason and what to do about it
+
+    This is the "if a transaction in the ledger seems not related or there
+    is any doubt, tell me what to do" layer. Falls back to empty lists on
+    any failure so it never blocks the rest of the commentary."""
+    import json as _json
+
+    empty = {"headline": "", "recommendations": [], "item_flags": []}
+    try:
+        from core.ai.client import compute_cache_key, generate_narrative
+
+        sorted_items = sorted(
+            items, key=lambda i: abs(Decimal(str(i.get("amount", "0") or "0"))), reverse=True,
+        )[:25]
+        items_block = "\n".join(
+            f"  - {i.get('txn_date', '')} {i.get('txn_type', '')} "
+            f"#{i.get('txn_number', '')}: "
+            f"{_money(Decimal(str(i.get('amount', '0') or '0')))} — "
+            f"{(i.get('memo') or '(no memo)')[:90]}"
+            for i in sorted_items
+        ) or "  (no reconciling items selected)"
+
+        system_prompt = (
+            "You are a senior reconciliation reviewer at a CPA firm signing off on a "
+            "balance-sheet reconciliation. You are given the account, its opening "
+            "balance, its GL balance, and the GL transactions selected as reconciling "
+            "items. Review them like a careful accountant.\n\n"
+            "Return ONE JSON object and nothing else:\n"
+            "{\n"
+            '  "headline": "one-sentence verdict, <= 140 chars",\n'
+            '  "recommendations": ["specific next action", ...],   // 1-4, [] if clean\n'
+            '  "item_flags": [\n'
+            '     {"label":"txn description","amount":"123.45","reason":"why it is '
+            'questionable","action":"what the preparer should do","severity":"low|medium|high"}\n'
+            "  ]\n"
+            "}\n\n"
+            "Flag a reconciling item ONLY when a reviewer would genuinely question it:\n"
+            "- it does not belong in this account type (e.g. a payroll run sitting in "
+            "Prepaid Insurance, an expense in a cash account)\n"
+            "- it is back-dated or falls outside the period being reconciled\n"
+            "- it is a large manual journal entry with a blank or vague memo\n"
+            "- a single item concentrates an unusual share of the balance\n"
+            "- the memo / entity is unrelated to what this account should hold\n"
+            "Do NOT flag ordinary, well-described activity. If everything looks clean, "
+            "return an empty item_flags array and recommend approval.\n"
+            "Rules: JSON only, no markdown. Never invent amounts. 'amount' is a positive "
+            "decimal string. Keep reasons and actions concrete and short."
+        )
+        user_prompt = (
+            f"Account: {account_number + ' · ' if account_number else ''}{account_name} ({account_type})\n"
+            f"Period end: {period_end.isoformat()}\n"
+            f"Opening balance: {_money(opening)}\n"
+            f"GL balance: {_money(gl_balance)}\n"
+            f"Subledger built from opening + items: {_money(target)}\n"
+            f"Ties out to GL: {'yes' if tied_out else 'no'}\n\n"
+            f"Reconciling items ({len(items)} total; top {len(sorted_items)} by |amount|):\n"
+            f"{items_block}\n\n"
+            "Review and return the JSON."
+        )
+        key = compute_cache_key(
+            account_number or account_name, str(gl_balance), str(target),
+            f"recon-actions-{period_end.isoformat()}-{len(items)}",
+        )
+        resp = generate_narrative(system_prompt, user_prompt, key, max_tokens=800)
+        raw = resp.content.strip()
+        first, last = raw.find("{"), raw.rfind("}")
+        if first == -1 or last == -1:
+            return empty
+        parsed = _json.loads(raw[first:last + 1])
+
+        recs = [
+            str(r).strip().lstrip("-•* ").strip()
+            for r in (parsed.get("recommendations") or [])
+            if str(r).strip()
+        ][:4]
+
+        flags: list[dict[str, Any]] = []
+        for f in (parsed.get("item_flags") or [])[:8]:
+            if not isinstance(f, dict):
+                continue
+            label = str(f.get("label") or "").strip()
+            reason = str(f.get("reason") or "").strip()
+            if not label or not reason:
+                continue
+            amt = f.get("amount")
+            try:
+                amt_str = str(abs(Decimal(str(amt)).quantize(Decimal("0.01")))) if amt not in (None, "") else ""
+            except Exception:
+                amt_str = ""
+            sev = str(f.get("severity") or "medium").lower().strip()
+            if sev not in ("low", "medium", "high"):
+                sev = "medium"
+            flags.append({
+                "label":    label[:160],
+                "amount":   amt_str,
+                "reason":   reason[:240],
+                "action":   str(f.get("action") or "").strip()[:240],
+                "severity": sev,
+            })
+
+        return {
+            "headline":        str(parsed.get("headline") or "").strip()[:200],
+            "recommendations": recs,
+            "item_flags":      flags,
+        }
+    except Exception:
+        logger.exception("recon actions AI call failed — returning empty actions")
+        return empty
 
 
 async def _secondary_qbo_check(

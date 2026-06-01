@@ -47,6 +47,7 @@ import {
 import { Button, Badge, StatusBadge, Spinner } from "@/core/ui/components"
 import { cn, formatAccounting, formatPct } from "@/core/ui/utils"
 import { workspaceApi } from "@/modules/workspace/api"
+import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
 
 interface Props {
   tbId:      string
@@ -579,7 +580,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     col.display({
       id:     "actions",
       header: "",
-      size:   100,
+      size:   170,
       cell:   ({ row }) => {
         const r = row.original
         const agenticPendingForThisRow =
@@ -615,25 +616,29 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                 Hidden on locked periods. Spinner replaces icon while
                 running. */}
             {!readOnly && (
-              <Button
-                size="icon-sm"
-                variant="outline"
-                title={r.ai_commentary
-                  ? "Re-run AI on this row (overwrites existing analysis)"
-                  : "Run AI on this row (pulls QBO transactions + structured analysis)"}
+              <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation()
                   triggerRowAgentic(r)
                 }}
                 disabled={agenticPendingForThisRow}
-                style={r.ai_commentary
-                  ? { borderColor: "var(--green)", color: "var(--green)" }
-                  : undefined}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0"
+                style={{
+                  color:      r.ai_commentary ? "var(--green)" : "var(--text-2)",
+                  border:     `1px solid ${r.ai_commentary ? "var(--green)" : "var(--border-strong)"}`,
+                  background: r.ai_commentary ? "var(--green-subtle)" : "var(--surface)",
+                  opacity:    agenticPendingForThisRow ? 0.6 : 1,
+                }}
+                title={r.ai_commentary
+                  ? "Re-run AI on this row (overwrites existing analysis)"
+                  : "Run AI on this row: pulls QBO transactions + structured analysis"}
               >
                 {agenticPendingForThisRow
                   ? <Spinner className="h-3 w-3" />
-                  : <Sparkles size={14} strokeWidth={1.6} />}
-              </Button>
+                  : <Sparkles size={11} strokeWidth={1.8} />}
+                Run AI
+              </button>
             )}
             {/* Approve check icon — admin / reviewer only and only
                 when the period isn't locked. Preparers still get the
@@ -702,6 +707,23 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
 
   return (
     <div className="flex flex-col px-4 sm:px-6 py-4 gap-4" style={{ background: "var(--bg)" }}>
+      {/* Per-row Run AI loader — the same branded overlay reconciliations
+          uses, so a single-row Run AI click shows the full "AI is
+          working" visual (not just an inline spinner). No Stop button:
+          a per-row run is short, atomic, and can't be cancelled
+          mid-prompt. The bulk Agentic Mode overlay lives up in
+          FluxDashboard; this one covers the per-row path. */}
+      <AgenticRunningOverlay
+        open={rowAgentic.isPending}
+        title="AI is analyzing this variance"
+        statusLines={[
+          "Pulling the transactions behind this change from QuickBooks…",
+          "Decomposing the change into its drivers…",
+          "Checking which entities concentrate the movement…",
+          "Asking Claude to reconcile the bridge…",
+          "Drafting recommended actions for review…",
+        ]}
+      />
       {/* Filters row — sits ABOVE the table card (like recon) instead of
           being baked into the same container. Tabs match the recon
           status-bucket style for visual parity. */}

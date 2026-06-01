@@ -23,6 +23,7 @@ import { useQuery } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   AlertTriangle,
+  Lightbulb,
   Banknote,
   Brain,
   CheckCircle2,
@@ -734,9 +735,70 @@ function SummaryTab({ account }: { account: OverviewAccount }) {
             <ConfidencePill confidence={account.ai_commentary.confidence} />
             <RecommendationPill recommendation={account.ai_commentary.recommendation} />
           </div>
+          {account.ai_commentary.headline && (
+            <p className="text-[12.5px] font-semibold leading-snug mb-1.5" style={{ color: "var(--text)" }}>
+              {account.ai_commentary.headline}
+            </p>
+          )}
           <p className="text-[12px] leading-relaxed" style={{ color: "var(--text)" }}>
             {account.ai_commentary.narrative}
           </p>
+
+          {/* Items to review — reconciling items that look unrelated /
+              out-of-period / doubtful, with the reason + what to do. */}
+          {account.ai_commentary.item_flags && account.ai_commentary.item_flags.length > 0 && (
+            <div className="mt-3">
+              <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ color: "#b45309" }}>
+                <AlertTriangle size={12} strokeWidth={2} /> Items to review ({account.ai_commentary.item_flags.length})
+              </div>
+              <div className="space-y-2">
+                {account.ai_commentary.item_flags.map((f, i) => {
+                  const sevColor = f.severity === "high" ? "#b91c1c" : f.severity === "medium" ? "#b45309" : "var(--text-muted)"
+                  return (
+                    <div key={i} className="rounded-lg p-2.5"
+                      style={{ background: "rgba(245, 158, 11, 0.06)", border: "1px solid rgba(245, 158, 11, 0.30)" }}>
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-[12px] font-semibold leading-snug" style={{ color: "var(--text)" }}>{f.label}</span>
+                        {f.amount && (
+                          <span className="text-[12px] font-semibold tabular-nums shrink-0" style={{ color: "var(--text)" }}>
+                            {fmtMoneyAcct(parseFloat(f.amount) || 0)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] mt-1 leading-snug" style={{ color: "var(--text-2)" }}>
+                        <span className="font-semibold uppercase text-[9px] tracking-wider mr-1" style={{ color: sevColor }}>{f.severity}</span>
+                        {f.reason}
+                      </p>
+                      {f.action && (
+                        <p className="text-[11px] mt-1 leading-snug font-medium" style={{ color: "var(--green)" }}>→ {f.action}</p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Recommended actions */}
+          {account.ai_commentary.recommendations && account.ai_commentary.recommendations.length > 0 && (
+            <div className="mt-3">
+              <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ color: "var(--green)" }}>
+                <Lightbulb size={12} strokeWidth={2} /> Recommended actions
+              </div>
+              <ul className="space-y-1.5">
+                {account.ai_commentary.recommendations.map((r, i) => (
+                  <li key={i} className="flex items-start gap-2 text-[12px] leading-snug" style={{ color: "var(--text)" }}>
+                    <span className="inline-flex items-center justify-center h-4 w-4 rounded-full text-[9px] font-bold shrink-0 mt-0.5"
+                      style={{ background: "var(--green-subtle)", color: "var(--green)" }}>{i + 1}</span>
+                    {r}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {account.ai_commentary.checks && account.ai_commentary.checks.length > 0 && (
             <ul className="mt-3 space-y-1.5">
               {account.ai_commentary.checks.map((c, i) => (

@@ -143,11 +143,27 @@ export interface AiCommentaryCheck {
   detail: string
 }
 
+/** A reconciling item the AI thinks looks unrelated / out-of-period /
+ *  doubtful, with the reason and what to do about it. (actionable layer) */
+export interface AiCommentaryItemFlag {
+  label:    string
+  amount:   string
+  reason:   string
+  action:   string
+  severity: "low" | "medium" | "high"
+}
+
 export interface AiCommentary {
   generated_at:   string
+  /** One-line reviewer verdict. (actionable layer) */
+  headline?:      string
   confidence:     AiCommentaryConfidence
   checks:         AiCommentaryCheck[]
   recommendation: AiCommentaryRecommendation
+  /** Concrete next actions for the preparer/reviewer. (actionable layer) */
+  recommendations?: string[]
+  /** Reconciling items that look wrong for this account/period. (actionable layer) */
+  item_flags?:    AiCommentaryItemFlag[]
   narrative:      string
 }
 
