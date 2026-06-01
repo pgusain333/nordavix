@@ -26,13 +26,17 @@ import {
   FileText,
   GripVertical,
   Layers,
+  Lightbulb,
   Receipt,
   ShieldCheck,
   Sparkles,
+  TrendingDown,
+  TrendingUp,
+  Users,
   X,
 } from "lucide-react"
 
-import type { VarianceRow } from "@/modules/flux/api"
+import type { VarianceRow, AICommentary } from "@/modules/flux/api"
 import { formatDateTime } from "@/core/lib/dates"
 
 const TABS = [
@@ -377,11 +381,19 @@ function DrawerHeader({
         <StatusPill status={row.status} />
       </div>
 
-      {/* Variance strip */}
+      {/* Current / Prior / Change strip. The third cell is labeled by
+          DIRECTION — "Increase" / "Decrease" — which reads more plainly
+          than the accounting term "Variance" (it's literally the
+          period-over-period movement in the account balance). */}
       <div className="mt-3 grid grid-cols-3 gap-3">
         <BalanceCell label="Current" value={row.current_balance} />
         <BalanceCell label="Prior"   value={row.prior_balance} />
-        <BalanceCell label="Variance" value={row.dollar_variance}
+        <BalanceCell
+          label={(() => {
+            const v = parseFloat(row.dollar_variance) || 0
+            return v > 0 ? "Increase vs prior" : v < 0 ? "Decrease vs prior" : "No change"
+          })()}
+          value={row.dollar_variance}
           accent={Math.abs(parseFloat(row.dollar_variance)) >= 0.5}
           percent={row.pct_variance} />
       </div>
@@ -510,27 +522,9 @@ function SummaryTab({ row }: { row: VarianceRow }) {
   }
   return (
     <div className="space-y-4">
-      {/* AI verdict snapshot */}
+      {/* AI verdict + bridge + actions */}
       {row.ai_commentary ? (
-        <Card title="AI verdict" icon={<Sparkles size={13} strokeWidth={1.8} />}>
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <Pill tone={
-              row.ai_commentary.risk_level === "high" ? "danger" :
-              row.ai_commentary.risk_level === "medium" ? "warn" : "success"
-            }>{row.ai_commentary.risk_level} risk</Pill>
-            <Pill tone={
-              row.ai_commentary.justified === "yes" ? "success" :
-              row.ai_commentary.justified === "no"  ? "danger"  : "warn"
-            }>{
-              row.ai_commentary.justified === "yes" ? "Justified" :
-              row.ai_commentary.justified === "no"  ? "Not justified" : "Needs review"
-            }</Pill>
-            <Pill tone="info">{row.ai_commentary.confidence} confidence</Pill>
-          </div>
-          <p className="text-[12px] leading-relaxed" style={{ color: "var(--text)" }}>
-            {row.ai_commentary.narrative}
-          </p>
-        </Card>
+        <AiCommentaryView c={row.ai_commentary} />
       ) : row.narrative ? (
         <Card title="Commentary" icon={<FileText size={13} strokeWidth={1.8} />}>
           <p className="text-[12px] leading-relaxed" style={{ color: "var(--text)" }}>
@@ -572,6 +566,127 @@ function SummaryTab({ row }: { row: VarianceRow }) {
 }
 
 // ── Smaller blocks ────────────────────────────────────────────────────
+
+/**
+ * Organized, actionable rendering of the structured AI commentary:
+ *   1. Verdict   — headline + risk / justified / confidence pills + context
+ *   2. Bridge    — itemized drivers that make up the change, with an
+ *                  explained / unexplained reconciliation footer
+ *   3. Actions   — the recommendations (previously computed but never shown)
+ *   4. Drivers   — key customers/vendors (previously computed but never shown)
+ * Every section after the verdict is conditional — older v1 commentaries
+ * (no drivers/recommendations) just render the verdict, same as before.
+ */
+function AiCommentaryView({ c }: { c: AICommentary }) {
+  const drivers = c.drivers ?? []
+  const recs = c.recommendations ?? []
+  const entities = c.key_entities ?? []
+  const unexplained = parseFloat(c.unexplained_amount ?? "0") || 0
+  const explained = parseFloat(c.explained_amount ?? "0") || 0
+
+  return (
+    <div className="space-y-3">
+      {/* 1 — Verdict */}
+      <Card title="AI verdict" icon={<Sparkles size={13} strokeWidth={1.8} />}>
+        {c.headline && (
+          <p className="text-[12.5px] font-semibold leading-snug mb-2" style={{ color: "var(--text)" }}>
+            {c.headline}
+          </p>
+        )}
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
+          <Pill tone={c.risk_level === "high" ? "danger" : c.risk_level === "medium" ? "warn" : "success"}>
+            {c.risk_level} risk
+          </Pill>
+          <Pill tone={c.justified === "yes" ? "success" : c.justified === "no" ? "danger" : "warn"}>
+            {c.justified === "yes" ? "Justified" : c.justified === "no" ? "Not justified" : "Needs review"}
+          </Pill>
+          <Pill tone="info">{c.confidence} confidence</Pill>
+        </div>
+        {c.narrative && (
+          <p className="text-[12px] leading-relaxed" style={{ color: "var(--text)" }}>
+            {c.narrative}
+          </p>
+        )}
+      </Card>
+
+      {/* 2 — Variance bridge (the exact reasoning of what makes up the change) */}
+      {drivers.length > 0 && (
+        <Card title="What makes up the change" icon={<TrendingUp size={13} strokeWidth={1.8} />}>
+          <div className="space-y-1.5">
+            {drivers.map((d, i) => {
+              const amt = parseFloat(d.amount) || 0
+              const up = d.direction === "increase"
+              return (
+                <div key={i} className="flex items-start gap-2">
+                  {up
+                    ? <TrendingUp size={13} strokeWidth={2} style={{ color: "#047857", marginTop: 1, flexShrink: 0 }} />
+                    : <TrendingDown size={13} strokeWidth={2} style={{ color: "#b91c1c", marginTop: 1, flexShrink: 0 }} />}
+                  <span className="text-[12px] leading-snug flex-1" style={{ color: "var(--text)" }}>{d.label}</span>
+                  <span className="text-[12px] font-semibold tabular-nums" style={{ color: up ? "#047857" : "#b91c1c" }}>
+                    {up ? "+" : "−"}{fmtMoneyAcct(amt)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          {/* Reconciliation footer */}
+          <div className="mt-2.5 pt-2 flex items-center justify-between gap-2 text-[11px]"
+            style={{ borderTop: "1px solid var(--border)" }}>
+            <span style={{ color: "var(--text-muted)" }}>
+              Explained <span className="font-semibold tabular-nums" style={{ color: "var(--text)" }}>{fmtMoneyAcct(explained)}</span>
+            </span>
+            {Math.abs(unexplained) >= 1 && (
+              <span className="inline-flex items-center gap-1 font-semibold" style={{ color: "#b45309" }}>
+                <AlertTriangle size={11} strokeWidth={2} />
+                {fmtMoneyAcct(unexplained)} unexplained
+              </span>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* 3 — Recommended actions */}
+      {recs.length > 0 && (
+        <Card title="Recommended actions" icon={<Lightbulb size={13} strokeWidth={1.8} />}>
+          <ul className="space-y-1.5">
+            {recs.map((r, i) => (
+              <li key={i} className="flex items-start gap-2 text-[12px] leading-snug" style={{ color: "var(--text)" }}>
+                <span className="inline-flex items-center justify-center h-4 w-4 rounded-full text-[9px] font-bold shrink-0 mt-0.5"
+                  style={{ background: "var(--green-subtle)", color: "var(--green)" }}>{i + 1}</span>
+                {r}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {/* 4 — Key drivers (entities) */}
+      {entities.length > 0 && (
+        <Card title="Key customers / vendors" icon={<Users size={13} strokeWidth={1.8} />}>
+          <div className="space-y-1">
+            {entities.map((e, i) => (
+              <div key={i} className="flex items-center gap-2 text-[12px]">
+                <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider shrink-0"
+                  style={{
+                    background: e.type === "customer" ? "rgba(59,130,246,0.12)" : e.type === "vendor" ? "rgba(245,158,11,0.12)" : "var(--surface-2)",
+                    color: e.type === "customer" ? "#1d4ed8" : e.type === "vendor" ? "#b45309" : "var(--text-muted)",
+                  }}>
+                  {e.type}
+                </span>
+                <span className="flex-1 truncate" style={{ color: "var(--text)" }}>{e.name}</span>
+                {e.amount && (
+                  <span className="font-semibold tabular-nums" style={{ color: "var(--text-2)" }}>
+                    {fmtMoneyAcct(parseFloat(e.amount) || 0)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  )
+}
 
 function Card({ title, icon, children }: {
   title:    string

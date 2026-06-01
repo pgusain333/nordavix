@@ -60,13 +60,31 @@ You are a senior controller analyzing a single flux variance for a CPA firm's
 month-end close. You have the account context, the dollar change between
 periods, and the actual transactions posted during the change window.
 
-Your job is FOUR things:
+Produce a CRISP, ACTIONABLE analysis. The reader is a busy reviewer who
+wants to know, in order: what happened, exactly what makes up the change,
+whether it's a problem, and what to do next.
 
-1. Explain what drove the variance in plain English (4–6 sentences).
-   Cite specific customers/vendors and transaction amounts when they
-   explain >25% of the change.
+Deliver SEVEN things:
 
-2. Rate the RISK of this variance going unexplained or mis-classified:
+1. HEADLINE — one sentence (<= 140 chars) capturing the change and its
+   primary driver. E.g. "AR rose $142K (54%) on four enterprise renewals
+   signed in the final week of the period."
+
+2. DRIVERS — the variance BRIDGE. Decompose the dollar change into the
+   specific items that make it up, largest first. Each driver is a
+   concrete cause tied to a dollar amount, with a direction:
+     - "increase": this item pushed the account balance UP
+     - "decrease": this item pushed the account balance DOWN
+   Cite the transaction / customer / vendor / JE that drives each line.
+   The signed driver amounts should approximately sum to the total change.
+   Group small/immaterial items into a single "Other routine activity"
+   driver rather than listing dozens of tiny lines. Aim for 2–6 drivers.
+
+3. NARRATIVE — 2–4 sentences of plain-English context that the bridge
+   alone doesn't convey (business reason, timing, why it matters). No
+   restating the numbers already in the drivers.
+
+4. RISK of this variance going unexplained or mis-classified:
    - "low":    routine activity, well-understood drivers, no concentration risk
    - "medium": some unusual elements (one-time items, large single transactions,
                new customer/vendor concentration, timing shifts)
@@ -74,48 +92,52 @@ Your job is FOUR things:
                concentration above 40% in a single entity, accruals reversal
                missed, or anything else that warrants controller review
 
-3. Decide if the variance is JUSTIFIED by the available evidence:
-   - "yes":           transactions clearly explain the change; no follow-up needed
-   - "no":            transactions don't add up to the variance OR explain it
-                      poorly — investigate
-   - "needs_review":  partially explained but missing context (e.g. a large
-                      JE with a blank memo, unusual entity concentration that
-                      needs business justification)
+5. JUSTIFIED — is the change supported by the evidence?
+   - "yes":           drivers clearly explain the change; no follow-up needed
+   - "no":            drivers don't add up to the change OR explain it poorly
+   - "needs_review":  partially explained but missing context (blank-memo JE,
+                      unusual concentration needing business justification)
 
-4. List 1–4 short actionable recommendations for the controller. Examples:
-   "Confirm $50k JE-2026-04-15 with CFO before approving"
-   "Follow up with Acme Corp on the prepayment timing"
-   "Reclassify the marketing spend out of professional services"
+6. RECOMMENDATIONS — 1–4 short, SPECIFIC next actions, each naming the
+   thing to do and (where possible) the dollar amount / document / person:
+     "Confirm the $50K JE-2026-04-15 with the CFO before approving"
+     "Follow up with Acme Corp on the $22K prepayment timing"
+     "Reclassify the $8K marketing spend out of professional services"
 
-You ALSO identify key customers/vendors (up to 5) that materially drove
-the change — entities appearing in transactions that sum to >10% of the
-absolute variance.
+7. KEY ENTITIES — up to 5 customers/vendors that materially drove the
+   change (appear in transactions summing to >10% of the absolute change).
 
 Return ONE JSON object with this exact shape and nothing else:
 
 {
-  "narrative":       "4-6 sentences in plain prose, no markdown, no headers",
+  "headline":        "one sentence, <= 140 chars, no trailing period required",
+  "drivers":         [
+    {"label": "What this is + the txn/entity behind it", "amount": "52000.00", "direction": "increase" | "decrease"},
+    ...
+  ],
+  "narrative":       "2-4 sentences of context in plain prose, no markdown",
   "risk_level":      "low" | "medium" | "high",
   "justified":       "yes" | "no" | "needs_review",
   "key_entities":    [
     {"name": "Entity Name", "type": "customer" | "vendor" | "other", "amount": "12345.67"},
     ...
   ],
-  "recommendations": ["short action sentence 1", "short action sentence 2", ...],
+  "recommendations": ["specific action 1", "specific action 2", ...],
   "confidence":      "high" | "medium" | "low"
 }
 
 Confidence reflects how confident YOU are in the analysis:
-  - "high":   transactions fully reconcile the variance + clear entity drivers
-  - "medium": transactions explain most of the change but some gaps
+  - "high":   drivers fully reconcile the change + clear entity attribution
+  - "medium": drivers explain most of the change but some gaps
   - "low":    sparse transaction data or material unexplained portion
 
 Strict rules:
   - JSON only. No leading prose, no trailing prose, no markdown fences.
-  - Never invent numbers — only cite what's in the data.
-  - "amount" fields are decimal strings ("12345.67"), not numbers.
-  - "narrative" is prose only. No headers, no bullets, no markdown.
-  - If you can't identify any key entities, return an empty array.
+  - Never invent numbers — only cite amounts present in the data.
+  - "amount" fields are POSITIVE decimal strings ("12345.67"); the
+    "direction" field carries the sign. Not numbers, not negative.
+  - "narrative" and "headline" are prose only. No headers, no bullets.
+  - If you cannot identify drivers or entities, return empty arrays.
 """
 
 
@@ -215,16 +237,20 @@ def _fallback_commentary(
     )
     risk = "medium" if abs(var.dollar_variance or 0) > 10000 else "low"
     return {
-        "generated_at":    datetime.now(UTC).isoformat(),
-        "narrative":       narrative,
-        "risk_level":      risk,
-        "justified":       "needs_review",
-        "key_entities":    [],
-        "recommendations": [
+        "generated_at":      datetime.now(UTC).isoformat(),
+        "headline":          f"{_money(var.dollar_variance)} change on {acct.account_name} — manual review required.",
+        "drivers":           [],
+        "explained_amount":  "0.00",
+        "unexplained_amount": str(Decimal(str(var.dollar_variance or 0)).quantize(Decimal("0.01"))),
+        "narrative":         narrative,
+        "risk_level":        risk,
+        "justified":         "needs_review",
+        "key_entities":      [],
+        "recommendations":   [
             "AI analysis failed — review transactions manually before approving.",
             f"Reason: {err[:120]}",
         ],
-        "confidence":      "low",
+        "confidence":        "low",
     }
 
 
@@ -319,8 +345,11 @@ async def run_deep_agentic_for_variance(
     )
 
     user_prompt = _build_user_prompt(acct=acct, tb=tb, var=var, txns=txns)
+    # v2 = structured bridge schema (headline + drivers + explained/
+    # unexplained). The version tag busts any cached v1 responses that
+    # lack the new fields.
     cache_key = hashlib.sha256(
-        f"deep|{var.id}|{len(txns)}|{var.dollar_variance}".encode()
+        f"deep|v2|{var.id}|{len(txns)}|{var.dollar_variance}".encode()
     ).hexdigest()
 
     try:
@@ -336,17 +365,33 @@ async def run_deep_agentic_for_variance(
         if first == -1 or last == -1:
             raise ValueError("No JSON object in response")
         parsed = json.loads(raw[first:last + 1])
+        drivers = _normalize_drivers(parsed.get("drivers"))
+        # The bridge: compute explained / unexplained in CODE (never trust
+        # the model's arithmetic). explained = sum of signed driver amounts;
+        # unexplained = the residual of the actual dollar change the drivers
+        # don't account for. This guarantees the bridge always ties to the
+        # variance the user sees in the header.
+        explained = sum(
+            (Decimal(d["amount"]) if d["direction"] == "increase" else -Decimal(d["amount"]))
+            for d in drivers
+        ) if drivers else Decimal("0")
+        total_change = Decimal(str(var.dollar_variance or 0))
+        unexplained = (total_change - explained).quantize(Decimal("0.01"))
         commentary: dict[str, Any] = {
-            "generated_at":    datetime.now(UTC).isoformat(),
-            "narrative":       _strip_md(str(parsed.get("narrative") or "")).strip(),
-            "risk_level":      str(parsed.get("risk_level") or "medium").lower(),
-            "justified":       str(parsed.get("justified") or "needs_review").lower(),
-            "key_entities":    _normalize_entities(parsed.get("key_entities")),
-            "recommendations": [
+            "generated_at":      datetime.now(UTC).isoformat(),
+            "headline":          _strip_md(str(parsed.get("headline") or "")).strip()[:200],
+            "drivers":           drivers,
+            "explained_amount":  str(explained.quantize(Decimal("0.01"))),
+            "unexplained_amount": str(unexplained),
+            "narrative":         _strip_md(str(parsed.get("narrative") or "")).strip(),
+            "risk_level":        str(parsed.get("risk_level") or "medium").lower(),
+            "justified":         str(parsed.get("justified") or "needs_review").lower(),
+            "key_entities":      _normalize_entities(parsed.get("key_entities")),
+            "recommendations":   [
                 _strip_md(str(r)).strip() for r in (parsed.get("recommendations") or [])
                 if str(r).strip()
             ],
-            "confidence":      str(parsed.get("confidence") or "medium").lower(),
+            "confidence":        str(parsed.get("confidence") or "medium").lower(),
         }
         # Defensive validation — clamp enums to allowed values.
         if commentary["risk_level"] not in ("low", "medium", "high"):
@@ -385,6 +430,35 @@ async def run_deep_agentic_for_variance(
         narr.cache_key = cache_key
 
     return commentary
+
+
+def _normalize_drivers(raw: Any) -> list[dict[str, Any]]:
+    """Defensive parsing of the variance-bridge drivers. Each driver is
+    {label, amount (positive decimal str), direction ('increase'|'decrease')}.
+    Keeps only well-shaped entries; drops zero/blank ones; caps at 8 so the
+    bridge stays readable."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in raw[:8]:
+        if not isinstance(entry, dict):
+            continue
+        label = _strip_md(str(entry.get("label") or "")).strip()
+        if not label:
+            continue
+        # Amount → positive 2dp decimal string. Direction carries the sign.
+        amt = entry.get("amount")
+        try:
+            amt_dec = abs(Decimal(str(amt)).quantize(Decimal("0.01")))
+        except Exception:
+            continue
+        if amt_dec == 0:
+            continue
+        direction = str(entry.get("direction") or "increase").lower().strip()
+        if direction not in ("increase", "decrease"):
+            direction = "increase"
+        out.append({"label": label[:160], "amount": str(amt_dec), "direction": direction})
+    return out
 
 
 def _normalize_entities(raw: Any) -> list[dict[str, Any]]:

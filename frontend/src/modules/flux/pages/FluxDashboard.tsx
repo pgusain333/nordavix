@@ -1389,12 +1389,12 @@ function FluxKpiStrip({ rows, compact }: { rows: VarianceRow[]; compact: boolean
           transition={{ duration: 0.16, ease: "easeOut" }}
           className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <FluxKpi
-            label="Variance rows"
+            label="Changed accounts"
             value={String(total)}
-            sub={total > 0 ? `across all accounts` : "no variances"}
+            sub={total > 0 ? `vs prior period` : "no changes"}
             tone={total > 0 ? "var(--text)" : "var(--text-muted)"} />
           <FluxKpi
-            label="Total |variance|"
+            label="Total change"
             value={fmtMoneyShort(totalAbsVar)}
             sub="sum of absolute movements"
             tone="var(--text)" />

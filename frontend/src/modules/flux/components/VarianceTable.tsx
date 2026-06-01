@@ -537,7 +537,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       ),
     }),
     col.accessor("dollar_variance", {
-      header: "$ Var",
+      header: "$ Change",
       size:   110,
       cell: (c) => {
         const v = parseFloat(c.getValue())
@@ -552,7 +552,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       },
     }),
     col.accessor("pct_variance", {
-      header: "% Var",
+      header: "% Change",
       size:   80,
       cell: (c) => {
         const v = c.getValue() ? parseFloat(c.getValue()!) : null

@@ -64,8 +64,22 @@ export interface ParseResult {
  * Schema matches backend modules.flux.deep_agentic.run_deep_agentic_for_variance.
  * NULL on rows that only have legacy prose in `narrative`.
  */
+export interface AICommentaryDriver {
+  label:     string
+  amount:    string                       // positive decimal string
+  direction: "increase" | "decrease"      // carries the sign
+}
+
 export interface AICommentary {
   generated_at:    string
+  /** One-line summary of the change + its primary driver. (v2) */
+  headline?:       string
+  /** Variance bridge — the itemized causes that make up the change. (v2) */
+  drivers?:        AICommentaryDriver[]
+  /** Sum of signed drivers. (v2) */
+  explained_amount?:   string
+  /** Residual the drivers don't account for. (v2) */
+  unexplained_amount?: string
   narrative:       string
   risk_level:      "low" | "medium" | "high"
   justified:       "yes" | "no" | "needs_review"
