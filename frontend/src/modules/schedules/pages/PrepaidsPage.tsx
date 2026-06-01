@@ -76,8 +76,16 @@ function fmt(s: string | null | undefined): string {
 
 function monthlyAmount(total: string, start: string, end: string): string {
   const t = parseFloat(total) || 0
-  const s = start ? new Date(start) : null
-  const e = end ? new Date(end) : null
+  // CRITICAL: append "T00:00:00" so the date-only string parses at LOCAL
+  // midnight, not UTC midnight. Without it, `new Date("2026-01-01")` is
+  // UTC midnight, and `.getFullYear()/.getMonth()` then read it in the
+  // browser's local zone — for any negative-UTC offset (all of the US)
+  // that shifts 2026-01-01 back to 2025-12-31, inflating the month span
+  // by one (12 → 13) and showing $923.08 instead of $1,000 for a
+  // 12-month / $12,000 prepaid. The sibling dailyRateLabel() already
+  // guards this way; monthlyAmount() was missing it.
+  const s = start ? new Date(start + "T00:00:00") : null
+  const e = end ? new Date(end + "T00:00:00") : null
   if (!s || !e || isNaN(s.getTime()) || isNaN(e.getTime())) return "$0.00"
   const months = Math.max(
     1,
