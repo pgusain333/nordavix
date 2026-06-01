@@ -158,12 +158,11 @@ export const SOFTWARE_APP_SCHEMA = {
     priceCurrency:   "USD",
     description:     "Free during beta",
   },
-  aggregateRating: {
-    "@type":      "AggregateRating",
-    ratingValue: "5",
-    bestRating:  "5",
-    ratingCount: "10",
-  },
+  // NOTE: no aggregateRating here on purpose. Emitting a fabricated rating
+  // (we have no real, verifiable user reviews yet during beta) violates
+  // Google's structured-data guidelines and can trigger a manual action that
+  // suppresses ALL rich results for the domain. Re-add a real AggregateRating
+  // only once it reflects genuine, on-page reviews.
 }
 
 /**
