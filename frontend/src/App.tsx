@@ -2,11 +2,7 @@ import { lazy, Suspense } from "react"
 import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react"
 import { Routes, Route, Navigate, useLocation } from "react-router-dom"
 import { AnimatePresence, motion } from "framer-motion"
-import { ThreePaneLayout } from "@/core/layout/ThreePaneLayout"
-import { DashboardHome } from "@/modules/dashboard/pages/DashboardHome"
 import { HomePage } from "@/marketing/HomePage"
-import { WorkspaceGate } from "@/core/auth/WorkspaceGate"
-import { AuthPage } from "@/modules/auth/pages/AuthPage"
 import { TopProgressBar } from "@/core/ui/TopProgressBar"
 import { CookieBanner } from "@/core/consent/CookieBanner"
 import { Spinner } from "@/core/ui/components"
@@ -18,13 +14,18 @@ import { MOTION, EASE } from "@/core/motion"
 // `lazy(() => import(...))` into a separate file under /assets, fetched
 // the first time the user lands on that route.
 //
-// Eager (kept in main bundle): HomePage, AuthPage, ThreePaneLayout,
-// WorkspaceGate, DashboardHome — these are the first paint for both
-// signed-out and signed-in users.
+// Eager (kept in main bundle): HomePage only — the marketing landing page,
+// the SEO-critical first paint for anonymous visitors. Everything the
+// AUTHENTICATED app needs (app shell, dashboard, auth surface) is lazy below,
+// so a marketing visitor never downloads it. Trade-off: a signed-in user
+// hitting /app sees a ~150ms loader on first visit while the app-shell chunk
+// loads — then it's cached (immutable) for every subsequent visit.
 //
-// Lazy: everything else. Trade-off is a ~150ms spinner on the first
-// hit to a never-visited page, in exchange for cutting the initial
-// JS by ~60%.
+// Lazy: everything else, each its own chunk fetched on first navigation.
+const ThreePaneLayout = lazy(() => import("@/core/layout/ThreePaneLayout").then(m => ({ default: m.ThreePaneLayout })))
+const WorkspaceGate   = lazy(() => import("@/core/auth/WorkspaceGate").then(m => ({ default: m.WorkspaceGate })))
+const AuthPage        = lazy(() => import("@/modules/auth/pages/AuthPage").then(m => ({ default: m.AuthPage })))
+const DashboardHome   = lazy(() => import("@/modules/dashboard/pages/DashboardHome").then(m => ({ default: m.DashboardHome })))
 const FluxDashboard           = lazy(() => import("@/modules/flux/pages/FluxDashboard").then(m => ({ default: m.FluxDashboard })))
 const FluxMonthIndex          = lazy(() => import("@/modules/flux/pages/FluxMonthIndex").then(m => ({ default: m.FluxMonthIndex })))
 const ReconciliationsDashboard = lazy(() => import("@/modules/recons/pages/ReconciliationsDashboard").then(m => ({ default: m.ReconciliationsDashboard })))

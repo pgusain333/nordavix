@@ -52,7 +52,11 @@ export default defineConfig({
           "vendor-react":   ["react", "react-dom", "react-router-dom"],
           "vendor-clerk":   ["@clerk/clerk-react"],
           "vendor-framer":  ["framer-motion"],
-          "vendor-query":   ["@tanstack/react-query", "@tanstack/react-table"],
+          "vendor-query":   ["@tanstack/react-query"],
+          // react-table is only used by the app's data tables (all lazy
+          // routes), never by the marketing pages — split it out of
+          // vendor-query so the marketing homepage doesn't download it.
+          "vendor-table":   ["@tanstack/react-table"],
           "vendor-lucide":  ["lucide-react"],
         },
       },
