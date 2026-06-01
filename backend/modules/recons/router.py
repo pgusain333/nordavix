@@ -3125,7 +3125,10 @@ async def export_reconciliation(
 # the new batch. Idempotent.
 
 _BANK_CSV_EXTS = {"csv", "txt"}
-_BANK_CSV_MAX_BYTES = 5 * 1024 * 1024  # 5 MB — typical statement is <500 KB
+_BANK_PDF_EXTS = {"pdf"}
+_BANK_FILE_EXTS = _BANK_CSV_EXTS | _BANK_PDF_EXTS
+_BANK_CSV_MAX_BYTES = 5 * 1024 * 1024   # 5 MB — typical CSV is <500 KB
+_BANK_PDF_MAX_BYTES = 15 * 1024 * 1024  # 15 MB — multi-page color statements can be larger
 
 
 def _serialize_bank_txn(row: BankStatementTxn) -> dict:
@@ -3163,32 +3166,59 @@ async def upload_bank_statement(
 
     name = file.filename or "statement.csv"
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    if ext not in _BANK_CSV_EXTS:
+    if ext not in _BANK_FILE_EXTS:
         raise HTTPException(
             status_code=400,
-            detail=f"File type .{ext} not allowed. Upload a CSV bank statement.",
+            detail=(
+                f"File type .{ext} not allowed. Upload a CSV or PDF bank statement."
+            ),
         )
 
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file.")
-    if len(raw) > _BANK_CSV_MAX_BYTES:
+    max_bytes = _BANK_PDF_MAX_BYTES if ext in _BANK_PDF_EXTS else _BANK_CSV_MAX_BYTES
+    if len(raw) > max_bytes:
         raise HTTPException(
             status_code=400,
-            detail=f"File too large ({len(raw):,} bytes). Max 5 MB.",
+            detail=f"File too large ({len(raw):,} bytes). Max {max_bytes // (1024*1024)} MB.",
         )
 
-    from modules.recons.bank_csv import parse_bank_csv
-
-    parsed = parse_bank_csv(raw, filename=name)
-    if not parsed:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Couldn't find any transaction rows in the CSV. Expected a header "
-                "row with Date + Amount (or Debit/Credit) + Description columns."
-            ),
-        )
+    # Dispatch to the right parser by extension. Both return the same
+    # shape ([{txn_date, amount, description, bank_ref}, ...]) so the
+    # persist + auto-match path below is identical.
+    if ext in _BANK_PDF_EXTS:
+        from modules.recons.bank_pdf import is_likely_scanned_pdf, parse_bank_pdf
+        try:
+            parsed = parse_bank_pdf(raw, filename=name)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not parsed:
+            # Tell the user WHY — scanned vs unfamiliar layout matters.
+            if is_likely_scanned_pdf(raw):
+                detail = (
+                    "This PDF appears to be a scanned image (no extractable text). "
+                    "Use your bank's CSV export instead, or convert via a "
+                    "text-based PDF tool."
+                )
+            else:
+                detail = (
+                    "Couldn't find any transaction rows in the PDF. The layout "
+                    "may be unfamiliar — try your bank's CSV export instead, or "
+                    "share the PDF with support so we can add this bank's layout."
+                )
+            raise HTTPException(status_code=400, detail=detail)
+    else:
+        from modules.recons.bank_csv import parse_bank_csv
+        parsed = parse_bank_csv(raw, filename=name)
+        if not parsed:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Couldn't find any transaction rows in the CSV. Expected a header "
+                    "row with Date + Amount (or Debit/Credit) + Description columns."
+                ),
+            )
 
     # Wipe prior rows for this (account, period) — re-uploads replace.
     await db.execute(

@@ -157,13 +157,13 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
             <>
               <p className="text-sm font-semibold text-theme">No bank statement uploaded yet</p>
               <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                Upload your bank's CSV statement for {formatDate(periodEnd)} — we auto-match it
+                Upload your bank's CSV or PDF statement for {formatDate(periodEnd)} — we auto-match it
                 against the GL and surface what needs JEs vs. what's outstanding.
               </p>
             </>
           )}
         </div>
-        <input ref={fileInputRef} type="file" accept=".csv,.txt"
+        <input ref={fileInputRef} type="file" accept=".csv,.txt,.pdf"
           onChange={onFilePick}
           style={{ display: "none" }} />
         <Button size="sm" variant={w.uploaded ? "outline" : undefined}

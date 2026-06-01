@@ -21,3 +21,11 @@ sentry-sdk[fastapi]>=1.45.0
 # so the dependency wasn't actually shipped. Every PDF export was
 # failing with ModuleNotFoundError until this line was added.
 reportlab>=4.2.0
+
+# PDF text + table extraction for bank-statement uploads. Pure Python
+# (no system deps like poppler/tesseract), works on Fly out of the box.
+# Used by modules/recons/bank_pdf.py to parse uploaded bank PDFs into
+# the same {txn_date, amount, description, bank_ref} shape that the CSV
+# parser produces — downstream code (persist + auto-match) doesn't care
+# which format the user uploaded.
+pdfplumber>=0.11.0
