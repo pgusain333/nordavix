@@ -368,6 +368,27 @@ async def _process_account(
         # value can be safely overwritten — AI re-computes from the
         # same chain anyway. Fall through.
 
+    gl_balance = Decimal(snap.balance)
+    is_credit_natural = snap.account_type in _CREDIT_NATURAL_TYPES
+    flip = -1 if is_credit_natural else 1
+
+    # ── Schedule-backed account fork ───────────────────────────────────
+    # Before falling through to the generic "opening + GL period activity"
+    # logic, check whether this account is tied to a Nordavix Schedule
+    # (Prepaid / Accrual / Fixed Asset / Lease / Loan). If yes, the
+    # Schedule is the AUTHORITATIVE subledger — not the QBO GL — and we
+    # must compare schedule-derived SL to GL. A non-zero variance means a
+    # JE is missing or extra in QBO; we surface that gap rather than
+    # auto-papering over it with GL activity.
+    sched = await _schedule_backed_subledger(db, tenant_id, qid, period_end)
+    if sched is not None:
+        await _process_schedule_backed_account(
+            db=db, tenant_id=tenant_id, user=user,
+            snap=snap, period_end=period_end, review=review,
+            gl_balance=gl_balance, sched=sched, result=result,
+        )
+        return
+
     # ── Compute opening balance — strict close-and-roll ────────────────
     # Opening = prior reconciled subledger ONLY. If no prior is
     # reconciled, opening = $0 and AI will likely fail to tie out
@@ -381,10 +402,6 @@ async def _process_account(
     else:
         opening = chosen[1]
         opening_source = f"reconciled prior-period subledger ({chosen[0].isoformat()})"
-
-    gl_balance = Decimal(snap.balance)
-    is_credit_natural = snap.account_type in _CREDIT_NATURAL_TYPES
-    flip = -1 if is_credit_natural else 1
 
     # ── Pull every transaction posted to this account in the period ─────
     from core.qbo_gl import pull_gl_transactions
@@ -1227,6 +1244,467 @@ def _generate_narrative(
             f"ties subledger {_money(computed)} to GL {_money(gl_balance)} exactly. "
             f"Confidence: {confidence}."
         )
+
+
+# ── Schedule-backed subledger (Prepaid / Accrual / FA / Lease / Loan) ──────
+#
+# For these five account types the Nordavix Schedule is the authoritative
+# subledger. The recon logic must compute SL from the schedule (independent
+# of QBO GL activity) and compare to the GL balance. A non-zero variance
+# means there's a JE that should be posted to (or removed from) QuickBooks
+# — Agentic Mode surfaces that gap rather than auto-papering over it.
+#
+# Sign convention: `sl_signed` is returned in DEBIT-POSITIVE so it can be
+# compared directly to `GlBalanceSnapshot.balance` (which stores debit-
+# positive too). Asset accounts → positive; liabilities + contra-assets →
+# negative.
+
+
+async def _schedule_backed_subledger(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,  # noqa: ARG001 — tenant filter applied via session event listener
+    qbo_account_id: str,
+    period_end: date,
+) -> dict | None:
+    """If `qbo_account_id` is tied to a Nordavix Schedule, return the
+    schedule-derived subledger info. Otherwise return None and the caller
+    falls back to the GL-based logic.
+
+    Returns:
+      {
+        "schedule_type":  "prepaid" | "accrual" | "fixed_asset_cost" |
+                          "fixed_asset_accdep" | "lease_liability" |
+                          "lease_rou" | "loan",
+        "sl_signed":      Decimal in debit-positive convention,
+        "item_count":     int — # active items hitting this account,
+        "je_items":       list[dict] — period JEs expected per the
+                                       schedule, in reconciling_items
+                                       shape (txn_id, txn_type, txn_number,
+                                       txn_date, amount, memo).
+      }
+    """
+    from models.schedule import (
+        ScheduleAccrual,
+        ScheduleFixedAsset,
+        ScheduleLease,
+        ScheduleLoan,
+        SchedulePrepaid,
+    )
+    from modules.schedules.calc import (
+        ZERO,
+        _accrual_balance_as_of,
+        _fa_accumulated_dep_as_of,
+        _lease_liability_as_of,
+        _loan_principal_as_of,
+        _months_between,
+        _prepaid_period_expense,
+        _prepaid_unamortized_as_of,
+        _q,
+        fa_period_depreciation,
+        lease_principal_paid_in_period,
+        loan_principal_paid_in_period,
+    )
+
+    p_start = period_end.replace(day=1)
+
+    # ── Prepaid (debit-natural asset) ────────────────────────────────
+    prepaids = list((await db.execute(
+        select(SchedulePrepaid).where(
+            SchedulePrepaid.qbo_account_id == qbo_account_id,
+            SchedulePrepaid.is_active.is_(True),
+        )
+    )).scalars().all())
+    if prepaids:
+        sl = ZERO
+        je: list[dict] = []
+        for it in prepaids:
+            sl += _prepaid_unamortized_as_of(it, period_end)
+            if p_start <= it.invoice_date <= period_end:
+                je.append({
+                    "txn_id":     f"prepaid-init-{it.id}",
+                    "txn_type":   "Schedule (Initial)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   it.invoice_date.isoformat(),
+                    "amount":     str(_q(Decimal(it.total_amount))),
+                    "memo":       f"{it.description} — initial prepayment per Nordavix Schedule",
+                })
+            amort = _prepaid_period_expense(it, p_start, period_end)
+            if amort > ZERO:
+                je.append({
+                    "txn_id":     f"prepaid-amort-{it.id}-{period_end.isoformat()}",
+                    "txn_type":   "Schedule (Amortization)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   period_end.isoformat(),
+                    "amount":     str(_q(-amort)),
+                    "memo":       f"{it.description} — period amortization per Nordavix Schedule",
+                })
+        return {"schedule_type": "prepaid", "sl_signed": _q(sl), "item_count": len(prepaids), "je_items": je}
+
+    # ── Accrual (credit-natural liability) ───────────────────────────
+    accruals = list((await db.execute(
+        select(ScheduleAccrual).where(
+            ScheduleAccrual.qbo_account_id == qbo_account_id,
+            ScheduleAccrual.is_active.is_(True),
+        )
+    )).scalars().all())
+    if accruals:
+        sl_pos = ZERO
+        je = []
+        for it in accruals:
+            sl_pos += _accrual_balance_as_of(it, period_end)
+            if p_start <= it.accrual_date <= period_end:
+                je.append({
+                    "txn_id":     f"accrual-book-{it.id}",
+                    "txn_type":   "Schedule (Accrual)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   it.accrual_date.isoformat(),
+                    "amount":     str(_q(-Decimal(it.amount))),
+                    "memo":       f"{it.description} — accrual booked per Nordavix Schedule",
+                })
+            if it.reverses_on is not None and p_start <= it.reverses_on <= period_end:
+                je.append({
+                    "txn_id":     f"accrual-rev-{it.id}",
+                    "txn_type":   "Schedule (Reversal)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   it.reverses_on.isoformat(),
+                    "amount":     str(_q(Decimal(it.amount))),
+                    "memo":       f"{it.description} — accrual reversed per Nordavix Schedule",
+                })
+        return {"schedule_type": "accrual", "sl_signed": _q(-sl_pos), "item_count": len(accruals), "je_items": je}
+
+    # ── Fixed Asset COST account (debit-natural asset) ───────────────
+    fas_cost = list((await db.execute(
+        select(ScheduleFixedAsset).where(
+            ScheduleFixedAsset.qbo_account_id == qbo_account_id,
+            ScheduleFixedAsset.is_active.is_(True),
+        )
+    )).scalars().all())
+    if fas_cost:
+        sl = ZERO
+        je = []
+        for it in fas_cost:
+            in_svc = it.in_service_date <= period_end
+            disposed = it.disposed_on is not None and it.disposed_on <= period_end
+            if in_svc and not disposed:
+                sl += Decimal(it.cost)
+            if p_start <= it.in_service_date <= period_end:
+                je.append({
+                    "txn_id":     f"fa-add-{it.id}",
+                    "txn_type":   "Schedule (FA Addition)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   it.in_service_date.isoformat(),
+                    "amount":     str(_q(Decimal(it.cost))),
+                    "memo":       f"{it.description} — placed in service per Nordavix Schedule",
+                })
+            if it.disposed_on is not None and p_start <= it.disposed_on <= period_end:
+                je.append({
+                    "txn_id":     f"fa-disp-{it.id}",
+                    "txn_type":   "Schedule (FA Disposal)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   it.disposed_on.isoformat(),
+                    "amount":     str(_q(-Decimal(it.cost))),
+                    "memo":       f"{it.description} — disposed per Nordavix Schedule",
+                })
+        return {"schedule_type": "fixed_asset_cost", "sl_signed": _q(sl), "item_count": len(fas_cost), "je_items": je}
+
+    # ── Fixed Asset ACCUMULATED DEP contra-asset (credit-natural) ────
+    fas_dep = list((await db.execute(
+        select(ScheduleFixedAsset).where(
+            ScheduleFixedAsset.accumulated_dep_qbo_account_id == qbo_account_id,
+            ScheduleFixedAsset.is_active.is_(True),
+        )
+    )).scalars().all())
+    if fas_dep:
+        sl_pos = ZERO
+        je = []
+        for it in fas_dep:
+            sl_pos += _fa_accumulated_dep_as_of(it, period_end)
+            dep = fa_period_depreciation(it, p_start, period_end)
+            if dep > ZERO:
+                je.append({
+                    "txn_id":     f"fa-dep-{it.id}-{period_end.isoformat()}",
+                    "txn_type":   "Schedule (Depreciation)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   period_end.isoformat(),
+                    "amount":     str(_q(-dep)),
+                    "memo":       f"{it.description} — period depreciation per Nordavix Schedule",
+                })
+        return {"schedule_type": "fixed_asset_accdep", "sl_signed": _q(-sl_pos), "item_count": len(fas_dep), "je_items": je}
+
+    # ── Lease LIABILITY (credit-natural) ─────────────────────────────
+    leases_liab = list((await db.execute(
+        select(ScheduleLease).where(
+            ScheduleLease.qbo_account_id == qbo_account_id,
+            ScheduleLease.is_active.is_(True),
+        )
+    )).scalars().all())
+    if leases_liab:
+        sl_pos = ZERO
+        je = []
+        active_count = 0
+        for it in leases_liab:
+            if it.initial_liability is None or it.discount_rate_pct is None:
+                continue  # cash-basis lease — no BS liability
+            active_count += 1
+            sl_pos += _lease_liability_as_of(it, period_end)
+            if p_start <= it.lease_start <= period_end:
+                je.append({
+                    "txn_id":     f"lease-init-{it.id}",
+                    "txn_type":   "Schedule (Lease Initial)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   it.lease_start.isoformat(),
+                    "amount":     str(_q(-Decimal(it.initial_liability))),
+                    "memo":       f"{it.description} — initial lease liability per Nordavix Schedule",
+                })
+            principal = lease_principal_paid_in_period(it, p_start, period_end)
+            if principal > ZERO:
+                je.append({
+                    "txn_id":     f"lease-pay-{it.id}-{period_end.isoformat()}",
+                    "txn_type":   "Schedule (Lease Payment)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   period_end.isoformat(),
+                    "amount":     str(_q(principal)),
+                    "memo":       f"{it.description} — principal portion of lease payment per Nordavix Schedule",
+                })
+        if active_count > 0:
+            return {"schedule_type": "lease_liability", "sl_signed": _q(-sl_pos), "item_count": active_count, "je_items": je}
+
+    # ── Lease ROU asset (debit-natural) ──────────────────────────────
+    leases_rou = list((await db.execute(
+        select(ScheduleLease).where(
+            ScheduleLease.rou_qbo_account_id == qbo_account_id,
+            ScheduleLease.is_active.is_(True),
+        )
+    )).scalars().all())
+    if leases_rou:
+        sl = ZERO
+        je = []
+        active_count = 0
+        for it in leases_rou:
+            if it.initial_rou_asset is None:
+                continue
+            active_count += 1
+            total_months = (it.lease_end.year - it.lease_start.year) * 12 + (it.lease_end.month - it.lease_start.month) + 1
+            if total_months <= 0:
+                continue
+            months_elapsed = min(_months_between(it.lease_start, period_end), total_months)
+            monthly_amort = Decimal(it.initial_rou_asset) / Decimal(total_months)
+            rou_remaining = max(ZERO, Decimal(it.initial_rou_asset) - monthly_amort * Decimal(months_elapsed))
+            sl += rou_remaining
+            if p_start <= it.lease_start <= period_end:
+                je.append({
+                    "txn_id":     f"lease-rou-init-{it.id}",
+                    "txn_type":   "Schedule (ROU Initial)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   it.lease_start.isoformat(),
+                    "amount":     str(_q(Decimal(it.initial_rou_asset))),
+                    "memo":       f"{it.description} — ROU asset recognized per Nordavix Schedule",
+                })
+            # Period amortization = monthly_amort × (months_elapsed_now − months_elapsed_prior).
+            # prior_pe = last day of the month BEFORE p_start.
+            if p_start.month == 1:
+                prior_pe = date(p_start.year - 1, 12, 31)
+            else:
+                from calendar import monthrange as _mr
+                prev_m = p_start.month - 1
+                prior_pe = date(p_start.year, prev_m, _mr(p_start.year, prev_m)[1])
+            months_prior = min(_months_between(it.lease_start, prior_pe), total_months)
+            period_amort = max(ZERO, monthly_amort * Decimal(months_elapsed - months_prior))
+            if period_amort > ZERO and it.lease_start <= period_end:
+                je.append({
+                    "txn_id":     f"lease-rou-amort-{it.id}-{period_end.isoformat()}",
+                    "txn_type":   "Schedule (ROU Amortization)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   period_end.isoformat(),
+                    "amount":     str(_q(-period_amort)),
+                    "memo":       f"{it.description} — ROU period amortization per Nordavix Schedule",
+                })
+        if active_count > 0:
+            return {"schedule_type": "lease_rou", "sl_signed": _q(sl), "item_count": active_count, "je_items": je}
+
+    # ── Loan (credit-natural liability) ──────────────────────────────
+    loans = list((await db.execute(
+        select(ScheduleLoan).where(
+            ScheduleLoan.qbo_account_id == qbo_account_id,
+            ScheduleLoan.is_active.is_(True),
+        )
+    )).scalars().all())
+    if loans:
+        sl_pos = ZERO
+        je = []
+        for it in loans:
+            sl_pos += _loan_principal_as_of(it, period_end)
+            if p_start <= it.loan_date <= period_end:
+                je.append({
+                    "txn_id":     f"loan-orig-{it.id}",
+                    "txn_type":   "Schedule (Loan Origination)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   it.loan_date.isoformat(),
+                    "amount":     str(_q(-Decimal(it.original_principal))),
+                    "memo":       f"{it.description} — loan origination per Nordavix Schedule",
+                })
+            principal = loan_principal_paid_in_period(it, p_start, period_end)
+            if principal > ZERO:
+                je.append({
+                    "txn_id":     f"loan-pay-{it.id}-{period_end.isoformat()}",
+                    "txn_type":   "Schedule (Loan Payment)",
+                    "txn_number": str(it.id)[-8:],
+                    "txn_date":   period_end.isoformat(),
+                    "amount":     str(_q(principal)),
+                    "memo":       f"{it.description} — principal payment per Nordavix Schedule",
+                })
+        return {"schedule_type": "loan", "sl_signed": _q(-sl_pos), "item_count": len(loans), "je_items": je}
+
+    return None
+
+
+async def _process_schedule_backed_account(
+    *,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    user: User,
+    snap: GlBalanceSnapshot,
+    period_end: date,
+    review: AccountReviewStatus | None,
+    gl_balance: Decimal,
+    sched: dict,
+    result: AgenticResult,
+) -> None:
+    """Reconcile a schedule-backed account: subledger = Nordavix Schedule,
+    not QBO GL activity. Tied out → mark prepared. Variance → analyze + show
+    expected JEs so the user knows what's missing in QBO."""
+    sl = Decimal(sched["sl_signed"])
+    je_items = sched["je_items"]
+    gap = gl_balance - sl
+    tied_out = abs(gap) < _TIE_TOLERANCE
+
+    qid = snap.qbo_account_id
+    name = snap.account_name
+    number = snap.account_number or ""
+    pretty_type = sched["schedule_type"].replace("_", " ")
+
+    if tied_out:
+        commentary = {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "confidence":   "high",
+            "checks": [
+                {
+                    "name":   "Subledger source",
+                    "status": "pass",
+                    "detail": (
+                        f"Computed from Nordavix {pretty_type} schedule "
+                        f"({sched['item_count']} active item(s)) — authoritative "
+                        "subledger for this account."
+                    ),
+                },
+                {
+                    "name":   "Schedule vs GL",
+                    "status": "pass",
+                    "detail": (
+                        f"Schedule SL of {_money(sl)} ties to GL of {_money(gl_balance)}. "
+                        "No reconciling items needed."
+                    ),
+                },
+            ],
+            "recommendation": "approve",
+            "narrative": (
+                f"AI-prepared this schedule-backed reconciliation by deriving the "
+                f"subledger from the Nordavix {pretty_type} schedule "
+                f"({sched['item_count']} active item(s)). Schedule balance of {_money(sl)} "
+                f"matches GL of {_money(gl_balance)} — clean tie-out."
+            ),
+        }
+        await _save_prepared(
+            db=db, tenant_id=tenant_id, user=user,
+            qid=qid, period_end=period_end, review=review,
+            subledger_total=sl, items=je_items,
+            source_note=(
+                f"AI-prepared (schedule-backed {pretty_type}): Nordavix Schedule "
+                f"yields {_money(sl)}, matches GL {_money(gl_balance)} "
+                f"({sched['item_count']} active item(s), {len(je_items)} period JE(s))."
+            ),
+            commentary=commentary,
+        )
+        result.prepared += 1
+        result.accounts.append(AccountResult(
+            qbo_account_id=qid, account_name=name, account_number=number,
+            action="prepared",
+            reason=f"Schedule-backed ({pretty_type}): Nordavix Schedule SL {_money(sl)} matches GL — tied out.",
+            items_added=len(je_items),
+            gap_before=str(gap.quantize(Decimal("0.01"))),
+            gap_after=str(gap.quantize(Decimal("0.01"))),
+        ))
+        return
+
+    # Variance — analyze, do NOT mark prepared.
+    je_summary = (
+        ", ".join(f"{j['txn_type']} {_money(Decimal(j['amount']))}" for j in je_items[:3])
+        if je_items else "no period activity in the schedule"
+    )
+    commentary = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "confidence":   "medium",
+        "checks": [
+            {
+                "name":   "Subledger source",
+                "status": "pass",
+                "detail": (
+                    f"Computed from Nordavix {pretty_type} schedule "
+                    f"({sched['item_count']} active item(s))."
+                ),
+            },
+            {
+                "name":   "Schedule vs GL",
+                "status": "warn",
+                "detail": (
+                    f"Schedule SL of {_money(sl)} vs GL of {_money(gl_balance)} — "
+                    f"variance of {_money(gap)}. The Nordavix Schedule is the "
+                    "authoritative subledger; this gap means the corresponding "
+                    "JE is missing (or extra) in QuickBooks."
+                ),
+            },
+            {
+                "name":   "Suggested JEs for this period",
+                "status": "warn" if je_items else "pass",
+                "detail": (
+                    f"{len(je_items)} JE(s) expected per the schedule: {je_summary}. "
+                    "See the Suggestions tab to review and post the missing entries to QBO."
+                    if je_items else
+                    "No new schedule activity this period — variance is from prior-period "
+                    "JEs that were never posted to QBO."
+                ),
+            },
+        ],
+        "recommendation": "investigate",
+        "narrative": (
+            f"Schedule shows a balance of {_money(sl)} but QBO GL shows {_money(gl_balance)} — "
+            f"a {_money(gap)} gap. The Nordavix Schedule is your subledger of record, so this "
+            "variance represents JE(s) that need to be posted to (or removed from) QuickBooks. "
+            "Open the Suggestions tab to see the expected JEs for this period and post them. "
+            "Re-Sync the period after posting and re-run AI to confirm the tie-out."
+        ),
+    }
+    await _save_analyzed_row(
+        db=db, tenant_id=tenant_id,
+        qid=qid, period_end=period_end, review=review,
+        commentary=commentary,
+        opening=Decimal("0"),  # n/a for schedule-backed
+        variance=gap, candidate_count=len(je_items),
+        prior_period_end=None,
+    )
+    result.analyzed += 1
+    result.accounts.append(AccountResult(
+        qbo_account_id=qid, account_name=name, account_number=number,
+        action="analyzed",
+        reason=(
+            f"Schedule-backed ({pretty_type}): Nordavix Schedule SL of {_money(sl)} "
+            f"doesn't match GL of {_money(gl_balance)} (variance {_money(gap)}). "
+            "Likely missing or extra JE in QBO — see Suggestions tab."
+        ),
+        items_added=0,
+        gap_before=str(gap.quantize(Decimal("0.01"))),
+        gap_after=str(gap.quantize(Decimal("0.01"))),
+    ))
 
 
 # ── Display formatting ─────────────────────────────────────────────────────
