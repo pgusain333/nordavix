@@ -190,7 +190,7 @@ def verify_evidence_document(
         messages=[{"role": "user", "content": content}],
     )
 
-    raw_text = response.content[0].text.strip()
+    raw_text = (response.content[0].text if response.content else "").strip()
     # Strip code fences if the model added any.
     if raw_text.startswith("```"):
         raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)

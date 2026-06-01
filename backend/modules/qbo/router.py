@@ -13,7 +13,10 @@ State encoding: tenant_id is base64-encoded in the OAuth state parameter so the 
 can associate the tokens with the right tenant without an auth token.
 """
 import base64
+import hashlib
+import hmac
 import json
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
@@ -39,16 +42,39 @@ _AUTH_BASE  = "https://appcenter.intuit.com/connect/oauth2"
 _TOKEN_URL  = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 
 
+# OAuth state is HMAC-signed so the callback can't be tricked into binding
+# QBO tokens to an attacker-chosen tenant. A 15-minute TTL bounds replay —
+# an OAuth round trip takes seconds. Signed with the server-only Clerk
+# secret (never exposed to clients).
+_STATE_TTL_SECONDS = 900
+
+
+def _state_secret() -> bytes:
+    return (settings.clerk_secret_key or "nordavix-state-fallback").encode()
+
+
 def _encode_state(tenant_id: uuid.UUID) -> str:
-    """Encode tenant_id into OAuth state (base64 JSON). Not cryptographically signed for MVP."""
-    payload = json.dumps({"tid": str(tenant_id)})
-    return base64.urlsafe_b64encode(payload.encode()).decode()
+    """Encode tenant_id into a SIGNED OAuth state: base64(payload).hmac.
+    Payload carries the tenant id + issued-at epoch; the HMAC binds them so
+    the callback rejects any forged/tampered state."""
+    payload = json.dumps({"tid": str(tenant_id), "iat": int(time.time())}, separators=(",", ":"))
+    body = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    sig = hmac.new(_state_secret(), body.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{body}.{sig}"
 
 
 def _decode_state(state: str) -> uuid.UUID | None:
-    """Decode state back to tenant_id. Returns None if malformed."""
+    """Verify the HMAC + TTL, then return tenant_id. None on any failure
+    (bad signature, tampered payload, expired, malformed)."""
     try:
-        payload = json.loads(base64.urlsafe_b64decode(state.encode()))
+        body, sig = state.rsplit(".", 1)
+        expected = hmac.new(_state_secret(), body.encode(), hashlib.sha256).hexdigest()[:32]
+        if not hmac.compare_digest(sig, expected):
+            return None
+        padding = "=" * ((4 - len(body) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode((body + padding).encode()))
+        if int(time.time()) - int(payload.get("iat", 0)) > _STATE_TTL_SECONDS:
+            return None
         return uuid.UUID(payload["tid"])
     except Exception:
         return None

@@ -84,6 +84,17 @@ def generate_narrative(
                 system=safe_system,
                 messages=[{"role": "user", "content": safe_user}],
             )
+            # A refusal / max_tokens-with-no-text / empty stop can return an
+            # empty content list — guard so it doesn't IndexError into an
+            # unhandled 500. Treat as a transient (retry, then raise the
+            # RuntimeError below which callers already catch + fall back on).
+            if not response.content or not getattr(response.content[0], "text", ""):
+                last_error = RuntimeError(
+                    f"Claude returned no text content (stop_reason="
+                    f"{getattr(response, 'stop_reason', '?')})."
+                )
+                time.sleep(2**attempt)
+                continue
             content = response.content[0].text
             input_tokens = response.usage.input_tokens
             output_tokens = response.usage.output_tokens

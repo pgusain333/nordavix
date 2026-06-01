@@ -1224,7 +1224,7 @@ async def explain_item(
             max_tokens=260,
             messages=[{"role": "user", "content": prompt}],
         )
-        return _strip_markdown(resp.content[0].text)
+        return _strip_markdown(resp.content[0].text if resp.content else "")
     except Exception:
         logger.exception("AI commentary failed for item %s", item.id)
         return None
@@ -1268,7 +1268,7 @@ async def explain_recon_summary(
             max_tokens=320,
             messages=[{"role": "user", "content": prompt}],
         )
-        return _strip_markdown(resp.content[0].text)
+        return _strip_markdown(resp.content[0].text if resp.content else "")
     except Exception:
         logger.exception("AI summary failed for recon %s", recon.id)
         return None

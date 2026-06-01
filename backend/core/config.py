@@ -29,6 +29,22 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     anthropic_model: str = "claude-sonnet-4-6"
 
+    # Application-layer encryption key for secrets at rest (QBO OAuth tokens).
+    # urlsafe-base64 32-byte Fernet key. Empty = tokens stored plaintext
+    # (the EncryptedString column type degrades gracefully + logs a warning).
+    # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    encryption_key: str = ""
+
+    # Clerk issuer allowlist (comma-separated https URLs). Empty = derive the
+    # expected issuer from clerk_jwks_url / clerk_publishable_key. Tokens
+    # whose `iss` isn't allowed are rejected — stops anyone with their own
+    # Clerk instance from self-provisioning a Nordavix tenant.
+    clerk_allowed_issuers: str = ""
+    # Safe rollout: when False, a mismatched issuer is only LOGGED (so you can
+    # confirm the real issuer matches what we derive before enforcing). Set to
+    # True — or set clerk_allowed_issuers explicitly — to actually reject.
+    clerk_enforce_issuer: bool = False
+
     app_env: str = "development"
     debug: bool = False
 

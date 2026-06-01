@@ -231,7 +231,7 @@ async def _generate(variance_id: str, tenant_id: str) -> dict[str, str]:
             messages=[{"role": "user", "content": prompt}],
         )
 
-        content       = _strip_markdown(response.content[0].text)
+        content       = _strip_markdown(response.content[0].text if response.content else "")
         input_tokens  = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
 
