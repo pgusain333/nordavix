@@ -19,10 +19,12 @@ import {
   TrendingUp, TrendingDown, Wallet, ReceiptText, ArrowDownToLine,
   ArrowUpFromLine, LineChart as LineIcon, Sparkles, AlertTriangle,
   Play, Info, Lightbulb, MousePointerClick,
+  Target, Eye, ShieldCheck, CheckCircle2,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import {
   insightsApi, type InsightsOverview, type KpiRow, type RiskLevel, type HistoryPoint,
+  type Advisory,
 } from "@/modules/insights/api"
 
 // ── Period helpers ───────────────────────────────────────────────────────────
@@ -204,13 +206,15 @@ export function InsightsPage() {
               )}
 
               <HeroKpis data={data} />
+              <ManagementSummary data={data} />
               <Section id="recommendations" title="Risks & recommendations" icon={Sparkles}
                 description="Heuristic-flagged action items for the selected period.">
                 <Recommendations data={data} />
               </Section>
               <Section id="liquidity" title="Liquidity" icon={Wallet}
-                description="Cash position, burn rate, runway, and operating cash flow.">
+                description="Cash position, operating burn, runway, ratios, and cash conversion.">
                 <KpiTable rows={data.liquidity.kpis} />
+                <AdvisoryBlock advisory={data.liquidity.advisory} />
                 <SectionDivider label="Cash & operating cash flow — last 7 months" />
                 <DualSparkline history={data.liquidity.history}
                   leftKey="cash" rightKey="ocf"
@@ -220,6 +224,7 @@ export function InsightsPage() {
               <Section id="profitability" title="Revenue & profitability" icon={LineIcon}
                 description="Top-line trends and margin compression.">
                 <KpiTable rows={data.profitability.kpis} />
+                <AdvisoryBlock advisory={data.profitability.advisory} />
                 <SectionDivider label="Revenue, GP, and net income — last 7 months" />
                 <TripleSparkline history={data.profitability.history}
                   keys={["revenue", "gp", "ni"]}
@@ -229,6 +234,7 @@ export function InsightsPage() {
               <Section id="receivables" title="Receivables (AR)" icon={ArrowDownToLine}
                 description="How quickly customers pay, where risk concentrates, largest overdue accounts.">
                 <KpiTable rows={data.receivables.kpis} />
+                <AdvisoryBlock advisory={data.receivables.advisory} />
                 {data.receivables.aging.length > 0 ? (
                   <>
                     <SectionDivider label="Aging concentration" />
@@ -245,6 +251,7 @@ export function InsightsPage() {
               <Section id="payables" title="Payables (AP)" icon={ArrowUpFromLine}
                 description="How quickly you're paying suppliers. Stretched payables damage relationships.">
                 <KpiTable rows={data.payables.kpis} />
+                <AdvisoryBlock advisory={data.payables.advisory} />
                 {data.payables.aging.length > 0 ? (
                   <>
                     <SectionDivider label="Aging concentration" />
@@ -261,6 +268,7 @@ export function InsightsPage() {
               <Section id="expenses" title="Expense monitoring" icon={ReceiptText}
                 description="Where the money went + month-over-month movers for anomaly detection.">
                 <KpiTable rows={data.expenses.kpis} />
+                <AdvisoryBlock advisory={data.expenses.advisory} />
                 {data.expenses.top_categories.length > 0 && (
                   <>
                     <SectionDivider label="Largest categories (by spend this period)" />
@@ -597,9 +605,9 @@ function HeroKpis({ data }: { data: InsightsOverview }) {
     {
       label:  "Runway",
       value:  data.liquidity.runway_months !== null
-        ? `${data.liquidity.runway_months.toFixed(1)} mo` : "Indefinite",
+        ? `${data.liquidity.runway_months.toFixed(1)} mo` : "Cash-gen.",
       change: null, changeUp: false,
-      sub:    data.liquidity.runway_months !== null ? "at current burn" : "cash-positive",
+      sub:    data.liquidity.runway_months !== null ? "at operating burn" : "operations fund themselves",
       risk:   riskColor(runwayRisk(data.liquidity.runway_months)),
     },
     {
@@ -677,6 +685,102 @@ function Recommendations({ data }: { data: InsightsOverview }) {
         </li>
       ))}
     </ul>
+  )
+}
+
+// ── Management summary ───────────────────────────────────────────────────────
+
+function ManagementSummary({ data }: { data: InsightsOverview }) {
+  const ms = data.management_summary
+  if (!ms) return null
+  const tone =
+    ms.health === "strong" ? { bg: "#dcfce7", fg: "#16a34a", label: "Strong",  Icon: ShieldCheck }
+    : ms.health === "watch" ? { bg: "#fef3c7", fg: "#b45309", label: "Watch",   Icon: Eye }
+    :                          { bg: "#fef2f2", fg: "#dc2626", label: "At risk", Icon: AlertTriangle }
+  const Icon = tone.Icon
+  return (
+    <div className="rounded-2xl overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="px-5 py-4 flex items-start gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        <span className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
+          style={{ background: tone.bg, color: tone.fg }}>
+          <Icon size={18} strokeWidth={1.9} />
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-sm font-bold text-theme">Management summary</h2>
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+              style={{ background: tone.bg, color: tone.fg }}>
+              {tone.label} · {ms.score}/100
+            </span>
+          </div>
+          <p className="text-[13px] mt-1 font-medium" style={{ color: "var(--text)" }}>{ms.headline}</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x"
+        style={{ borderColor: "var(--border)" }}>
+        <SummaryCol title="Do this first" Icon={Target}      items={ms.priorities}  fg="#dc2626" />
+        <SummaryCol title="Strengths"     Icon={CheckCircle2} items={ms.strengths}   fg="#16a34a" />
+        <SummaryCol title="Keep watching" Icon={Eye}         items={ms.watch_items} fg="#b45309" />
+      </div>
+    </div>
+  )
+}
+
+function SummaryCol({ title, Icon, items, fg }: { title: string; Icon: React.ElementType; items: string[]; fg: string }) {
+  return (
+    <div className="px-5 py-4" style={{ borderColor: "var(--border)" }}>
+      <div className="flex items-center gap-1.5 mb-2">
+        <Icon size={13} strokeWidth={2} style={{ color: fg }} />
+        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{title}</p>
+      </div>
+      <ul className="space-y-1.5">
+        {items.map((it, i) => (
+          <li key={i} className="text-[12px] leading-snug flex items-start gap-1.5" style={{ color: "var(--text-2)" }}>
+            <span className="mt-1.5 h-1 w-1 rounded-full shrink-0" style={{ background: fg }} />
+            {it}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// ── Per-section advisory (implications / actions / watch / risks) ────────────
+
+function AdvisoryBlock({ advisory }: { advisory?: Advisory }) {
+  if (!advisory) return null
+  return (
+    <div className="rounded-xl p-4" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <p className="text-[13px] leading-relaxed mb-3" style={{ color: "var(--text)" }}>
+        {advisory.implications}
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <AdvisoryList title="What to do"  Icon={Target}        items={advisory.actions} fg="var(--green)" />
+        <AdvisoryList title="Watch"       Icon={Eye}           items={advisory.watch}   fg="#6366f1" />
+        <AdvisoryList title="Risk areas"  Icon={AlertTriangle} items={advisory.risks}   fg="#dc2626" />
+      </div>
+    </div>
+  )
+}
+
+function AdvisoryList({ title, Icon, items, fg }: { title: string; Icon: React.ElementType; items: string[]; fg: string }) {
+  if (!items || items.length === 0) return null
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Icon size={12} strokeWidth={2} style={{ color: fg }} />
+        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{title}</p>
+      </div>
+      <ul className="space-y-1">
+        {items.map((it, i) => (
+          <li key={i} className="text-[12px] leading-snug flex items-start gap-1.5" style={{ color: "var(--text-2)" }}>
+            <span className="mt-1.5 h-1 w-1 rounded-full shrink-0" style={{ background: fg }} />
+            {it}
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 

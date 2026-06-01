@@ -88,6 +88,30 @@ ASSET_TYPES = {"Bank", "Accounts Receivable", "Other Current Asset", "Fixed Asse
 LIAB_TYPES  = {"Accounts Payable", "Credit Card", "Other Current Liability", "Long Term Liability"}
 EQUITY_TYPES = {"Equity"}
 
+# Working-capital classification (for liquidity ratios + the indirect-method
+# operating cash flow). Current = expected to convert to/consume cash within a
+# year. Credit Card is an operating current liability. Long-term items are
+# excluded from current ratios on purpose.
+CURRENT_ASSET_TYPES       = {"Bank", "Accounts Receivable", "Other Current Asset"}
+OTHER_CURRENT_ASSET_TYPES = {"Other Current Asset"}          # inventory, prepaids, etc.
+CURRENT_LIAB_TYPES        = {"Accounts Payable", "Credit Card", "Other Current Liability"}
+OTHER_CURRENT_LIAB_TYPES  = {"Credit Card", "Other Current Liability"}  # ex-AP (accrued, deferred rev, CC)
+
+# Non-cash expense accounts added back in the indirect cash-flow method. QBO
+# has no native "non-cash" flag, so we match by account name.
+_DEPRECIATION_KEYWORDS = ("depreciation", "amortization", "amortisation", "depletion")
+
+
+def _is_depreciation(account_name: str | None) -> bool:
+    if not account_name:
+        return False
+    nm = account_name.lower()
+    return any(k in nm for k in _DEPRECIATION_KEYWORDS)
+
+
+def _is_inventory(account_name: str | None) -> bool:
+    return bool(account_name and "inventory" in account_name.lower())
+
 # Credit-natural — balance comes back negative; flip for display.
 CREDIT_NATURAL = LIAB_TYPES | EQUITY_TYPES | INCOME_TYPES | OTHER_INCOME_TYPES
 
@@ -165,6 +189,18 @@ def _risk_for(metric: str, value: float | None) -> str:
     if metric == "dpo":
         if v <= 45: return "green"
         if v <= 75: return "amber"
+        return "red"
+    if metric == "current_ratio":
+        if v >= 1.5: return "green"
+        if v >= 1.0: return "amber"
+        return "red"
+    if metric == "quick_ratio":
+        if v >= 1.0: return "green"
+        if v >= 0.7: return "amber"
+        return "red"
+    if metric == "ccc":  # cash conversion cycle, days; lower is better
+        if v <= 30: return "green"
+        if v <= 60: return "amber"
         return "red"
     if metric == "gross_margin":
         if v >= 50: return "green"
@@ -496,6 +532,247 @@ def _build_recommendations(payload: dict) -> list[dict]:
     return recs[:6]
 
 
+# ── advisory layer (deterministic, number-driven) ────────────────────────────
+
+def _build_advisory(payload: dict) -> None:
+    """Attach decision-grade advisory to each section and a top management
+    summary. Fully deterministic + tied to the computed numbers (no AI), so a
+    CPA can audit exactly why each statement was made. Mutates `payload`."""
+    liq  = payload.get("liquidity", {})
+    prof = payload.get("profitability", {})
+    ar   = payload.get("receivables", {})
+    ap   = payload.get("payables", {})
+    exp  = payload.get("expenses", {})
+
+    runway  = liq.get("runway_months")
+    op_burn = liq.get("operating_burn") or 0.0
+    op_cf   = liq.get("operating_cash_flow") or 0.0
+    cash    = liq.get("cash_balance") or 0.0
+    cur_r   = liq.get("current_ratio")
+    wc      = liq.get("working_capital") or 0.0
+    wc_prior = liq.get("working_capital_prior") or 0.0
+    ncm     = liq.get("net_cash_movement") or 0.0
+    ccc     = liq.get("cash_conversion_cycle")
+
+    dso      = ar.get("dso_days")
+    ar_over60 = ar.get("aging_over_60_pct")
+    top_cust = (ar.get("top_customers") or [])
+    top_cust0 = top_cust[0] if top_cust else None
+
+    dpo      = ap.get("dpo_days")
+    ap_over60 = ap.get("aging_over_60_pct")
+    top_vend = (ap.get("top_vendors") or [])
+    top_vend0 = top_vend[0] if top_vend else None
+
+    gm       = prof.get("gross_margin_pct")
+    gm_prior = prof.get("gross_margin_pct_prior")
+    nm       = prof.get("net_margin_pct")
+    rev_chg  = prof.get("revenue_change_str")
+
+    # ── Liquidity & cash flow ──
+    impl: list[str] = []
+    if op_burn > 0 and runway is not None:
+        impl.append(
+            f"Operations consume about {_money_str(op_burn)}/month; with {_money_str(cash)} in the bank "
+            f"that's ~{runway:.1f} months of runway."
+        )
+    elif op_cf >= 0:
+        impl.append(f"Operations threw off ~{_money_str(op_cf)}/month of cash — you're self-funding, not burning.")
+    if cur_r is not None:
+        cover = "comfortably covers" if cur_r >= 1.5 else "roughly covers" if cur_r >= 1.0 else "does NOT cover"
+        impl.append(f"A {cur_r:.2f}× current ratio means current assets {cover} what's due within a year.")
+    if op_burn > 0 and abs(ncm - op_burn) > max(1000.0, 0.3 * op_burn):
+        impl.append("The gap between operating burn and the actual change in cash is financing "
+                    "(loans, raises, or owner draws) — watch it, it can mask the real operating picture.")
+
+    actions: list[str] = []
+    if runway is not None and runway < 6:
+        actions.append("Start a raise or credit line NOW — these take 2–4 months to close, often longer than your runway.")
+        actions.append("Freeze non-critical hiring and cut discretionary spend this month.")
+        if top_cust0:
+            actions.append(f"Accelerate collections — chasing {top_cust0['name']} ({_money_str(top_cust0['total'])}) directly extends runway.")
+    elif runway is not None and runway < 12:
+        actions.append("Build a 12-month cash forecast and set a monthly burn target reviewed at each close.")
+        actions.append("Secure a credit facility while metrics are strong — cheaper than raising under pressure.")
+    elif op_cf > 0:
+        actions.append("You're cash-generative: deliberately split surplus between reserves, debt paydown, and growth.")
+    if cur_r is not None and cur_r < 1.0:
+        actions.append("Lift the current ratio above 1.0× — pull AR collection forward and slow non-critical AP.")
+
+    watch = ["Operating-burn trend month over month — a widening burn shortens runway fast.",
+             "The spread between operating burn and net cash movement (your reliance on financing)."]
+    if ccc is not None:
+        watch.append(f"Cash conversion cycle ({ccc:.0f} days) — each day trimmed frees working capital.")
+
+    risks: list[str] = []
+    if runway is not None and runway < 6:
+        risks.append(f"Runway under 6 months ({runway:.1f}) — financing risk is the top threat right now.")
+    if cur_r is not None and cur_r < 1.0:
+        risks.append("Current ratio below 1.0× — exposed if a large payable comes due at once.")
+    if wc < 0:
+        risks.append("Negative working capital — current obligations exceed current assets.")
+
+    liq["advisory"] = {
+        "implications": " ".join(impl) or "Cash position held steady for the period.",
+        "actions":      actions or ["Keep the rolling cash forecast current and review burn at each close."],
+        "watch":        watch,
+        "risks":        risks or ["No acute liquidity risk flagged this period."],
+    }
+
+    # ── Receivables ──
+    ar_impl: list[str] = []
+    if dso is not None:
+        ar_impl.append(
+            f"You collect in about {dso:.0f} days on average"
+            + ("" if dso <= 45 else " — slower than the 30–45 day norm, so cash is sitting in receivables.")
+            + ("." if dso <= 45 else "")
+        )
+    if ar_over60 is not None:
+        ar_impl.append(f"{ar_over60:.0f}% of receivables are 60+ days old — that bucket is your write-off exposure.")
+    ar_actions: list[str] = []
+    if top_cust0:
+        ar_actions.append(f"Call your largest balance first: {top_cust0['name']} at {_money_str(top_cust0['total'])}.")
+    if dso is not None and dso > 45:
+        ar_actions.append("Tighten terms: automated reminders at 7/14/30 days, and consider a 1–2% early-pay discount.")
+    if ar_over60 is not None and ar_over60 > 15:
+        ar_actions.append("Escalate the 90+ bucket to a payment plan or collections before it becomes a write-off.")
+    ar["advisory"] = {
+        "implications": " ".join(ar_impl) or "Receivables are turning over cleanly.",
+        "actions":      ar_actions or ["Keep dunning current; no overdue concentration to act on."],
+        "watch":        ["Customer concentration — over-reliance on one payer is a cash risk.",
+                         "The 90+ day bucket (leading indicator of bad debt)."],
+        "risks":        ([f"{ar_over60:.0f}% of AR is 60+ days — elevated write-off risk."] if (ar_over60 or 0) > 25 else
+                         ["No acute collection risk flagged."]),
+    }
+
+    # ── Payables ──
+    ap_impl: list[str] = []
+    if dpo is not None:
+        ap_impl.append(
+            f"You pay suppliers in about {dpo:.0f} days"
+            + (" — healthy use of supplier credit." if dpo <= 75 else " — stretched, which can strain relationships.")
+        )
+    if dso is not None and dpo is not None:
+        if dpo < dso:
+            ap_impl.append(f"You pay faster ({dpo:.0f}d) than you collect ({dso:.0f}d) — you're financing customers; closing that gap frees cash.")
+        else:
+            ap_impl.append(f"You pay slower ({dpo:.0f}d) than you collect ({dso:.0f}d) — suppliers are helping fund operations.")
+    ap_actions: list[str] = []
+    if op_burn > 0:
+        ap_actions.append("Cash is tight: pay to terms (not early) and sequence vendors by criticality.")
+    else:
+        ap_actions.append("Cash is healthy: capture early-pay discounts where the implied yield beats your cash return.")
+    if ap_over60 is not None and ap_over60 > 25:
+        ap_actions.append("Clear or renegotiate the 60+ day payables before they damage supplier standing.")
+    if top_vend0:
+        ap_actions.append(f"Largest balance: {top_vend0['name']} at {_money_str(top_vend0['total'])} — confirm terms and timing.")
+    ap["advisory"] = {
+        "implications": " ".join(ap_impl) or "Payables are in normal range.",
+        "actions":      ap_actions,
+        "watch":        ["60+ day payables (supplier-relationship risk).",
+                         "Whether DPO is drifting up because of cash strain vs. deliberate terms."],
+        "risks":        ([f"{ap_over60:.0f}% of AP is 60+ days past due — supplier-relationship risk."] if (ap_over60 or 0) > 25 else
+                         ["No acute payables risk flagged."]),
+    }
+
+    # ── Profitability ──
+    pr_impl: list[str] = []
+    if gm is not None:
+        pr_impl.append(f"Gross margin is {gm:.0f}%"
+                       + (f" ({gm - gm_prior:+.1f} pts vs prior)." if gm_prior is not None else "."))
+    if nm is not None:
+        pr_impl.append(f"Net margin is {nm:.0f}% — "
+                       + ("profitable." if nm >= 0 else "you're spending more than you earn."))
+    if rev_chg:
+        pr_impl.append(f"Revenue moved {rev_chg} vs the prior period.")
+    pr_actions: list[str] = []
+    if gm is not None and gm_prior is not None and (gm_prior - gm) > 2:
+        pr_actions.append("Investigate the margin slip — break COGS down by category to find cost inflation or discounting.")
+    if nm is not None and nm < 0:
+        pr_actions.append("Path to break-even: rank expenses largest-first and set a target operating-income date.")
+    if not pr_actions:
+        pr_actions.append("Hold the line on margin — set a floor and review pricing vs. input costs each close.")
+    prof["advisory"] = {
+        "implications": " ".join(pr_impl) or "Profitability is steady.",
+        "actions":      pr_actions,
+        "watch":        ["Gross-margin trend (early signal of pricing/cost pressure).",
+                         "Operating leverage — are costs scaling slower than revenue?"],
+        "risks":        (["Operating at a net loss — every month of loss draws down cash."] if (nm or 0) < 0 else
+                         ["No acute profitability risk flagged."]),
+    }
+
+    # ── Expenses ──
+    mover = exp.get("biggest_mom_mover")
+    tops = exp.get("top_categories") or []
+    ex_impl: list[str] = []
+    if tops:
+        ex_impl.append(f"Largest spend category is {tops[0]['category']} ({_money_str(tops[0]['amount'])}).")
+    if mover:
+        ex_impl.append(f"{mover['category']} moved {mover['change_pct']:+.0f}% vs prior ({_money_str(mover['from'])} → {_money_str(mover['to'])}).")
+    exp["advisory"] = {
+        "implications": " ".join(ex_impl) or "No outsized expense categories or swings this period.",
+        "actions":      ([f"Confirm the {mover['category']} jump is intentional (one-off) vs. recurring drift."] if mover else
+                         ["Review the top categories for renegotiation or consolidation opportunities."]),
+        "watch":        ["Recurring vs. one-off in the biggest movers.",
+                         "Subscription/vendor creep across small line items."],
+        "risks":        (["A large recurring expense spike will compress margin if it sticks."] if mover else
+                         ["No acute expense risk flagged."]),
+    }
+
+    # ── Management summary (composite health) ──
+    score = 0
+    if runway is None and op_cf >= 0:
+        score += 25
+    elif runway is not None:
+        score += 25 if runway >= 12 else 15 if runway >= 6 else 5
+    if nm is None:
+        score += 12
+    else:
+        score += 25 if nm >= 15 else 18 if nm >= 5 else 10 if nm >= 0 else 3
+    score += 12 if dso is None else (15 if dso <= 30 else 10 if dso <= 60 else 4)
+    score += 12 if cur_r is None else (20 if cur_r >= 1.5 else 12 if cur_r >= 1.0 else 4)
+    score += 12 if ar_over60 is None else (15 if ar_over60 <= 10 else 9 if ar_over60 <= 25 else 3)
+    score = min(100, score)
+    health = "strong" if score >= 70 else "watch" if score >= 45 else "at_risk"
+
+    if runway is not None and runway < 6:
+        headline = f"Cash is the priority — about {runway:.1f} months of runway at the current operating burn."
+    elif nm is not None and nm < 0:
+        headline = "Profitability is the priority — the business is running at a net loss this period."
+    elif health == "strong":
+        headline = "Financially healthy — protect the position and deploy surplus deliberately."
+    else:
+        headline = "Generally stable with a few areas to tighten this month."
+
+    strengths: list[str] = []
+    if runway is None and op_cf >= 0: strengths.append("Operations are cash-generative.")
+    if runway is not None and runway >= 12: strengths.append(f"Strong runway ({runway:.0f}+ months).")
+    if nm is not None and nm >= 10: strengths.append(f"Healthy net margin ({nm:.0f}%).")
+    if cur_r is not None and cur_r >= 1.5: strengths.append(f"Solid liquidity (current ratio {cur_r:.2f}×).")
+    if dso is not None and dso <= 30: strengths.append(f"Fast collections (DSO {dso:.0f} days).")
+    if wc > 0 and wc >= wc_prior: strengths.append("Positive, growing working capital.")
+
+    watch_items: list[str] = []
+    if runway is not None and runway < 12: watch_items.append(f"Runway: ~{runway:.1f} months.")
+    if nm is not None and nm < 5: watch_items.append(f"Thin/negative net margin ({nm:.0f}%).")
+    if dso is not None and dso > 45: watch_items.append(f"Slow collections (DSO {dso:.0f} days).")
+    if cur_r is not None and cur_r < 1.0: watch_items.append(f"Tight liquidity (current ratio {cur_r:.2f}×).")
+    if (ar_over60 or 0) > 25: watch_items.append(f"AR concentration in 60+ days ({ar_over60:.0f}%).")
+
+    # Priority moves = the high/medium recommendations, top 3.
+    recs = payload.get("recommendations", [])
+    priorities = [r["title"] for r in recs if r.get("priority") in ("high", "medium")][:3]
+
+    payload["management_summary"] = {
+        "headline":    headline,
+        "health":      health,            # strong | watch | at_risk
+        "score":       score,             # 0–100
+        "priorities":  priorities or ["Maintain the close cadence and keep the cash forecast current."],
+        "strengths":   strengths or ["Books are synced and current."],
+        "watch_items": watch_items or ["Nothing flagged for active monitoring this period."],
+    }
+
+
 # ── main entry point ─────────────────────────────────────────────────────────
 
 async def compute_overview(
@@ -520,6 +797,16 @@ async def compute_overview(
         period_ends.append(cursor)
     period_ends.sort()  # ascending: oldest first
     prior_pe = period_ends[-2] if len(period_ends) > 1 else None
+
+    # Exact length of the window the P&L numbers cover — used so DSO/DPO/DIO
+    # annualize against the RIGHT number of days. A custom range uses its real
+    # inclusive day count; month mode uses the actual calendar-month length
+    # (28–31) rather than a hardcoded 30.
+    if period_start is not None:
+        days_in_period = max(1, (period_end - period_start).days + 1)
+    else:
+        days_in_period = calendar.monthrange(period_end.year, period_end.month)[1]
+    days_dec = Decimal(days_in_period)
 
     snaps_by_pe = await _load_snapshots(db, tenant_id, period_ends)
     period_syncs = list((await db.execute(
@@ -552,112 +839,235 @@ async def compute_overview(
         custom_prior_start = custom_prior_end - timedelta(days=custom_span_days)
         custom_pl_prior, _ = await _fetch_pl_summary(qbo_conn, db, custom_prior_start, custom_prior_end)
 
-    # ── Liquidity ───────────────────────────────────────────────────────────
+    # ── Liquidity & cash flow ─────────────────────────────────────────────────
     def cash_at(pe: date) -> Decimal:
         return _sum_by_types(snaps_by_pe.get(pe, []), CASH_TYPES)
 
     cash_balance = cash_at(period_end)
     cash_prior   = cash_at(prior_pe) if prior_pe else ZERO
 
-    # Burn = (cash_prev - cash_curr), averaged over last 3 deltas (positive = burning)
-    deltas: list[Decimal] = []
+    # Net cash movement: average monthly change in TOTAL cash (last 3 deltas,
+    # positive = cash shrinking). This is the literal bank-balance trend; it
+    # includes financing (a raise/loan inflates it), so we surface it as a
+    # transparent secondary figure — runway is driven by OPERATING burn below.
+    cash_deltas: list[Decimal] = []
     for i in range(max(0, len(period_ends) - 4), len(period_ends)):
         if i == 0:
             continue
-        deltas.append(cash_at(period_ends[i - 1]) - cash_at(period_ends[i]))
-    monthly_burn = sum(deltas) / len(deltas) if deltas else ZERO
+        cash_deltas.append(cash_at(period_ends[i - 1]) - cash_at(period_ends[i]))
+    net_cash_movement = sum(cash_deltas) / len(cash_deltas) if cash_deltas else ZERO
 
-    runway_months: float | None
-    if monthly_burn <= 0:
-        runway_months = None  # cash-positive
-    elif cash_balance <= 0:
-        runway_months = 0.0
-    else:
-        runway_months = float((cash_balance / monthly_burn).quantize(Decimal("0.1")))
-
-    # OCF proxy: monthly net income (true OCF needs cash-flow statement).
-    # NI = Revenue - COGS - OpEx + Other Income - Other Expense — matches the
-    # financials/internal.py formula so the two pages reconcile.
+    # YTD net income (presentation). Matches financials/internal.py so the
+    # Insights and Financials pages reconcile.
     def ytd_ni(pe: date) -> Decimal:
         rows = snaps_by_pe.get(pe, [])
-        rev       = _sum_by_types_presented(rows, INCOME_TYPES)
-        other_inc = _sum_by_types_presented(rows, OTHER_INCOME_TYPES)
-        cogs      = _sum_by_types_presented(rows, COGS_TYPES)
-        opex      = _sum_by_types_presented(rows, EXPENSE_TYPES)
-        other_exp = _sum_by_types_presented(rows, OTHER_EXPENSE_TYPES)
-        return rev - cogs - opex + other_inc - other_exp
+        return (
+            _sum_by_types_presented(rows, INCOME_TYPES)
+            - _sum_by_types_presented(rows, COGS_TYPES)
+            - _sum_by_types_presented(rows, EXPENSE_TYPES)
+            + _sum_by_types_presented(rows, OTHER_INCOME_TYPES)
+            - _sum_by_types_presented(rows, OTHER_EXPENSE_TYPES)
+        )
 
-    def monthly_ni(pe: date) -> Decimal:
+    def ytd_depreciation(pe: date) -> Decimal:
+        """YTD depreciation / amortization expense (presentation-positive)."""
+        total = ZERO
+        for r in snaps_by_pe.get(pe, []):
+            if r.account_type in (EXPENSE_TYPES | OTHER_EXPENSE_TYPES) and _is_depreciation(r.account_name):
+                total += _signed_presentation(r.account_type, r.balance)
+        return total
+
+    def _month_diff(pe: date, ytd_func) -> Decimal:
+        """Convert a YTD measure into the single month ending at pe."""
         if pe.month == 1:
-            return ytd_ni(pe)
-        # find prior period_end in same year
+            return ytd_func(pe)
         prior = None
         for p in period_ends:
             if p < pe and p.year == pe.year:
                 prior = p
-        if prior is None:
-            return ytd_ni(pe)
-        return ytd_ni(pe) - ytd_ni(prior)
+        return ytd_func(pe) if prior is None else ytd_func(pe) - ytd_func(prior)
 
-    ocf_proxy = monthly_ni(period_end)
+    def monthly_ni(pe: date) -> Decimal:
+        return _month_diff(pe, ytd_ni)
+
+    # Balance-sheet working-capital magnitudes (presentation-positive).
+    def wc_at(pe: date, types: set[str], *, presented: bool) -> Decimal:
+        rows = snaps_by_pe.get(pe, [])
+        return _sum_by_types_presented(rows, types) if presented else _sum_by_types(rows, types)
+
+    def _prior_in_list(pe: date) -> date | None:
+        idx = period_ends.index(pe) if pe in period_ends else -1
+        return period_ends[idx - 1] if idx > 0 else None
+
+    def monthly_ocf(pe: date) -> Decimal | None:
+        """Indirect-method operating cash flow for the month ending at pe:
+
+          OCF = Net income
+              + Depreciation / amortization        (non-cash add-back)
+              - Δ Accounts receivable              (a rise ties up cash)
+              - Δ Other current assets             (inventory, prepaids)
+              + Δ Accounts payable                 (a rise defers an outflow)
+              + Δ Other current liabilities        (accrued, deferred rev, CC)
+
+        Δ is between this month-end and the prior month-end snapshot. Returns
+        None when there is no prior snapshot to difference against.
+        """
+        pp = _prior_in_list(pe)
+        if pp is None:
+            return None
+        ni  = monthly_ni(pe)
+        dep = _month_diff(pe, ytd_depreciation)
+        d_ar  = wc_at(pe, AR_TYPES, presented=False)                   - wc_at(pp, AR_TYPES, presented=False)
+        d_oca = wc_at(pe, OTHER_CURRENT_ASSET_TYPES, presented=False)  - wc_at(pp, OTHER_CURRENT_ASSET_TYPES, presented=False)
+        d_ap  = wc_at(pe, AP_TYPES, presented=True)                    - wc_at(pp, AP_TYPES, presented=True)
+        d_ocl = wc_at(pe, OTHER_CURRENT_LIAB_TYPES, presented=True)    - wc_at(pp, OTHER_CURRENT_LIAB_TYPES, presented=True)
+        return ni + dep - d_ar - d_oca + d_ap + d_ocl
+
+    # Trailing operating cash flow + burn rate (3-mo average of months w/ data).
+    ocf_series = [(p, monthly_ocf(p)) for p in period_ends]
+    recent_ocf = [v for _, v in ocf_series[-3:] if v is not None]
+    avg_monthly_ocf = sum(recent_ocf) / len(recent_ocf) if recent_ocf else ZERO
+    operating_burn = -avg_monthly_ocf if avg_monthly_ocf < 0 else ZERO  # positive = burning
+
+    runway_months: float | None
+    if operating_burn <= 0:
+        runway_months = None                       # operations generate cash
+    elif cash_balance <= 0:
+        runway_months = 0.0
+    else:
+        runway_months = float((cash_balance / operating_burn).quantize(Decimal("0.1")))
+
+    # Headline OCF KPI: the selected month's OCF when we have clean month-end
+    # snapshots; the trailing monthly average for custom windows (no endpoint
+    # snapshots) — clearly labelled so it's never a mislabelled number.
+    ocf_this = monthly_ocf(period_end)
+    ocf_display = ocf_this if (ocf_this is not None and period_start is None) else avg_monthly_ocf
+
+    # Liquidity ratios (point-in-time at period_end).
+    current_assets = wc_at(period_end, CURRENT_ASSET_TYPES, presented=False)
+    current_liabs  = wc_at(period_end, CURRENT_LIAB_TYPES, presented=True)
+    quick_assets   = cash_balance + wc_at(period_end, AR_TYPES, presented=False)
+    current_ratio  = float((current_assets / current_liabs).quantize(Decimal("0.01"))) if current_liabs > 0 else None
+    quick_ratio    = float((quick_assets / current_liabs).quantize(Decimal("0.01"))) if current_liabs > 0 else None
+    working_capital = current_assets - current_liabs
+    wc_prior = (
+        wc_at(prior_pe, CURRENT_ASSET_TYPES, presented=False)
+        - wc_at(prior_pe, CURRENT_LIAB_TYPES, presented=True)
+    ) if prior_pe else ZERO
 
     cash_history = [
         {
             "period": p.isoformat(),
             "label":  p.strftime("%b"),
             "cash":   _to_money(cash_at(p)),
-            "ocf":    _to_money(monthly_ni(p)),
+            "ocf":    _to_money(v if v is not None else ZERO),
         }
-        for p in period_ends
+        for p, v in ocf_series
     ]
 
+    runway_value = (
+        f"{runway_months:.1f} months" if runway_months is not None
+        else ("Cash-generative" if operating_burn <= 0 else "—")
+    )
     liquidity = {
-        "cash_balance":        _to_money(cash_balance),
-        "cash_balance_prior":  _to_money(cash_prior),
-        "cash_change_str":     _change_str(_to_money(cash_balance), _to_money(cash_prior)),
-        "monthly_burn":        _to_money(monthly_burn),
-        "runway_months":       runway_months,
-        "operating_cash_flow": _to_money(ocf_proxy),
-        "history":             cash_history,
+        "cash_balance":          _to_money(cash_balance),
+        "cash_balance_prior":    _to_money(cash_prior),
+        "cash_change_str":       _change_str(_to_money(cash_balance), _to_money(cash_prior)),
+        "operating_burn":        _to_money(operating_burn),
+        "net_cash_movement":     _to_money(net_cash_movement),
+        "monthly_burn":          _to_money(operating_burn),   # back-compat alias
+        "runway_months":         runway_months,
+        "operating_cash_flow":   _to_money(ocf_display),
+        "current_ratio":         current_ratio,
+        "quick_ratio":           quick_ratio,
+        "working_capital":       _to_money(working_capital),
+        "working_capital_prior": _to_money(wc_prior),
+        "cash_conversion_cycle": None,   # filled after AR/AP/inventory below
+        "dio_days":              None,
+        "history":               cash_history,
         "kpis": [
             {
                 "kpi":     "Cash balance",
                 "value":   _money_str(cash_balance),
                 "risk":    "neutral",
                 "insight": (
-                    f"Total of all bank/cash accounts at {period_end.isoformat()}."
+                    f"Total bank/cash at {period_end.isoformat()}."
                     + (f" {_change_str(float(cash_balance), float(cash_prior))} vs prior month."
                        if cash_prior else "")
                 ),
             },
             {
-                "kpi":     "Monthly cash burn (3-mo avg)",
-                "value":   _money_str(monthly_burn) if monthly_burn > 0 else "Cash positive",
-                "risk":    _risk_for("cash_burn", float(monthly_burn)),
-                "insight": (
-                    "Net cash consumed per month. Negative = cash growing."
-                    if monthly_burn > 0
-                    else "Cash position grew on average — focus shifts to deploying capital effectively."
-                ),
-            },
-            {
                 "kpi":     "Cash runway",
-                "value":   f"{runway_months:.1f} months" if runway_months is not None else "Indefinite",
+                "value":   runway_value,
                 "risk":    _risk_for("runway_months", runway_months) if runway_months is not None else "green",
                 "insight": (
-                    "Months of cash remaining at current burn. Under 6 = act now, "
-                    "6–12 = plan, 12+ = healthy."
+                    f"At the recent operating burn of {_money_str(operating_burn)}/mo, cash lasts "
+                    f"~{runway_months:.1f} months. Under 6 = act now, 6–12 = plan, 12+ = healthy."
                     if runway_months is not None
-                    else "Generating cash; no runway constraint at current trajectory."
+                    else "Operations are generating cash — no runway constraint at this trajectory."
                 ),
             },
             {
-                "kpi":     "Operating cash flow (proxy: monthly net income)",
-                "value":   _money_str(ocf_proxy),
-                "risk":    _risk_for("operating_cash_flow", float(ocf_proxy)),
+                "kpi":     "Operating burn (3-mo avg)",
+                "value":   _money_str(operating_burn) + "/mo" if operating_burn > 0 else "Cash-generative",
+                "risk":    _risk_for("cash_burn", float(operating_burn)),
                 "insight": (
-                    "True OCF requires a cash-flow statement. Net income is a useful "
-                    "proxy until working-capital movements are pulled."
+                    "Cash consumed by OPERATIONS per month (income + non-cash add-backs ± "
+                    "working-capital swings). Excludes loans/raises so a financing inflow "
+                    "can't hide an operating burn."
+                    if operating_burn > 0
+                    else "Operations threw off cash on average over the last 3 months."
+                ),
+            },
+            {
+                "kpi":     "Operating cash flow" + ("" if period_start is None else " (3-mo avg)"),
+                "value":   _money_str(ocf_display),
+                "risk":    _risk_for("operating_cash_flow", float(ocf_display)),
+                "insight": (
+                    "Indirect method: net income + depreciation − ΔAR − ΔInventory + ΔAP "
+                    "+ Δaccrued/deferred. Positive = operations self-fund; negative = the "
+                    "gap you're covering from the bank."
+                ),
+            },
+            {
+                "kpi":     "Net cash movement (3-mo avg)",
+                "value":   (_money_str(-net_cash_movement) + "/mo") if net_cash_movement != 0 else "Flat",
+                "risk":    "neutral",
+                "insight": (
+                    "Actual average change in the bank balance — INCLUDES financing (loans, "
+                    "raises, owner draws). Compare to operating burn: a gap means financing "
+                    "is moving cash, not the business."
+                ),
+            },
+            {
+                "kpi":     "Current ratio",
+                "value":   f"{current_ratio:.2f}×" if current_ratio is not None else "—",
+                "risk":    _risk_for("current_ratio", current_ratio),
+                "insight": (
+                    "Current assets ÷ current liabilities. ≥1.5 comfortable, 1.0–1.5 monitor, "
+                    "<1.0 means short-term obligations exceed liquid assets."
+                    if current_ratio is not None else "No current liabilities to measure against."
+                ),
+            },
+            {
+                "kpi":     "Quick ratio (acid test)",
+                "value":   f"{quick_ratio:.2f}×" if quick_ratio is not None else "—",
+                "risk":    _risk_for("quick_ratio", quick_ratio),
+                "insight": (
+                    "(Cash + receivables) ÷ current liabilities — can you cover what's due "
+                    "without selling inventory? ≥1.0 is healthy."
+                    if quick_ratio is not None else "No current liabilities to measure against."
+                ),
+            },
+            {
+                "kpi":     "Working capital",
+                "value":   _money_str(working_capital),
+                "risk":    "green" if working_capital > 0 else "red",
+                "insight": (
+                    "Current assets − current liabilities = the buffer funding day-to-day "
+                    "operations."
+                    + (f" {_change_str(_to_money(working_capital), _to_money(wc_prior))} vs prior month."
+                       if wc_prior else "")
                 ),
             },
         ],
@@ -928,10 +1338,11 @@ async def compute_overview(
     ar_balance_sync = sync_by_pe[period_end].ar_aging_total if period_end in sync_by_pe else None
     ar_balance = float(ar_balance_sync) if ar_balance_sync is not None else _to_money(ar_balance_gl)
 
-    # DSO using monthly revenue (revenue_month is presentation-positive)
+    # DSO = AR ÷ (revenue for the period ÷ days in the period). Uses the exact
+    # window length so a custom range or a 28/31-day month is measured correctly.
     dso_days: float | None
     if revenue_month and revenue_month > 0:
-        dso_days = float((Decimal(ar_balance) / (revenue_month / Decimal(30))).quantize(Decimal("0.1")))
+        dso_days = float((Decimal(ar_balance) / (revenue_month / days_dec)).quantize(Decimal("0.1")))
     else:
         dso_days = None
 
@@ -1003,9 +1414,10 @@ async def compute_overview(
     ap_balance_sync = sync_by_pe[period_end].ap_aging_total if period_end in sync_by_pe else None
     ap_balance = float(ap_balance_sync) if ap_balance_sync is not None else _to_money(ap_balance_gl)
 
+    # DPO = AP ÷ (COGS for the period ÷ days in the period).
     dpo_days: float | None
     if cogs_month and cogs_month > 0:
-        dpo_days = float((Decimal(ap_balance) / (cogs_month / Decimal(30))).quantize(Decimal("0.1")))
+        dpo_days = float((Decimal(ap_balance) / (cogs_month / days_dec)).quantize(Decimal("0.1")))
     else:
         dpo_days = None
 
@@ -1078,6 +1490,34 @@ async def compute_overview(
             },
         ],
     }
+
+    # ── Cash conversion cycle (CCC = DSO + DIO − DPO) ─────────────────────────
+    # Days cash is tied up: time to collect (DSO) + time inventory sits (DIO)
+    # − time you take to pay suppliers (DPO). Lower/negative = customers and
+    # suppliers fund your working capital. Injected back into the liquidity blob.
+    inventory_balance = ZERO
+    for r in snaps_by_pe.get(period_end, []):
+        if r.account_type in OTHER_CURRENT_ASSET_TYPES and _is_inventory(r.account_name):
+            inventory_balance += _signed_presentation(r.account_type, r.balance)
+    dio_days: float | None = None
+    if cogs_month and cogs_month > 0 and inventory_balance > 0:
+        dio_days = float((inventory_balance / (cogs_month / days_dec)).quantize(Decimal("0.1")))
+    ccc_days: float | None = None
+    if dso_days is not None and dpo_days is not None:
+        ccc_days = round(dso_days + (dio_days or 0.0) - dpo_days, 1)
+    liquidity["cash_conversion_cycle"] = ccc_days
+    liquidity["dio_days"] = dio_days
+    if ccc_days is not None:
+        liquidity["kpis"].append({
+            "kpi":     "Cash conversion cycle",
+            "value":   f"{ccc_days:.0f} days",
+            "risk":    _risk_for("ccc", ccc_days),
+            "insight": (
+                f"DSO {dso_days:.0f}" + (f" + DIO {dio_days:.0f}" if dio_days else "")
+                + f" − DPO {dpo_days:.0f}. Days cash is locked in working capital between "
+                "paying suppliers and collecting from customers. Lower (or negative) is better."
+            ),
+        })
 
     # ── Expense monitoring ─────────────────────────────────────────────────
     # "Where did the money go?" — covers OpEx + COGS + Other Expense
@@ -1213,4 +1653,7 @@ async def compute_overview(
     }
 
     payload["recommendations"] = _build_recommendations(payload)
+    # Decision-grade advisory per section + a top management summary. Reads the
+    # recommendations (for the priority list) so it must run after them.
+    _build_advisory(payload)
     return payload

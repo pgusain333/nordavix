@@ -37,15 +37,41 @@ export interface EntityRow {
   total:   number
 }
 
+/** Decision-grade advisory for a section — deterministic, tied to the numbers. */
+export interface Advisory {
+  implications: string
+  actions:      string[]
+  watch:        string[]
+  risks:        string[]
+}
+
+export interface ManagementSummary {
+  headline:    string
+  health:      "strong" | "watch" | "at_risk"
+  score:       number          // 0–100
+  priorities:  string[]
+  strengths:   string[]
+  watch_items: string[]
+}
+
 export interface Liquidity {
-  cash_balance:        number
-  cash_balance_prior:  number
-  cash_change_str:     string | null
-  monthly_burn:        number
-  runway_months:       number | null
-  operating_cash_flow: number
-  history:             HistoryPoint[]
-  kpis:                KpiRow[]
+  cash_balance:          number
+  cash_balance_prior:    number
+  cash_change_str:       string | null
+  operating_burn:        number          // operating cash burn / mo (positive = burning)
+  net_cash_movement:     number          // avg monthly change in bank balance (incl. financing)
+  monthly_burn:          number          // back-compat alias of operating_burn
+  runway_months:         number | null
+  operating_cash_flow:   number          // indirect-method OCF
+  current_ratio:         number | null
+  quick_ratio:           number | null
+  working_capital:       number
+  working_capital_prior: number
+  cash_conversion_cycle: number | null   // DSO + DIO − DPO (days)
+  dio_days:              number | null
+  history:               HistoryPoint[]
+  kpis:                  KpiRow[]
+  advisory?:             Advisory
 }
 
 export interface Profitability {
@@ -69,6 +95,7 @@ export interface Profitability {
   net_margin_pct:           number | null
   history:                  HistoryPoint[]
   kpis:                     KpiRow[]
+  advisory?:                Advisory
 }
 
 export interface Receivables {
@@ -79,6 +106,7 @@ export interface Receivables {
   top_customers:     EntityRow[]
   qbo_error:         string | null
   kpis:              KpiRow[]
+  advisory?:         Advisory
 }
 
 export interface Payables {
@@ -90,6 +118,7 @@ export interface Payables {
   payment_lag_days:  number | null
   qbo_error:         string | null
   kpis:              KpiRow[]
+  advisory?:         Advisory
 }
 
 export interface ExpenseRow {
@@ -105,6 +134,7 @@ export interface Expenses {
   top_movers:        ExpenseRow[]
   biggest_mom_mover: { category: string; from: number; to: number; change_pct: number } | null
   kpis:              KpiRow[]
+  advisory?:         Advisory
 }
 
 export interface Recommendation {
@@ -126,6 +156,7 @@ export interface InsightsOverview {
   payables:         Payables
   expenses:         Expenses
   recommendations:  Recommendation[]
+  management_summary?: ManagementSummary
 }
 
 // ── API ──────────────────────────────────────────────────────────────────────
