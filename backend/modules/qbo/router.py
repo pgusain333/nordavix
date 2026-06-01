@@ -151,11 +151,13 @@ async def qbo_callback(
             )
         if info_resp.status_code == 200:
             data = info_resp.json()
-            company_name = (
-                data.get("QueryResponse", {})
-                .get("CompanyInfo", [{}])[0]
-                .get("CompanyName")
-            )
+            # Direct /companyinfo/{realm_id} returns:
+            #   { "CompanyInfo": { "CompanyName": "...", ... }, "time": "..." }
+            # NOT the QueryResponse shape (which only wraps SELECT queries).
+            # Earlier code parsed the wrong shape, silently produced None,
+            # and the UI fell back to "(QuickBooks company name unavailable)".
+            ci = data.get("CompanyInfo") or {}
+            company_name = ci.get("CompanyName") or ci.get("LegalName")
     except Exception:
         pass
 
