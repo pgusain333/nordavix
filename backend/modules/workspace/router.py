@@ -9,12 +9,14 @@ Used by the frontend to render "Reviewed by Jatin" instead of
 """
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit.log import write_audit_event
 from core.auth.clerk_users import (
     _format_display_name,
     get_clerk_user,
@@ -28,8 +30,13 @@ from core.auth.dependencies import (
 )
 from core.config import settings
 from core.db.session import get_db
+from models.qbo_connection import QboConnection
 from models.tenant import Tenant
 from models.user import User
+
+# Grace window between soft-delete and irreversible purge. Matches the
+# deletion language in the Privacy Policy ("removed within 30 days").
+_DELETE_GRACE_DAYS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -448,3 +455,75 @@ async def lookup_users(
     for u in uuid_list:
         out.setdefault(str(u), {"display_name": "Unknown user", "email": None, "image_url": None, "clerk_user_id": None})
     return {"users": out}
+
+
+@router.delete("", dependencies=[Depends(require_role("admin"))])
+async def delete_workspace(
+    tenant_id: CurrentTenantId,
+    current_user: RequireAdmin,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Admin-only: delete this workspace (the Danger Zone action).
+
+    Soft-delete with a 30-day grace window:
+      1. Revoke + delete the QBO connection so no live token to the company's
+         books survives the moment of deletion.
+      2. Mark the tenant deleted_at = now, purge_after = now + 30d. The tenancy
+         middleware immediately returns 410 for every request to this tenant —
+         it's inaccessible everywhere from this point on.
+      3. A scheduled purge job hard-deletes all the tenant's data + R2 files
+         once the grace window elapses. Audit logs are retained.
+
+    The deletion is recoverable (by clearing deleted_at) until the purge runs.
+    The frontend destroys the Clerk organization separately after this returns.
+    """
+    tenant = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+
+    if tenant.deleted_at is not None:
+        # Idempotent — already scheduled for purge.
+        return {
+            "deleted": True,
+            "already_deleted": True,
+            "purge_after": tenant.purge_after.isoformat() if tenant.purge_after else None,
+        }
+
+    # 1. Sever the live QBO link (revoke at Intuit + drop local tokens).
+    qbo_revoked: bool | None = None
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id)
+    )).scalar_one_or_none()
+    if conn is not None:
+        from modules.qbo.router import revoke_qbo_token
+        qbo_revoked = await revoke_qbo_token(conn)
+        await db.delete(conn)
+
+    # 2. Soft-delete + schedule purge.
+    now = datetime.now(UTC)
+    tenant.deleted_at = now
+    tenant.purge_after = now + timedelta(days=_DELETE_GRACE_DAYS)
+    tenant.deleted_by = current_user.id
+
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=current_user.id,
+        action="workspace.deleted",
+        entity_type="tenant", entity_id=tenant_id,
+        metadata={
+            "summary":      f"Deleted workspace (purge after {tenant.purge_after.date().isoformat()})",
+            "purge_after":  tenant.purge_after.isoformat(),
+            "qbo_revoked":  qbo_revoked,
+            "grace_days":   _DELETE_GRACE_DAYS,
+        },
+    )
+    await db.commit()
+    return {
+        "deleted": True,
+        "purge_after": tenant.purge_after.isoformat(),
+        "grace_days": _DELETE_GRACE_DAYS,
+        "qbo_revoked": qbo_revoked,
+    }

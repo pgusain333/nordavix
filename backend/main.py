@@ -13,6 +13,7 @@ from modules.financials.router import router as financials_router
 from modules.flux.router import router as flux_router
 from modules.insights.router import router as insights_router
 from modules.intercompany.router import router as intercompany_router
+from modules.internal.router import router as internal_router
 from modules.qbo.router import oauth_router as qbo_oauth_router
 from modules.qbo.router import qbo_router
 from modules.recons.router import router as recons_router
@@ -63,6 +64,7 @@ app.include_router(exports_router,      prefix="/api/exports",      tags=["expor
 app.include_router(insights_router,     prefix="/api/insights",     tags=["insights"])
 app.include_router(schedules_router,     prefix="/api/schedules",    tags=["schedules"])
 app.include_router(feedback_router,      prefix="/api/feedback",     tags=["feedback"])
+app.include_router(internal_router,      prefix="/api/internal",     tags=["internal"])
 
 
 @app.get("/api/health", tags=["system"])

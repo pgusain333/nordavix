@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     # True — or set clerk_allowed_issuers explicitly — to actually reject.
     clerk_enforce_issuer: bool = False
 
+    # Shared secret for internal/scheduled task endpoints (e.g. the tenant
+    # purge job). These bypass Clerk auth, so they're gated by this secret
+    # sent in the X-Internal-Secret header. Empty = the endpoints are DISABLED
+    # (return 503), so a missing secret can never leave them wide open.
+    # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    internal_task_secret: str = ""
+
     app_env: str = "development"
     debug: bool = False
 

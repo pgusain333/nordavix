@@ -1070,9 +1070,10 @@ function DataExportSection() {
               <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>Danger zone</p>
               <p className="text-[12px] mt-0.5" style={{ color: "#991b1b" }}>
                 Deleting this workspace removes <span className="font-semibold">{organization?.name ?? "the company"}</span>{" "}
-                from your account and revokes access for every member. Connected data (QuickBooks
-                sync, audit log, reconciliations, schedules) becomes inaccessible. This cannot
-                be undone.
+                from your account and revokes access for every member. The QuickBooks connection
+                is disconnected and revoked at the source, and all data (reconciliations,
+                schedules, trial balances, evidence) is permanently deleted within 30 days.
+                This cannot be undone.
               </p>
               {!isAdmin && organization && (
                 <p className="text-[11px] mt-2 inline-flex items-center gap-1"
@@ -1126,14 +1127,17 @@ function DataExportSection() {
  * accidental deletion essentially impossible while still being one
  * action away for the intentional case.
  *
- * After Clerk's organization.destroy() succeeds, we also wipe every
- * localStorage / sessionStorage key whose name contains the org id
- * (CompanyForm meta, notif/AI prefs, schedules-loaded flag, etc.) so
- * the browser doesn't carry stale per-org state into other workspaces.
+ * Delete order matters: we call our backend (DELETE /api/workspace) FIRST,
+ * while the Clerk JWT still resolves this org. That revokes the QuickBooks
+ * token at Intuit and soft-deletes the tenant — access is cut off everywhere
+ * immediately and a scheduled job hard-purges all data + files after a 30-day
+ * grace window (audit logs retained). Only then do we call Clerk's
+ * organization.destroy(). If the backend call fails we abort, so we never
+ * tear down Clerk while leaving a live QBO token or orphaned data behind.
  *
- * Tenant rows in our DB become orphaned by design — the user no longer
- * has org access via Clerk so the rows are invisible. A scheduled
- * backend cleanup job can purge them later if needed.
+ * After both succeed we wipe every localStorage / sessionStorage key whose
+ * name contains the org id (CompanyForm meta, notif/AI prefs, schedules-loaded
+ * flag, etc.) so the browser doesn't carry stale per-org state forward.
  */
 function DeleteCompanyModal({
   organization, onCancel, onDeleted,
@@ -1162,9 +1166,18 @@ function DeleteCompanyModal({
     setErr(null)
     setWorking(true)
     try {
+      // 1. Delete on OUR backend FIRST, while the JWT still resolves this org.
+      //    This revokes the QuickBooks token and soft-deletes the tenant
+      //    (inaccessible immediately, hard-purged after the grace window).
+      //    If it fails we abort — destroying the Clerk org without this would
+      //    leave a live QBO token + orphaned data behind.
+      await workspaceApi.deleteWorkspace()
+
+      // 2. Now remove the Clerk organization itself.
       await organization.destroy()
-      // Wipe every browser-side key tied to this org so the next
-      // active workspace doesn't inherit stale meta / prefs.
+
+      // 3. Wipe every browser-side key tied to this org so the next
+      //    active workspace doesn't inherit stale meta / prefs.
       try {
         const orgId = organization.id
         for (const store of [localStorage, sessionStorage]) {
@@ -1178,7 +1191,10 @@ function DeleteCompanyModal({
       } catch { /* harmless */ }
       onDeleted()
     } catch (e) {
-      const msg = (e as { message?: string })?.message
+      // Surface the backend detail when present (e.g. permission / network),
+      // else the Clerk error message, else a generic fallback.
+      const ax = e as { response?: { data?: { detail?: string } }; message?: string }
+      const msg = ax?.response?.data?.detail ?? ax?.message
       setErr(msg ?? "Could not delete the workspace. Try again?")
       setWorking(false)
     }
@@ -1217,8 +1233,10 @@ function DeleteCompanyModal({
           <p className="text-[13px]" style={{ color: "var(--text-2)" }}>
             You're about to permanently delete{" "}
             <span className="font-semibold" style={{ color: "var(--text)" }}>{expected}</span>.
-            All members will lose access. QuickBooks sync, reconciliations, schedules, audit log,
-            and uploaded evidence will become inaccessible.
+            Every member loses access immediately and the QuickBooks connection is
+            disconnected and revoked. Reconciliations, schedules, trial balances, and
+            uploaded evidence are scheduled for permanent deletion within 30 days
+            (audit logs are retained for compliance). This can't be undone.
           </p>
           <div>
             <label className="block text-[11px] font-semibold mb-1.5" style={{ color: "var(--text-2)" }}>

@@ -15,8 +15,11 @@ from models.user import User
 
 # Routes that do not require authentication (exact paths or prefixes)
 _PUBLIC_PATHS = {"/api/health", "/docs", "/redoc", "/openapi.json"}
-# Path prefixes that are always public (e.g. OAuth callbacks from third parties)
-_PUBLIC_PREFIXES = {"/api/oauth/"}
+# Path prefixes that are always public (e.g. OAuth callbacks from third parties).
+# /api/internal/ bypasses Clerk auth because it's called by schedulers/cron, not
+# users — those endpoints are instead gated by the X-Internal-Secret shared
+# secret (see modules/internal/router.py). They have NO tenant context.
+_PUBLIC_PREFIXES = {"/api/oauth/", "/api/internal/"}
 
 
 class TenantMiddleware(BaseHTTPMiddleware):
@@ -94,6 +97,25 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 execution_options=skip,
             )
             tenant = tenant_result.scalar_one_or_none()
+
+            # ── Soft-delete gate ────────────────────────────────────────────
+            # A deleted workspace is inaccessible everywhere until its 30-day
+            # grace window elapses and the purge job removes it. Block here —
+            # before we provision a User row or run any business logic — so no
+            # endpoint can read or mutate a deleted tenant's data. 410 Gone (not
+            # 403) tells the frontend the resource is intentionally gone so it
+            # can drop the org from the switcher rather than show a perms error.
+            if tenant is not None and tenant.deleted_at is not None:
+                return JSONResponse(
+                    {
+                        "detail": "This workspace has been deleted.",
+                        "code": "tenant_deleted",
+                        "purge_after": tenant.purge_after.isoformat()
+                        if tenant.purge_after
+                        else None,
+                    },
+                    status_code=410,
+                )
 
             if tenant is None:
                 # First time this org/user hits the API — provision their tenant record.

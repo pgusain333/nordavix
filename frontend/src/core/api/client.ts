@@ -110,6 +110,24 @@ apiClient.interceptors.response.use(
     // expired session still bubbles up as an error after one attempt.
     const status   = error?.response?.status
     const original = error?.config as RetryableConfig | undefined
+
+    // The active workspace was deleted (soft-deleted on the backend). Every
+    // request to it now returns 410 tenant_deleted. This happens when a
+    // workspace is deleted in another tab, or a refetch races the delete
+    // flow. Bounce the user to the company picker so they pick a live
+    // workspace. Guard against a redirect loop: only redirect when we're not
+    // already on the companies page.
+    if (status === 410 && error?.response?.data?.code === "tenant_deleted") {
+      try {
+        clearApiTokenCache()
+        const path = window.location.pathname
+        if (!path.startsWith("/app/companies")) {
+          window.location.assign("/app/companies")
+        }
+      } catch { /* non-browser / SSR — ignore */ }
+      return Promise.reject(error)
+    }
+
     if (status === 401 && original && !original._nordavixAuthRetry && _getToken) {
       original._nordavixAuthRetry = true
       try {

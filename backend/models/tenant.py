@@ -32,3 +32,13 @@ class Tenant(TimestampMixin, Base):
     # Null until onboarding is complete. Locked after seeding (admin only).
     books_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     books_seeded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ── Soft-delete lifecycle ───────────────────────────────────────────────
+    # "Delete company" sets deleted_at (immediately blocking all access and
+    # revoking the QBO token) and purge_after = deleted_at + 30 days. A
+    # scheduled purge job hard-deletes the tenant's data once purge_after
+    # passes; until then the deletion is recoverable. Audit logs are archived,
+    # not purged. deleted_by is the Clerk user id that initiated the deletion.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

@@ -76,6 +76,25 @@ async function revokeInvitation(id: string): Promise<void> {
   await apiClient.delete(`/api/workspace/invitations/${encodeURIComponent(id)}`)
 }
 
+export interface DeleteWorkspaceResponse {
+  deleted:         boolean
+  already_deleted?: boolean
+  purge_after?:    string | null   // ISO — when the data is permanently purged
+  grace_days?:     number
+  qbo_revoked?:    boolean | null
+}
+
+/**
+ * Delete the active workspace on the Nordavix backend. Revokes the QBO token
+ * and soft-deletes the tenant (inaccessible immediately; hard-purged after the
+ * grace window). Call this BEFORE Clerk's organization.destroy() so the request
+ * still resolves a valid org from the JWT.
+ */
+async function deleteWorkspace(): Promise<DeleteWorkspaceResponse> {
+  const { data } = await apiClient.delete<DeleteWorkspaceResponse>("/api/workspace")
+  return data
+}
+
 export const workspaceApi = {
   listMembers,
   lookupUsers,
@@ -84,4 +103,5 @@ export const workspaceApi = {
   listInvitations,
   createInvitation,
   revokeInvitation,
+  deleteWorkspace,
 }

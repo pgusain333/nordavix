@@ -27,7 +27,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.auth.dependencies import CurrentTenantId, require_role
+from core.auth.dependencies import CurrentTenantId, RequireAdmin, require_role
 from core.config import settings
 from core.db.base import current_tenant_id as _current_tenant_id
 from core.db.session import AsyncSessionLocal, get_db
@@ -40,6 +40,11 @@ qbo_router   = APIRouter()
 _QBO_SCOPES = "com.intuit.quickbooks.accounting"
 _AUTH_BASE  = "https://appcenter.intuit.com/connect/oauth2"
 _TOKEN_URL  = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+# Intuit OAuth2 token revocation. Revoking the refresh token invalidates the
+# entire grant (access + refresh), so Nordavix's access to the company's books
+# stops immediately — this is what we call when a workspace is deleted or the
+# user disconnects QBO, so no stale token can linger past the off-boarding.
+_REVOKE_URL = "https://developer.api.intuit.com/v2/oauth2/tokens/revoke"
 
 
 # OAuth state is HMAC-signed so the callback can't be tricked into binding
@@ -353,3 +358,89 @@ async def _get_valid_token(conn: QboConnection, db: AsyncSession) -> str:
     await db.commit()
 
     return conn.access_token
+
+
+async def revoke_qbo_token(conn: QboConnection) -> bool:
+    """
+    Revoke a tenant's QBO OAuth grant at Intuit so Nordavix loses all access
+    to the company's books immediately. Revoking the refresh token kills the
+    whole grant (access token included).
+
+    Best-effort: returns True on a clean revoke, False otherwise. Callers
+    proceed with local deletion regardless — a failed remote revoke must not
+    block off-boarding (the local tokens are deleted and would expire anyway),
+    but we log it so it can be retried/audited.
+    """
+    if not settings.qbo_enabled:
+        return False
+    credentials = base64.b64encode(
+        f"{settings.qbo_client_id}:{settings.qbo_client_secret}".encode()
+    ).decode()
+    # Prefer the long-lived refresh token; fall back to the access token.
+    token = conn.refresh_token or conn.access_token
+    if not token:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                _REVOKE_URL,
+                headers={
+                    "Authorization": f"Basic {credentials}",
+                    "Content-Type":  "application/json",
+                    "Accept":        "application/json",
+                },
+                json={"token": token},
+            )
+        # Intuit returns 200 on success. 401/400 typically mean the token was
+        # already invalid/expired — functionally revoked, so treat as success.
+        if resp.status_code in (200, 204):
+            return True
+        import logging
+        logging.getLogger(__name__).warning(
+            "QBO token revoke returned %s for realm %s: %s",
+            resp.status_code, conn.realm_id, resp.text[:300],
+        )
+        return resp.status_code in (400, 401)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("QBO token revoke request failed")
+        return False
+
+
+@qbo_router.delete("/connection", dependencies=[Depends(require_role("admin"))])
+async def disconnect_qbo(
+    tenant_id: CurrentTenantId,
+    current_user: RequireAdmin,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Admin-only: disconnect QuickBooks. Revokes the OAuth grant at Intuit and
+    deletes the local connection (encrypted tokens included). After this,
+    Nordavix holds no QBO credentials for the tenant until they reconnect.
+
+    Already-synced data (snapshots, reconciliations, flux) is untouched — this
+    severs the live connection only. Idempotent: a 404 means nothing to do.
+    """
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id)
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=404, detail="No QuickBooks connection to disconnect.")
+
+    realm_id = conn.realm_id
+    revoked = await revoke_qbo_token(conn)
+    await db.delete(conn)
+
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=current_user.id,
+        action="qbo.disconnected",
+        entity_type="qbo_connection", entity_id=None,
+        metadata={
+            "summary":      "Disconnected QuickBooks",
+            "realm_id":     realm_id,
+            "token_revoked": revoked,
+        },
+    )
+    await db.commit()
+    return {"disconnected": True, "token_revoked": revoked}

@@ -62,3 +62,45 @@ def delete_file(key: str) -> None:
     except ClientError:
         # Log but don't raise — a failed delete should not block the user workflow.
         pass
+
+
+def delete_prefix(prefix: str) -> int:
+    """
+    Delete every object under a key prefix. Used by the tenant purge job to
+    remove a deleted workspace's entire R2 footprint (`{tenant_id}/...`).
+
+    Returns the number of objects deleted. Paginates + batch-deletes (1000 per
+    request, the S3 API cap) so it scales to large tenants. Best-effort: a
+    failed batch is logged and skipped rather than aborting the whole purge.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    # Guard against an empty prefix wiping the whole bucket.
+    prefix = (prefix or "").strip()
+    if not prefix:
+        logger.error("delete_prefix called with empty prefix — refusing (would delete entire bucket).")
+        return 0
+
+    deleted = 0
+    paginator = _s3.get_paginator("list_objects_v2")
+    try:
+        for page in paginator.paginate(Bucket=settings.r2_bucket_name, Prefix=prefix):
+            objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+            if not objects:
+                continue
+            # delete_objects caps at 1000 keys per call; paginate already
+            # yields <=1000 per page, so one delete per page is safe.
+            for i in range(0, len(objects), 1000):
+                batch = objects[i : i + 1000]
+                try:
+                    _s3.delete_objects(
+                        Bucket=settings.r2_bucket_name,
+                        Delete={"Objects": batch, "Quiet": True},
+                    )
+                    deleted += len(batch)
+                except ClientError as exc:
+                    logger.error("delete_prefix batch failed for %s: %s", prefix, exc)
+    except ClientError as exc:
+        logger.error("delete_prefix listing failed for %s: %s", prefix, exc)
+    return deleted
