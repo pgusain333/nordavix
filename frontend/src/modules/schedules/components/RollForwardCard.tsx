@@ -8,7 +8,7 @@
  * Empty state (no account picked) shows a friendly nudge instead.
  */
 import { motion } from "framer-motion"
-import { ArrowRight, CheckCircle2, Save } from "lucide-react"
+import { ArrowRight, CheckCircle2, Save, RefreshCw, AlertTriangle } from "lucide-react"
 import { Button } from "@/core/ui/components"
 import { formatDateTime } from "@/core/lib/dates"
 import type { Snapshot } from "@/modules/schedules/types"
@@ -22,6 +22,8 @@ interface Props {
   onCommit:        () => void
   committing:      boolean
   alreadyCommitted: boolean
+  /** Was committed, but items changed since → prompt a re-commit. */
+  stale?:          boolean
 }
 
 function fmt(s: string): string {
@@ -34,7 +36,7 @@ export function RollForwardCard({
   snapshot, isLoading, hasAccount,
   expenseLabel = "Period expense",
   paymentLabel = "Payments",
-  onCommit, committing, alreadyCommitted,
+  onCommit, committing, alreadyCommitted, stale = false,
 }: Props) {
   if (!hasAccount) {
     return (
@@ -82,12 +84,27 @@ export function RollForwardCard({
             ending balance into the recon as the subledger.
           </p>
         </div>
-        {alreadyCommitted ? (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider"
-            style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
-            <CheckCircle2 size={10} strokeWidth={2.4} />
-            Committed
-          </span>
+        {stale ? (
+          // Was committed, but items changed since → must re-commit so the
+          // persisted snapshot + recon subledger pick up the new lines.
+          <Button size="sm" loading={committing} onClick={onCommit}
+            icon={<RefreshCw size={12} strokeWidth={2} />}>
+            Re-commit snapshot
+          </Button>
+        ) : alreadyCommitted ? (
+          // Committed and current. Show the badge but keep a quiet
+          // re-commit affordance so it's never a dead end.
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider"
+              style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
+              <CheckCircle2 size={10} strokeWidth={2.4} />
+              Committed
+            </span>
+            <Button size="sm" variant="ghost" loading={committing} onClick={onCommit}
+              icon={<RefreshCw size={11} strokeWidth={2} />}>
+              Re-commit
+            </Button>
+          </div>
         ) : (
           <Button size="sm" loading={committing} onClick={onCommit}
             icon={<Save size={12} strokeWidth={2} />}>
@@ -95,6 +112,18 @@ export function RollForwardCard({
           </Button>
         )}
       </div>
+      {stale && (
+        <div className="flex items-start gap-2 rounded-lg px-3 py-2 mb-3"
+          style={{ background: "rgba(180, 83, 9, 0.08)", border: "1px solid rgba(180, 83, 9, 0.35)" }}>
+          <AlertTriangle size={13} strokeWidth={2} style={{ color: "#b45309", marginTop: 1 }} />
+          <p className="text-[11px] leading-snug" style={{ color: "#b45309" }}>
+            Schedule items changed since this period was last committed
+            {snapshot.committed_at ? <> ({formatDateTime(snapshot.committed_at)})</> : null}.
+            The numbers below are live — <span className="font-semibold">re-commit</span> to
+            update the reconciliation subledger and re-close this schedule task.
+          </p>
+        </div>
+      )}
       <div className="flex flex-wrap items-end gap-2">
         {cells.map((c) => (
           <div key={c.label}

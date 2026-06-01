@@ -148,6 +148,7 @@ export function LeasesPage() {
           expenseLabel="Interest accretion" paymentLabel="Cash paid"
           onCommit={() => commitMut.mutate()} committing={commitMut.isPending}
           alreadyCommitted={!!snapshot?.committed}
+          stale={!!snapshot?.stale}
         />
 
         <div className="rounded-xl overflow-hidden"

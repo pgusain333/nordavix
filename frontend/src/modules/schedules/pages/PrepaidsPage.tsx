@@ -328,6 +328,7 @@ export function PrepaidsPage() {
           onCommit={() => commitMut.mutate()}
           committing={commitMut.isPending}
           alreadyCommitted={!!snapshot?.committed}
+          stale={!!snapshot?.stale}
         />
 
         {/* Items table */}

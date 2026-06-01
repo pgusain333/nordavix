@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
+from models.closed_period import ClosedPeriod
 from models.fixed_asset_candidate import FixedAssetCandidate
 from models.missed_accrual_candidate import MissedAccrualCandidate
 from models.prepaid_candidate import PrepaidCandidate
@@ -377,6 +378,69 @@ async def list_items(
     }
 
 
+# ── Snapshot staleness ───────────────────────────────────────────────────
+#
+# A committed ScheduleSnapshot is a point-in-time roll-forward. The moment
+# the underlying items change (add / edit / delete / bulk-import), that
+# committed snapshot no longer reflects reality — and every downstream
+# consumer that gates on status=="committed" (close-task completion, the
+# dashboard close-progress, the recon's schedule-backed subledger) would
+# otherwise treat the out-of-date snapshot as done.
+#
+# So on ANY item mutation we flip the affected account's committed
+# snapshots to status="stale" (keeping committed_at so the UI can still
+# say "last committed <when>"). The schedule page then re-shows the
+# Commit button, the close task re-opens, and progress drops — all from
+# this one status change. Closed periods are never reopened: their books
+# are locked, and a stale recompute there would be a compliance problem.
+
+
+def _item_account_ids(schedule_type: str, row) -> set[str]:
+    """Every GL account a schedule item rolls up to. Most types have one
+    (qbo_account_id); FA also hits its accumulated-depreciation account and
+    leases also hit the ROU asset account — changing the item invalidates
+    snapshots on ALL of them."""
+    ids = {(getattr(row, "qbo_account_id", "") or "")}
+    if schedule_type == "fixed_asset":
+        ids.add(getattr(row, "accumulated_dep_qbo_account_id", None) or "")
+    if schedule_type == "lease":
+        ids.add(getattr(row, "rou_qbo_account_id", None) or "")
+    return {i for i in ids if i}
+
+
+async def _invalidate_committed_snapshots(
+    db: AsyncSession,
+    tenant_id,
+    schedule_type: str,
+    qbo_account_ids: set[str],
+) -> int:
+    """Flip committed snapshots for the given account(s) to 'stale' so the
+    user is prompted to re-commit. Skips closed (locked) periods. Mutates
+    rows in the current session WITHOUT committing — the caller owns the
+    transaction. Returns the number of snapshots invalidated."""
+    ids = {a for a in qbo_account_ids if a}
+    if not ids:
+        return 0
+    closed = set(
+        (await db.execute(select(ClosedPeriod.period_end))).scalars().all()
+    )
+    rows = (await db.execute(
+        select(ScheduleSnapshot).where(
+            ScheduleSnapshot.tenant_id == tenant_id,
+            ScheduleSnapshot.schedule_type == schedule_type,
+            ScheduleSnapshot.qbo_account_id.in_(ids),
+            ScheduleSnapshot.status == "committed",
+        )
+    )).scalars().all()
+    n = 0
+    for r in rows:
+        if r.period_end in closed:
+            continue   # books locked — leave the committed snapshot intact
+        r.status = "stale"
+        n += 1
+    return n
+
+
 @router.post("/{schedule_type}", dependencies=[Depends(require_role("preparer"))])
 async def create_item(
     schedule_type: str,
@@ -397,6 +461,11 @@ async def create_item(
     if not row.qbo_account_id:
         raise HTTPException(status_code=400, detail="qbo_account_id is required.")
     db.add(row)
+    # Adding a line invalidates any committed snapshot for this account —
+    # the roll-forward changed, so the period needs a re-commit.
+    await _invalidate_committed_snapshots(
+        db, tenant_id, schedule_type, _item_account_ids(schedule_type, row),
+    )
     await db.commit()
     await db.refresh(row)
     return _serialize(schedule_type, row)
@@ -416,7 +485,13 @@ async def update_item(
     )).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail=f"{schedule_type} item not found.")
+    # Capture account(s) BEFORE the edit — if the user re-points the item
+    # to a different GL account, both the old and new account's committed
+    # snapshots are now stale.
+    affected = _item_account_ids(schedule_type, row)
     _apply_body(schedule_type, row, body)
+    affected |= _item_account_ids(schedule_type, row)
+    await _invalidate_committed_snapshots(db, tenant_id, schedule_type, affected)
     await db.commit()
     await db.refresh(row)
     return _serialize(schedule_type, row)
@@ -435,6 +510,11 @@ async def delete_item(
     )).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail=f"{schedule_type} item not found.")
+    # Removing a line changes the roll-forward → invalidate this account's
+    # committed snapshots before deleting the row.
+    await _invalidate_committed_snapshots(
+        db, tenant_id, schedule_type, _item_account_ids(schedule_type, row),
+    )
     await db.delete(row)
     await db.commit()
     return {"id": str(item_id), "deleted": True}
@@ -478,6 +558,11 @@ async def snapshot(
         "period_end":      pe.isoformat(),
         **snap.as_dict(),
         "committed":       existing is not None and existing.status == "committed",
+        # `stale` = was committed, but items have since changed, so the
+        # persisted snapshot is out of date and the period needs a
+        # re-commit. committed_at is preserved on stale rows so the UI can
+        # show "last committed <when>".
+        "stale":           existing is not None and existing.status == "stale",
         "committed_at":    existing.committed_at.isoformat() if existing and existing.committed_at else None,
     }
 
@@ -1212,6 +1297,9 @@ async def prepaid_import_qbo(
         db.add(row)
         created.append(row)
     if created:
+        # Bulk-import added lines → any committed snapshot for this
+        # account is now stale; prompt a re-commit.
+        await _invalidate_committed_snapshots(db, tenant_id, "prepaid", {qbo_id})
         await db.commit()
         for c in created:
             await db.refresh(c)
@@ -1427,6 +1515,9 @@ async def accrual_import_qbo(
         db.add(row)
         created.append(row)
     if created:
+        # Bulk-import added lines → any committed snapshot for this
+        # account is now stale; prompt a re-commit.
+        await _invalidate_committed_snapshots(db, tenant_id, "accrual", {qbo_id})
         await db.commit()
         for c in created:
             await db.refresh(c)
@@ -1576,6 +1667,9 @@ async def fixed_asset_import_qbo(
         db.add(row)
         created.append(row)
     if created:
+        # Bulk-import added lines → any committed snapshot for this
+        # account is now stale; prompt a re-commit.
+        await _invalidate_committed_snapshots(db, tenant_id, "fixed_asset", {qbo_id})
         await db.commit()
         for c in created:
             await db.refresh(c)
@@ -1729,6 +1823,9 @@ async def loan_import_qbo(
         db.add(row)
         created.append(row)
     if created:
+        # Bulk-import added lines → any committed snapshot for this
+        # account is now stale; prompt a re-commit.
+        await _invalidate_committed_snapshots(db, tenant_id, "loan", {qbo_id})
         await db.commit()
         for c in created:
             await db.refresh(c)

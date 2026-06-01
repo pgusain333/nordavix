@@ -127,6 +127,8 @@ export interface Snapshot {
   ending_balance:    string
   item_count:        number
   committed?:        boolean
+  /** Was committed, but schedule items changed since — needs re-commit. */
+  stale?:            boolean
   committed_at?:     string | null
   pushed_to_recon?:  boolean
 }
