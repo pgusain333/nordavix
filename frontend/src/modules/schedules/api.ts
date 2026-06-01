@@ -338,6 +338,125 @@ async function importPrepaidsFromQbo(
   return data
 }
 
+// ── Import existing accruals / fixed assets / loans from QBO ───────────
+//
+// Mirrors the prepaid pattern: each scans GL on the user-selected account
+// over a lookback window, dedupes against existing items, and either
+// previews (preview_only: true) or creates real schedule rows. Sensible
+// per-type defaults; user can edit each row after import.
+
+export interface AccrualImportProposed {
+  qbo_account_id: string
+  description:    string
+  vendor:         string | null
+  reference:      string | null
+  accrual_date:   string
+  amount:         string
+  reverses_on:    string | null
+  qbo_txn_id?:    string | null
+}
+export interface AccrualImportPreview {
+  preview:         true
+  would_create:    number
+  skipped:         number
+  lookback_months: number
+  items:           AccrualImportProposed[]
+}
+export interface AccrualImportResult { preview: false; created: number; skipped: number; items: unknown[] }
+
+async function previewImportAccrualsFromQbo(qboAccountId: string, lookbackMonths = 12): Promise<AccrualImportPreview> {
+  const { data } = await apiClient.post<AccrualImportPreview>(
+    "/api/schedules/accrual/import-qbo",
+    { qbo_account_id: qboAccountId, lookback_months: lookbackMonths, preview_only: true },
+  )
+  return data
+}
+async function importAccrualsFromQbo(qboAccountId: string, lookbackMonths = 12): Promise<AccrualImportResult> {
+  const { data } = await apiClient.post<AccrualImportResult>(
+    "/api/schedules/accrual/import-qbo",
+    { qbo_account_id: qboAccountId, lookback_months: lookbackMonths, preview_only: false },
+  )
+  return data
+}
+
+export interface FixedAssetImportProposed {
+  qbo_account_id:      string
+  description:         string
+  vendor:              string | null
+  reference:           string | null
+  category:            string | null
+  in_service_date:     string
+  cost:                string
+  salvage_value:       string
+  useful_life_months:  number
+  depreciation_method: string
+  qbo_txn_id?:         string | null
+}
+export interface FixedAssetImportPreview {
+  preview:            true
+  would_create:       number
+  skipped:            number
+  lookback_months:    number
+  useful_life_months: number
+  items:              FixedAssetImportProposed[]
+}
+export interface FixedAssetImportResult { preview: false; created: number; skipped: number; items: unknown[] }
+
+async function previewImportFixedAssetsFromQbo(
+  qboAccountId: string, lookbackMonths = 24, usefulLifeMonths = 60,
+): Promise<FixedAssetImportPreview> {
+  const { data } = await apiClient.post<FixedAssetImportPreview>(
+    "/api/schedules/fixed-asset/import-qbo",
+    { qbo_account_id: qboAccountId, lookback_months: lookbackMonths, useful_life_months: usefulLifeMonths, preview_only: true },
+  )
+  return data
+}
+async function importFixedAssetsFromQbo(
+  qboAccountId: string, lookbackMonths = 24, usefulLifeMonths = 60,
+): Promise<FixedAssetImportResult> {
+  const { data } = await apiClient.post<FixedAssetImportResult>(
+    "/api/schedules/fixed-asset/import-qbo",
+    { qbo_account_id: qboAccountId, lookback_months: lookbackMonths, useful_life_months: usefulLifeMonths, preview_only: false },
+  )
+  return data
+}
+
+export interface LoanImportProposed {
+  qbo_account_id:     string
+  description:        string
+  vendor:             string | null
+  reference:          string | null
+  loan_date:          string
+  original_principal: string
+  interest_rate_pct:  string
+  term_months:        number
+  payment_type:       string
+  qbo_txn_id?:        string | null
+}
+export interface LoanImportPreview {
+  preview:         true
+  would_create:    number
+  skipped:         number
+  lookback_months: number
+  items:           LoanImportProposed[]
+}
+export interface LoanImportResult { preview: false; created: number; skipped: number; items: unknown[] }
+
+async function previewImportLoansFromQbo(qboAccountId: string, lookbackMonths = 24): Promise<LoanImportPreview> {
+  const { data } = await apiClient.post<LoanImportPreview>(
+    "/api/schedules/loan/import-qbo",
+    { qbo_account_id: qboAccountId, lookback_months: lookbackMonths, preview_only: true },
+  )
+  return data
+}
+async function importLoansFromQbo(qboAccountId: string, lookbackMonths = 24): Promise<LoanImportResult> {
+  const { data } = await apiClient.post<LoanImportResult>(
+    "/api/schedules/loan/import-qbo",
+    { qbo_account_id: qboAccountId, lookback_months: lookbackMonths, preview_only: false },
+  )
+  return data
+}
+
 // ── AI prepaid detection (Phase 2) ────────────────────────────────────────
 
 /** Run the AI scan against the current period's expense-account GL.
@@ -537,9 +656,15 @@ export const schedulesApi = {
   getLeaseSuggestions,
   getLoanSuggestions,
   getPrepaidAlerts,
-  // Onboarding helpers
+  // Onboarding helpers — bulk-import existing items from QBO
   previewImportPrepaidFromQbo,
   importPrepaidsFromQbo,
+  previewImportAccrualsFromQbo,
+  importAccrualsFromQbo,
+  previewImportFixedAssetsFromQbo,
+  importFixedAssetsFromQbo,
+  previewImportLoansFromQbo,
+  importLoansFromQbo,
   // AI prepaid detection
   scanForPrepaidCandidates,
   listPrepaidCandidates,

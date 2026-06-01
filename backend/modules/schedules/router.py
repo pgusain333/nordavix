@@ -1239,6 +1239,508 @@ def _serialize_proposed_prepaid(p: dict) -> dict:
     }
 
 
+# ── Accrual / FA / Loan import-from-QBO (mirror of prepaid_import_qbo) ─────
+#
+# Each pulls GL transactions on the user-selected liability/asset account
+# over a lookback window, dedupes against existing schedule items, and
+# either previews or creates real schedule rows with sensible per-type
+# defaults the user can refine afterward. Pattern identical to the
+# prepaid version above so the frontend banners can be carbon copies of
+# ImportPrepaidsFromQboBanner with only the labels and defaults swapped.
+
+
+def _first_of_next_month(d: _date) -> _date:
+    """First day of the month after d. Used as default accrual reversal date —
+    most accruals reverse on the first day of the following period."""
+    if d.month == 12:
+        return _date(d.year + 1, 1, 1)
+    return _date(d.year, d.month + 1, 1)
+
+
+def _serialize_proposed_accrual(p: dict) -> dict:
+    return {
+        "qbo_account_id": p["qbo_account_id"],
+        "description":   p["description"],
+        "vendor":        p["vendor"],
+        "reference":     p["reference"],
+        "accrual_date":  p["accrual_date"].isoformat(),
+        "amount":        str(p["amount"]),
+        "reverses_on":   p["reverses_on"].isoformat() if p["reverses_on"] else None,
+        "qbo_txn_id":    p.get("qbo_txn_id"),
+    }
+
+
+def _serialize_proposed_fixed_asset(p: dict) -> dict:
+    return {
+        "qbo_account_id":      p["qbo_account_id"],
+        "description":         p["description"],
+        "vendor":              p["vendor"],
+        "reference":           p["reference"],
+        "category":            p.get("category"),
+        "in_service_date":     p["in_service_date"].isoformat(),
+        "cost":                str(p["cost"]),
+        "salvage_value":       str(p["salvage_value"]),
+        "useful_life_months":  p["useful_life_months"],
+        "depreciation_method": p["depreciation_method"],
+        "qbo_txn_id":          p.get("qbo_txn_id"),
+    }
+
+
+def _serialize_proposed_loan(p: dict) -> dict:
+    return {
+        "qbo_account_id":     p["qbo_account_id"],
+        "description":        p["description"],
+        "vendor":             p["vendor"],     # lender stored in vendor for proposal symmetry
+        "reference":          p["reference"],
+        "loan_date":          p["loan_date"].isoformat(),
+        "original_principal": str(p["original_principal"]),
+        "interest_rate_pct":  str(p["interest_rate_pct"]),
+        "term_months":        p["term_months"],
+        "payment_type":       p["payment_type"],
+        "qbo_txn_id":         p.get("qbo_txn_id"),
+    }
+
+
+@router.post("/accrual/import-qbo", dependencies=[Depends(require_role("preparer"))])
+async def accrual_import_qbo(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Bulk-import accruals from a QBO BS liability account.
+
+    Body: {
+      qbo_account_id:  str,   # the accrued liability account
+      lookback_months: int,   # how far back to scan (default 12)
+      preview_only:    bool,
+    }
+
+    Accruals are credit-natural — we import CREDIT postings as new
+    accruals (debits are usually the reversal entry and shouldn't
+    create new items).
+    """
+    qbo_id = ((body or {}).get("qbo_account_id") or "").strip()
+    if not qbo_id:
+        raise HTTPException(status_code=400, detail="qbo_account_id is required.")
+    try:
+        lookback = int((body or {}).get("lookback_months") or 12)
+    except Exception:
+        raise HTTPException(status_code=400, detail="lookback_months must be an integer.")
+    if lookback < 1 or lookback > 60:
+        raise HTTPException(status_code=400, detail="lookback_months must be between 1 and 60.")
+    preview_only = bool((body or {}).get("preview_only") or False)
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    from core.qbo_gl import pull_gl_transactions
+
+    end = _date.today()
+    start = end - _timedelta(days=lookback * 30)
+
+    try:
+        txns = await pull_gl_transactions(conn, db, qbo_id, start, end)
+    except Exception:
+        logger.exception("Accrual import-from-QBO: GL pull failed for acct=%s", qbo_id)
+        raise HTTPException(status_code=502, detail="QBO GL pull failed. Try again.")
+
+    existing = list((await db.execute(
+        select(ScheduleAccrual).where(
+            ScheduleAccrual.tenant_id == tenant_id,
+            ScheduleAccrual.qbo_account_id == qbo_id,
+        )
+    )).scalars().all())
+    existing_keys = {
+        (e.description.strip().lower(), str(e.amount), e.accrual_date.isoformat())
+        for e in existing
+        if e.description and e.accrual_date is not None
+    }
+
+    proposed: list[dict] = []
+    skipped = 0
+    for t in txns:
+        amount_raw = t.get("amount") or Decimal("0")
+        # Accruals = CREDIT postings (negative debit amount in GL convention).
+        # Debits to the liability are reversal/payment entries — not new accruals.
+        if amount_raw >= 0:
+            continue
+        amount = abs(Decimal(amount_raw))
+        txn_date = t.get("txn_date")
+        if not txn_date:
+            continue
+
+        memo = (t.get("memo") or "").strip()[:200]
+        vendor = (t.get("entity_name") or "").strip()
+        description = memo or (vendor and f"{vendor} — accrual") or "Accrual (imported from QBO)"
+
+        key = (description.strip().lower(), str(amount), txn_date.isoformat())
+        if key in existing_keys:
+            skipped += 1
+            continue
+
+        proposed.append({
+            "qbo_account_id": qbo_id,
+            "description":    description[:255],
+            "vendor":         (vendor[:255] if vendor else None),
+            "reference":      ((t.get("txn_number") or "")[:100] or None),
+            "accrual_date":   txn_date,
+            "amount":         amount,
+            # Default: reverses on the 1st of next month. Most accruals
+            # are month-end JEs that reverse on day-one of the next month.
+            "reverses_on":    _first_of_next_month(txn_date),
+            "qbo_txn_id":     t.get("qbo_txn_id"),
+        })
+
+    proposed.sort(key=lambda p: p["accrual_date"], reverse=True)
+
+    if preview_only:
+        return {
+            "preview":         True,
+            "would_create":    len(proposed),
+            "skipped":         skipped,
+            "lookback_months": lookback,
+            "items":           [_serialize_proposed_accrual(p) for p in proposed],
+        }
+
+    user_uuid = uuid.UUID(str(user.id)) if user else None
+    created: list[ScheduleAccrual] = []
+    for p in proposed:
+        row = ScheduleAccrual(
+            tenant_id=tenant_id,
+            qbo_account_id=p["qbo_account_id"],
+            description=p["description"],
+            vendor=p["vendor"],
+            reference=p["reference"],
+            notes=f"Imported from QBO ({p.get('qbo_txn_id') or 'no-txn-id'}) on {_date.today().isoformat()}.",
+            is_active=True,
+            created_by=user_uuid,
+            accrual_date=p["accrual_date"],
+            amount=p["amount"],
+            reverses_on=p["reverses_on"],
+            is_reversed=False,
+        )
+        db.add(row)
+        created.append(row)
+    if created:
+        await db.commit()
+        for c in created:
+            await db.refresh(c)
+
+    return {
+        "preview": False,
+        "created": len(created),
+        "skipped": skipped,
+        "items":   [_serialize("accrual", r) for r in created],
+    }
+
+
+@router.post("/fixed-asset/import-qbo", dependencies=[Depends(require_role("preparer"))])
+async def fixed_asset_import_qbo(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Bulk-import fixed assets from a QBO BS asset account.
+
+    Body: {
+      qbo_account_id:  str,   # the FA COST account (not accum-dep)
+      lookback_months: int,   # default 24 — assets are typically longer-lived
+      preview_only:    bool,
+      useful_life_months: int (optional, default 60 = 5 years),
+    }
+
+    Each debit to the cost account becomes a new fixed asset row.
+    Default useful_life_months = 60 (5 years, standard MACRS class life
+    for office equipment), straight-line, $0 salvage. User edits per row.
+    """
+    qbo_id = ((body or {}).get("qbo_account_id") or "").strip()
+    if not qbo_id:
+        raise HTTPException(status_code=400, detail="qbo_account_id is required.")
+    try:
+        lookback = int((body or {}).get("lookback_months") or 24)
+    except Exception:
+        raise HTTPException(status_code=400, detail="lookback_months must be an integer.")
+    if lookback < 1 or lookback > 120:
+        raise HTTPException(status_code=400, detail="lookback_months must be between 1 and 120.")
+    preview_only = bool((body or {}).get("preview_only") or False)
+    try:
+        default_life = int((body or {}).get("useful_life_months") or 60)
+    except Exception:
+        raise HTTPException(status_code=400, detail="useful_life_months must be an integer.")
+    if default_life < 1 or default_life > 600:
+        raise HTTPException(status_code=400, detail="useful_life_months must be between 1 and 600.")
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    from core.qbo_gl import pull_gl_transactions
+
+    end = _date.today()
+    start = end - _timedelta(days=lookback * 30)
+
+    try:
+        txns = await pull_gl_transactions(conn, db, qbo_id, start, end)
+    except Exception:
+        logger.exception("FA import-from-QBO: GL pull failed for acct=%s", qbo_id)
+        raise HTTPException(status_code=502, detail="QBO GL pull failed. Try again.")
+
+    existing = list((await db.execute(
+        select(ScheduleFixedAsset).where(
+            ScheduleFixedAsset.tenant_id == tenant_id,
+            ScheduleFixedAsset.qbo_account_id == qbo_id,
+        )
+    )).scalars().all())
+    existing_keys = {
+        (e.description.strip().lower(), str(e.cost), e.in_service_date.isoformat())
+        for e in existing
+        if e.description and e.in_service_date is not None
+    }
+
+    proposed: list[dict] = []
+    skipped = 0
+    for t in txns:
+        amount_raw = t.get("amount") or Decimal("0")
+        # Debits only — credits on a cost account are disposals/writeoffs,
+        # not new asset acquisitions.
+        if amount_raw <= 0:
+            continue
+        amount = Decimal(amount_raw)
+        txn_date = t.get("txn_date")
+        if not txn_date:
+            continue
+
+        memo = (t.get("memo") or "").strip()[:200]
+        vendor = (t.get("entity_name") or "").strip()
+        description = memo or (vendor and f"{vendor} — asset") or "Fixed asset (imported from QBO)"
+
+        key = (description.strip().lower(), str(amount), txn_date.isoformat())
+        if key in existing_keys:
+            skipped += 1
+            continue
+
+        proposed.append({
+            "qbo_account_id":      qbo_id,
+            "description":         description[:255],
+            "vendor":              (vendor[:255] if vendor else None),
+            "reference":           ((t.get("txn_number") or "")[:100] or None),
+            "category":            None,   # user picks per asset
+            "in_service_date":     txn_date,
+            "cost":                amount,
+            "salvage_value":       Decimal("0.00"),
+            "useful_life_months":  default_life,
+            "depreciation_method": "straight_line",
+            "qbo_txn_id":          t.get("qbo_txn_id"),
+        })
+
+    proposed.sort(key=lambda p: p["in_service_date"], reverse=True)
+
+    if preview_only:
+        return {
+            "preview":         True,
+            "would_create":    len(proposed),
+            "skipped":         skipped,
+            "lookback_months": lookback,
+            "useful_life_months": default_life,
+            "items":           [_serialize_proposed_fixed_asset(p) for p in proposed],
+        }
+
+    user_uuid = uuid.UUID(str(user.id)) if user else None
+    created: list[ScheduleFixedAsset] = []
+    for p in proposed:
+        row = ScheduleFixedAsset(
+            tenant_id=tenant_id,
+            qbo_account_id=p["qbo_account_id"],
+            description=p["description"],
+            vendor=p["vendor"],
+            reference=p["reference"],
+            notes=f"Imported from QBO ({p.get('qbo_txn_id') or 'no-txn-id'}) on {_date.today().isoformat()}.",
+            is_active=True,
+            created_by=user_uuid,
+            category=p["category"],
+            in_service_date=p["in_service_date"],
+            cost=p["cost"],
+            salvage_value=p["salvage_value"],
+            useful_life_months=p["useful_life_months"],
+            depreciation_method=p["depreciation_method"],
+        )
+        db.add(row)
+        created.append(row)
+    if created:
+        await db.commit()
+        for c in created:
+            await db.refresh(c)
+
+    return {
+        "preview": False,
+        "created": len(created),
+        "skipped": skipped,
+        "items":   [_serialize("fixed_asset", r) for r in created],
+    }
+
+
+@router.post("/loan/import-qbo", dependencies=[Depends(require_role("preparer"))])
+async def loan_import_qbo(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Bulk-import loans from a QBO BS liability account.
+
+    Body: {
+      qbo_account_id:  str,   # the loan payable / notes payable account
+      lookback_months: int,   # default 24
+      preview_only:    bool,
+    }
+
+    Each CREDIT to the liability becomes a new loan row with the
+    transaction amount as original_principal. Interest rate, term, and
+    monthly payment can't be derived from GL data — they default to
+    placeholders (0% / 60mo / no payment) and the user MUST edit each
+    row to fill in the real terms before any payment activity rolls
+    forward correctly.
+    """
+    qbo_id = ((body or {}).get("qbo_account_id") or "").strip()
+    if not qbo_id:
+        raise HTTPException(status_code=400, detail="qbo_account_id is required.")
+    try:
+        lookback = int((body or {}).get("lookback_months") or 24)
+    except Exception:
+        raise HTTPException(status_code=400, detail="lookback_months must be an integer.")
+    if lookback < 1 or lookback > 120:
+        raise HTTPException(status_code=400, detail="lookback_months must be between 1 and 120.")
+    preview_only = bool((body or {}).get("preview_only") or False)
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="Connect QuickBooks first.")
+
+    from core.qbo_gl import pull_gl_transactions
+
+    end = _date.today()
+    start = end - _timedelta(days=lookback * 30)
+
+    try:
+        txns = await pull_gl_transactions(conn, db, qbo_id, start, end)
+    except Exception:
+        logger.exception("Loan import-from-QBO: GL pull failed for acct=%s", qbo_id)
+        raise HTTPException(status_code=502, detail="QBO GL pull failed. Try again.")
+
+    existing = list((await db.execute(
+        select(ScheduleLoan).where(
+            ScheduleLoan.tenant_id == tenant_id,
+            ScheduleLoan.qbo_account_id == qbo_id,
+        )
+    )).scalars().all())
+    existing_keys = {
+        (e.description.strip().lower(), str(e.original_principal), e.loan_date.isoformat())
+        for e in existing
+        if e.description and e.loan_date is not None
+    }
+
+    proposed: list[dict] = []
+    skipped = 0
+    for t in txns:
+        amount_raw = t.get("amount") or Decimal("0")
+        # Originations = CREDIT to liability. Debits are principal
+        # payments and shouldn't create new loans.
+        if amount_raw >= 0:
+            continue
+        amount = abs(Decimal(amount_raw))
+        txn_date = t.get("txn_date")
+        if not txn_date:
+            continue
+
+        memo = (t.get("memo") or "").strip()[:200]
+        lender = (t.get("entity_name") or "").strip()
+        description = memo or (lender and f"{lender} — loan") or "Loan (imported from QBO)"
+
+        key = (description.strip().lower(), str(amount), txn_date.isoformat())
+        if key in existing_keys:
+            skipped += 1
+            continue
+
+        proposed.append({
+            "qbo_account_id":     qbo_id,
+            "description":        description[:255],
+            # Lender is stored in the shared `vendor` column on the
+            # schedule_loans table for proposal symmetry — the actual
+            # ScheduleLoan model has a typed `lender` column. We map
+            # vendor → lender at create time below.
+            "vendor":             (lender[:255] if lender else None),
+            "reference":          ((t.get("txn_number") or "")[:100] or None),
+            "loan_date":          txn_date,
+            "original_principal": amount,
+            "interest_rate_pct":  Decimal("0.0000"),  # user MUST edit
+            "term_months":        60,                  # placeholder
+            "payment_type":       "amortizing",
+            "qbo_txn_id":         t.get("qbo_txn_id"),
+        })
+
+    proposed.sort(key=lambda p: p["loan_date"], reverse=True)
+
+    if preview_only:
+        return {
+            "preview":         True,
+            "would_create":    len(proposed),
+            "skipped":         skipped,
+            "lookback_months": lookback,
+            "items":           [_serialize_proposed_loan(p) for p in proposed],
+        }
+
+    user_uuid = uuid.UUID(str(user.id)) if user else None
+    created: list[ScheduleLoan] = []
+    for p in proposed:
+        row = ScheduleLoan(
+            tenant_id=tenant_id,
+            qbo_account_id=p["qbo_account_id"],
+            description=p["description"],
+            vendor=p["vendor"],
+            reference=p["reference"],
+            notes=(
+                f"Imported from QBO ({p.get('qbo_txn_id') or 'no-txn-id'}) on "
+                f"{_date.today().isoformat()}. INTEREST RATE and TERM are "
+                "placeholders — edit this row to set the real loan terms before "
+                "running any close."
+            ),
+            is_active=True,
+            created_by=user_uuid,
+            lender=p["vendor"],   # vendor column → lender on ScheduleLoan
+            loan_date=p["loan_date"],
+            original_principal=p["original_principal"],
+            interest_rate_pct=p["interest_rate_pct"],
+            term_months=p["term_months"],
+            monthly_payment=None,
+            payment_type=p["payment_type"],
+        )
+        db.add(row)
+        created.append(row)
+    if created:
+        await db.commit()
+        for c in created:
+            await db.refresh(c)
+
+    return {
+        "preview": False,
+        "created": len(created),
+        "skipped": skipped,
+        "items":   [_serialize("loan", r) for r in created],
+    }
+
+
 @router.post("/prepaid/ai/scan", dependencies=[Depends(require_role("preparer"))])
 async def prepaid_ai_scan(
     tenant_id: CurrentTenantId,

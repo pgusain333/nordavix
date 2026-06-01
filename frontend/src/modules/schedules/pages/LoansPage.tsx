@@ -16,6 +16,9 @@ import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
+import { ImportScheduleFromQboBanner, ImportTh, importMoneyFmt } from "@/modules/schedules/components/ImportScheduleFromQboBanner"
+import type { LoanImportPreview } from "@/modules/schedules/api"
+import { formatDate } from "@/core/lib/dates"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
@@ -97,6 +100,60 @@ export function LoansPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        {/* First-month onboarding — pull loans from QBO BS liability
+            account. Each credit becomes a loan with placeholder rate +
+            term — the user MUST fill in real terms before any close. */}
+        <ImportScheduleFromQboBanner
+          qboAccountId={filterAccount}
+          existingItemCount={items.length}
+          config={{
+            noun:        "loan",
+            nounPlural:  "loans",
+            defaultLookback: 24,
+            lookbackChoices: [12, 24, 36, 60],
+            blurb:       "Pulls every credit posted to this liability account in the last {lookback} months and creates a Nordavix loan for each — lender, principal, and origination date pre-filled from the QBO transaction. Interest rate and term are placeholders — edit each row to set the real loan terms.",
+            defaultsHint: "Placeholders: 0% interest, 60-month amortizing term. You MUST edit each row to set the real interest rate and term before any close runs correctly.",
+            queryKey:    ["schedules", "loan"],
+            preview:     schedulesApi.previewImportLoansFromQbo,
+            doImport:    schedulesApi.importLoansFromQbo,
+            wouldCreate: (p) => (p as LoanImportPreview).would_create,
+            skipped:     (p) => (p as LoanImportPreview).skipped,
+            itemCount:   (p) => (p as LoanImportPreview).items.length,
+            renderTable: (p) => {
+              const preview = p as LoanImportPreview
+              return (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0" style={{ background: "var(--surface-2)" }}>
+                    <tr>
+                      <ImportTh>Description</ImportTh>
+                      <ImportTh>Lender</ImportTh>
+                      <ImportTh>Loan date</ImportTh>
+                      <ImportTh right>Principal</ImportTh>
+                      <ImportTh>Term (placeholder)</ImportTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.items.map((it, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td className="px-3 py-2 text-theme">
+                          <div className="font-medium">{it.description}</div>
+                          {it.reference && (
+                            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Ref: {it.reference}</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{it.vendor ?? "—"}</td>
+                        <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{formatDate(it.loan_date)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-theme">{importMoneyFmt(it.original_principal)}</td>
+                        <td className="px-3 py-2 text-[11px]" style={{ color: "#b45309" }}>{it.term_months} mo · 0% · edit me</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )
+            },
+          }}
+        />
+
         <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker value={filterAccount} onChange={setFilterAccount} mode="filter" label="Loan liability GL account" />

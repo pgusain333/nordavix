@@ -20,6 +20,8 @@ import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { AiDetectFixedAssetBanner } from "@/modules/schedules/components/AiDetectFixedAssetBanner"
+import { ImportScheduleFromQboBanner, ImportTh, importMoneyFmt } from "@/modules/schedules/components/ImportScheduleFromQboBanner"
+import type { FixedAssetImportPreview } from "@/modules/schedules/api"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import { formatDate } from "@/core/lib/dates"
@@ -171,6 +173,60 @@ export function FixedAssetsPage() {
         <AiDetectFixedAssetBanner
           periodEnd={periodEnd}
           onAccept={handleAcceptCandidate}
+        />
+
+        {/* First-month onboarding — pull existing capitalized assets from
+            the cost account. Each debit becomes a Nordavix fixed asset
+            with sensible SL-60mo defaults the user can edit. */}
+        <ImportScheduleFromQboBanner
+          qboAccountId={filterAccount}
+          existingItemCount={items.length}
+          config={{
+            noun:        "fixed asset",
+            nounPlural:  "fixed assets",
+            defaultLookback: 24,
+            lookbackChoices: [12, 24, 36, 60],
+            blurb:       "Pulls every debit posted to this cost account in the last {lookback} months and creates a Nordavix fixed asset for each — vendor, cost, and in-service date pre-filled from the QBO transaction. Default useful life 60 months (5 years), straight-line, no salvage. Edit any row to refine.",
+            defaultsHint: "Defaults: 60-month straight-line depreciation, $0 salvage. Edit individual rows after import to set per-asset terms.",
+            queryKey:    ["schedules", "fixed_asset"],
+            preview:     (id, mo) => schedulesApi.previewImportFixedAssetsFromQbo(id, mo, 60),
+            doImport:    (id, mo) => schedulesApi.importFixedAssetsFromQbo(id, mo, 60),
+            wouldCreate: (p) => (p as FixedAssetImportPreview).would_create,
+            skipped:     (p) => (p as FixedAssetImportPreview).skipped,
+            itemCount:   (p) => (p as FixedAssetImportPreview).items.length,
+            renderTable: (p) => {
+              const preview = p as FixedAssetImportPreview
+              return (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0" style={{ background: "var(--surface-2)" }}>
+                    <tr>
+                      <ImportTh>Description</ImportTh>
+                      <ImportTh>Vendor</ImportTh>
+                      <ImportTh>In service</ImportTh>
+                      <ImportTh right>Cost</ImportTh>
+                      <ImportTh>Useful life</ImportTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.items.map((it, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td className="px-3 py-2 text-theme">
+                          <div className="font-medium">{it.description}</div>
+                          {it.reference && (
+                            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Ref: {it.reference}</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{it.vendor ?? "—"}</td>
+                        <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{formatDate(it.in_service_date)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-theme">{importMoneyFmt(it.cost)}</td>
+                        <td className="px-3 py-2 text-[11px]" style={{ color: "var(--text-2)" }}>{it.useful_life_months} mo · SL</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )
+            },
+          }}
         />
 
         <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"

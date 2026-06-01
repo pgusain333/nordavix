@@ -16,6 +16,8 @@ import { AccrualReversalDrawer } from "@/modules/schedules/components/AccrualRev
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { AiDetectMissedAccrualsBanner } from "@/modules/schedules/components/AiDetectMissedAccrualsBanner"
 import { UnreversedAccrualsBanner } from "@/modules/schedules/components/UnreversedAccrualsBanner"
+import { ImportScheduleFromQboBanner, ImportTh, importMoneyFmt } from "@/modules/schedules/components/ImportScheduleFromQboBanner"
+import type { AccrualImportPreview } from "@/modules/schedules/api"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import { formatDate } from "@/core/lib/dates"
@@ -167,6 +169,60 @@ export function AccrualsPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        {/* First-month onboarding — pull existing accruals from QBO and
+            bulk-create them as Nordavix schedule items. Only visible
+            when an account is selected and there's a reason to show it. */}
+        <ImportScheduleFromQboBanner
+          qboAccountId={filterAccount}
+          existingItemCount={items.length}
+          config={{
+            noun:        "accrual",
+            nounPlural:  "accruals",
+            defaultLookback: 12,
+            lookbackChoices: [6, 12, 18, 24],
+            blurb:       "Pulls every credit posted to this account in the last {lookback} months and creates a Nordavix accrual item for each — vendor, amount, and accrual date pre-filled from the QBO transaction. Default reverses on the 1st of next month; edit each row to refine.",
+            defaultsHint: "Defaults: reverses on 1st of next month. Edit individual rows after import to set a different reversal date.",
+            queryKey:    ["schedules", "accrual"],
+            preview:     schedulesApi.previewImportAccrualsFromQbo,
+            doImport:    schedulesApi.importAccrualsFromQbo,
+            wouldCreate: (p) => (p as AccrualImportPreview).would_create,
+            skipped:     (p) => (p as AccrualImportPreview).skipped,
+            itemCount:   (p) => (p as AccrualImportPreview).items.length,
+            renderTable: (p) => {
+              const preview = p as AccrualImportPreview
+              return (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0" style={{ background: "var(--surface-2)" }}>
+                    <tr>
+                      <ImportTh>Description</ImportTh>
+                      <ImportTh>Vendor</ImportTh>
+                      <ImportTh>Accrual date</ImportTh>
+                      <ImportTh right>Amount</ImportTh>
+                      <ImportTh>Reverses on</ImportTh>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.items.map((it, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td className="px-3 py-2 text-theme">
+                          <div className="font-medium">{it.description}</div>
+                          {it.reference && (
+                            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Ref: {it.reference}</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{it.vendor ?? "—"}</td>
+                        <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{formatDate(it.accrual_date)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-theme">{importMoneyFmt(it.amount)}</td>
+                        <td className="px-3 py-2 text-[11px]" style={{ color: "var(--text-2)" }}>{it.reverses_on ? formatDate(it.reverses_on) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )
+            },
+          }}
+        />
+
         {/* AI: detect missed accruals (feature a) */}
         <AiDetectMissedAccrualsBanner
           periodEnd={periodEnd}
