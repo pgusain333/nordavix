@@ -657,10 +657,49 @@ async def fetch_variance_detail(
 
     For AR/AP accounts we also annotate JEs that lack a customer/vendor ref
     — those are the canonical drivers of an aging-vs-GL gap.
+
+    APPROVED accounts are FROZEN: once an account is approved its data is
+    saved within Nordavix, so we serve the reconciling items captured at
+    sign-off and make NO QuickBooks call. Re-syncing (which re-opens the
+    account) is the only way to pull live GL activity again.
     """
     from datetime import timedelta
 
+    from sqlalchemy import select as _select
+
     from core.qbo_gl import pull_gl_transactions
+    from models.account_review_status import AccountReviewStatus
+
+    # Frozen-snapshot short-circuit for approved accounts — no QBO call.
+    review = (await session.execute(
+        _select(AccountReviewStatus).where(
+            AccountReviewStatus.qbo_account_id == qbo_account_id,
+            AccountReviewStatus.period_end == period_end,
+        )
+    )).scalar_one_or_none()
+    if review is not None and review.status == "approved":
+        items = review.reconciling_items or []
+        rows = [{
+            "txn_id":     it.get("txn_id") or "",
+            "txn_type":   it.get("txn_type") or "",
+            "txn_number": it.get("txn_number") or "",
+            "txn_date":   it.get("txn_date") or "",
+            "amount":     str(it.get("amount") or "0"),
+            "memo":       it.get("memo") or "",
+            "entity":     it.get("entity") or it.get("vendor") or "",
+            "flag":       None,
+        } for it in items]
+        total = sum((Decimal(str(it.get("amount") or "0")) for it in items), Decimal("0"))
+        return {
+            "rows":   rows,
+            "source": (
+                "Approved & frozen in Nordavix — showing the reconciled items "
+                "captured at sign-off. Re-open and sync to pull live QuickBooks "
+                "activity again."
+            ),
+            "total":  str(total.quantize(Decimal("0.01"))),
+            "frozen": True,
+        }
 
     accts = await _list_balance_sheet_accounts(conn, session)
     acct = next((a for a in accts if str(a.get("Id")) == str(qbo_account_id)), None)

@@ -373,15 +373,21 @@ export function ReconciliationsDashboard() {
             if (a.qbo_id !== data.qbo_account_id) return a
             const gl = parseFloat(data.gl_balance) || 0
             const sub = parseFloat(a.subledger_balance) || 0
+            const reopened = (data as { reopened?: boolean }).reopened
             return {
               ...a,
               gl_balance:  data.gl_balance,
               variance:    (gl - sub).toFixed(2),
+              // Re-syncing an approved account re-opened it server-side —
+              // reflect that immediately so the row leaves the approved state.
+              review_status: reopened ? "reviewed" as const : a.review_status,
             }
           }),
         }
       })
-      setSyncMsg(`${data.account_name} resynced from QuickBooks.`)
+      setSyncMsg((data as { reopened?: boolean }).reopened
+        ? `${data.account_name} resynced and re-opened for review (was approved).`
+        : `${data.account_name} resynced from QuickBooks.`)
     },
     onError: (err: unknown) => {
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }
@@ -1733,7 +1739,20 @@ export function ReconciliationsDashboard() {
                                     closed periods (no edits). */}
                                 {!isClosed && (
                                   <button
-                                    onClick={() => rowSyncMut.mutate(a.qbo_id)}
+                                    onClick={() => {
+                                      // Approved accounts are frozen in Nordavix.
+                                      // Re-syncing is the only thing that calls
+                                      // QBO again and it re-opens the account —
+                                      // confirm before clearing the approval.
+                                      if (a.review_status === "approved") {
+                                        const ok = window.confirm(
+                                          `${a.account_name} is approved.\n\nRe-syncing pulls fresh data from ` +
+                                          `QuickBooks and re-opens it for review (its approval will be cleared).\n\nContinue?`,
+                                        )
+                                        if (!ok) return
+                                      }
+                                      rowSyncMut.mutate(a.qbo_id)
+                                    }}
                                     disabled={rowSyncMut.isPending && rowSyncMut.variables === a.qbo_id}
                                     className="inline-flex items-center justify-center rounded-md h-6 w-6 transition-colors"
                                     style={{
@@ -1741,7 +1760,9 @@ export function ReconciliationsDashboard() {
                                       border: "1px solid var(--border-strong)",
                                       background: "var(--surface)",
                                     }}
-                                    title="Sync this account's GL balance from QuickBooks"
+                                    title={a.review_status === "approved"
+                                      ? "Re-sync from QuickBooks (re-opens this approved account for review)"
+                                      : "Sync this account's GL balance from QuickBooks"}
                                     onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--green)")}
                                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border-strong)")}
                                   >

@@ -405,7 +405,12 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
           ),
         )
       }
-      onMessage?.({ kind: "ok", text: `${data.account_name} resynced from QuickBooks.` })
+      onMessage?.({
+        kind: "ok",
+        text: (data as { reopened?: boolean }).reopened
+          ? `${data.account_name} resynced from QuickBooks and re-opened for review (was approved).`
+          : `${data.account_name} resynced from QuickBooks.`,
+      })
     },
     onError: (err: unknown) => {
       onMessage?.({ kind: "err", text: extractErrorDetail(err) ?? "Could not sync from QBO." })
@@ -598,9 +603,22 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
               <Button
                 size="icon-sm"
                 variant="outline"
-                title="Sync this account's balance from QuickBooks"
+                title={r.status === "approved"
+                  ? "Re-sync from QuickBooks (re-opens this approved variance for review)"
+                  : "Sync this account's balance from QuickBooks"}
                 onClick={(e) => {
                   e.stopPropagation()
+                  // Approved variances are frozen in Nordavix — re-syncing
+                  // is the only thing that pulls QBO again, and it re-opens
+                  // the variance for review. Confirm before discarding the
+                  // approval.
+                  if (r.status === "approved") {
+                    const ok = window.confirm(
+                      `${r.account_name} is approved.\n\nRe-syncing pulls fresh balances from ` +
+                      `QuickBooks and re-opens it for review (its approval will be cleared).\n\nContinue?`,
+                    )
+                    if (!ok) return
+                  }
                   rowSync.mutate(r)
                 }}
                 disabled={syncPendingForThisRow}

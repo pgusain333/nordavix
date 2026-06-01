@@ -515,6 +515,25 @@ async def sync_one_account_from_qbo(
         snap.balance = new_balance
         snap.captured_at = datetime.now(UTC)
 
+    # Re-syncing an APPROVED account re-opens it: the QBO numbers may now
+    # differ from what was signed off, so the approval can no longer stand.
+    # Drop it back to "reviewed" (preparer can re-review + re-approve).
+    # This is the only path that pulls QBO for an approved account, and it
+    # always un-approves — so an approval always reflects the exact data
+    # that existed when it was signed off.
+    reopened = False
+    review = (await db.execute(
+        select(AccountReviewStatus).where(
+            AccountReviewStatus.qbo_account_id == qbo_account_id,
+            AccountReviewStatus.period_end == pe,
+        )
+    )).scalar_one_or_none()
+    if review is not None and review.status == "approved":
+        review.status = "reviewed"
+        review.approved_by = None
+        review.approved_at = None
+        reopened = True
+
     await db.commit()
     await db.refresh(snap)
 
@@ -525,10 +544,14 @@ async def sync_one_account_from_qbo(
             action="recon.account_synced",
             entity_type="account_snapshot", entity_id=snap.id,
             metadata={
-                "summary":      f"Resynced {snap.account_name} from QBO",
+                "summary": (
+                    f"Resynced {snap.account_name} from QBO"
+                    + (" (re-opened — was approved)" if reopened else "")
+                ),
                 "qbo_account_id": qbo_account_id,
                 "period_end":   pe.isoformat(),
                 "new_balance":  str(new_balance),
+                "reopened":     reopened,
             },
         )
         await db.commit()
@@ -543,6 +566,7 @@ async def sync_one_account_from_qbo(
         "account_type":   snap.account_type,
         "gl_balance":     str(new_balance.quantize(Decimal("0.01"))),
         "captured_at":    snap.captured_at.isoformat() if snap.captured_at else None,
+        "reopened":       reopened,
     }
 
 

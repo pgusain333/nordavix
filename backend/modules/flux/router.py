@@ -844,6 +844,15 @@ async def list_variance_transactions(
         # period_prior + 1 day catches all activity that contributed to the
         # change in balance — no matter the comparison length (month vs month,
         # quarter vs quarter, YTD vs YTD all work).
+        # A forced txn refresh is an explicit QBO pull — approved variance
+        # data is otherwise frozen in Nordavix (we serve the cached rows
+        # without `refresh`). So a refresh on an approved variance re-opens
+        # it for review.
+        if var.status == "approved":
+            var.status = "generated"
+            var.approved_by = None
+            var.approved_at = None
+
         from datetime import timedelta
         period_start = tb.period_prior + timedelta(days=1)
         try:
@@ -1224,6 +1233,20 @@ async def sync_one_account_from_qbo(
         seen: set[str] = set()
         var.anomaly_flags = [f for f in flags if not (f in seen or seen.add(f))]
 
+        # Re-syncing an APPROVED variance re-opens it: the balances just
+        # changed, so the approval no longer reflects the data. Drop it
+        # back to "generated" (keeps any AI commentary; clears the
+        # approval stamp) so it returns to the review queue.
+        if var.status == "approved":
+            var.status = "generated"
+            var.approved_by = None
+            var.approved_at = None
+            reopened = True
+        else:
+            reopened = False
+    else:
+        reopened = False
+
     await db.commit()
     await db.refresh(acct)
     if var is not None:
@@ -1235,10 +1258,14 @@ async def sync_one_account_from_qbo(
             action="flux.account_synced",
             entity_type="account", entity_id=acct.id,
             metadata={
-                "summary":      f"Resynced {acct.account_name} from QBO",
+                "summary": (
+                    f"Resynced {acct.account_name} from QBO"
+                    + (" (re-opened — was approved)" if reopened else "")
+                ),
                 "qbo_account_id": qbo_account_id,
                 "new_current":  str(new_current),
                 "new_prior":    str(new_prior),
+                "reopened":     reopened,
             },
         )
         await db.commit()
@@ -1259,6 +1286,7 @@ async def sync_one_account_from_qbo(
             "is_material":     bool(var.is_material) if var else False,
             "anomaly_flags":   list(var.anomaly_flags or []) if var else [],
         } if var else None,
+        "reopened":  reopened,
         "synced_at": datetime.now(UTC).isoformat(),
     }
 
