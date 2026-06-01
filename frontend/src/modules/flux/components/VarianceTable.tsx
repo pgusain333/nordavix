@@ -1039,6 +1039,43 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                     : "Run AI on this variance: pulls QBO transactions + structured analysis"}>
                   {r.ai_commentary ? "Re-run AI" : "Run AI"}
                 </Button>
+
+                {/* Preparer step — mark an OPEN variance prepared (reviewed,
+                    ready for sign-off). Anyone but a view-only user can do
+                    this; it's the maker half of maker-checker. Mirrors the
+                    bulk "Mark prepared" action so the drawer is self-sufficient. */}
+                {(r.status === "pending" || r.status === "flagged") && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={<Check size={12} strokeWidth={2.2} />}
+                    loading={
+                      bulkSetStatus.isPending &&
+                      bulkSetStatus.variables?.status === "edited" &&
+                      (bulkSetStatus.variables?.ids?.includes(r.id) ?? false)
+                    }
+                    onClick={() => bulkSetStatus.mutate({ ids: [r.id], status: "edited" })}
+                    title="Mark this variance prepared — reviewed and ready for sign-off">
+                    Mark prepared
+                  </Button>
+                )}
+
+                {/* Prepared but not yet approved — show the preparer an undo
+                    back to open. (Approvers also see the Approve button below.) */}
+                {(r.status === "generated" || r.status === "edited") && (
+                  <button
+                    onClick={() => bulkSetStatus.mutate({ ids: [r.id], status: "pending" })}
+                    disabled={bulkSetStatus.isPending}
+                    className="text-[11px] inline-flex items-center gap-1 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
+                    style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent" }}
+                    title="Move back to open (undo prepared)">
+                    <RotateCcw size={11} strokeWidth={2} />
+                    Reset to open
+                  </button>
+                )}
+
                 {canApprove && r.status !== "approved" && (
                   <Button
                     size="sm"
