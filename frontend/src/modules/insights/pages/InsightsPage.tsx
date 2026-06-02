@@ -20,6 +20,7 @@ import {
   ArrowUpFromLine, LineChart as LineIcon, Sparkles, AlertTriangle,
   Play, Info, Lightbulb, MousePointerClick,
   Target, Eye, ShieldCheck, CheckCircle2,
+  CalendarClock, Scale, Gauge,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import {
@@ -61,7 +62,11 @@ function monthOptions(): { value: string; label: string }[] {
 const SECTIONS = [
   { id: "recommendations", label: "Risks",         icon: AlertTriangle },
   { id: "liquidity",       label: "Liquidity",     icon: Wallet },
+  { id: "cash_forecast",   label: "Forecast",      icon: CalendarClock },
+  { id: "balance_sheet",   label: "Balance sheet", icon: Scale },
   { id: "profitability",   label: "P&L",           icon: LineIcon },
+  { id: "growth",          label: "Growth",        icon: TrendingUp },
+  { id: "breakeven",       label: "Break-even",    icon: Gauge },
   { id: "receivables",     label: "AR",            icon: ArrowDownToLine },
   { id: "payables",        label: "AP",            icon: ArrowUpFromLine },
   { id: "expenses",        label: "Expenses",      icon: ReceiptText },
@@ -221,6 +226,33 @@ export function InsightsPage() {
                   leftLabel="Cash balance" rightLabel="Monthly OCF"
                   onPointClick={jumpToMonth} />
               </Section>
+              <Section id="cash_forecast" title="Cash flow forecast" icon={CalendarClock}
+                description="Where cash lands over the next 6 months at the current operating burn — and when to act.">
+                <KpiTable rows={data.cash_forecast.kpis} />
+                <AdvisoryBlock advisory={data.cash_forecast.advisory} />
+                {data.cash_forecast.points.length > 0 && (
+                  <>
+                    <SectionDivider label="Projected cash balance — next 6 months" />
+                    <ForecastChart points={data.cash_forecast.points}
+                      outOfCashDate={data.cash_forecast.out_of_cash_date} />
+                  </>
+                )}
+              </Section>
+              <Section id="balance_sheet" title="Balance sheet & solvency" icon={Scale}
+                description="What you own vs. owe, how leveraged you are, and how net worth is trending.">
+                <KpiTable rows={data.balance_sheet.kpis} />
+                <AdvisoryBlock advisory={data.balance_sheet.advisory} />
+                {data.balance_sheet.equity_history.length > 0 && (
+                  <>
+                    <SectionDivider label="Net worth (equity) — last 7 months" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <SparklineCard label="Equity / net worth"
+                        points={data.balance_sheet.equity_history.map((h) => ({ x: h.label, y: h.equity, period: h.period }))}
+                        color="var(--green)" onPointClick={jumpToMonth} />
+                    </div>
+                  </>
+                )}
+              </Section>
               <Section id="profitability" title="Revenue & profitability" icon={LineIcon}
                 description="Top-line trends and margin compression.">
                 <KpiTable rows={data.profitability.kpis} />
@@ -230,6 +262,33 @@ export function InsightsPage() {
                   keys={["revenue", "gp", "ni"]}
                   labels={["Revenue", "Gross profit", "Net income"]}
                   onPointClick={jumpToMonth} />
+              </Section>
+              <Section id="growth" title="Growth & momentum" icon={TrendingUp}
+                description="Revenue trajectory, annualized run-rate, and whether costs scale slower than revenue.">
+                <KpiTable rows={data.growth.kpis} />
+                <AdvisoryBlock advisory={data.growth.advisory} />
+                {data.growth.history.length > 0 && (
+                  <>
+                    <SectionDivider label="Revenue — last 7 months" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <SparklineCard label="Revenue"
+                        points={data.growth.history.map((h) => ({ x: h.label, y: Number(h.revenue ?? 0), period: h.period }))}
+                        color="var(--green)" onPointClick={jumpToMonth} />
+                    </div>
+                  </>
+                )}
+              </Section>
+              <Section id="breakeven" title="Break-even & margin of safety" icon={Gauge}
+                description="The revenue needed to cover all costs, and how much cushion you have above it.">
+                <KpiTable rows={data.breakeven.kpis} />
+                <AdvisoryBlock advisory={data.breakeven.advisory} />
+                {data.breakeven.break_even_revenue !== null && (
+                  <>
+                    <SectionDivider label="Current revenue vs. break-even" />
+                    <BreakevenBar current={data.breakeven.current_revenue}
+                      breakEven={data.breakeven.break_even_revenue} />
+                  </>
+                )}
               </Section>
               <Section id="receivables" title="Receivables (AR)" icon={ArrowDownToLine}
                 description="How quickly customers pay, where risk concentrates, largest overdue accounts.">
@@ -969,6 +1028,74 @@ function SparklineCard({ label, points, color, onPointClick }: {
         <MousePointerClick size={9} strokeWidth={2} />
         Click a point to focus that month
       </p>
+    </div>
+  )
+}
+
+// ── Cash-flow forecast chart (projected balance, marks the zero line) ────────
+
+function ForecastChart({ points, outOfCashDate }: {
+  points: { month: string; projected_cash: number }[]; outOfCashDate: string | null;
+}) {
+  const W = 600, H = 120, PAD = 8
+  if (!points.length) return null
+  const ys = points.map((p) => p.projected_cash)
+  const min = Math.min(...ys, 0)
+  const max = Math.max(...ys, 0)
+  const span = max - min || 1
+  const dx = (W - PAD * 2) / Math.max(1, points.length - 1)
+  const toY = (v: number) => H - PAD - ((v - min) / span) * (H - PAD * 2)
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${PAD + i * dx} ${toY(p.projected_cash)}`).join(" ")
+  const zeroY = toY(0)
+  return (
+    <div className="rounded-lg p-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="overflow-visible">
+        <line x1={PAD} y1={zeroY} x2={W - PAD} y2={zeroY} stroke="#dc2626" strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
+        <path d={path} fill="none" stroke="var(--green)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {points.map((p, i) => (
+          <circle key={i} cx={PAD + i * dx} cy={toY(p.projected_cash)} r={2.6}
+            fill={p.projected_cash <= 0 ? "#dc2626" : "var(--green)"} stroke="var(--surface)" strokeWidth="0.5" />
+        ))}
+      </svg>
+      <div className="flex justify-between mt-1">
+        {points.map((p, i) => (
+          <span key={i} className="text-[9px] tabular-nums"
+            style={{ color: p.projected_cash <= 0 ? "#dc2626" : "var(--text-muted)" }}>
+            {p.month.split(" ")[0]}
+          </span>
+        ))}
+      </div>
+      {outOfCashDate && (
+        <p className="text-[11px] mt-2 flex items-center gap-1.5" style={{ color: "#b45309" }}>
+          <AlertTriangle size={11} strokeWidth={2} />
+          Projected to reach $0 around <strong>{outOfCashDate}</strong> at the current operating burn.
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ── Break-even bar (current revenue vs. the break-even threshold) ────────────
+
+function BreakevenBar({ current, breakEven }: { current: number; breakEven: number }) {
+  const max = Math.max(current, breakEven) * 1.15 || 1
+  const curPct = Math.max(0, Math.min(100, (current / max) * 100))
+  const bePct = Math.max(0, Math.min(100, (breakEven / max) * 100))
+  const above = current >= breakEven
+  return (
+    <div className="space-y-2">
+      <div className="relative h-9 rounded-md overflow-hidden" style={{ background: "var(--surface-2)" }}>
+        <div className="h-full transition-all" style={{ width: `${curPct}%`, background: above ? "var(--green)" : "#f59e0b" }} />
+        <div className="absolute top-0 bottom-0" style={{ left: `${bePct}%`, width: 2, background: "#dc2626" }} />
+        <span className="absolute text-[9px] font-bold uppercase tracking-wider"
+          style={{ left: `calc(${bePct}% + 4px)`, top: 3, color: "#dc2626" }}>
+          Break-even
+        </span>
+      </div>
+      <div className="flex justify-between text-[11px]">
+        <span style={{ color: "var(--text-2)" }}>Current revenue: <strong style={{ color: "var(--text)" }}>{fmtMoney(current)}</strong></span>
+        <span style={{ color: "var(--text-2)" }}>Break-even: <strong style={{ color: "var(--text)" }}>{fmtMoney(breakEven)}</strong></span>
+      </div>
     </div>
   )
 }

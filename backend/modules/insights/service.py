@@ -144,6 +144,15 @@ def _last_day_of_month(d: date) -> date:
     return d.replace(day=calendar.monthrange(d.year, d.month)[1])
 
 
+def _add_months(d: date, n: int) -> date:
+    """Add n calendar months to d, clamping the day to the target month length."""
+    total = d.month - 1 + n
+    year = d.year + total // 12
+    month = total % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
 def _signed_presentation(account_type: str, balance: Decimal) -> Decimal:
     """Flip credit-natural accounts so presentation values read positive."""
     if account_type in CREDIT_NATURAL:
@@ -201,6 +210,26 @@ def _risk_for(metric: str, value: float | None) -> str:
     if metric == "ccc":  # cash conversion cycle, days; lower is better
         if v <= 30: return "green"
         if v <= 60: return "amber"
+        return "red"
+    if metric == "debt_to_equity":
+        if v <= 1.0: return "green"
+        if v <= 2.0: return "amber"
+        return "red"
+    if metric == "debt_to_assets":
+        if v <= 0.4: return "green"
+        if v <= 0.6: return "amber"
+        return "red"
+    if metric == "revenue_growth":  # MoM %
+        if v > 2:  return "green"
+        if v >= -2: return "amber"
+        return "red"
+    if metric == "operating_leverage":  # rev growth − expense growth, pts
+        if v > 0:  return "green"
+        if v >= -5: return "amber"
+        return "red"
+    if metric == "margin_of_safety":  # % above break-even
+        if v >= 25: return "green"
+        if v > 0:   return "amber"
         return "red"
     if metric == "gross_margin":
         if v >= 50: return "green"
@@ -543,6 +572,10 @@ def _build_advisory(payload: dict) -> None:
     ar   = payload.get("receivables", {})
     ap   = payload.get("payables", {})
     exp  = payload.get("expenses", {})
+    cf   = payload.get("cash_forecast", {})
+    bs   = payload.get("balance_sheet", {})
+    gr   = payload.get("growth", {})
+    be   = payload.get("breakeven", {})
 
     runway  = liq.get("runway_months")
     op_burn = liq.get("operating_burn") or 0.0
@@ -717,6 +750,120 @@ def _build_advisory(payload: dict) -> None:
                          "Subscription/vendor creep across small line items."],
         "risks":        (["A large recurring expense spike will compress margin if it sticks."] if mover else
                          ["No acute expense risk flagged."]),
+    }
+
+    # ── Cash flow forecast ──
+    ooc = cf.get("out_of_cash_date")
+    r_minus = cf.get("runway_minus_10")
+    r_plus = cf.get("runway_plus_10")
+    cf_impl = (
+        f"On the current operating burn and no new financing, cash runs to zero around {ooc}."
+        if ooc else "Operations are self-funding, so there's no projected cash-out date — the forecast trends flat-to-up."
+    )
+    cf_actions = []
+    if ooc and runway is not None and runway < 9:
+        cf_actions.append("Begin financing conversations now — a raise/credit line typically takes 2–4 months to close.")
+        cf_actions.append("Model a downside case (revenue −20%) and pre-decide the spend cuts that extend runway.")
+    elif op_cf < 0:
+        cf_actions.append("Set a monthly burn ceiling and track actual-vs-target at each close to defend the forecast.")
+    else:
+        cf_actions.append("Build a reserve target (e.g. 6 months of operating costs) and route surplus toward it.")
+    if r_minus and r_plus:
+        cf_actions.append(f"Use the sensitivity: a 10% burn cut buys ~{r_minus - r_plus:.1f} extra months — make that your first lever.")
+    cf["advisory"] = {
+        "implications": cf_impl,
+        "actions":      cf_actions,
+        "watch":        ["Whether actual cash tracks the projection — drift means burn is changing.",
+                         "Lumpy outflows (tax, annual renewals) that the smooth projection won't show."],
+        "risks":        ([f"Projected to run low by {ooc} — financing risk."] if ooc and runway is not None and runway < 6 else
+                         ["No near-term cash-out risk on the current trajectory."]),
+    }
+
+    # ── Balance sheet & solvency ──
+    dte = bs.get("debt_to_equity")
+    dta = bs.get("debt_to_assets")
+    eq  = bs.get("equity") or 0.0
+    bs_impl = []
+    if dte is not None:
+        lev = "conservatively financed" if dte <= 1 else "moderately leveraged" if dte <= 2 else "highly leveraged"
+        bs_impl.append(f"Debt-to-equity of {dte:.2f}× means the business is {lev}.")
+    if dta is not None:
+        bs_impl.append(f"About {dta * 100:.0f}% of assets are financed by debt.")
+    bs_impl.append(f"Net worth (equity) stands at {_money_str(eq)}" + (" — negative, a solvency red flag." if eq < 0 else "."))
+    bs_actions = []
+    if (dte is not None and dte > 2) or eq < 0:
+        bs_actions.append("De-lever: prioritize paying down the most expensive debt and pause new borrowing.")
+        bs_actions.append("Rebuild equity — retain earnings or raise before taking on more obligations.")
+    elif dte is not None and dte <= 1:
+        bs_actions.append("Balance sheet has room — debt is a cheaper growth lever than equity if returns beat the rate.")
+    else:
+        bs_actions.append("Keep leverage steady; refinance high-rate debt opportunistically.")
+    bs["advisory"] = {
+        "implications": " ".join(bs_impl),
+        "actions":      bs_actions,
+        "watch":        ["Equity trend — is net worth building or eroding each month?",
+                         "Long-term debt maturities and covenant headroom."],
+        "risks":        (["High leverage — limited cushion if results dip or rates rise."] if (dte or 0) > 2 else
+                         ["Negative equity — balance-sheet insolvency."] if eq < 0 else
+                         ["No acute solvency risk flagged."]),
+    }
+
+    # ── Growth & momentum ──
+    gmom = gr.get("revenue_growth_mom")
+    glev = gr.get("operating_leverage")
+    grr  = gr.get("annualized_run_rate")
+    gr_impl = []
+    if gmom is not None:
+        gr_impl.append(f"Revenue {('grew' if gmom >= 0 else 'fell')} {abs(gmom):.1f}% month over month.")
+    if grr:
+        gr_impl.append(f"That annualizes to a ~{_money_str(grr)} run-rate.")
+    if glev is not None:
+        gr_impl.append("Costs are growing " + ("slower than revenue — you're getting operating leverage." if glev >= 0
+                       else "faster than revenue — operating leverage is negative."))
+    gr_actions = []
+    if glev is not None and glev < 0:
+        gr_actions.append("Reset cost growth below revenue growth — freeze additions until the lines re-cross.")
+    if gmom is not None and gmom < 0:
+        gr_actions.append("Diagnose the decline: churn, pricing, seasonality, or pipeline — then target the biggest driver.")
+    if not gr_actions:
+        gr_actions.append("Momentum is constructive — reinvest into the channels that are compounding.")
+    gr["advisory"] = {
+        "implications": " ".join(gr_impl) or "Not enough history to read momentum yet.",
+        "actions":      gr_actions,
+        "watch":        ["The 3-month trend, not single-month spikes.",
+                         "Operating leverage — costs must scale slower than revenue to reach profitability."],
+        "risks":        (["Revenue is contracting — a strategic, not just operational, concern."] if (gmom or 0) < -2 else
+                         ["No acute growth risk flagged."]),
+    }
+
+    # ── Break-even & margin of safety ──
+    mos = be.get("margin_of_safety_pct")
+    bev = be.get("break_even_revenue")
+    cmp_ = be.get("contribution_margin_pct")
+    be_impl = []
+    if bev is not None:
+        be_impl.append(f"You break even at about {_money_str(bev)} of revenue.")
+    if mos is not None:
+        be_impl.append(
+            f"Current revenue sits {mos:+.0f}% {'above' if mos >= 0 else 'below'} that line"
+            + (" — a comfortable cushion." if mos >= 25 else " — a thin cushion." if mos >= 0 else " — you're below break-even.")
+        )
+    be_actions = []
+    if mos is not None and mos < 0:
+        be_actions.append("Close the gap to break-even: lead with price/mix (it flows straight to contribution), then trim fixed costs.")
+    elif mos is not None and mos < 25:
+        be_actions.append("Widen the cushion — a few points of contribution margin move break-even down materially.")
+    else:
+        be_actions.append("Healthy buffer — you can invest behind growth without risking a loss month.")
+    if cmp_ is not None and cmp_ < 40:
+        be_actions.append(f"Contribution margin is {cmp_:.0f}% — review pricing and direct-cost inputs to lift it.")
+    be["advisory"] = {
+        "implications": " ".join(be_impl) or "Need positive gross margin to compute a break-even point.",
+        "actions":      be_actions,
+        "watch":        ["Fixed-cost creep — it raises the break-even bar every month.",
+                         "Contribution margin — the lever that moves break-even fastest."],
+        "risks":        (["Operating below break-even — every period at this level is a loss."] if (mos is not None and mos < 0) else
+                         ["No acute break-even risk flagged."]),
     }
 
     # ── Management summary (composite health) ──
@@ -1617,6 +1764,175 @@ async def compute_overview(
         ],
     }
 
+    # ── Cash flow forecast (forward projection at operating burn) ─────────────
+    HORIZON = 6
+    burn = operating_burn  # Decimal; positive = burning
+    cf_points = [
+        {"month": _add_months(period_end, n).strftime("%b %Y"),
+         "projected_cash": _to_money(cash_balance - burn * n)}
+        for n in range(0, HORIZON + 1)
+    ]
+    out_of_cash_label = None
+    if burn > 0 and cash_balance > 0 and runway_months is not None:
+        out_of_cash_label = _add_months(period_end, int(runway_months)).strftime("%b %Y")
+
+    def _runway_at(b: Decimal) -> float | None:
+        return float((cash_balance / b).quantize(Decimal("0.1"))) if (b > 0 and cash_balance > 0) else None
+    runway_slower = _runway_at(burn * Decimal("0.9")) if burn > 0 else None   # cut burn 10%
+    runway_faster = _runway_at(burn * Decimal("1.1")) if burn > 0 else None   # burn rises 10%
+    cash_3 = cash_balance - burn * 3
+    cash_6 = cash_balance - burn * 6
+    cash_forecast = {
+        "horizon_months":     HORIZON,
+        "out_of_cash_date":   out_of_cash_label,
+        "projected_cash_3mo": _to_money(cash_3),
+        "projected_cash_6mo": _to_money(cash_6),
+        "runway_minus_10":    runway_slower,
+        "runway_plus_10":     runway_faster,
+        "points":             cf_points,
+        "kpis": [
+            {"kpi": "Out of cash by",
+             "value": out_of_cash_label or ("Self-funding" if burn <= 0 else "—"),
+             "risk": _risk_for("runway_months", runway_months) if runway_months is not None else "green",
+             "insight": (f"At {_money_str(burn)}/mo operating burn — and assuming no new financing — cash reaches "
+                         f"zero around {out_of_cash_label}. Line up funding well before this."
+                         if out_of_cash_label else "Operations fund themselves — no projected cash-out date.")},
+            {"kpi": "Projected cash in 3 months", "value": _money_str(cash_3),
+             "risk": "red" if cash_3 <= 0 else ("amber" if burn > 0 else "green"),
+             "insight": "Bank balance in 3 months if the burn rate holds and you raise nothing."},
+            {"kpi": "Projected cash in 6 months", "value": _money_str(cash_6),
+             "risk": "red" if cash_6 <= 0 else ("amber" if burn > 0 else "green"),
+             "insight": "Bank balance in 6 months on the same assumptions."},
+            {"kpi": "Burn sensitivity (±10%)",
+             "value": (f"{runway_faster:.1f}–{runway_slower:.1f} mo" if (runway_faster and runway_slower) else "—"),
+             "risk": "neutral",
+             "insight": (f"Trim burn 10% → ~{runway_slower:.1f} months; let it drift up 10% → ~{runway_faster:.1f} months. "
+                         "Small operating changes compound into real runway."
+                         if (runway_faster and runway_slower) else "No burn to flex — operations are cash-generative.")},
+        ],
+    }
+
+    # ── Balance sheet & solvency ──────────────────────────────────────────────
+    def _equity_at(p: date) -> Decimal:
+        rows = snaps_by_pe.get(p, [])
+        return _sum_by_types(rows, ASSET_TYPES) - _sum_by_types_presented(rows, LIAB_TYPES)
+    bs_rows = snaps_by_pe.get(period_end, [])
+    total_assets = _sum_by_types(bs_rows, ASSET_TYPES)
+    total_liabilities = _sum_by_types_presented(bs_rows, LIAB_TYPES)
+    equity_nw = total_assets - total_liabilities
+    long_term_liab = _sum_by_types_presented(bs_rows, {"Long Term Liability"})
+    d_to_e = float((total_liabilities / equity_nw).quantize(Decimal("0.01"))) if equity_nw > 0 else None
+    d_to_a = float((total_liabilities / total_assets).quantize(Decimal("0.001"))) if total_assets > 0 else None
+    equity_history = [
+        {"period": p.isoformat(), "label": p.strftime("%b"), "equity": _to_money(_equity_at(p))}
+        for p in period_ends
+    ]
+    eq_prior = _equity_at(prior_pe) if prior_pe else ZERO
+    balance_sheet = {
+        "total_assets":          _to_money(total_assets),
+        "total_liabilities":     _to_money(total_liabilities),
+        "equity":                _to_money(equity_nw),
+        "long_term_liabilities": _to_money(long_term_liab),
+        "debt_to_equity":        d_to_e,
+        "debt_to_assets":        d_to_a,
+        "equity_history":        equity_history,
+        "kpis": [
+            {"kpi": "Total assets", "value": _money_str(total_assets), "risk": "neutral",
+             "insight": "Everything the business owns at period end (cash, receivables, inventory, fixed assets)."},
+            {"kpi": "Total liabilities", "value": _money_str(total_liabilities), "risk": "neutral",
+             "insight": "Everything the business owes — payables, credit cards, loans, accruals."},
+            {"kpi": "Equity (net worth)", "value": _money_str(equity_nw),
+             "risk": "green" if equity_nw > 0 else "red",
+             "insight": ("Assets − liabilities — the owners' stake."
+                         + (f" {_change_str(_to_money(equity_nw), _to_money(eq_prior))} vs prior month." if eq_prior else "")
+                         if equity_nw > 0 else "Negative — liabilities exceed assets (balance-sheet insolvency).")},
+            {"kpi": "Debt-to-equity", "value": f"{d_to_e:.2f}×" if d_to_e is not None else "—",
+             "risk": _risk_for("debt_to_equity", d_to_e),
+             "insight": ("Liabilities ÷ equity. ≤1 conservative, 1–2 moderate, >2 highly leveraged."
+                         if d_to_e is not None else "No positive equity to measure leverage against.")},
+            {"kpi": "Debt-to-assets", "value": f"{d_to_a * 100:.0f}%" if d_to_a is not None else "—",
+             "risk": _risk_for("debt_to_assets", d_to_a),
+             "insight": ("Share of assets financed by debt. <40% conservative, >60% leveraged."
+                         if d_to_a is not None else "No assets to measure against.")},
+        ],
+    }
+
+    # ── Growth & momentum ─────────────────────────────────────────────────────
+    rev_vals = [float(h["revenue"]) for h in revenue_history]   # ascending
+    rev_now  = rev_vals[-1] if rev_vals else 0.0
+    rev_prev = rev_vals[-2] if len(rev_vals) > 1 else 0.0
+    rev_growth_mom = _to_pct(Decimal(str(rev_now - rev_prev)), Decimal(str(rev_prev))) if rev_prev else None
+    last3, prev3 = rev_vals[-3:], rev_vals[-6:-3]
+    avg_last3 = sum(last3) / len(last3) if last3 else 0.0
+    avg_prev3 = sum(prev3) / len(prev3) if prev3 else 0.0
+    trend3_growth = _to_pct(Decimal(str(avg_last3 - avg_prev3)), Decimal(str(avg_prev3))) if avg_prev3 else None
+    run_rate = float((Decimal(str(revenue_month)) / days_dec * Decimal(365)).quantize(Decimal("0.01")))
+    prev_total_exp = float(sum(prev_exp.values())) if prev_exp else 0.0
+    exp_growth_mom = _to_pct(Decimal(str(total_expenses_month - prev_total_exp)), Decimal(str(prev_total_exp))) if prev_total_exp else None
+    op_leverage = round(rev_growth_mom - exp_growth_mom, 1) if (rev_growth_mom is not None and exp_growth_mom is not None) else None
+    growth = {
+        "revenue_growth_mom":   rev_growth_mom,
+        "trend_3mo_growth":     trend3_growth,
+        "annualized_run_rate":  run_rate,
+        "expense_growth_mom":   exp_growth_mom,
+        "operating_leverage":   op_leverage,
+        "history":              revenue_history,
+        "kpis": [
+            {"kpi": "Revenue growth (MoM)",
+             "value": f"{rev_growth_mom:+.1f}%" if rev_growth_mom is not None else "—",
+             "risk": _risk_for("revenue_growth", rev_growth_mom),
+             "insight": ("Month-over-month top-line change. The momentum signal — sustained negative growth is a strategic flag."
+                         if rev_growth_mom is not None else "Need a prior period to measure growth.")},
+            {"kpi": "3-month trend",
+             "value": f"{trend3_growth:+.1f}%" if trend3_growth is not None else "—",
+             "risk": _risk_for("revenue_growth", trend3_growth),
+             "insight": "Trailing-3-month average vs the prior 3 months — smooths out one-off spikes."},
+            {"kpi": "Annualized run-rate", "value": _money_str(run_rate), "risk": "neutral",
+             "insight": "This period's revenue projected to a full year — the headline number for planning and valuation."},
+            {"kpi": "Operating leverage",
+             "value": f"{op_leverage:+.1f} pts" if op_leverage is not None else "—",
+             "risk": _risk_for("operating_leverage", op_leverage),
+             "insight": ("Revenue growth − expense growth. Positive = revenue outpacing costs (you're scaling); "
+                         "negative = spending faster than you're growing."
+                         if op_leverage is not None else "Need prior-period revenue + expense to compute.")},
+        ],
+    }
+
+    # ── Break-even & margin of safety ─────────────────────────────────────────
+    cm_ratio = (gm_pct / 100.0) if gm_pct is not None else None       # contribution-margin ratio ≈ gross margin
+    fixed_costs = float(opex_month) + float(other_expense_month)      # indirect OpEx + other expense
+    break_even_rev = (fixed_costs / cm_ratio) if (cm_ratio and cm_ratio > 0) else None
+    rev_f = float(revenue_month)
+    mos_pct = round((rev_f - break_even_rev) / rev_f * 100, 1) if (break_even_rev is not None and rev_f > 0) else None
+    breakeven = {
+        "break_even_revenue":      _to_money(break_even_rev) if break_even_rev is not None else None,
+        "margin_of_safety_pct":    mos_pct,
+        "contribution_margin_pct": gm_pct,
+        "fixed_costs":             _to_money(fixed_costs),
+        "current_revenue":         _to_money(revenue_month),
+        "kpis": [
+            {"kpi": "Break-even revenue",
+             "value": _money_str(break_even_rev) if break_even_rev is not None else "—",
+             "risk": "neutral",
+             "insight": ("Revenue needed to cover all costs = fixed costs ÷ contribution margin. "
+                         "Below this you lose money; above it, every dollar drops to profit faster."
+                         if break_even_rev is not None else "Gross margin must be positive to compute a break-even.")},
+            {"kpi": "Margin of safety",
+             "value": f"{mos_pct:+.0f}%" if mos_pct is not None else "—",
+             "risk": _risk_for("margin_of_safety", mos_pct),
+             "insight": ("How far current revenue sits above break-even. The cushion before you'd swing to a loss — "
+                         "the bigger the safer."
+                         if mos_pct is not None else "Need a break-even point to measure the cushion.")},
+            {"kpi": "Contribution margin",
+             "value": f"{gm_pct:.0f}%" if gm_pct is not None else "—",
+             "risk": _risk_for("gross_margin", gm_pct),
+             "insight": "Share of each revenue dollar left after direct costs to cover fixed costs + profit. "
+                        "Your main pricing/cost lever — a few points move break-even a lot."},
+            {"kpi": "Fixed costs (this period)", "value": _money_str(fixed_costs), "risk": "neutral",
+             "insight": "Indirect operating + other expenses — the nut you must cover regardless of sales volume."},
+        ],
+    }
+
     # Period label: month-year when the range is exactly one calendar
     # month (so "January 2026" stays readable for Month-mode selections),
     # otherwise a date-range string for true custom windows.
@@ -1645,6 +1961,10 @@ async def compute_overview(
         "is_full_month":  is_full_month,
         "custom_pl_error": custom_pl_error,
         "liquidity":      liquidity,
+        "cash_forecast":  cash_forecast,
+        "balance_sheet":  balance_sheet,
+        "growth":         growth,
+        "breakeven":      breakeven,
         "receivables":    receivables,
         "payables":       payables,
         "profitability":  profitability,

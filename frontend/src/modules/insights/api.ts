@@ -98,6 +98,51 @@ export interface Profitability {
   advisory?:                Advisory
 }
 
+export interface CashForecast {
+  horizon_months:     number
+  out_of_cash_date:   string | null
+  projected_cash_3mo: number
+  projected_cash_6mo: number
+  runway_minus_10:    number | null   // runway if burn cut 10%
+  runway_plus_10:     number | null   // runway if burn rises 10%
+  points:             { month: string; projected_cash: number }[]
+  kpis:               KpiRow[]
+  advisory?:          Advisory
+}
+
+export interface BalanceSheet {
+  total_assets:          number
+  total_liabilities:     number
+  equity:                number   // net worth = assets − liabilities
+  long_term_liabilities: number
+  debt_to_equity:        number | null
+  debt_to_assets:        number | null   // ratio (0–1)
+  equity_history:        { period: string; label: string; equity: number }[]
+  kpis:                  KpiRow[]
+  advisory?:             Advisory
+}
+
+export interface Growth {
+  revenue_growth_mom:  number | null
+  trend_3mo_growth:    number | null
+  annualized_run_rate: number
+  expense_growth_mom:  number | null
+  operating_leverage:  number | null   // rev growth − expense growth (pts)
+  history:             HistoryPoint[]
+  kpis:                KpiRow[]
+  advisory?:           Advisory
+}
+
+export interface Breakeven {
+  break_even_revenue:      number | null
+  margin_of_safety_pct:    number | null
+  contribution_margin_pct: number | null
+  fixed_costs:             number
+  current_revenue:         number
+  kpis:                    KpiRow[]
+  advisory?:               Advisory
+}
+
 export interface Receivables {
   ar_balance:        number
   dso_days:          number | null
@@ -151,6 +196,10 @@ export interface InsightsOverview {
   custom_pl_error:  string | null
   qbo_connected:    boolean
   liquidity:        Liquidity
+  cash_forecast:    CashForecast
+  balance_sheet:    BalanceSheet
+  growth:           Growth
+  breakeven:        Breakeven
   profitability:    Profitability
   receivables:      Receivables
   payables:         Payables
