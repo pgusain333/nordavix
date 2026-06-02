@@ -130,7 +130,7 @@ export const ORGANIZATION_SCHEMA = {
   "@type":    "Organization",
   name:       SITE_NAME,
   url:        SITE,
-  logo:       `${SITE}/logo-mark-dark.svg`,
+  logo:       `${SITE}/icon-512.png`,
   description:
     "AI-native month-end close platform for CPA firms and corporate controllers. " +
     "AI-prepared reconciliations, flux analysis, intercompany consolidation, " +
@@ -239,7 +239,7 @@ export function articleSchema(args: {
       name:    SITE_NAME,
       logo: {
         "@type": "ImageObject",
-        url:     `${SITE}/logo-mark-dark.svg`,
+        url:     `${SITE}/icon-512.png`,
       },
     },
     mainEntityOfPage: {

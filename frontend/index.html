@@ -4,9 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- Favicons — SVG for modern browsers, PNG fallback for older + iOS -->
+    <!-- Favicons. Google search results + older browsers use favicon.ico (the
+         root fallback Google always probes); modern browsers prefer the PNG /
+         crisp SVG for tabs; iOS uses the PNG apple-touch-icon. All render the
+         brand 'n' mark on the cream brand square. -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96.png" />
     <link rel="icon" type="image/svg+xml" href="/logo-mark-dark.svg" />
-    <link rel="apple-touch-icon" href="/logo-mark-dark.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 
     <!-- PWA manifest — declares app name + icons for the install prompt
          and gives Google a mobile-quality signal. -->
@@ -38,7 +43,7 @@
       "@type":    "Organization",
       "name":     "Nordavix",
       "url":      "https://nordavix.com",
-      "logo":     "https://nordavix.com/logo-mark-dark.svg",
+      "logo":     "https://nordavix.com/icon-512.png",
       "description": "AI-native month-end close platform for CPA firms and corporate controllers. AI-prepared reconciliations, flux analysis, intercompany consolidation, schedules, and the executive financial package.",
       "sameAs": [
         "https://www.linkedin.com/company/nordavix/"
