@@ -422,13 +422,22 @@ def _reconciliation_table(data: dict) -> Table:
     rows.append(["", "", "", Paragraph(opening_label_html, memo_bold), _fmt_money(opening)])
     opening_row_idx = len(rows) - 1
 
-    # 2. Reconciling items
+    # 2. Reconciling items — split into OPEN (outstanding; listed individually
+    #    as the open items) and CLEARED (ticked as reconciled; they still feed
+    #    the build-up math but are summarized in one line, not listed). An item
+    #    with no `cleared` flag defaults to open.
+    open_items    = [it for it in items if not it.get("cleared")]
+    cleared_items = [it for it in items if it.get("cleared")]
+
+    def _signed(it: dict) -> Decimal:
+        raw = _to_decimal(it.get("amount"))
+        return raw if str(it.get("txn_id", "")).startswith("manual-") else (flip * raw)
+
     items_sum = Decimal("0")
     items_start_idx = len(rows)
-    for it in items:
+    for it in open_items:
         is_manual = str(it.get("txn_id", "")).startswith("manual-")
-        raw_amt = _to_decimal(it.get("amount"))
-        signed = raw_amt if is_manual else (flip * raw_amt)
+        signed = _signed(it)
         items_sum += signed
         memo_text = (it.get("memo") or "")[:200]
         if is_manual and "Manual" not in (it.get("txn_type") or ""):
@@ -444,9 +453,26 @@ def _reconciliation_table(data: dict) -> Table:
         ])
     items_end_idx = len(rows) - 1
 
+    # 2b. Cleared items — one summary line (tie into the math, not listed).
+    cleared_sum: Decimal = sum((_signed(it) for it in cleared_items), Decimal("0"))
+    cleared_row_idx: int | None = None
+    if cleared_items:
+        rows.append([
+            "", "", "",
+            Paragraph(
+                "Cleared items"
+                f"<br/><font size='8' color='{GREY_MID.hexval()}'>"
+                f"{len(cleared_items)} item{'' if len(cleared_items) == 1 else 's'} "
+                "reconciled / cleared this period</font>",
+                memo_bold,
+            ),
+            _fmt_money(cleared_sum),
+        ])
+        cleared_row_idx = len(rows) - 1
+
     # 3a. Reconcile opening + items to the SAVED subledger via an explicit
     # "Other adjustments" row when they differ.
-    computed_from_items = opening + items_sum
+    computed_from_items = opening + items_sum + cleared_sum
     adjustment = saved_subledger - computed_from_items
     adjustment_row_idx: int | None = None
     if abs(adjustment) >= Decimal("0.01"):
@@ -550,6 +576,11 @@ def _reconciliation_table(data: dict) -> Table:
         style.append(("LINEABOVE",  (0, adjustment_row_idx), (-1, adjustment_row_idx), 0.5, GREY_LIGHT))
         style.append(("TOPPADDING", (0, adjustment_row_idx), (-1, adjustment_row_idx), 7))
         style.append(("BOTTOMPADDING", (0, adjustment_row_idx), (-1, adjustment_row_idx), 7))
+    # Cleared-items summary row (when present)
+    if cleared_row_idx is not None:
+        style.append(("BACKGROUND", (0, cleared_row_idx), (-1, cleared_row_idx), colors.Color(0.965, 0.965, 0.965)))
+        style.append(("TOPPADDING", (0, cleared_row_idx), (-1, cleared_row_idx), 6))
+        style.append(("BOTTOMPADDING", (0, cleared_row_idx), (-1, cleared_row_idx), 6))
     tbl.setStyle(TableStyle(style))
     return tbl
 
@@ -735,7 +766,8 @@ def build_account_pdf(buffer: BinaryIO, *, data: dict) -> None:
 
     # ── 2. Reconciliation build-up ─────────────────────────────────────
     items = data.get("reconciling_items") or []
-    item_count_label = f"{len(items)} RECONCILING ITEM{'' if len(items) == 1 else 'S'}"
+    open_n = sum(1 for it in items if not it.get("cleared"))
+    item_count_label = f"{open_n} OPEN ITEM{'' if open_n == 1 else 'S'}"
     story.append(Paragraph(
         f"RECONCILIATION BUILD-UP  &nbsp;&nbsp;<font size='7' color='{GREY_MID.hexval()}'>· {item_count_label}</font>",
         styles["section"],

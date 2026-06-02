@@ -124,6 +124,9 @@ export interface ReconcilingItem {
   amount:     string
   memo:       string
   entity?:    string
+  /** Ticked = reconciled/cleared this period. Falsy/absent = still open
+   *  (outstanding) — open items are listed in the reconciliation PDF. */
+  cleared?:   boolean
 }
 
 export interface OverviewEvidenceFile {
