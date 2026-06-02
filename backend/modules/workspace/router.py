@@ -135,26 +135,34 @@ async def get_me(
             )
             await db.commit()
 
-    # First-sign-in welcome email — once per person. `welcomed_at` gates it;
-    # the cross-tenant check stops a multi-workspace founder being welcomed
-    # twice. Cheap no-op after the first call (welcomed_at is set thereafter).
+    # First-sign-in welcome email — exactly once per person. CRITICAL: `user`
+    # comes from the tenant middleware's (now-closed) session, so stamping
+    # welcomed_at on it here would NOT persist — and every /me call (the app
+    # polls it) would resend the welcome. We re-load the row in THIS request's
+    # session so the commit actually sticks. `welcomed_at` then gates it; the
+    # cross-tenant check stops a multi-workspace founder being welcomed twice.
     if user.welcomed_at is None:
-        first_ever = (await db.execute(
-            select(User.id).where(
-                User.clerk_user_id == user.clerk_user_id,
-                User.welcomed_at.isnot(None),
-            ),
+        me_row = (await db.execute(
+            select(User).where(User.id == user.id),
             execution_options={"skip_tenant_filter": True},
-        )).first() is None
-        user.welcomed_at = datetime.now(UTC)
-        await db.commit()
-        if first_ever and settings.email_enabled and user.email:
-            background_tasks.add_task(
-                send_welcome_email,
-                to_email=user.email,
-                clerk_user_id=user.clerk_user_id,
-                cta_url=settings.web_url + "/app",
-            )
+        )).scalar_one_or_none()
+        if me_row is not None and me_row.welcomed_at is None:
+            already_welcomed = (await db.execute(
+                select(User.id).where(
+                    User.clerk_user_id == me_row.clerk_user_id,
+                    User.welcomed_at.isnot(None),
+                ),
+                execution_options={"skip_tenant_filter": True},
+            )).first() is not None
+            me_row.welcomed_at = datetime.now(UTC)
+            await db.commit()
+            if not already_welcomed and settings.email_enabled and me_row.email:
+                background_tasks.add_task(
+                    send_welcome_email,
+                    to_email=me_row.email,
+                    clerk_user_id=me_row.clerk_user_id,
+                    cta_url=settings.web_url + "/app",
+                )
 
     return {
         "id":            str(user.id),
