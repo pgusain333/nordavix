@@ -41,7 +41,6 @@ import {
   BarChart3,
   Users,
   Clock,
-  ShieldCheck,
   Lock,
   Unlock,
   Circle,
@@ -52,6 +51,7 @@ import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
 import { tasksApi } from "@/modules/tasks/api"
+import { OnboardingChecklist } from "@/modules/onboarding/OnboardingChecklist"
 import { useBooksStatus } from "@/modules/recons/hooks"
 import { workspaceApi } from "@/modules/workspace/api"
 import { Button, Spinner } from "@/core/ui/components"
@@ -147,7 +147,7 @@ export function DashboardHome() {
   // QBO connection — uses the localStorage-cached hook so refreshes
   // don't flash the "not connected" banner while the verify-fetch
   // round-trips.
-  const { data: qbo, isLoading: qboLoading } = useQboConnection()
+  const { data: qbo } = useQboConnection()
 
   // Books status — localStorage-cached hook so we don't flash the
   // "Welcome — finish the setup below" hero + the "Set up books to
@@ -462,20 +462,6 @@ export function DashboardHome() {
     staleTime: 5 * 60_000,
   })
 
-  // Setup checklist — only shows steps that aren't done yet
-  const setupSteps = useMemo(() => {
-    const steps: { label: string; done: boolean; href: string }[] = []
-    if (!qboLoading) {
-      steps.push({ label: "Connect QuickBooks", done: !!qbo, href: "/app/connections" })
-    }
-    if (books) {
-      steps.push({ label: "Set books start date + opening balances", done: books.seeded, href: "/app/setup/books" })
-    }
-    return steps
-  }, [qbo, qboLoading, books])
-
-  const setupIncomplete = setupSteps.filter((s) => !s.done)
-
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
       {/* Header */}
@@ -526,37 +512,8 @@ export function DashboardHome() {
       </motion.div>
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
-        {/* ── Setup checklist (only if anything's missing) ───────── */}
-        {setupIncomplete.length > 0 && (
-          <div className="rounded-xl p-4"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-            <div className="flex items-center gap-2 mb-3">
-              <ShieldCheck size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-              <h2 className="text-sm font-semibold text-theme">Finish setting up your workspace</h2>
-            </div>
-            <ol className="space-y-2">
-              {setupSteps.map((s, i) => (
-                <li key={i}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg"
-                  style={{ background: s.done ? "var(--green-subtle)" : "var(--surface-2)" }}>
-                  {s.done
-                    ? <CheckCircle2 size={16} strokeWidth={2} style={{ color: "var(--green)" }} />
-                    : <span className="h-4 w-4 rounded-full" style={{ border: "2px solid var(--text-muted)" }} />}
-                  <span className="flex-1 text-sm"
-                    style={{ color: s.done ? "var(--green)" : "var(--text)", textDecoration: s.done ? "line-through" : "none" }}>
-                    {s.label}
-                  </span>
-                  {!s.done && (
-                    <Button size="sm" variant="outline" icon={<ArrowRight size={12} strokeWidth={1.8} />}
-                      onClick={() => navigate(s.href)}>
-                      Open
-                    </Button>
-                  )}
-                </li>
-              ))}
-            </ol>
-          </div>
-        )}
+        {/* Onboarding checklist — backend-derived, hides when complete. */}
+        <OnboardingChecklist />
 
         {/* ── Month-end close tracker — always shown ─────────────────
             When books haven't been set up, the section explains why no

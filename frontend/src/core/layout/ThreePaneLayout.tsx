@@ -1,8 +1,9 @@
 import { ReactNode, useEffect, useState } from "react"
-import { Menu, X } from "lucide-react"
+import { Menu, X, Search } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
 import { LeftNav } from "./LeftNav"
 import { ClerkApiWirer } from "@/core/auth/ClerkProvider"
+import { CommandPalette, CMDK_EVENT } from "@/core/ui/CommandPalette"
 
 interface ThreePaneLayoutProps {
   children: ReactNode
@@ -23,6 +24,7 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
   return (
     <div className="flex h-screen overflow-hidden bg-theme">
       <ClerkApiWirer />
+      <CommandPalette />
 
       {/* ── Desktop sidebar ── */}
       <div className="hidden lg:flex">
@@ -85,8 +87,15 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
               nordavix<span style={{ color: "var(--green)" }}>.</span>
             </span>
           </div>
-          {/* Theme toggle lives at the bottom of LeftNav — no duplicate here. */}
-          <span className="w-8" aria-hidden="true" />
+          {/* Search opens the ⌘K command palette (no keyboard on mobile). */}
+          <button
+            onClick={() => window.dispatchEvent(new Event(CMDK_EVENT))}
+            className="flex items-center justify-center h-8 w-8 rounded-lg transition-colors text-theme-2"
+            style={{ background: "var(--surface-2)" }}
+            aria-label="Search"
+          >
+            <Search size={18} strokeWidth={1.6} />
+          </button>
         </div>
 
         <main className="flex flex-1 flex-col overflow-hidden min-w-0">

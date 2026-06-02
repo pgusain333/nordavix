@@ -8,7 +8,7 @@ import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
-  MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList,
+  MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList, Search,
   type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
@@ -19,6 +19,7 @@ import { FeedbackDialog } from "@/core/ui/FeedbackDialog"
 import { WorkspaceSwitcher } from "@/core/layout/WorkspaceSwitcher"
 import { workspaceApi } from "@/modules/workspace/api"
 import { tasksApi } from "@/modules/tasks/api"
+import { CMDK_EVENT } from "@/core/ui/CommandPalette"
 
 interface NavItem {
   label:     string
@@ -170,6 +171,22 @@ export function LeftNav({ onClose }: Props) {
           below it on small viewports, which the outer scroll then
           reveals when needed. On desktop the aside is tall enough that
           everything fits without scrolling. */}
+      {/* Quick search → opens the ⌘K command palette. Also reachable via the
+          ⌘K / Ctrl-K shortcut anywhere in the app. */}
+      <div className="px-2 pt-2.5">
+        <button
+          onClick={() => { window.dispatchEvent(new Event(CMDK_EVENT)); onClose?.() }}
+          className="w-full inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+          title="Search and jump anywhere (⌘K)"
+        >
+          <Search size={16} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+          <span className="flex-1 text-left" style={{ color: "var(--text-muted)" }}>Search…</span>
+          <kbd className="text-[10px] px-1 py-0.5 rounded"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>⌘K</kbd>
+        </button>
+      </div>
+
       <nav className="shrink-0 px-2 py-3 space-y-0.5">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon
