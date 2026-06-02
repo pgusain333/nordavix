@@ -31,14 +31,16 @@ def upgrade() -> None:
         sa.Column("payload", JSONB, nullable=False),
         sa.Column("computed_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
-    # One cached snapshot per (tenant, window). NULLS NOT DISTINCT so a
-    # month-mode row (period_start present) and a no-start row stay unique.
+    # One cached snapshot per (tenant, window). Plain unique index — we do NOT
+    # use NULLS NOT DISTINCT (a Postgres 15+ feature) because it would fail the
+    # migration on older Postgres, and it isn't needed: the Insights page always
+    # sends a period_start (never NULL), and the upsert is select-then-write, not
+    # ON CONFLICT, so it never depends on NULL-distinctness semantics.
     op.create_index(
         "ix_insights_snapshots_tenant_period",
         "insights_snapshots",
         ["tenant_id", "period_end", "period_start"],
         unique=True,
-        postgresql_nulls_not_distinct=True,
     )
 
 
