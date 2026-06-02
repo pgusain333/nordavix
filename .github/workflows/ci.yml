@@ -131,3 +131,37 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl deploy --remote-only
+
+  deploy-frontend:
+    name: Deploy frontend to Vercel
+    needs: frontend
+    runs-on: ubuntu-latest
+    # Only on push to main. If the Vercel secrets aren't configured yet, the
+    # deploy step SKIPS cleanly (stays green) instead of failing — so adding
+    # this job never breaks CI. Add three repo secrets to turn it on:
+    #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+    # (Settings → Secrets and variables → Actions). Runs from the repo root and
+    # uses the official `vercel pull/build/deploy` flow, which respects the
+    # project's Root Directory + production env vars from Vercel.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Deploy (production)
+        env:
+          VERCEL_TOKEN:      ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID:     ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "Vercel secrets not configured — skipping frontend deploy."
+            echo "Add VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID under"
+            echo "Settings -> Secrets and variables -> Actions to enable it."
+            exit 0
+          fi
+          npm i -g vercel@latest
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          vercel build --prod --token="$VERCEL_TOKEN"
+          vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
