@@ -47,7 +47,6 @@ import {
   Circle,
   CalendarCheck,
   Lightbulb,
-  Sparkles,
 } from "lucide-react"
 import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
@@ -1478,7 +1477,7 @@ function CloseProgressCard({
 // the user couldn't find it.
 
 function ClosedStateCard({
-  monthLabel, period, closedAt, approvedCount, total, onOpen,
+  monthLabel, closedAt, approvedCount, total, onOpen,
   isAdmin, onReopenBooks, reopening, fluxTotal,
 }: {
   monthLabel: string
@@ -1496,23 +1495,6 @@ function ClosedStateCard({
    *  summary line alongside the accounts count. */
   fluxTotal: number
 }) {
-  const [execError, setExecError] = useState<string | null>(null)
-  const execMut = useMutation({
-    mutationFn: async () => {
-      const { financialsApi } = await import("@/modules/financials/api")
-      return financialsApi.exportExecutiveReport(period)
-    },
-    onMutate: () => setExecError(null),
-    onError: (e: Error) => setExecError(e.message),
-  })
-  // Auto-dismiss errors so the card doesn't carry a permanent failure
-  // message after the user retries.
-  useEffect(() => {
-    if (!execError) return
-    const t = setTimeout(() => setExecError(null), 6_000)
-    return () => clearTimeout(t)
-  }, [execError])
-
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "var(--green-subtle)", border: "1px solid var(--green)", boxShadow: "var(--card-shadow)" }}>
@@ -1547,21 +1529,6 @@ function ClosedStateCard({
           <Button size="sm" variant="outline" onClick={onOpen}>
             View
           </Button>
-          {/* Executive Report — board-ready AI-narrated PDF.
-              Lives here because the user kept asking "where do I
-              generate the executive report" — burying it inside the
-              Financial Package tab (where it requires Load + scroll)
-              made it invisible. The dashboard is the natural place
-              once books are closed. */}
-          <Button
-            size="sm"
-            icon={<Sparkles size={12} strokeWidth={1.8} />}
-            loading={execMut.isPending}
-            onClick={() => execMut.mutate()}
-            title="Download the AI-narrated executive report (10+ page board package)"
-          >
-            {execMut.isPending ? "Generating…" : "Download executive report"}
-          </Button>
           {/* Reopen books — admin only. Moved here from the recons
               dashboard so close + reopen sit in one place: this card
               is the single source of truth for period lifecycle.
@@ -1581,29 +1548,7 @@ function ClosedStateCard({
           )}
         </div>
       </div>
-      {execError && (
-        <div className="px-5 py-2 text-xs flex items-start gap-2"
-          style={{ background: "#fef2f2", color: "#991b1b", borderTop: "1px solid #fecaca" }}>
-          <AlertCircleIcon /> <span className="flex-1">{execError}</span>
-        </div>
-      )}
-      {execMut.isPending && (
-        <div className="px-5 py-2 text-[11px] italic" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--border)" }}>
-          Pulling financials + insights + flux, then asking Claude for the narrative. About 10–30 seconds.
-        </div>
-      )}
     </div>
-  )
-}
-
-// Tiny inline alert icon so we don't haul lucide-react's AlertCircle
-// out for a one-off error stripe inside this card.
-function AlertCircleIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5">
-      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-    </svg>
   )
 }
 

@@ -13,16 +13,17 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   TrendingUp, TrendingDown, Wallet, ReceiptText, ArrowDownToLine,
   ArrowUpFromLine, LineChart as LineIcon, Sparkles, AlertTriangle,
   Play, Info, Lightbulb, MousePointerClick,
   Target, Eye, ShieldCheck, CheckCircle2,
-  CalendarClock, Scale, Gauge,
+  CalendarClock, Scale, Gauge, RefreshCw,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
+import { DatePicker } from "@/core/ui/DatePicker"
 import {
   insightsApi, type InsightsOverview, type KpiRow, type RiskLevel, type HistoryPoint,
   type Advisory,
@@ -56,6 +57,14 @@ function monthOptions(): { value: string; label: string }[] {
     })
   }
   return out
+}
+/** "Synced {time}" label — compact local timestamp of the cached compute. */
+function fmtSyncedAt(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  return d.toLocaleString("en-US", {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  })
 }
 
 // Section anchor registry
@@ -116,8 +125,29 @@ export function InsightsPage() {
     queryKey,
     queryFn:  () => insightsApi.getOverview(pending!.periodEnd, pending?.periodStart ?? null),
     enabled:  pending !== null,
-    staleTime: 60_000,
+    // Insights are persisted server-side now, so a plain load returns the saved
+    // snapshot instantly. Keep it effectively fresh until the user hits Sync.
+    staleTime: Infinity,
   })
+
+  // ── Sync: recompute the loaded period (refresh=1) and overwrite the cache ──
+  const qc = useQueryClient()
+  const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
+
+  async function sync() {
+    if (!pending) return
+    setSyncing(true)
+    setSyncError(null)
+    try {
+      const fresh = await insightsApi.getOverview(pending.periodEnd, pending.periodStart ?? null, true)
+      qc.setQueryData(queryKey, fresh)
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : "Sync failed")
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   function generate() {
     // Month mode used to send only period_end and let the backend compute
@@ -160,6 +190,10 @@ export function InsightsPage() {
         onGenerate={generate}
         isFetching={isFetching}
         loadedLabel={data?.period_label}
+        savedAt={data?.saved_at}
+        onSync={sync}
+        isSyncing={syncing}
+        syncError={syncError}
       />
 
       {pending && data && <JumpNav data={data} />}
@@ -354,6 +388,7 @@ export function InsightsPage() {
 function Header({
   mode, setMode, periodEnd, setPeriodEnd, periodStart, setPeriodStart,
   onGenerate, isFetching, loadedLabel,
+  savedAt, onSync, isSyncing, syncError,
 }: {
   mode: DateMode; setMode: (m: DateMode) => void
   periodEnd: string; setPeriodEnd: (s: string) => void
@@ -361,6 +396,10 @@ function Header({
   onGenerate: () => void
   isFetching: boolean
   loadedLabel?: string
+  savedAt?: string
+  onSync?: () => void
+  isSyncing?: boolean
+  syncError?: string | null
 }) {
   const valid = mode === "month"
     ? !!periodEnd
@@ -390,6 +429,27 @@ function Header({
               and recommendations from your books.
             </p>
           </div>
+
+          {/* Saved-snapshot status + Sync (recompute). Insights persist once
+              generated, so a revisit is instant; Sync refreshes from the books. */}
+          {savedAt && onSync && (
+            <div className="flex flex-col items-end gap-1 ml-auto shrink-0">
+              <button
+                onClick={onSync}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-60 transition-opacity"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+              >
+                <RefreshCw size={12} strokeWidth={2.2} className={isSyncing ? "animate-spin" : ""} />
+                {isSyncing ? "Syncing…" : "Sync"}
+              </button>
+              {syncError ? (
+                <span className="text-[10px] font-medium" style={{ color: "#dc2626" }}>Sync failed — retry</span>
+              ) : (
+                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Synced {fmtSyncedAt(savedAt)}</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Period picker row */}
@@ -429,24 +489,10 @@ function Header({
           ) : (
             <>
               <FieldShell label="From">
-                <input
-                  type="date"
-                  value={periodStart}
-                  onChange={(e) => setPeriodStart(e.target.value)}
-                  max={periodEnd}
-                  className="rounded-lg px-3 py-1.5 text-sm font-medium outline-none"
-                  style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-                />
+                <DatePicker value={periodStart} onChange={setPeriodStart} max={periodEnd} />
               </FieldShell>
               <FieldShell label="To">
-                <input
-                  type="date"
-                  value={periodEnd}
-                  onChange={(e) => setPeriodEnd(e.target.value)}
-                  min={periodStart}
-                  className="rounded-lg px-3 py-1.5 text-sm font-medium outline-none"
-                  style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-                />
+                <DatePicker value={periodEnd} onChange={setPeriodEnd} min={periodStart} />
               </FieldShell>
               <PresetButtons
                 onPick={(s, e) => { setPeriodStart(s); setPeriodEnd(e) }}

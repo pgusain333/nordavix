@@ -206,13 +206,21 @@ export interface InsightsOverview {
   expenses:         Expenses
   recommendations:  Recommendation[]
   management_summary?: ManagementSummary
+  /** ISO timestamp of the cached compute — drives the "Synced {time}" label. */
+  saved_at?:        string
 }
 
 // ── API ──────────────────────────────────────────────────────────────────────
 
-async function getOverview(periodEnd: string, periodStart?: string | null): Promise<InsightsOverview> {
+async function getOverview(
+  periodEnd: string,
+  periodStart?: string | null,
+  refresh = false,
+): Promise<InsightsOverview> {
   const params: Record<string, string> = { period_end: periodEnd }
   if (periodStart) params.period_start = periodStart
+  // refresh=1 is the Sync button: recompute + overwrite the saved snapshot.
+  if (refresh) params.refresh = "1"
   const { data } = await apiClient.get<InsightsOverview>(
     "/api/insights/overview", { params },
   )

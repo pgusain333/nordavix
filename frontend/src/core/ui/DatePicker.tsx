@@ -20,7 +20,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { Calendar, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react"
-import { formatDate } from "@/core/lib/dates"
 
 interface Props {
   /** ISO YYYY-MM-DD, or empty string for unset. */
@@ -58,8 +57,12 @@ function fromIso(s: string): { y: number; m: number; d: number } | null {
   return { y, m: m - 1, d }
 }
 function fmtDisplay(iso: string): string {
-  // App-wide standard: MM-DD-YYYY (US, unambiguous when copy-pasted).
-  return formatDate(iso) || iso
+  // App-wide picker standard: MM-DD-YY (2-digit year). Manual entry still
+  // accepts MM-DD-YYYY / slashes / ISO (see parseManualDate); we just render
+  // back in the compact 2-digit form.
+  const p = fromIso(iso)
+  if (!p) return iso || ""
+  return `${pad2(p.m + 1)}-${pad2(p.d)}-${pad2(p.y % 100)}`
 }
 
 /**
@@ -266,7 +269,7 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
         <input
           type="text"
           value={textValue}
-          placeholder={placeholder ?? "MM-DD-YYYY"}
+          placeholder={placeholder ?? "MM-DD-YY"}
           disabled={disabled}
           onChange={(e) => setTextValue(e.target.value)}
           onFocus={() => setTextFocused(true)}
@@ -287,7 +290,7 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
             color: value ? "var(--text)" : "var(--text-muted)",
             cursor: disabled ? "not-allowed" : "text",
           }}
-          aria-label="Date (MM-DD-YYYY)"
+          aria-label="Date (MM-DD-YY)"
         />
 
         {/* Chevron — also opens the picker (mirrors the calendar icon). */}
