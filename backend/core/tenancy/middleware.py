@@ -79,6 +79,44 @@ class TenantMiddleware(BaseHTTPMiddleware):
         if not clerk_user_id:
             return JSONResponse({"detail": "Invalid token: missing user ID"}, status_code=401)
 
+        # ── Sample-company demo mode ────────────────────────────────────────
+        # A logged-in user can VIEW a fixed, seeded demo tenant read-only by
+        # sending X-Nordavix-Demo: 1. The header only ever maps to the single
+        # demo tenant (never another real tenant), ALL writes are 403-blocked,
+        # and a valid JWT is still required — so the worst a caller can do is
+        # read fake data.
+        if request.headers.get("X-Nordavix-Demo") == "1":
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                return JSONResponse(
+                    {"detail": "Sample company is read-only.", "code": "demo_readonly"},
+                    status_code=403,
+                )
+            async with AsyncSessionLocal() as session:
+                demo = (await session.execute(
+                    select(Tenant).where(Tenant.clerk_org_id == settings.demo_clerk_org_id),
+                    execution_options={"skip_tenant_filter": True},
+                )).scalar_one_or_none()
+                demo_user = None
+                if demo is not None:
+                    demo_user = (await session.execute(
+                        select(User).where(User.tenant_id == demo.id, User.role == "admin"),
+                        execution_options={"skip_tenant_filter": True},
+                    )).scalars().first()
+            if demo is None or not demo.is_demo or demo_user is None:
+                return JSONResponse(
+                    {"detail": "Sample company is not available yet."},
+                    status_code=404,
+                )
+            current_tenant_id.set(demo.id)
+            request.state.tenant_id = demo.id
+            request.state.tenant = demo
+            request.state.user = demo_user
+            begin_capture()
+            try:
+                return await call_next(request)
+            finally:
+                await flush_usage(demo.id)
+
         if not clerk_org_id:
             # Log the actual claim keys present so we can debug Clerk
             # template misconfiguration. Don't log values (PII).

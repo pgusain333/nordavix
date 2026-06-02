@@ -22,6 +22,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { formatDate, formatDateLong, formatDateTime } from "@/core/lib/dates"
+import { useDemoMode } from "@/core/demo/DemoModeProvider"
 import {
   RefreshCw,
   AlertTriangle,
@@ -282,7 +283,10 @@ export function ReconciliationsDashboard() {
   // Closed-period flag flows through from /overview. When true, the entire
   // dashboard goes read-only — bulk actions hidden, status chips frozen,
   // inline forms collapsed, banner shown.
-  const isClosed = overview?.is_closed === true
+  // Demo mode makes the whole dashboard read-only too (the backend also blocks
+  // writes); the closed-period *banner* below stays keyed to a real close.
+  const { isDemo } = useDemoMode()
+  const isClosed = overview?.is_closed === true || isDemo
   const closedByName = useUserNames([overview?.closed_by])[overview?.closed_by ?? ""]
 
   // Sequential-close gate (mirrored on the backend in /admin/close-period).
@@ -1193,7 +1197,7 @@ export function ReconciliationsDashboard() {
         )}
 
         {/* ── Books-closed banner — prominent, locks the dashboard ── */}
-        {isClosed && overview && (
+        {overview?.is_closed === true && (
           <div className="rounded-xl overflow-hidden"
             style={{
               background: "linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)",

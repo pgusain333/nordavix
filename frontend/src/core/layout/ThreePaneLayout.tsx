@@ -6,6 +6,7 @@ import { ClerkApiWirer } from "@/core/auth/ClerkProvider"
 import { CommandPalette, CMDK_EVENT } from "@/core/ui/CommandPalette"
 import { NotificationsPanel } from "@/modules/notifications/NotificationsPanel"
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
+import { DemoModeProvider, DemoBanner } from "@/core/demo/DemoModeProvider"
 
 interface ThreePaneLayoutProps {
   children: ReactNode
@@ -24,6 +25,7 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
   }, [mobileNavOpen])
 
   return (
+    <DemoModeProvider>
     <div className="flex h-screen overflow-hidden bg-theme">
       <ClerkApiWirer />
       <CommandPalette />
@@ -70,6 +72,8 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
       {/* ── Main content ── */}
       <div className="flex flex-1 flex-col overflow-hidden min-w-0">
 
+        <DemoBanner />
+
         {/* Mobile top bar */}
         <div
           className="flex lg:hidden items-center justify-between px-4 py-3 shrink-0"
@@ -110,5 +114,6 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
         </main>
       </div>
     </div>
+    </DemoModeProvider>
   )
 }

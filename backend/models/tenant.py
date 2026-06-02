@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Date, DateTime, String
+from sqlalchemy import Boolean, Date, DateTime, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,6 +25,13 @@ class Tenant(TimestampMixin, Base):
     clerk_org_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     # Flexible settings blob: materiality defaults, account range overrides, branding, etc.
     settings: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+    # Read-only sample/demo workspace ("Explore a sample company"). Seeded with
+    # fake data; the tenancy middleware serves it read-only when a request
+    # carries the X-Nordavix-Demo header. Excluded from the purge job.
+    is_demo: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false"),
+    )
 
     # First period the company reconciles against. Reconciliations may not
     # reference period_end < this date. Seeded openings live at

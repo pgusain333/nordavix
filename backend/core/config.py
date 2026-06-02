@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     # APP_BASE_URL on Fly so email buttons point at the real app.
     app_base_url: str = ""
 
+    # Clerk org id of the seeded read-only "sample company" demo tenant. The
+    # tenancy middleware maps the X-Nordavix-Demo header to this one tenant.
+    demo_clerk_org_id: str = "org_nordavix_demo"
+
     @field_validator("database_url")
     @classmethod
     def require_asyncpg_driver(cls, v: str) -> str:

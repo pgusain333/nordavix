@@ -8,8 +8,9 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { CheckCircle2, ArrowRight, Sparkles, X } from "lucide-react"
+import { CheckCircle2, ArrowRight, Sparkles, X, Eye } from "lucide-react"
 import { onboardingApi } from "@/modules/onboarding/api"
+import { useDemoMode } from "@/core/demo/DemoModeProvider"
 
 const DISMISS_KEY = "nordavix_onboarding_dismissed"
 
@@ -17,6 +18,8 @@ export function OnboardingChecklist() {
   const [dismissed, setDismissed] = useState(() => {
     try { return localStorage.getItem(DISMISS_KEY) === "1" } catch { return false }
   })
+
+  const { enterDemo } = useDemoMode()
 
   const { data } = useQuery({
     queryKey:  ["onboarding-status"],
@@ -91,6 +94,16 @@ export function OnboardingChecklist() {
           </li>
         ))}
       </ol>
+
+      {/* Escape hatch — see the product working on a sample company without
+          connecting QuickBooks first. */}
+      <div className="px-3 pb-3 -mt-1">
+        <button onClick={enterDemo}
+          className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
+          style={{ background: "transparent", border: "1px dashed var(--border-strong)", color: "var(--text-2)" }}>
+          <Eye size={13} strokeWidth={1.8} /> Just exploring? Open a sample company
+        </button>
+      </div>
     </div>
   )
 }

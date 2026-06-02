@@ -21,6 +21,7 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { formatDate, formatDateLong, formatDateTime } from "@/core/lib/dates"
+import { useDemoMode } from "@/core/demo/DemoModeProvider"
 import {
   Plus,
   AlertCircle,
@@ -279,7 +280,10 @@ export function FluxDashboard() {
       c.period_end === pc || c.period_end.slice(0, 7) === ym,
     ) ?? null
   }, [selectedTb, closedPeriods])
-  const isClosed = closedEntry !== null
+  // Demo mode also makes the workspace read-only (backend blocks writes too);
+  // the closed-period banner stays keyed to a real close, not demo.
+  const { isDemo } = useDemoMode()
+  const isClosed = closedEntry !== null || isDemo
   const closedByName = useUserNames([closedEntry?.closed_by])[closedEntry?.closed_by ?? ""]
 
   // Reopen — admin-only escape hatch (mirrors recons). Lets the admin
@@ -638,7 +642,7 @@ export function FluxDashboard() {
                 Same pattern as recons: unlocks the period from
                 inside the locked surface so the admin doesn't have
                 to navigate back to the dashboard. */}
-            {showVarianceTable && isClosed && isAdmin && (
+            {showVarianceTable && closedEntry !== null && isAdmin && (
               <Button
                 size="sm"
                 variant="outline"
@@ -721,7 +725,7 @@ export function FluxDashboard() {
                   Reopen button for admins. The VarianceTable below
                   goes read-only (readOnly prop) so approve/edit
                   buttons disappear. */}
-              {isClosed && (
+              {closedEntry !== null && (
                 <div className="mx-4 sm:mx-6 mb-3 rounded-xl overflow-hidden"
                   style={{
                     background: "linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)",

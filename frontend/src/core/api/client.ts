@@ -31,6 +31,16 @@ export function setApiAuthProvider(
 }
 
 /**
+ * Demo mode: when the registered provider returns true, every request carries
+ * the `X-Nordavix-Demo` header so the backend serves the read-only sample
+ * tenant. Set by DemoModeProvider; reads localStorage so it's race-free.
+ */
+let _isDemo: (() => boolean) | null = null
+export function setDemoModeProvider(fn: () => boolean): void {
+  _isDemo = fn
+}
+
+/**
  * Tiny in-flight token cache: Clerk's getToken is internally cached, but
  * still triggers a microtask + promise round-trip per call. When the UI
  * fires a burst of mutations (e.g. bulk-approve 12 recon rows at once),
@@ -88,6 +98,10 @@ apiClient.interceptors.request.use(async (config) => {
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
+  }
+  // Read-only sample-company demo: route reads to the seeded demo tenant.
+  if (_isDemo?.()) {
+    config.headers["X-Nordavix-Demo"] = "1"
   }
   return config
 })
