@@ -61,6 +61,13 @@ def _fernet() -> Fernet | None:
         return None
 
 
+def encryption_configured() -> bool:
+    """True when a valid ENCRYPTION_KEY is set, so secrets encrypt at rest.
+    main.py calls this at boot to fail CLOSED in production — refusing to start
+    rather than silently persisting QBO OAuth tokens as plaintext."""
+    return _fernet() is not None
+
+
 def encrypt_secret(plaintext: str | None) -> str | None:
     """Encrypt a secret for storage. No-op (returns plaintext) when no key
     is configured, or when the value is already encrypted/empty."""

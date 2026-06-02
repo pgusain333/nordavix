@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import Session, with_loader_criteria
 
 from core.config import settings
-from core.db.base import TenantBase, current_tenant_id
+from core.db.base import (
+    DemoReadOnlyError,
+    TenantBase,
+    current_request_readonly,
+    current_tenant_id,
+)
 
 engine = create_async_engine(
     settings.database_url,
@@ -41,6 +46,14 @@ def _apply_tenant_filter(execute_state: object) -> None:
 
     state: ORMExecuteState = execute_state  # type: ignore[assignment]
 
+    # Read-only (demo) requests may not write. Block ORM-emitted DML here; the
+    # before_flush guard below covers unit-of-work (session.add/dirty/delete)
+    # writes. Together they make the demo tenant truly immutable per request.
+    if current_request_readonly.get() and (
+        state.is_insert or state.is_update or state.is_delete
+    ):
+        raise DemoReadOnlyError("Sample company is read-only.")
+
     if (
         not state.is_select
         or state.is_column_load
@@ -71,6 +84,24 @@ def _apply_tenant_filter(execute_state: object) -> None:
             include_aliases=True,
         )
     )
+
+
+@event.listens_for(Session, "before_flush")
+def _block_readonly_flush(
+    session: Session, flush_context: object, instances: object,  # noqa: ARG001
+) -> None:
+    """Hard read-only guarantee for demo requests.
+
+    If anything tries to flush new/changed/deleted rows while the request is
+    flagged read-only, refuse. This makes "the sample company is read-only" a
+    true DB-layer invariant rather than a per-HTTP-method whitelist — even a GET
+    handler that opportunistically writes (e.g. an email backfill, the /me
+    welcome stamp) can never mutate the shared demo tenant. Mapped to 403.
+    """
+    if not current_request_readonly.get():
+        return
+    if session.new or session.dirty or session.deleted:
+        raise DemoReadOnlyError("Sample company is read-only.")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

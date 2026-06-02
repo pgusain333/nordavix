@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.ai.guard import enforce_ai_limits
 from core.auth.clerk_users import _format_display_name, get_clerk_user
 from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, require_role
+from core.db.base import current_request_readonly
 from core.db.session import get_db
 from core.storage import r2 as r2_storage
 from models.account_review_status import AccountReviewStatus
@@ -746,6 +747,10 @@ async def export_account_pdf(
             user_rows = list((await db.execute(
                 select(User).where(User.id.in_(actor_ids))
             )).scalars().all())
+            # Never write during a read-only (demo) request — the DB layer would
+            # 403 the commit anyway; skip the opportunistic backfill cleanly so
+            # the PDF still renders against the demo tenant.
+            read_only = current_request_readonly.get()
             backfill_dirty = False
             for u in user_rows:
                 # Always prefer "First Last" from Clerk over the local
@@ -764,7 +769,7 @@ async def export_account_pdf(
                         display = _format_display_name(cu)
                         # Opportunistically backfill the local email
                         # if Clerk has one we don't.
-                        if cu.get("email") and not u.email:
+                        if cu.get("email") and not u.email and not read_only:
                             u.email = cu["email"]
                             backfill_dirty = True
                 if not display:

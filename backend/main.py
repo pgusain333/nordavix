@@ -1,10 +1,13 @@
 import sentry_sdk
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from core.config import settings
+from core.db.base import DemoReadOnlyError
+from core.security.crypto import encryption_configured
 from core.tenancy.middleware import TenantMiddleware
 from modules.audit.router import router as audit_router
 from modules.comments.router import router as comments_router
@@ -33,6 +36,16 @@ if settings.sentry_dsn:
         traces_sample_rate=0.1,
     )
 
+# Fail CLOSED in production: refuse to boot if at-rest encryption for secrets
+# (QBO OAuth tokens) isn't configured, so a missing/invalid ENCRYPTION_KEY can
+# never silently persist live credentials as plaintext. In dev it stays a
+# warning (see core/security/crypto.py) so local work isn't blocked.
+if settings.is_production and not encryption_configured():
+    raise RuntimeError(
+        "ENCRYPTION_KEY is required in production — QBO OAuth tokens must be "
+        "encrypted at rest. Set the ENCRYPTION_KEY secret and redeploy."
+    )
+
 app = FastAPI(
     title="Nordavix API",
     version="0.2.0",
@@ -51,6 +64,17 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.exception_handler(DemoReadOnlyError)
+async def _demo_readonly_handler(request: Request, exc: DemoReadOnlyError) -> JSONResponse:  # noqa: ARG001
+    """A read-only demo request tried to write to the DB — return a clean 403
+    instead of a 500. The demo middleware already blocks non-GET methods; this
+    catches GET handlers that would write (now prevented at the DB layer)."""
+    return JSONResponse(
+        {"detail": "Sample company is read-only.", "code": "demo_readonly"},
+        status_code=403,
+    )
 
 # ── API routers ───────────────────────────────────────────────────────────────
 

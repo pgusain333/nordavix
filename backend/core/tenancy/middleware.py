@@ -10,7 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from core.ai.usage import begin_capture, flush_usage
 from core.auth.clerk import verify_clerk_token
 from core.config import settings
-from core.db.base import current_tenant_id
+from core.db.base import current_request_readonly, current_tenant_id
 from core.db.session import AsyncSessionLocal
 from core.ratelimit.limiter import check_rate_limit
 from models.tenant import Tenant
@@ -111,10 +111,19 @@ class TenantMiddleware(BaseHTTPMiddleware):
             request.state.tenant_id = demo.id
             request.state.tenant = demo
             request.state.user = demo_user
+            # Hard read-only: any DB write during this request raises
+            # DemoReadOnlyError (see core/db/session.py) → 403, so even a GET
+            # endpoint that would normally write can't mutate the demo tenant.
+            ro_token = current_request_readonly.set(True)
             begin_capture()
             try:
                 return await call_next(request)
             finally:
+                # Clear read-only BEFORE flushing usage: flush_usage writes
+                # AIUsage via its own session/commit, which is a legitimate
+                # system write (not a mutation of demo business data). In demo
+                # the buffer is empty anyway (AI endpoints are POST → blocked).
+                current_request_readonly.reset(ro_token)
                 await flush_usage(demo.id)
 
         if not clerk_org_id:

@@ -29,6 +29,7 @@ from core.auth.dependencies import (
     require_role,
 )
 from core.config import settings
+from core.db.base import current_request_readonly
 from core.db.session import get_db
 from core.email.welcome import send_welcome_email
 from models.qbo_connection import QboConnection
@@ -113,62 +114,68 @@ async def get_me(
     Strict scope — only fires when there's literally no admin at all.
     For tenants that already have an admin, role stays exactly as set.
     """
-    if user.role != "admin":
-        admin_count = (await db.execute(
-            select(User).where(User.tenant_id == tenant_id, User.role == "admin")
-        )).scalars().all()
-        if not list(admin_count):
-            old_role = user.role
-            user.role = "admin"
+    # `user` from request.state belongs to the tenant middleware's (now-closed)
+    # session — it's DETACHED here, so writing to it and committing on this
+    # request's `db` silently fails to persist (the bug behind the old
+    # welcome-email loop). Re-load the caller's own row in THIS session so any
+    # write below actually sticks. Both the admin self-heal and the welcome
+    # stamp operate on me_row.
+    me_row = (await db.execute(
+        select(User).where(User.id == user.id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none() or user
+
+    # In the read-only sample-company demo, never self-heal roles or send a
+    # welcome email — the demo user is pre-seeded and DB writes are blocked
+    # anyway (would 403). Just return identity.
+    read_only = current_request_readonly.get()
+
+    if not read_only and me_row.role != "admin":
+        admin_exists = (await db.execute(
+            select(User.id).where(User.tenant_id == tenant_id, User.role == "admin")
+        )).first() is not None
+        if not admin_exists:
+            old_role = me_row.role
+            me_row.role = "admin"
             await db.commit()
-            await db.refresh(user)
-            from core.audit.log import write_audit_event
             await write_audit_event(
-                db, tenant_id=tenant_id, user_id=user.id,
+                db, tenant_id=tenant_id, user_id=me_row.id,
                 action="workspace.role_self_heal_to_admin",
-                entity_type="user", entity_id=user.id,
+                entity_type="user", entity_id=me_row.id,
                 metadata={
-                    "summary":  f"Promoted {user.email} to admin (no admin existed in tenant)",
+                    "summary":  f"Promoted {me_row.email} to admin (no admin existed in tenant)",
                     "old_role": old_role,
                     "new_role": "admin",
                 },
             )
             await db.commit()
 
-    # First-sign-in welcome email — exactly once per person. CRITICAL: `user`
-    # comes from the tenant middleware's (now-closed) session, so stamping
-    # welcomed_at on it here would NOT persist — and every /me call (the app
-    # polls it) would resend the welcome. We re-load the row in THIS request's
-    # session so the commit actually sticks. `welcomed_at` then gates it; the
-    # cross-tenant check stops a multi-workspace founder being welcomed twice.
-    if user.welcomed_at is None:
-        me_row = (await db.execute(
-            select(User).where(User.id == user.id),
+    # First-sign-in welcome email — exactly once per person. `welcomed_at` gates
+    # it; the cross-tenant check stops a multi-workspace founder being welcomed
+    # twice. me_row is persistent in THIS session, so the stamp sticks.
+    if not read_only and me_row.welcomed_at is None:
+        already_welcomed = (await db.execute(
+            select(User.id).where(
+                User.clerk_user_id == me_row.clerk_user_id,
+                User.welcomed_at.isnot(None),
+            ),
             execution_options={"skip_tenant_filter": True},
-        )).scalar_one_or_none()
-        if me_row is not None and me_row.welcomed_at is None:
-            already_welcomed = (await db.execute(
-                select(User.id).where(
-                    User.clerk_user_id == me_row.clerk_user_id,
-                    User.welcomed_at.isnot(None),
-                ),
-                execution_options={"skip_tenant_filter": True},
-            )).first() is not None
-            me_row.welcomed_at = datetime.now(UTC)
-            await db.commit()
-            if not already_welcomed and settings.email_enabled and me_row.email:
-                background_tasks.add_task(
-                    send_welcome_email,
-                    to_email=me_row.email,
-                    clerk_user_id=me_row.clerk_user_id,
-                    cta_url=settings.web_url + "/app",
-                )
+        )).first() is not None
+        me_row.welcomed_at = datetime.now(UTC)
+        await db.commit()
+        if not already_welcomed and settings.email_enabled and me_row.email:
+            background_tasks.add_task(
+                send_welcome_email,
+                to_email=me_row.email,
+                clerk_user_id=me_row.clerk_user_id,
+                cta_url=settings.web_url + "/app",
+            )
 
     return {
-        "id":            str(user.id),
-        "clerk_user_id": user.clerk_user_id,
-        "email":         user.email,
-        "role":          user.role or "preparer",
+        "id":            str(me_row.id),
+        "clerk_user_id": me_row.clerk_user_id,
+        "email":         me_row.email,
+        "role":          me_row.role or "preparer",
     }
 
 

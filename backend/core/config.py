@@ -40,10 +40,13 @@ class Settings(BaseSettings):
     # whose `iss` isn't allowed are rejected — stops anyone with their own
     # Clerk instance from self-provisioning a Nordavix tenant.
     clerk_allowed_issuers: str = ""
-    # Safe rollout: when False, a mismatched issuer is only LOGGED (so you can
-    # confirm the real issuer matches what we derive before enforcing). Set to
-    # True — or set clerk_allowed_issuers explicitly — to actually reject.
-    clerk_enforce_issuer: bool = False
+    # Secure by default: reject tokens whose `iss` isn't allowed. The expected
+    # issuer is derived from clerk_publishable_key — the SAME key today's valid
+    # logins already verify against — so enforcement matches your real Clerk
+    # instance and won't lock anyone out. Set to False ONLY as a temporary
+    # break-glass if a Clerk domain change ever causes a mismatch (then fix the
+    # allowlist). If the issuer can't be derived at all, enforcement no-ops.
+    clerk_enforce_issuer: bool = True
 
     # Shared secret for internal/scheduled task endpoints (e.g. the tenant
     # purge job). These bypass Clerk auth, so they're gated by this secret

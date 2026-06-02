@@ -9,6 +9,7 @@ their main commit and commit again in a try/except. See the period-close hook.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 from sqlalchemy import select
@@ -16,6 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.notification import Notification
 from models.user import User
+
+logger = logging.getLogger(__name__)
+
+# Defensive cap on a single workspace broadcast. v1 workspaces are tiny (a
+# handful of users), so this never bites in practice — it's a backstop against
+# an unexpectedly huge workspace turning one period-close into a notification +
+# email storm. If we ever exceed it, we notify the first N and log the rest.
+_MAX_BROADCAST_RECIPIENTS = 500
 
 
 def notify(
@@ -58,6 +67,14 @@ async def broadcast_workspace(
     tenant-scoped, so the SELECT is auto-filtered to this workspace.
     """
     user_ids = list((await db.execute(select(User.id))).scalars().all())
+    if len(user_ids) > _MAX_BROADCAST_RECIPIENTS:
+        logger.warning(
+            "broadcast_workspace: %d users exceeds cap %d for tenant %s — "
+            "notifying first %d only (type=%s)",
+            len(user_ids), _MAX_BROADCAST_RECIPIENTS, tenant_id,
+            _MAX_BROADCAST_RECIPIENTS, type,
+        )
+        user_ids = user_ids[:_MAX_BROADCAST_RECIPIENTS]
     recipients: list[uuid.UUID] = []
     for uid in user_ids:
         if exclude_user_id is not None and uid == exclude_user_id:

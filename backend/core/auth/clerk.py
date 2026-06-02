@@ -87,9 +87,12 @@ def _build_allowed_issuers() -> set[str]:
 
 
 _allowed_issuers: set[str] = _build_allowed_issuers()
-# Enforce (reject) only when explicitly told to, OR when an explicit allowlist
-# was provided. Otherwise we log mismatches but let the token through — a safe
-# rollout that can't accidentally lock out prod auth from a derivation mistake.
+# Secure by default (clerk_enforce_issuer defaults True): reject tokens from a
+# foreign Clerk instance. Disable only as a temporary break-glass via
+# CLERK_ENFORCE_ISSUER=false; an explicit CLERK_ALLOWED_ISSUERS always forces
+# enforcement on. If no issuer could be derived, _allowed_issuers is empty and
+# the check below no-ops — so a derivation miss degrades to log-only, never a
+# lockout.
 _enforce_issuer: bool = bool(settings.clerk_enforce_issuer) or bool(settings.clerk_allowed_issuers.strip())
 logger.info(
     "Clerk allowed issuers: %s (enforce=%s)",
