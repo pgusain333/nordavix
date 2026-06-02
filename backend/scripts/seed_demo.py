@@ -43,8 +43,8 @@ from models.trial_balance import TrialBalance
 from models.user import User
 from models.variance import Variance
 
-# Deterministic ids so re-runs replace cleanly.
-_NS = uuid.UUID("d3m0c0de-0000-4000-8000-000000000000")
+# Deterministic ids so re-runs replace cleanly. (Fixed, valid namespace UUID.)
+_NS = uuid.uuid5(uuid.NAMESPACE_URL, "nordavix-sample-company-demo")
 def _id(key: str) -> uuid.UUID:
     return uuid.uuid5(_NS, key)
 
