@@ -11,6 +11,7 @@ from models.intercompany_account import IntercompanyAccount
 from models.intercompany_pair import IntercompanyPair
 from models.missed_accrual_candidate import MissedAccrualCandidate
 from models.narrative import Narrative
+from models.notification import Notification
 from models.period_sync import PeriodSync
 from models.prepaid_candidate import PrepaidCandidate
 from models.qbo_connection import QboConnection
@@ -40,6 +41,7 @@ __all__ = [
     "IntercompanyPair",
     "MissedAccrualCandidate",
     "Narrative",
+    "Notification",
     "PeriodSync",
     "PrepaidCandidate",
     "QboConnection",

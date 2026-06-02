@@ -1703,7 +1703,27 @@ async def close_period(
             "backfilled": backfilled,
         },
     )
+    closed_id = str(row.id)
     await db.commit()
+
+    # Best-effort: tell the rest of the workspace the books moved. A failure
+    # here must never undo a successful close, so it runs after the main commit
+    # in its own try/except with its own commit.
+    try:
+        from modules.notifications.service import broadcast_workspace
+        await broadcast_workspace(
+            db, tenant_id=tenant_id,
+            type="period_closed",
+            title=f"Books closed for {pe.isoformat()}",
+            body=f"{user.email} closed the {pe.isoformat()} period. It's now locked.",
+            link="/app",
+            exclude_user_id=user.id,
+            entity_type="closed_period", entity_id=closed_id,
+        )
+        await db.commit()
+    except Exception:
+        logger.warning("period-closed notifications failed for %s", pe, exc_info=True)
+
     return {
         "period_end": pe.isoformat(),
         "closed_at":  row.closed_at.isoformat() if row.closed_at else None,
@@ -1732,19 +1752,37 @@ async def reopen_period(
     if row is None:
         raise HTTPException(status_code=404, detail=f"Period {pe} is not closed.")
 
+    closed_id = str(row.id)
     await db.delete(row)
 
     from core.audit.log import write_audit_event
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
         action="recon.period_reopened",
-        entity_type="closed_period", entity_id=row.id,
+        entity_type="closed_period", entity_id=closed_id,
         metadata={
             "summary":    f"Reopened period {pe}",
             "period_end": pe.isoformat(),
         },
     )
     await db.commit()
+
+    # Best-effort: let the workspace know the period was unlocked again.
+    try:
+        from modules.notifications.service import broadcast_workspace
+        await broadcast_workspace(
+            db, tenant_id=tenant_id,
+            type="period_reopened",
+            title=f"Books reopened for {pe.isoformat()}",
+            body=f"{user.email} reopened the {pe.isoformat()} period for edits.",
+            link="/app",
+            exclude_user_id=user.id,
+            entity_type="closed_period", entity_id=closed_id,
+        )
+        await db.commit()
+    except Exception:
+        logger.warning("period-reopened notifications failed for %s", pe, exc_info=True)
+
     return {"period_end": pe.isoformat(), "status": "reopened"}
 
 

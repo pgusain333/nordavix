@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from "framer-motion"
 import { LeftNav } from "./LeftNav"
 import { ClerkApiWirer } from "@/core/auth/ClerkProvider"
 import { CommandPalette, CMDK_EVENT } from "@/core/ui/CommandPalette"
+import { NotificationsPanel } from "@/modules/notifications/NotificationsPanel"
+import { NotificationBell } from "@/modules/notifications/NotificationBell"
 
 interface ThreePaneLayoutProps {
   children: ReactNode
@@ -25,6 +27,7 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
     <div className="flex h-screen overflow-hidden bg-theme">
       <ClerkApiWirer />
       <CommandPalette />
+      <NotificationsPanel />
 
       {/* ── Desktop sidebar ── */}
       <div className="hidden lg:flex">
@@ -87,15 +90,19 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
               nordavix<span style={{ color: "var(--green)" }}>.</span>
             </span>
           </div>
-          {/* Search opens the ⌘K command palette (no keyboard on mobile). */}
-          <button
-            onClick={() => window.dispatchEvent(new Event(CMDK_EVENT))}
-            className="flex items-center justify-center h-8 w-8 rounded-lg transition-colors text-theme-2"
-            style={{ background: "var(--surface-2)" }}
-            aria-label="Search"
-          >
-            <Search size={18} strokeWidth={1.6} />
-          </button>
+          {/* Notifications bell + search (search opens the ⌘K palette — no
+              keyboard on mobile). */}
+          <div className="flex items-center gap-1.5">
+            <NotificationBell />
+            <button
+              onClick={() => window.dispatchEvent(new Event(CMDK_EVENT))}
+              className="flex items-center justify-center h-8 w-8 rounded-lg transition-colors text-theme-2"
+              style={{ background: "var(--surface-2)" }}
+              aria-label="Search"
+            >
+              <Search size={18} strokeWidth={1.6} />
+            </button>
+          </div>
         </div>
 
         <main className="flex flex-1 flex-col overflow-hidden min-w-0">

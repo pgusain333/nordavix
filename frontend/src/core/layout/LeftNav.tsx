@@ -20,6 +20,7 @@ import { WorkspaceSwitcher } from "@/core/layout/WorkspaceSwitcher"
 import { workspaceApi } from "@/modules/workspace/api"
 import { tasksApi } from "@/modules/tasks/api"
 import { CMDK_EVENT } from "@/core/ui/CommandPalette"
+import { NotificationBell } from "@/modules/notifications/NotificationBell"
 
 interface NavItem {
   label:     string
@@ -173,10 +174,10 @@ export function LeftNav({ onClose }: Props) {
           everything fits without scrolling. */}
       {/* Quick search → opens the ⌘K command palette. Also reachable via the
           ⌘K / Ctrl-K shortcut anywhere in the app. */}
-      <div className="px-2 pt-2.5">
+      <div className="px-2 pt-2.5 flex items-center gap-1.5">
         <button
           onClick={() => { window.dispatchEvent(new Event(CMDK_EVENT)); onClose?.() }}
-          className="w-full inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors"
+          className="flex-1 min-w-0 inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors"
           style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
           title="Search and jump anywhere (⌘K)"
         >
@@ -185,6 +186,8 @@ export function LeftNav({ onClose }: Props) {
           <kbd className="text-[10px] px-1 py-0.5 rounded"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>⌘K</kbd>
         </button>
+        {/* Bell opens the right-side notifications panel; badge polls unread. */}
+        <NotificationBell onOpen={onClose} className="h-9 w-9" />
       </div>
 
       <nav className="shrink-0 px-2 py-3 space-y-0.5">
