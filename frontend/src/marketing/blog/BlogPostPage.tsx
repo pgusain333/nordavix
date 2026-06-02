@@ -24,7 +24,7 @@ import {
 import { findPostBySlug, POSTS } from "@/marketing/blog/posts/registry"
 import { getCategoryMeta } from "@/marketing/blog/categories"
 import { BlogLayout } from "@/marketing/blog/BlogLayout"
-import { SEO, articleSchema, breadcrumbSchema } from "@/marketing/seo/SEO"
+import { SEO, articleSchema, breadcrumbSchema, faqSchema } from "@/marketing/seo/SEO"
 import "@/marketing/blog/blog-prose.css"
 
 function formatDate(iso: string): string {
@@ -109,6 +109,10 @@ export function BlogPostPage() {
     { name: "Blog",  path: "/blog" },
     { name: meta.title, path: `/blog/${meta.slug}` },
   ])
+  // Article + breadcrumb always; FAQ schema only when the post declares
+  // visible FAQ pairs (Google requires the on-page text to match).
+  const jsonLd: object[] = [article, crumbs]
+  if (meta.faq && meta.faq.length > 0) jsonLd.push(faqSchema(meta.faq))
 
   return (
     <BlogLayout>
@@ -117,7 +121,7 @@ export function BlogPostPage() {
         description={meta.description}
         path={`/blog/${meta.slug}`}
         ogType="article"
-        jsonLd={[article, crumbs]}
+        jsonLd={jsonLd}
       />
 
       {/* Reading-progress bar pinned just below the marketing nav. */}

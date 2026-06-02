@@ -32,6 +32,12 @@ export interface BlogPostMeta {
   excerpt:       string
   /** Last modified date YYYY-MM-DD if different from `date`. Optional. */
   lastModified?: string
+  /** Optional FAQ pairs. When present, BlogPostPage emits an FAQPage
+   *  JSON-LD block (for "People Also Ask" rich results) IN ADDITION to
+   *  the Article + Breadcrumb schema. The post body MUST also render
+   *  these same Q&As visibly — Google requires the on-page text to match
+   *  the structured data. */
+  faq?:          { question: string; answer: string }[]
 }
 
 export interface BlogPostModule {
