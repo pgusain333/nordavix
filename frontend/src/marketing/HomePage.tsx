@@ -734,19 +734,22 @@ function CloseLoopHero() {
   // pushing them off-canvas. Percentages fix that.
   //
   // The dotted ring, the six icons, the center label, and the orbiting
-  // particle all share ONE center (50% / 50% of the square container =
-  // 220,220 in the 440 viewBox) and ONE radius, so every icon sits exactly
-  // on the ring and the whole cluster is perfectly concentric and centered
-  // in its box. (The SVG ring radius must equal R_PCT% of 440 — 36% ≈ 158 —
-  // or the icons drift inside/outside the dotted circle.)
+  // particle ALL share one center + one radius, so the icons sit exactly on
+  // the dashed circle. Horizontally centered (50%). Vertically nudged UP a
+  // few percent: every icon has a label dangling BELOW it, so each node's
+  // visual mass sits below its point on the ring — without the nudge the
+  // whole cluster reads as bottom-heavy. ~4% up offsets the label height so
+  // the cluster optically centers in its square box.
   const CX_PCT = 50
-  const CY_PCT = 50
-  const R_PCT  = 36   // ring radius as % of container (leaves room
-                      // for the node card width + label below)
-  // Matching SVG coordinates (viewBox 440 wide): 50% = 220, 36% ≈ 158.
-  const RING_CX = 220
-  const RING_CY = 220
-  const RING_R  = 158
+  const CY_PCT = 46
+  const R_PCT  = 36   // ring radius as % of container (leaves room for the
+                      // node card + the label below)
+  // SVG ring coords DERIVED from the same %s (viewBox is 440 wide) so the
+  // dashed circle can never drift from the icon ring.
+  const VIEWBOX = 440
+  const RING_CX = (CX_PCT / 100) * VIEWBOX
+  const RING_CY = (CY_PCT / 100) * VIEWBOX
+  const RING_R  = (R_PCT  / 100) * VIEWBOX
   const { ref, inView } = useInView<HTMLDivElement>(0.2)
 
   return (
