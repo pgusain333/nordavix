@@ -57,12 +57,12 @@ function fromIso(s: string): { y: number; m: number; d: number } | null {
   return { y, m: m - 1, d }
 }
 function fmtDisplay(iso: string): string {
-  // App-wide picker standard: MM-DD-YY (2-digit year). Manual entry still
-  // accepts MM-DD-YYYY / slashes / ISO (see parseManualDate); we just render
-  // back in the compact 2-digit form.
+  // App-wide picker standard: MM-DD-YYYY (4-digit year). Manual entry also
+  // accepts slashes / 2-digit year / ISO (see parseManualDate); we always
+  // render back in the canonical MM-DD-YYYY form.
   const p = fromIso(iso)
   if (!p) return iso || ""
-  return `${pad2(p.m + 1)}-${pad2(p.d)}-${pad2(p.y % 100)}`
+  return `${pad2(p.m + 1)}-${pad2(p.d)}-${p.y}`
 }
 
 /**
@@ -269,7 +269,7 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
         <input
           type="text"
           value={textValue}
-          placeholder={placeholder ?? "MM-DD-YY"}
+          placeholder={placeholder ?? "MM-DD-YYYY"}
           disabled={disabled}
           onChange={(e) => setTextValue(e.target.value)}
           onFocus={() => setTextFocused(true)}
@@ -290,7 +290,7 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
             color: value ? "var(--text)" : "var(--text-muted)",
             cursor: disabled ? "not-allowed" : "text",
           }}
-          aria-label="Date (MM-DD-YY)"
+          aria-label="Date (MM-DD-YYYY)"
         />
 
         {/* Chevron — also opens the picker (mirrors the calendar icon). */}
