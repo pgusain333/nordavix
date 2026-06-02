@@ -33,6 +33,7 @@ import { Link } from "react-router-dom"
 import { useUser } from "@clerk/clerk-react"
 import { motion, AnimatePresence, useScroll, useTransform } from "framer-motion"
 import { MarketingFooter } from "@/marketing/MarketingFooter"
+import { LoggedInLaunchpad } from "@/marketing/LoggedInLaunchpad"
 import { SEO, faqSchema, breadcrumbSchema } from "@/marketing/seo/SEO"
 import {
   Sparkles, ArrowRight, CheckCircle2, Menu, X, Zap, Lock, Brain,
@@ -256,6 +257,7 @@ function Navbar() {
 // clickable.
 
 function Hero() {
+  const { isSignedIn } = useUser()
   return (
     <section
       className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 px-6 overflow-hidden"
@@ -410,35 +412,40 @@ function Hero() {
               and lock the period — without the spreadsheet swivel-chair.
             </motion.p>
 
-            {/* Dual CTA */}
-            <motion.div
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.25 }}
-              className="mt-8 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
-              <Link to="/sign-up"
-                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold text-white transition-all hover:scale-[1.02] active:scale-[0.99]"
-                style={{
-                  background: "var(--green)",
-                  boxShadow: "0 12px 32px -8px rgba(16,185,129,0.45)",
-                }}>
-                Start free — no card required <ArrowRight size={15} strokeWidth={2.2} />
-              </Link>
-              <Link to="/solutions"
-                // Secondary CTA: white text + semi-transparent white
-                // border so it reads as a glass button against the
-                // burgundy field. Hover lifts the bg to a soft white film.
-                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold transition-all"
-                style={{
-                  background: "transparent",
-                  border: "1px solid rgba(255,255,255,0.35)",
-                  color: "#FFFFFF",
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.10)" }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent" }}>
-                Take the product tour
-              </Link>
-            </motion.div>
+            {/* Signed-in visitors get a personalized launchpad straight back
+                into their close; everyone else gets the marketing dual CTA. */}
+            {isSignedIn ? (
+              <LoggedInLaunchpad />
+            ) : (
+              <motion.div
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: 0.25 }}
+                className="mt-8 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
+                <Link to="/sign-up"
+                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold text-white transition-all hover:scale-[1.02] active:scale-[0.99]"
+                  style={{
+                    background: "var(--green)",
+                    boxShadow: "0 12px 32px -8px rgba(16,185,129,0.45)",
+                  }}>
+                  Start free — no card required <ArrowRight size={15} strokeWidth={2.2} />
+                </Link>
+                <Link to="/solutions"
+                  // Secondary CTA: white text + semi-transparent white
+                  // border so it reads as a glass button against the
+                  // burgundy field. Hover lifts the bg to a soft white film.
+                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold transition-all"
+                  style={{
+                    background: "transparent",
+                    border: "1px solid rgba(255,255,255,0.35)",
+                    color: "#FFFFFF",
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.10)" }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent" }}>
+                  Take the product tour
+                </Link>
+              </motion.div>
+            )}
 
             {/* Tiny trust strip */}
             <motion.div
