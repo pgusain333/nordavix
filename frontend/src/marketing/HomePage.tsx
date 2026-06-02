@@ -716,6 +716,8 @@ function TrustStrip() {
 }
 
 // ─── The Close Loop — hero version ─────────────────────────────────────────
+// NOTE: container kept square via items-center on the flex wrapper below so the
+// icon ring stays concentric with the dashed SVG circle (see geometry block).
 
 function CloseLoopHero() {
   const NODES = [
