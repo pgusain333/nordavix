@@ -37,7 +37,7 @@ import { SEO, faqSchema, breadcrumbSchema } from "@/marketing/seo/SEO"
 import {
   Sparkles, ArrowRight, CheckCircle2, Menu, X, Zap, Lock, Brain,
   ShieldCheck, ScrollText, GitCompareArrows, Workflow, Plug,
-  Scale, BarChart3, Lightbulb, Plus, Minus, ChevronRight, Star,
+  Scale, BarChart3, Lightbulb, Plus, Minus, ChevronRight,
   Quote, RefreshCw, Layers, Eye, Clock, TrendingUp, FileCheck,
   Building2, UserCheck, Users,
 } from "lucide-react"
@@ -450,11 +450,6 @@ function Hero() {
                 color: "rgba(255,255,255,0.78)",
                 textShadow: "0 1px 6px rgba(0,0,0,0.25)",
               }}>
-              <div className="flex items-center gap-1">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <Star key={i} size={12} fill="currentColor" style={{ color: "#f59e0b" }} />
-                ))}
-              </div>
               <span>Built by a CPA who's lived through 100+ closes</span>
             </motion.div>
           </div>
