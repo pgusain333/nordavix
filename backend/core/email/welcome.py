@@ -47,8 +47,8 @@ def render_welcome_email(*, name: str | None, cta_url: str) -> tuple[str, str, s
     subject = f"Welcome to Nordavix, {name.strip()}" if name and name.strip() else "Welcome to Nordavix"
 
     logo = (
-        f'<img src="{logo_url}" width="176" height="39" alt="Nordavix" '
-        f'style="display:block;border:0;outline:none;text-decoration:none;height:39px;width:176px;">'
+        f'<img src="{logo_url}" width="208" height="59" alt="Nordavix" '
+        f'style="display:block;margin:0 auto;border:0;outline:none;text-decoration:none;height:59px;width:208px;">'
         if logo_url
         else f'<span style="font-family:{_FONT};font-size:22px;font-weight:700;color:{_INK};">'
              f'nordavix<span style="color:{_GREEN};">.</span></span>'
