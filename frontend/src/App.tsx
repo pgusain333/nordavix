@@ -54,6 +54,7 @@ const HelpPage                = lazy(() => import("@/modules/help/pages/HelpPage
 const SolutionsPage           = lazy(() => import("@/marketing/SolutionsPage").then(m => ({ default: m.SolutionsPage })))
 const TermsPage               = lazy(() => import("@/marketing/TermsPage").then(m => ({ default: m.TermsPage })))
 const PrivacyPage             = lazy(() => import("@/marketing/PrivacyPage").then(m => ({ default: m.PrivacyPage })))
+const SecurityPage            = lazy(() => import("@/marketing/SecurityPage").then(m => ({ default: m.SecurityPage })))
 const PublicHelpPage          = lazy(() => import("@/marketing/PublicHelpPage").then(m => ({ default: m.PublicHelpPage })))
 const BlogIndex               = lazy(() => import("@/marketing/blog/BlogIndex").then(m => ({ default: m.BlogIndex })))
 const BlogPostPage            = lazy(() => import("@/marketing/blog/BlogPostPage").then(m => ({ default: m.BlogPostPage })))
@@ -156,6 +157,9 @@ export default function App() {
             Privacy Policy and Terms of Service URLs). */}
         <Route path="/terms"   element={<TermsPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
+        {/* Security & Trust — public + indexable (a sales asset, unlike the
+            noindex legal pages). Reuses LegalLayout for the long-form chrome. */}
+        <Route path="/security" element={<SecurityPage />} />
         {/* Public Help — same content as /app/help, hosted at the
             marketing root so it's shareable + indexable. */}
         <Route path="/help"    element={<PublicHelpPage />} />

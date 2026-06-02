@@ -23,7 +23,7 @@ import { Link, useNavigate } from "react-router-dom"
 import { useUser } from "@clerk/clerk-react"
 import { motion } from "framer-motion"
 import {
-  Menu, X, ArrowRight, ArrowUp, Printer, FileText, ShieldCheck,
+  Menu, X, ArrowRight, ArrowUp, Printer, FileText, ShieldCheck, Lock,
   Mail, ChevronDown,
 } from "lucide-react"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
@@ -589,6 +589,7 @@ function MarketingNavbar() {
             <a href="/#pricing" onClick={() => setMobileOpen(false)} className="block py-2.5 text-base text-theme">Pricing</a>
             <Link to="/terms" onClick={() => setMobileOpen(false)} className="block py-2.5 text-base text-theme">Terms</Link>
             <Link to="/privacy" onClick={() => setMobileOpen(false)} className="block py-2.5 text-base text-theme">Privacy</Link>
+            <Link to="/security" onClick={() => setMobileOpen(false)} className="block py-2.5 text-base text-theme">Security</Link>
             <div className="pt-4 space-y-3">
               <Link to="/sign-up" onClick={() => setMobileOpen(false)}
                 className="flex items-center justify-center gap-2 w-full py-3 rounded-lg text-sm font-semibold text-white"
@@ -640,6 +641,9 @@ function MarketingFooter() {
               </Link></li>
               <li><Link to="/terms" className="hover:text-slate-300 transition-colors inline-flex items-center gap-1.5">
                 <FileText size={11} /> Terms of Service
+              </Link></li>
+              <li><Link to="/security" className="hover:text-slate-300 transition-colors inline-flex items-center gap-1.5">
+                <Lock size={11} /> Security
               </Link></li>
               <li>
                 <button onClick={openCookiePreferences}

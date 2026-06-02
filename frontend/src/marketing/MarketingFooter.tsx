@@ -53,7 +53,7 @@ export function MarketingFooter() {
                   Cookie preferences
                 </button>
               </li>
-              <li><a href="mailto:security@nordavix.com" className="hover:text-slate-300 transition-colors">Security</a></li>
+              <li><Link to="/security" className="hover:text-slate-300 transition-colors">Security</Link></li>
             </ul>
           </div>
         </div>
