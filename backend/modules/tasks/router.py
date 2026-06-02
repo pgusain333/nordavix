@@ -35,7 +35,7 @@ import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -692,6 +692,7 @@ async def upsert_action(
     body: TaskActionUpsert,
     tenant_id: CurrentTenantId,
     user: CurrentUser,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     if body.source_type == "manual":
@@ -783,6 +784,31 @@ async def upsert_action(
         existing.dismissed_at = None
 
     await db.commit()
+
+    # Newly assigned preparer / reviewer → tell them work is waiting.
+    # Best-effort; only fires when an admin actually set an assignee (and not
+    # to themselves). Never block the assignment on a notification failure.
+    assignees: list[uuid.UUID] = []
+    if apply_admin_fields:
+        if assigned_preparer and assigned_preparer != user.id:
+            assignees.append(assigned_preparer)
+        if assigned_reviewer and assigned_reviewer not in (user.id, assigned_preparer):
+            assignees.append(assigned_reviewer)
+    if assignees:
+        try:
+            from modules.notifications.emails import notify_and_email_users
+            label = "reconciliation" if body.source_type == "recon_account" else "flux"
+            period_txt = f" for {body.period_end}" if body.period_end else ""
+            await notify_and_email_users(
+                db, background_tasks, tenant_id=tenant_id, recipient_ids=assignees,
+                type="task_assigned",
+                title="You've been assigned a close task",
+                body=f"{user.email} assigned you a {label} task{period_txt}.",
+                link="/app/tasks",
+            )
+        except Exception:
+            logger.warning("task-assigned notifications failed", exc_info=True)
+
     return {"ok": True, "action_id": str(existing.id)}
 
 

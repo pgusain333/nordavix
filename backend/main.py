@@ -7,6 +7,7 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from core.config import settings
 from core.tenancy.middleware import TenantMiddleware
 from modules.audit.router import router as audit_router
+from modules.comments.router import router as comments_router
 from modules.exports.router import router as exports_router
 from modules.feedback.router import router as feedback_router
 from modules.financials.router import router as financials_router
@@ -69,6 +70,7 @@ app.include_router(feedback_router,      prefix="/api/feedback",     tags=["feed
 app.include_router(internal_router,      prefix="/api/internal",     tags=["internal"])
 app.include_router(notifications_router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(onboarding_router,    prefix="/api/onboarding",   tags=["onboarding"])
+app.include_router(comments_router,      prefix="/api/comments",     tags=["comments"])
 
 
 @app.get("/api/health", tags=["system"])

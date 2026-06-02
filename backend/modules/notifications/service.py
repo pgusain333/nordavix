@@ -50,15 +50,15 @@ async def broadcast_workspace(
     exclude_user_id: uuid.UUID | None = None,
     entity_type: str | None = None,
     entity_id: str | None = None,
-) -> int:
+) -> list[uuid.UUID]:
     """Queue a notification for every user in the workspace (no commit).
 
     `exclude_user_id` skips the actor (no point telling someone about the thing
-    they just did). Returns the number queued. User is tenant-scoped, so the
-    SELECT is auto-filtered to this workspace.
+    they just did). Returns the recipient user ids queued (len = count). User is
+    tenant-scoped, so the SELECT is auto-filtered to this workspace.
     """
     user_ids = list((await db.execute(select(User.id))).scalars().all())
-    queued = 0
+    recipients: list[uuid.UUID] = []
     for uid in user_ids:
         if exclude_user_id is not None and uid == exclude_user_id:
             continue
@@ -67,5 +67,39 @@ async def broadcast_workspace(
             type=type, title=title, body=body, link=link,
             entity_type=entity_type, entity_id=entity_id,
         )
-        queued += 1
-    return queued
+        recipients.append(uid)
+    return recipients
+
+
+async def resolve_email_targets(
+    db: AsyncSession,
+    recipient_ids: list[uuid.UUID],
+) -> list[tuple[uuid.UUID, str]]:
+    """Given recipient user ids, return (user_id, email) for those who have a
+    non-empty email AND haven't opted out of notification emails. The SELECT on
+    User is tenant-auto-filtered, so it can only return this workspace's users.
+    """
+    if not recipient_ids:
+        return []
+    rows = (await db.execute(
+        select(User.id, User.email).where(
+            User.id.in_(recipient_ids),
+            User.email_notifications_enabled.is_(True),
+        )
+    )).all()
+    return [(r[0], r[1]) for r in rows if r[1]]
+
+
+async def workspace_user_ids_by_role(
+    db: AsyncSession,
+    roles: tuple[str, ...] | list[str],
+    *,
+    exclude_user_id: uuid.UUID | None = None,
+) -> list[uuid.UUID]:
+    """Internal user ids in this workspace whose role is in `roles` (the SELECT
+    on User is tenant-auto-filtered), minus the actor. Used to route
+    review-ready notifications to people who can approve."""
+    rows = (await db.execute(
+        select(User.id).where(User.role.in_(list(roles)))
+    )).scalars().all()
+    return [uid for uid in rows if uid != exclude_user_id]

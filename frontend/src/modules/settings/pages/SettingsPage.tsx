@@ -25,7 +25,8 @@ import {
   useUser,
   UserButton,
 } from "@clerk/clerk-react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { notificationsApi } from "@/modules/notifications/api"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Building2, User, Briefcase, Users as UsersIcon, Bell, Sparkles,
@@ -670,15 +671,46 @@ function NotificationsSection() {
     } catch { /* ignore */ }
   }
 
+  // The real, backend-backed master switch for notification emails.
+  const qc = useQueryClient()
+  const { data: emailPref } = useQuery({
+    queryKey: ["notification-preferences"],
+    queryFn:  notificationsApi.getPreferences,
+    staleTime: 5 * 60_000,
+  })
+  const emailOn = emailPref?.email_notifications_enabled ?? true
+  const setEmailPref = useMutation({
+    mutationFn: (enabled: boolean) =>
+      notificationsApi.setPreferences({ email_notifications_enabled: enabled }),
+    onMutate: async (enabled: boolean) => {
+      await qc.cancelQueries({ queryKey: ["notification-preferences"] })
+      const prev = qc.getQueryData(["notification-preferences"])
+      qc.setQueryData(["notification-preferences"], { email_notifications_enabled: enabled })
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["notification-preferences"], ctx.prev)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["notification-preferences"] }),
+  })
+
   return (
     <SectionShell
       title="Notifications"
-      description="Choose how Nordavix lets you know about workflow events. We're rolling out backend delivery — for now these save on this device."
+      description="Choose how Nordavix lets you know about workflow events. The email switch below is live; the finer-grained controls save on this device for now."
       icon={Bell}
-      badge={<LocalOnlyBadge />}
     >
       <div className="space-y-5">
-        <PrefGroup title="Email">
+        <PrefGroup title="Email notifications">
+          <Toggle
+            label="Email me about notifications"
+            hint="Mentions, task assignments, review-ready, and period closes. Off = in-app bell only."
+            value={emailOn}
+            onChange={(v) => setEmailPref.mutate(v)}
+          />
+        </PrefGroup>
+
+        <PrefGroup title="More email (coming soon)">
           <Toggle label="Due-date reminders"         hint="Heads-up the day before a task is due."
             value={prefs.email_due_date_reminders} onChange={(v) => update("email_due_date_reminders", v)} />
           <Toggle label="Reconciliation approved"    hint="When someone approves your prepared work."

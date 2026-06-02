@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import String, UniqueConstraint
+from sqlalchemy import Boolean, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,3 +34,8 @@ class User(TimestampMixin, TenantBase):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     # role: "admin" | "reviewer" | "preparer" — enforced at the application layer
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="preparer")
+    # Per-user opt-out for transactional notification emails (mentions,
+    # assignments, review-ready, closes). Default on; toggled in Settings.
+    email_notifications_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true"),
+    )

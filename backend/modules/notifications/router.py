@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
 from models.notification import Notification
+from models.user import User
 
 router = APIRouter()
 
@@ -105,3 +106,33 @@ async def mark_read(
     await db.execute(stmt)
     await db.commit()
     return {"ok": True}
+
+
+# ── Email preferences ────────────────────────────────────────────────────────
+
+class PreferencesOut(BaseModel):
+    email_notifications_enabled: bool
+
+
+@router.get("/preferences", response_model=PreferencesOut)
+async def get_preferences(user: CurrentUser) -> PreferencesOut:
+    """The calling user's notification-email opt-in."""
+    return PreferencesOut(email_notifications_enabled=user.email_notifications_enabled)
+
+
+@router.patch("/preferences", response_model=PreferencesOut)
+async def update_preferences(
+    body: PreferencesOut,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PreferencesOut:
+    """Toggle the calling user's notification emails. UPDATE is explicitly
+    scoped to this user within the tenant (the auto filter only covers SELECTs)."""
+    await db.execute(
+        update(User)
+        .where(User.id == user.id, User.tenant_id == tenant_id)
+        .values(email_notifications_enabled=body.email_notifications_enabled)
+    )
+    await db.commit()
+    return PreferencesOut(email_notifications_enabled=body.email_notifications_enabled)

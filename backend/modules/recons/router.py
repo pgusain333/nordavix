@@ -885,6 +885,7 @@ async def update_account_review_status(
     qbo_account_id: str,
     tenant_id: CurrentTenantId,
     user: CurrentUser,
+    background_tasks: BackgroundTasks,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
     status_value: str = Query(..., alias="status", description="pending | reviewed | approved | flagged"),
     notes: str | None = Query(default=None),
@@ -1019,7 +1020,29 @@ async def update_account_review_status(
             "period_end": period_end,
         },
     )
+    review_row_id = str(row.id)
     await db.commit()
+
+    # Preparer marked it prepared → tell the approvers it's ready for review.
+    # Best-effort; never block or fail the status change on a notification.
+    if status_value == "reviewed":
+        try:
+            from modules.notifications.emails import notify_and_email_users
+            from modules.notifications.service import workspace_user_ids_by_role
+            reviewers = await workspace_user_ids_by_role(
+                db, ("admin", "reviewer"), exclude_user_id=user.id,
+            )
+            await notify_and_email_users(
+                db, background_tasks, tenant_id=tenant_id, recipient_ids=reviewers,
+                type="review_ready",
+                title="A reconciliation is ready for review",
+                body=f"{user.email} marked account {qbo_account_id} ({period_end}) prepared.",
+                link="/app/reconciliations",
+                entity_type="account_review_status", entity_id=review_row_id,
+            )
+        except Exception:
+            logger.warning("recon review-ready notifications failed", exc_info=True)
+
     return {
         "qbo_account_id": qbo_account_id,
         "period_end":     period_end,
@@ -1034,6 +1057,7 @@ async def bulk_update_account_review_status(
     body: dict,
     tenant_id: CurrentTenantId,
     user: CurrentUser,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -1174,6 +1198,28 @@ async def bulk_update_account_review_status(
         },
     )
     await db.commit()
+
+    # Coalesce a bulk "mark prepared" into ONE review-ready notification per
+    # approver (not one per account) so reviewers aren't flooded. Best-effort.
+    if status_value == "reviewed":
+        try:
+            from modules.notifications.emails import notify_and_email_users
+            from modules.notifications.service import workspace_user_ids_by_role
+            reviewers = await workspace_user_ids_by_role(
+                db, ("admin", "reviewer"), exclude_user_id=user.id,
+            )
+            n = len(ids)
+            plural = "s" if n != 1 else ""
+            await notify_and_email_users(
+                db, background_tasks, tenant_id=tenant_id, recipient_ids=reviewers,
+                type="review_ready",
+                title=f"{n} reconciliation{plural} ready for review",
+                body=f"{user.email} marked {n} account{plural} prepared for {body.get('period_end')}.",
+                link="/app/reconciliations",
+            )
+        except Exception:
+            logger.warning("recon bulk review-ready notifications failed", exc_info=True)
+
     return {"updated": len(ids), "status": status_value}
 
 
@@ -1554,6 +1600,7 @@ async def close_period(
     body: dict,
     tenant_id: CurrentTenantId,
     user: CurrentUser,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -1710,17 +1757,24 @@ async def close_period(
     # here must never undo a successful close, so it runs after the main commit
     # in its own try/except with its own commit.
     try:
-        from modules.notifications.service import broadcast_workspace
-        await broadcast_workspace(
+        from modules.notifications.emails import schedule_notification_emails
+        from modules.notifications.service import broadcast_workspace, resolve_email_targets
+        title = f"Books closed for {pe.isoformat()}"
+        cbody = f"{user.email} closed the {pe.isoformat()} period. It's now locked."
+        recipients = await broadcast_workspace(
             db, tenant_id=tenant_id,
             type="period_closed",
-            title=f"Books closed for {pe.isoformat()}",
-            body=f"{user.email} closed the {pe.isoformat()} period. It's now locked.",
+            title=title,
+            body=cbody,
             link="/app",
             exclude_user_id=user.id,
             entity_type="closed_period", entity_id=closed_id,
         )
         await db.commit()
+        targets = await resolve_email_targets(db, recipients)
+        schedule_notification_emails(
+            background_tasks, targets=targets, title=title, body=cbody, link="/app",
+        )
     except Exception:
         logger.warning("period-closed notifications failed for %s", pe, exc_info=True)
 
@@ -1736,6 +1790,7 @@ async def reopen_period(
     body: dict,
     tenant_id: CurrentTenantId,
     user: CurrentUser,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -1769,17 +1824,24 @@ async def reopen_period(
 
     # Best-effort: let the workspace know the period was unlocked again.
     try:
-        from modules.notifications.service import broadcast_workspace
-        await broadcast_workspace(
+        from modules.notifications.emails import schedule_notification_emails
+        from modules.notifications.service import broadcast_workspace, resolve_email_targets
+        title = f"Books reopened for {pe.isoformat()}"
+        rbody = f"{user.email} reopened the {pe.isoformat()} period for edits."
+        recipients = await broadcast_workspace(
             db, tenant_id=tenant_id,
             type="period_reopened",
-            title=f"Books reopened for {pe.isoformat()}",
-            body=f"{user.email} reopened the {pe.isoformat()} period for edits.",
+            title=title,
+            body=rbody,
             link="/app",
             exclude_user_id=user.id,
             entity_type="closed_period", entity_id=closed_id,
         )
         await db.commit()
+        targets = await resolve_email_targets(db, recipients)
+        schedule_notification_emails(
+            background_tasks, targets=targets, title=title, body=rbody, link="/app",
+        )
     except Exception:
         logger.warning("period-reopened notifications failed for %s", pe, exc_info=True)
 

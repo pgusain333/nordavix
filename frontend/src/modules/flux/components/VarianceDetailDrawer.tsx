@@ -27,6 +27,7 @@ import {
   GripVertical,
   Layers,
   Lightbulb,
+  MessageSquare,
   Receipt,
   ShieldCheck,
   Sparkles,
@@ -38,11 +39,13 @@ import {
 
 import type { VarianceRow, AICommentary } from "@/modules/flux/api"
 import { formatDateTime } from "@/core/lib/dates"
+import { CommentThread } from "@/modules/comments/CommentThread"
 
 const TABS = [
   { id: "summary",      label: "Summary",      icon: Sparkles },
   { id: "commentary",   label: "Commentary",   icon: FileText },
   { id: "transactions", label: "Transactions", icon: Receipt  },
+  { id: "discussion",   label: "Discussion",   icon: MessageSquare },
 ] as const
 type TabId = typeof TABS[number]["id"]
 export type VarianceDrawerTabId = TabId
@@ -284,6 +287,15 @@ export function VarianceDetailDrawer({
                   {renderTransactions ? renderTransactions(row) : (
                     <PlaceholderTab title="Transactions" hint="Wire renderTransactions on the parent." />
                   )}
+                </div>
+              )}
+              {tab === "discussion" && (
+                <div className="px-5 py-5">
+                  <CommentThread
+                    entityType="variance"
+                    entityId={row.id}
+                    link={`/app/flux#var=${row.id}&vtab=discussion`}
+                  />
                 </div>
               )}
             </div>

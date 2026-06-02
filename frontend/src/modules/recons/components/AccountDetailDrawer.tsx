@@ -33,6 +33,7 @@ import {
   FileText,
   GripVertical,
   Layers,
+  MessageSquare,
   Paperclip,
   Receipt,
   ShieldCheck,
@@ -43,6 +44,7 @@ import {
 import type { OverviewAccount } from "@/modules/recons/api"
 import { formatDateTime } from "@/core/lib/dates"
 import { schedulesApi } from "@/modules/schedules/api"
+import { CommentThread } from "@/modules/comments/CommentThread"
 
 const TABS = [
   { id: "summary",     label: "Summary",     icon: Sparkles },
@@ -51,11 +53,12 @@ const TABS = [
   { id: "suggestions", label: "Suggestions", icon: Layers    },
   { id: "evidence",    label: "Evidence",    icon: Paperclip },
   { id: "ai",          label: "AI",          icon: Brain     },
+  { id: "discussion",  label: "Discussion",  icon: MessageSquare },
 ] as const
 export type DrawerTabId = typeof TABS[number]["id"]
-/** Tab ids that correspond to InlineSubledgerForm sections. Summary
- *  and bank_match are the drawer's own sections, not the form. */
-export type DrawerFormSection = Exclude<DrawerTabId, "summary" | "bank_match">
+/** Tab ids that correspond to InlineSubledgerForm sections. Summary,
+ *  bank_match, and discussion are the drawer's own sections, not the form. */
+export type DrawerFormSection = Exclude<DrawerTabId, "summary" | "bank_match" | "discussion">
 
 interface Props {
   /** Currently open account; null = drawer closed. */
@@ -399,8 +402,19 @@ export function AccountDetailDrawer({
                   {renderBankBody(account)}
                 </div>
               )}
-              <div style={{ display: tab !== "summary" && tab !== "bank_match" ? "block" : "none" }}>
-                {renderReconcileBody ? (
+              {/* Discussion — mounts only when active so the comments query
+                  doesn't fire for every drawer open. */}
+              {tab === "discussion" && (
+                <div className="px-5 py-5">
+                  <CommentThread
+                    entityType="reconciliation"
+                    entityId={`${account.qbo_id}:${periodEnd}`}
+                    link={`/app/reconciliations#acct=${account.qbo_id}&tab=discussion`}
+                  />
+                </div>
+              )}
+              <div style={{ display: tab !== "summary" && tab !== "bank_match" && tab !== "discussion" ? "block" : "none" }}>
+                {tab !== "discussion" && (renderReconcileBody ? (
                   // The form decides which sections to actually render
                   // based on its visibleSection prop. The render-prop
                   // gets the current tab id so it can pass through.
@@ -409,7 +423,7 @@ export function AccountDetailDrawer({
                   </div>
                 ) : (
                   <PlaceholderTab title="Coming soon" hint="The reconcile body will appear here when wired." />
-                )}
+                ))}
               </div>
             </div>
 

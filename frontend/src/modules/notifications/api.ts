@@ -36,4 +36,18 @@ async function markRead(ids?: string[]): Promise<void> {
   await apiClient.post("/api/notifications/read", ids ? { ids } : {})
 }
 
-export const notificationsApi = { list, count, markRead }
+export interface NotificationPreferences {
+  email_notifications_enabled: boolean
+}
+
+async function getPreferences(): Promise<NotificationPreferences> {
+  const { data } = await apiClient.get<NotificationPreferences>("/api/notifications/preferences")
+  return data
+}
+
+async function setPreferences(prefs: NotificationPreferences): Promise<NotificationPreferences> {
+  const { data } = await apiClient.patch<NotificationPreferences>("/api/notifications/preferences", prefs)
+  return data
+}
+
+export const notificationsApi = { list, count, markRead, getPreferences, setPreferences }

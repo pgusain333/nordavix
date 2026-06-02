@@ -96,6 +96,17 @@ class Settings(BaseSettings):
     resend_api_key:    str = ""
     resend_from_email: str = "Nordavix Feedback <feedback@nordavix.com>"
     feedback_to_email: str = "hello@nordavix.com"
+    # Sender for user-facing notification emails (mentions, assignments, etc.).
+    # Defaults to resend_from_email when blank. Must be on a Resend-verified
+    # domain. Set RESEND_NOTIFICATIONS_FROM on Fly for a nicer label, e.g.
+    # "Nordavix <notifications@nordavix.com>".
+    resend_notifications_from: str = ""
+
+    # Absolute base URL of the frontend app (e.g. https://app.nordavix.com),
+    # used to build clickable links in transactional emails. Empty = derive
+    # from the first https CORS origin, else the local dev origin. Set
+    # APP_BASE_URL on Fly so email buttons point at the real app.
+    app_base_url: str = ""
 
     @field_validator("database_url")
     @classmethod
@@ -113,6 +124,24 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def web_url(self) -> str:
+        """Absolute base URL of the frontend, for links in emails. Prefers the
+        explicit app_base_url; otherwise the first https CORS origin; else the
+        local dev origin. Never has a trailing slash."""
+        base = self.app_base_url.strip()
+        if not base:
+            base = next((o for o in self.cors_origins_list if o.startswith("https://")), "")
+        if not base:
+            base = "http://localhost:5173"
+        return base.rstrip("/")
+
+    @property
+    def notifications_from_email(self) -> str:
+        """Sender address for notification emails — explicit override, else the
+        shared Resend from address."""
+        return self.resend_notifications_from.strip() or self.resend_from_email
 
     @property
     def r2_endpoint_url(self) -> str:

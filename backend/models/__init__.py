@@ -5,6 +5,7 @@ from models.account_review_status import AccountReviewStatus
 from models.ai_usage import AIUsage
 from models.audit_log import AuditLog
 from models.closed_period import ClosedPeriod
+from models.comment import Comment
 from models.feedback import Feedback
 from models.insights_snapshot import InsightsSnapshot
 from models.intercompany_account import IntercompanyAccount
@@ -35,6 +36,7 @@ __all__ = [
     "AIUsage",
     "AuditLog",
     "ClosedPeriod",
+    "Comment",
     "Feedback",
     "InsightsSnapshot",
     "IntercompanyAccount",

@@ -19,7 +19,6 @@ import logging
 import uuid
 from datetime import datetime
 
-import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.config import settings
 from core.db.session import get_db
+from core.email.sender import send_email
 from models.feedback import Feedback
 
 logger = logging.getLogger(__name__)
@@ -57,51 +57,31 @@ async def _send_feedback_email(
     """Fire a Resend email to the configured feedback inbox. No-ops
     silently if email isn't configured. Never raises — caller should
     not block on this (use BackgroundTasks)."""
-    if not settings.email_enabled:
-        return
-    try:
-        emoji = _CATEGORY_EMOJI.get(category, "💬")
-        subject = f"{emoji} Feedback ({category}): {message[:60]}{'…' if len(message) > 60 else ''}"
-        # Plain-text body — easier to read on mobile inboxes than HTML,
-        # and avoids any escaping bugs with user-typed content.
-        body_text = (
-            f"Category: {category}\n"
-            f"From:     {user_name or '—'} <{user_email or '—'}>\n"
-            f"Page:     {page_path or '—'}\n"
-            f"Tenant:   {tenant_id}\n"
-            f"ID:       {feedback_id}\n"
-            f"\n"
-            f"───────────────────────────────────────\n"
-            f"{message}\n"
-            f"───────────────────────────────────────\n"
-            f"\n"
-            f"Reply directly to {user_email or 'the team'} to start a conversation."
-        )
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {settings.resend_api_key}",
-                    "Content-Type":  "application/json",
-                },
-                json={
-                    "from":     settings.resend_from_email,
-                    "to":       [settings.feedback_to_email],
-                    "subject":  subject,
-                    "text":     body_text,
-                    # Reply-To = user's email so the team can reply
-                    # directly from their inbox without leaving the thread.
-                    **({"reply_to": user_email} if user_email else {}),
-                },
-            )
-            if r.status_code >= 300:
-                logger.warning(
-                    "Resend rejected feedback email: status=%d body=%s",
-                    r.status_code, r.text[:300],
-                )
-    except Exception:
-        # Email is a side-effect; never block the user on it.
-        logger.exception("Feedback email send failed (non-fatal)")
+    emoji = _CATEGORY_EMOJI.get(category, "💬")
+    subject = f"{emoji} Feedback ({category}): {message[:60]}{'…' if len(message) > 60 else ''}"
+    # Plain-text body — easier to read on mobile inboxes than HTML,
+    # and avoids any escaping bugs with user-typed content.
+    body_text = (
+        f"Category: {category}\n"
+        f"From:     {user_name or '—'} <{user_email or '—'}>\n"
+        f"Page:     {page_path or '—'}\n"
+        f"Tenant:   {tenant_id}\n"
+        f"ID:       {feedback_id}\n"
+        f"\n"
+        f"───────────────────────────────────────\n"
+        f"{message}\n"
+        f"───────────────────────────────────────\n"
+        f"\n"
+        f"Reply directly to {user_email or 'the team'} to start a conversation."
+    )
+    # send_email no-ops when email is disabled and never raises.
+    # Reply-To = user's email so the team can reply straight from their inbox.
+    await send_email(
+        to=settings.feedback_to_email,
+        subject=subject,
+        text=body_text,
+        reply_to=user_email or None,
+    )
 
 
 class FeedbackIn(BaseModel):
