@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { formatDate, formatDateLong } from "@/core/lib/dates"
+import { apiClient } from "@/core/api/client"
 
 /** Resolve the current workspace's month-end close target in days
  * (default 15). Reads from CompanyMeta in localStorage so the value
@@ -46,6 +47,8 @@ import {
   Circle,
   CalendarCheck,
   Lightbulb,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react"
 import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
@@ -157,7 +160,7 @@ export function DashboardHome() {
   const { data: books } = useBooksStatus()
 
   // Recons overview — drives recon KPIs and the status panel
-  const { data: overview } = useQuery({
+  const { data: overview, isError: overviewErr, refetch: refetchOverview } = useQuery({
     queryKey: ["recons-overview", period],
     queryFn:  () => reconsApi.getOverview(period),
     enabled:  !!qbo && books?.seeded === true,
@@ -166,7 +169,7 @@ export function DashboardHome() {
 
   // Month-end close tracker — one entry per month from books_start
   // through current. Drives the close-status timeline component below.
-  const { data: tracker } = useQuery({
+  const { data: tracker, isError: trackerErr, refetch: refetchTracker } = useQuery({
     queryKey: ["period-tracker"],
     queryFn:  reconsApi.listPeriodTracker,
     enabled:  books?.seeded === true,
@@ -181,7 +184,7 @@ export function DashboardHome() {
   })
 
   // Flux trial balances — list of recent analyses
-  const { data: trialBalances } = useQuery({
+  const { data: trialBalances, isError: tbErr, refetch: refetchTb } = useQuery({
     queryKey: ["flux-trial-balances"],
     queryFn:  fluxApi.listTrialBalances,
     staleTime: 60_000,
@@ -442,7 +445,6 @@ export function DashboardHome() {
   const { data: audit } = useQuery({
     queryKey: ["dashboard-audit"],
     queryFn:  async () => {
-      const { apiClient } = await import("@/core/api/client")
       const { data } = await apiClient.get<{
         entries: { id: string; user_id: string | null; action: string; created_at: string; summary: string }[]
       }>("/api/audit", { params: { limit: 10 } })
@@ -512,6 +514,27 @@ export function DashboardHome() {
       </motion.div>
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
+        {/* Inline error banner — surfaces a failed dashboard load instead of
+            silently showing empty cards, with a one-click retry. */}
+        {(overviewErr || trackerErr || tbErr) && (
+          <div className="rounded-xl px-4 py-3 flex items-start gap-2.5"
+            style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
+            <AlertCircle size={15} strokeWidth={2} className="shrink-0 mt-0.5" style={{ color: "#dc2626" }} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>Some dashboard data couldn&apos;t load</p>
+              <p className="text-xs mt-0.5" style={{ color: "#991b1b" }}>
+                Your connection or QuickBooks may have hiccuped. Your data is safe — try again.
+              </p>
+            </div>
+            <button
+              onClick={() => { refetchOverview(); refetchTracker(); refetchTb() }}
+              className="shrink-0 inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-opacity hover:opacity-90"
+              style={{ background: "#dc2626", color: "#fff" }}>
+              <RefreshCw size={12} strokeWidth={2.2} /> Retry
+            </button>
+          </div>
+        )}
+
         {/* Onboarding checklist — backend-derived, hides when complete. */}
         <OnboardingChecklist />
 

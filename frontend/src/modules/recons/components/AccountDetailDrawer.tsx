@@ -152,6 +152,23 @@ export function AccountDetailDrawer({
   useEffect(() => {
     if (tab === "suggestions") setHasViewedSuggestionsTab(true)
   }, [tab])
+
+  // Focus management: when the drawer opens, move focus into the dialog so
+  // keyboard + screen-reader users land inside it (not at the top of the
+  // page); restore focus to the triggering element on close. Keyed on the
+  // open boolean (not `account`) so switching accounts via ←/→ doesn't
+  // steal focus mid-navigation.
+  const panelRef = useRef<HTMLElement>(null)
+  const isDrawerOpen = !!account
+  useEffect(() => {
+    if (!isDrawerOpen) return
+    const prev = document.activeElement as HTMLElement | null
+    const id = window.setTimeout(() => panelRef.current?.focus(), 60)
+    return () => {
+      window.clearTimeout(id)
+      if (prev && document.body.contains(prev)) prev.focus()
+    }
+  }, [isDrawerOpen])
   // Desktop vs mobile layout: desktop slides in from the right and
   // pushes the page content aside; mobile uses a bottom-sheet that
   // covers ~85vh, leaving the dashboard's KPI cards visible at the
@@ -266,6 +283,8 @@ export function AccountDetailDrawer({
               header. Slides up from the bottom with a calm spring. */}
           <motion.aside
             key="drawer"
+            ref={panelRef}
+            tabIndex={-1}
             initial={isLgUp ? { x: "100%" } : { y: "100%" }}
             animate={isLgUp ? { x: 0 } : { y: 0 }}
             exit={isLgUp ? { x: "100%" } : { y: "100%" }}
@@ -637,7 +656,7 @@ function TabBar({ value, onChange, account, suggestionsBadge }: {
           <button
             key={t.id}
             onClick={() => onChange(t.id)}
-            title={tooltip[t.id]}
+            title={tooltip[t.id] ?? t.label}
             className="relative inline-flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold whitespace-nowrap transition-colors shrink-0"
             style={{
               color: active ? "var(--text)" : "var(--text-muted)",
@@ -646,7 +665,7 @@ function TabBar({ value, onChange, account, suggestionsBadge }: {
               scrollSnapAlign: "center",
             }}>
             <Icon size={12} strokeWidth={1.8} />
-            {t.label}
+            <span className="hidden sm:inline">{t.label}</span>
             {count !== undefined && count > 0 && (
               <span className="inline-flex items-center justify-center rounded-full px-1.5 text-[9px] font-bold"
                 style={{

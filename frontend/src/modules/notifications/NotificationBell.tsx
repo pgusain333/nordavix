@@ -26,7 +26,6 @@ export function NotificationBell({ onOpen, className }: Props) {
     queryFn:  notificationsApi.count,
     staleTime: 30_000,
     refetchInterval: 45_000,
-    refetchOnWindowFocus: true,
     enabled: !!organization,
   })
 

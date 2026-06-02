@@ -53,7 +53,7 @@ export function OnboardingChecklist() {
         </div>
         <button onClick={dismiss}
           className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--surface-2)]"
-          style={{ color: "var(--text-muted)" }} title="Dismiss">
+          style={{ color: "var(--text-muted)" }} title="Dismiss" aria-label="Dismiss setup checklist">
           <X size={14} strokeWidth={2} />
         </button>
       </div>

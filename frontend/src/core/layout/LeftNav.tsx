@@ -102,14 +102,13 @@ export function LeftNav({ onClose }: Props) {
   })
 
   // Open-tasks count for the Tasks nav badge. Lightweight call — server
-  // returns just the numbers, not the full list. 30-second freshness +
-  // refetch-on-focus is enough so the badge follows what the user does
-  // without hammering the API.
+  // returns just the numbers, not the full list. 30-second staleness +
+  // refetch-on-navigation keeps the badge current without re-firing on
+  // every tab-switch (inherits the global refetchOnWindowFocus:false).
   const { data: tasksCount } = useQuery({
     queryKey: ["tasks", "count"],
     queryFn:  tasksApi.getCount,
     staleTime: 30_000,
-    refetchOnWindowFocus: true,
     enabled:  !!organization,
   })
   const roleMeta = me ? ({

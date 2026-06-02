@@ -87,6 +87,7 @@ export function ReconciliationsList({ title, subtitle, type }: Props) {
             <input
               value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Search reconciliations…"
+              aria-label="Search reconciliations"
               className="w-full rounded-lg pl-8 pr-3 py-1.5 text-sm outline-none"
               style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
             />

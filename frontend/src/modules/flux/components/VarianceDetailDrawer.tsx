@@ -125,6 +125,21 @@ export function VarianceDetailDrawer({
     return () => window.removeEventListener("keydown", handler)
   }, [row, prevRow, nextRow, onNavigate, onClose])
 
+  // Focus management: move focus into the dialog on open, restore it to the
+  // trigger on close. Keyed on the open boolean (not `row`) so flipping
+  // between variances via ←/→ doesn't steal focus mid-navigation.
+  const panelRef = useRef<HTMLElement>(null)
+  const isDrawerOpen = !!row
+  useEffect(() => {
+    if (!isDrawerOpen) return
+    const prev = document.activeElement as HTMLElement | null
+    const id = window.setTimeout(() => panelRef.current?.focus(), 60)
+    return () => {
+      window.clearTimeout(id)
+      if (prev && document.body.contains(prev)) prev.focus()
+    }
+  }, [isDrawerOpen])
+
   // Push page content aside on desktop only. On mobile we render a
   // bottom-sheet (see below), so this var stays unset and the page
   // gets no padding push (would be pointless when the sheet covers
@@ -190,6 +205,8 @@ export function VarianceDetailDrawer({
           )}
           <motion.aside
             key="drawer"
+            ref={panelRef}
+            tabIndex={-1}
             initial={isLgUp ? { x: "100%" } : { y: "100%" }}
             animate={isLgUp ? { x: 0 } : { y: 0 }}
             exit={isLgUp ? { x: "100%" } : { y: "100%" }}
@@ -507,6 +524,7 @@ function TabBar({ value, onChange }: { value: TabId; onChange: (v: TabId) => voi
           <button
             key={t.id}
             onClick={() => onChange(t.id)}
+            title={t.label}
             className="relative inline-flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold whitespace-nowrap transition-colors shrink-0"
             style={{
               color: active ? "var(--text)" : "var(--text-muted)",
@@ -515,7 +533,7 @@ function TabBar({ value, onChange }: { value: TabId; onChange: (v: TabId) => voi
               scrollSnapAlign: "center",
             }}>
             <Icon size={12} strokeWidth={1.8} />
-            {t.label}
+            <span className="hidden sm:inline">{t.label}</span>
           </button>
         )
       })}
