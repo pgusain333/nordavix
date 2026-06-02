@@ -16,6 +16,16 @@ from core.email.sender import send_batch
 from core.email.templates import render_notification_email
 from modules.notifications.service import notify, resolve_email_targets
 
+# Raw notification type → friendly eyebrow label shown in the email.
+# Unknown types fall through to no badge (render handles None).
+_TYPE_LABELS = {
+    "mention":         "New mention",
+    "period_closed":   "Books closed",
+    "period_reopened": "Books reopened",
+    "task_assigned":   "Task assigned",
+    "review_ready":    "Ready for review",
+}
+
 
 def schedule_notification_emails(
     background_tasks: BackgroundTasks,
@@ -25,6 +35,7 @@ def schedule_notification_emails(
     body: str | None,
     link: str | None,
     actor_name: str | None = None,
+    notif_type: str | None = None,
 ) -> None:
     """Queue a single batched email send for the recipients in `targets`
     (each `(user_id, email)` from resolve_email_targets). Every recipient gets
@@ -38,6 +49,7 @@ def schedule_notification_emails(
     cta_url = settings.web_url + path
     subject, html, text = render_notification_email(
         title=title, body=body, cta_url=cta_url, actor_name=actor_name,
+        type_label=_TYPE_LABELS.get(notif_type or ""),
     )
     from_email = settings.notifications_from_email
     messages = [
@@ -77,4 +89,5 @@ async def notify_and_email_users(
     schedule_notification_emails(
         background_tasks, targets=targets,
         title=title, body=body, link=link, actor_name=actor_name,
+        notif_type=type,
     )
