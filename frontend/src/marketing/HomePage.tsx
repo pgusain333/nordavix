@@ -787,8 +787,13 @@ function CloseLoopHero() {
 
           {/* Loop visualization — order-1 so it shows ABOVE the copy on
               mobile (better visual hook), then flips to the right on
-              desktop via order-2. */}
-          <div className="flex justify-center order-1 lg:order-2">
+              desktop via order-2.
+              items-center is CRITICAL: on desktop the grid uses
+              place-items-stretch, and a flex parent's default align-items
+              (stretch) would stretch the aspect-square box TALLER than wide —
+              turning the icon ring into an ellipse that no longer matches the
+              SVG circle. Centering the child keeps the box perfectly square. */}
+          <div className="flex justify-center items-center order-1 lg:order-2">
             <div className="relative w-full max-w-[360px] sm:max-w-[420px] lg:max-w-[440px] aspect-square mx-auto">
               {/* SVG ring + orbiting particle. ViewBox is fixed 440x440
                   but the SVG element fills its container — the viewBox
