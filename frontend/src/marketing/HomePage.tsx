@@ -733,21 +733,20 @@ function CloseLoopHero() {
   // but the absolute-positioned divs stayed at the 440px coordinates,
   // pushing them off-canvas. Percentages fix that.
   //
-  // Optical-center nudge: each icon has a label dangling BELOW it,
-  // so the cluster's visual mass is bottom-heavy. Math-centering at
-  // 50/50 makes the whole ring read as offset down + right. Shift the
-  // ring up + left a couple percent so the eye reads it as centered.
-  // The SVG circle below uses matching (cx, cy) so the dotted ring
-  // travels with the icons; the orbiting particle's offsetPath also
-  // matches.
-  const CX_PCT = 48
-  const CY_PCT = 47
+  // The dotted ring, the six icons, the center label, and the orbiting
+  // particle all share ONE center (50% / 50% of the square container =
+  // 220,220 in the 440 viewBox) and ONE radius, so every icon sits exactly
+  // on the ring and the whole cluster is perfectly concentric and centered
+  // in its box. (The SVG ring radius must equal R_PCT% of 440 — 36% ≈ 158 —
+  // or the icons drift inside/outside the dotted circle.)
+  const CX_PCT = 50
+  const CY_PCT = 50
   const R_PCT  = 36   // ring radius as % of container (leaves room
                       // for the node card width + label below)
-  // Matching SVG coordinates (viewBox 440 wide). 48% = 211, 47% = 207.
-  const RING_CX = 211
-  const RING_CY = 207
-  const RING_R  = 160
+  // Matching SVG coordinates (viewBox 440 wide): 50% = 220, 36% ≈ 158.
+  const RING_CX = 220
+  const RING_CY = 220
+  const RING_R  = 158
   const { ref, inView } = useInView<HTMLDivElement>(0.2)
 
   return (
@@ -843,10 +842,8 @@ function CloseLoopHero() {
                 )
               })}
 
-              {/* Center label — anchored to the same optical-center as
-                  the icons + dotted ring (48% x, 47% y) so it sits in
-                  the actual middle of the visual cluster, not the
-                  math middle of the container. */}
+              {/* Center label — anchored to the shared center (50% / 50%)
+                  so it sits in the exact middle of the ring of icons. */}
               <div
                 className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2"
                 style={{ left: `${CX_PCT}%`, top: `${CY_PCT}%` }}>
