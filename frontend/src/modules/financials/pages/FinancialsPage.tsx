@@ -38,10 +38,14 @@ import {
   Sparkles,
   CheckCircle2,
   Briefcase,
+  Table2,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
-import { financialsApi, type Statement, type FinancialRow, type FinancialSource } from "@/modules/financials/api"
+import {
+  financialsApi, FINANCIAL_SCHEDULES, SCHEDULE_GROUPS,
+  type Statement, type FinancialRow, type FinancialSource,
+} from "@/modules/financials/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
 
@@ -155,11 +159,11 @@ export function FinancialsPage() {
   const navigate = useNavigate()
   const [tab, setTab]                 = useState<Tab>("is")
   const [periodEnd, setPeriodEnd]     = useState<string>(defaultPeriodEnd())
-  // Period type — YTD (default) calculates start as Jan 1 server-side.
-  // "Custom" exposes a Period Start picker so the user can drive an
-  // arbitrary range (single month, quarter, custom window). Only
-  // affects IS + CF; BS is point-in-time and ignores it.
-  const [periodMode, setPeriodMode]   = useState<PeriodMode>("ytd")
+  // Period type — "Custom" is the default: it exposes a Period Start picker
+  // and defaults the range to the month being viewed (1st → period-end). YTD
+  // calculates start as Jan 1 server-side. Only affects IS + CF; BS is
+  // point-in-time and ignores it.
+  const [periodMode, setPeriodMode]   = useState<PeriodMode>("custom")
   const [periodStart, setPeriodStart] = useState<string>(firstDayOfMonth(defaultPeriodEnd()))
   const [comparative, setComparative] = useState<boolean>(true)
   // Default to Nordavix synced data — works offline + respects the
@@ -556,6 +560,15 @@ export function FinancialsPage() {
               <StatementView stmt={stmt} />
             ) : null}
 
+            {/* Financial statement schedules — the full GAAP workpaper set,
+                exportable to Excel individually or as one package. */}
+            <SchedulesExportCard
+              periodEnd={periodEnd}
+              periodStart={periodMode === "custom" ? periodStart : undefined}
+              comparative={comparative}
+              source={source}
+            />
+
             {/* (Executive Report card moved above the Load gate so
                 it's visible immediately when the user lands on a
                 closed period — no need to Load financials first.) */}
@@ -698,6 +711,109 @@ function ExecutiveReportCard({
   )
 }
 
+// ── SchedulesExportCard ──────────────────────────────────────────────────
+//
+// The full GAAP workpaper set, exportable to Excel — one primary "full
+// package" action + a grouped list where each schedule downloads on its own.
+// Monochrome (neutral theme tokens), consistent with the no-color statements.
+
+function SchedulesExportCard({
+  periodEnd, periodStart, comparative, source,
+}: {
+  periodEnd: string
+  periodStart: string | undefined
+  comparative: boolean
+  source: FinancialSource
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function run(slug: string) {
+    setBusy(slug)
+    setErr(null)
+    try {
+      if (slug === "__full__") {
+        await financialsApi.exportFinancialsExcel(periodEnd, periodStart, comparative, source)
+      } else {
+        await financialsApi.exportScheduleExcel(slug, periodEnd, periodStart, comparative, source)
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Export failed")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="rounded-xl overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      {/* Header + full-package action */}
+      <div className="px-5 sm:px-6 py-4 flex items-start justify-between gap-3 flex-wrap"
+        style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Table2 size={16} strokeWidth={1.8} style={{ color: "var(--text-2)" }} />
+            <h3 className="text-sm font-bold text-theme">Financial statement schedules</h3>
+          </div>
+          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            Export to Excel — individually or as one workbook. Built from the selected period and source.
+          </p>
+        </div>
+        <Button size="sm" icon={<Download size={14} strokeWidth={1.8} />}
+          loading={busy === "__full__"} onClick={() => run("__full__")}>
+          Export full package (.xlsx)
+        </Button>
+      </div>
+
+      {/* Error stripe */}
+      {err && (
+        <div className="px-5 sm:px-6 py-2.5 flex items-start gap-2 text-xs"
+          style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)", color: "var(--text-2)" }}>
+          <AlertCircle size={13} strokeWidth={1.8} className="shrink-0 mt-0.5" />
+          <span className="flex-1">{err}</span>
+          <button onClick={() => setErr(null)} className="font-medium hover:underline shrink-0">Dismiss</button>
+        </div>
+      )}
+
+      {/* Grouped schedule list */}
+      <div className="px-5 sm:px-6 py-4 space-y-4">
+        {SCHEDULE_GROUPS.map((group) => {
+          const items = FINANCIAL_SCHEDULES.filter((s) => s.group === group)
+          if (!items.length) return null
+          return (
+            <div key={group}>
+              <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>
+                {group}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {items.map((s) => (
+                  <div key={s.slug}
+                    className="flex items-center justify-between gap-3 rounded-lg px-3 py-2"
+                    style={{ border: "1px solid var(--border)", background: "var(--surface)" }}>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-theme truncate">{s.label}</p>
+                      <p className="text-[10px] leading-snug" style={{ color: "var(--text-muted)" }}>{s.description}</p>
+                    </div>
+                    <button onClick={() => run(s.slug)} disabled={busy !== null}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50"
+                      style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+                      title={`Download ${s.label} (.xlsx)`}>
+                      {busy === s.slug
+                        ? <Spinner className="h-3 w-3" />
+                        : <Download size={12} strokeWidth={1.8} />}
+                      .xlsx
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── StatementView ─────────────────────────────────────────────────────────
 
 function StatementView({ stmt }: { stmt: Statement }) {
@@ -708,10 +824,10 @@ function StatementView({ stmt }: { stmt: Statement }) {
 
       {/* audit style masthead — BIG company name + statement title + subtitle */}
       <div className="px-8 py-6 text-center"
-        style={{ borderBottom: "2px solid #1f3a5f", background: "var(--surface-2)" }}>
+        style={{ borderBottom: "2px solid var(--text)", background: "var(--surface-2)" }}>
         <h2 style={{
           fontSize: "clamp(22px, 4vw, 28px)", fontWeight: 700,
-          letterSpacing: "-0.01em", color: "#1f3a5f", margin: 0, lineHeight: 1.2,
+          letterSpacing: "-0.01em", color: "var(--text)", margin: 0, lineHeight: 1.2,
         }}>
           {stmt.company}
         </h2>
@@ -729,16 +845,16 @@ function StatementView({ stmt }: { stmt: Statement }) {
           <thead>
             <tr style={{ borderBottom: "1px solid var(--border-strong)" }}>
               <th className="text-left px-6 py-3 text-[10px] font-bold uppercase tracking-wide"
-                style={{ color: "#1f3a5f" }}>
+                style={{ color: "var(--text)" }}>
                 Account
               </th>
               <th className="text-right px-6 py-3 text-[10px] font-bold uppercase tracking-wide"
-                style={{ color: "#1f3a5f", width: 150 }}>
+                style={{ color: "var(--text)", width: 150 }}>
                 {stmt.period_label}
               </th>
               {hasComparative && (
                 <th className="text-right px-6 py-3 text-[10px] font-bold uppercase tracking-wide"
-                  style={{ color: "#1f3a5f", width: 150 }}>
+                  style={{ color: "var(--text)", width: 150 }}>
                   {stmt.comparative_label}
                 </th>
               )}
@@ -787,7 +903,7 @@ function Row({ row, hasComparative, firstDataInSection }:
       <tr style={{ background: "var(--surface-2)" }}>
         <td colSpan={hasComparative ? 3 : 2}
           className="px-6 pt-5 pb-1 text-[11px] font-bold uppercase tracking-widest"
-          style={{ color: "#1f3a5f" }}>
+          style={{ color: "var(--text)" }}>
           {row.label}
         </td>
       </tr>
@@ -798,18 +914,18 @@ function Row({ row, hasComparative, firstDataInSection }:
   if (row.kind === "grand_total") {
     return (
       <tr style={{
-        borderTop: "1px solid #1f3a5f",
-        borderBottom: "3px double #1f3a5f",
-        background: "rgba(31, 58, 95, 0.04)",
+        borderTop: "1px solid var(--text)",
+        borderBottom: "3px double var(--text)",
+        background: "var(--surface-2)",
       }}>
-        <td className="px-6 py-3 text-sm font-bold" style={{ color: "#1f3a5f" }}>
+        <td className="px-6 py-3 text-sm font-bold" style={{ color: "var(--text)" }}>
           {row.label}
         </td>
-        <td className="px-6 py-3 text-right text-sm font-bold tabular-nums" style={{ color: "#1f3a5f" }}>
+        <td className="px-6 py-3 text-right text-sm font-bold tabular-nums" style={{ color: "var(--text)" }}>
           {fmtMoney(row.current, true)}
         </td>
         {hasComparative && (
-          <td className="px-6 py-3 text-right text-sm font-bold tabular-nums" style={{ color: "#1f3a5f" }}>
+          <td className="px-6 py-3 text-right text-sm font-bold tabular-nums" style={{ color: "var(--text)" }}>
             {fmtMoney(row.prior, true)}
           </td>
         )}
@@ -829,14 +945,14 @@ function Row({ row, hasComparative, firstDataInSection }:
           {row.label}
         </td>
         <td className="px-6 py-2 text-right tabular-nums text-sm font-bold" style={{
-          color: row.current && parseFloat(row.current) < 0 ? "#dc2626" : "var(--text)",
+          color: "var(--text)",
           borderTop: "1px solid var(--border-strong)",
         }}>
           {fmtMoney(row.current, true)}
         </td>
         {hasComparative && (
           <td className="px-6 py-2 text-right tabular-nums text-sm font-bold" style={{
-            color: row.prior && parseFloat(row.prior) < 0 ? "#dc2626" : "var(--text)",
+            color: "var(--text)",
             borderTop: "1px solid var(--border-strong)",
           }}>
             {fmtMoney(row.prior, true)}
@@ -856,13 +972,13 @@ function Row({ row, hasComparative, firstDataInSection }:
         {row.label}
       </td>
       <td className="px-6 py-1.5 text-right tabular-nums" style={{
-        color: row.current && parseFloat(row.current) < 0 ? "#dc2626" : "var(--text)",
+        color: "var(--text)",
       }}>
         {fmtMoney(row.current, firstDataInSection)}
       </td>
       {hasComparative && (
         <td className="px-6 py-1.5 text-right tabular-nums" style={{
-          color: row.prior && parseFloat(row.prior) < 0 ? "#dc2626" : "var(--text-2)",
+          color: "var(--text-2)",
         }}>
           {fmtMoney(row.prior, firstDataInSection)}
         </td>

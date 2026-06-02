@@ -515,49 +515,78 @@ async def _build_statement(
         prior_pe = _prior_year_period(pe)
         prior_ps = None  # YTD computes from Jan 1 of prior year automatically
 
+    # Comparative column header — shared by both sources. Point-in-time for BS,
+    # range-aware for IS / CF.
+    if not comparative:
+        comparative_label = None
+    elif statement_kind == "balance_sheet":
+        comparative_label = prior_pe.strftime("%b %d, %Y")
+    elif period_start is not None:
+        comparative_label = f"{prior_ps.strftime('%b %d')} – {prior_pe.strftime('%b %d, %Y')}"
+    else:
+        comparative_label = f"YTD {prior_pe.strftime('%b %Y')}"
+
     notes: list[str] = []
 
-    # ── Nordavix-synced source (BS + IS) ─────────────────────────────
-    # Build from the gl_balance_snapshots table populated on every
-    # recons sync. Cash Flow stays QBO-backed even in this mode since
-    # it requires non-cash adjustments we don't yet decompose.
-    if source == "nordavix" and statement_kind in ("balance_sheet", "income_statement"):
+    # ── Nordavix-synced source (BS + IS + CF) ─────────────────────────
+    # Build from the gl_balance_snapshots table populated on every recons
+    # sync. Cash Flow is derived (indirect method) from beginning + ending
+    # snapshots; when no beginning snapshot exists we fall through to QBO.
+    if source == "nordavix" and statement_kind in ("balance_sheet", "income_statement", "cash_flow"):
         from modules.financials.internal import (
             build_balance_sheet as _bs_internal,
         )
         from modules.financials.internal import (
+            build_cash_flow as _cf_internal,
+        )
+        from modules.financials.internal import (
             build_income_statement as _is_internal,
         )
-        builder = _bs_internal if statement_kind == "balance_sheet" else _is_internal
-        rows_raw, internal_notes = await builder(
-            db, tenant_id, pe, prior_pe if comparative else None,
-        )
-        notes.extend(internal_notes)
-        # Normalize internal dict rows to FinancialRow models, applying
-        # the same GAAP label translator the QBO path uses for consistency.
-        rows = [FinancialRow(
-            label=_gaap(r["label"]),
-            current=r["current"],
-            prior=r["prior"],
-            level=r["level"],
-            kind=r["kind"],
-        ) for r in rows_raw]
-        closed = await _is_period_closed(db, pe)
-        return StatementOut(
-            statement=statement_kind,
-            title=title,
-            subtitle=subtitle + " · Source: Nordavix synced data",
-            company=company,
-            period_label=period_label,
-            comparative_label=(prior_pe.strftime("%b %d, %Y") if comparative else None) if statement_kind == "balance_sheet"
-                              else (f"YTD {prior_pe.strftime('%b %Y')}" if comparative else None),
-            period_end=pe.isoformat(),
-            comparative_end=prior_pe.isoformat() if comparative else None,
-            rows=rows,
-            is_closed=closed is not None,
-            closed_at=closed.closed_at.isoformat() if closed and closed.closed_at else None,
-            notes=notes,
-        )
+        rows_raw: list[dict] = []
+        internal_notes: list[str] = []
+        if statement_kind == "balance_sheet":
+            rows_raw, internal_notes = await _bs_internal(
+                db, tenant_id, pe, prior_pe if comparative else None)
+        elif statement_kind == "income_statement":
+            rows_raw, internal_notes = await _is_internal(
+                db, tenant_id, pe, prior_pe if comparative else None,
+                period_start=effective_ps, comparative_start=prior_ps)
+        else:  # cash_flow
+            rows_raw, internal_notes = await _cf_internal(
+                db, tenant_id, pe,
+                period_start=effective_ps,
+                comparative_end=prior_pe if comparative else None,
+                comparative_start=prior_ps)
+
+        # Cash flow with no beginning snapshot → fall through to the QBO
+        # block below (note carried). All other cases return here.
+        if not (statement_kind == "cash_flow" and not rows_raw):
+            notes.extend(internal_notes)
+            # Normalize internal dict rows to FinancialRow, applying the same
+            # GAAP label translator the QBO path uses for consistency.
+            rows = [FinancialRow(
+                label=_gaap(r["label"]),
+                current=r["current"],
+                prior=r["prior"],
+                level=r["level"],
+                kind=r["kind"],
+            ) for r in rows_raw]
+            closed = await _is_period_closed(db, pe)
+            return StatementOut(
+                statement=statement_kind,
+                title=title,
+                subtitle=subtitle + " · Source: Nordavix synced data",
+                company=company,
+                period_label=period_label,
+                comparative_label=comparative_label,
+                period_end=pe.isoformat(),
+                comparative_end=prior_pe.isoformat() if comparative else None,
+                rows=rows,
+                is_closed=closed is not None,
+                closed_at=closed.closed_at.isoformat() if closed and closed.closed_at else None,
+                notes=notes,
+            )
+        notes.extend(internal_notes)  # CF fallback — carry the explanatory note
 
     # ── QuickBooks source (live API) ─────────────────────────────────
     # period_start is honored for IS / CF (P&L-style reports) and
@@ -587,17 +616,7 @@ async def _build_statement(
                             statement_kind, prior_pe)
             notes.append("Prior-year comparative could not be loaded.")
 
-    # Comparative header label — point-in-time for BS, range-aware for
-    # IS / CF.
-    if not comparative:
-        comparative_label = None
-    elif statement_kind == "balance_sheet":
-        comparative_label = prior_pe.strftime("%b %d, %Y")
-    elif period_start is not None and prior_ps is not None:
-        comparative_label = f"{prior_ps.strftime('%b %d')} – {prior_pe.strftime('%b %d, %Y')}"
-    else:
-        comparative_label = f"YTD {prior_pe.strftime('%b %Y')}"
-
+    # comparative_label was computed once above and is shared by both sources.
     merged = _merge_periods(cur_rows, prior_rows)
     closed = await _is_period_closed(db, pe)
     return StatementOut(

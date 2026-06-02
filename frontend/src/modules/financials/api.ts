@@ -178,10 +178,102 @@ async function exportExecutiveReport(periodEnd: string): Promise<void> {
   }
 }
 
+// ── Excel exports ─────────────────────────────────────────────────────────────
+
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+/** Shared blob → file download with the same error-reading pattern as exportPdf. */
+async function downloadXlsx(
+  path: string,
+  params: Record<string, string | boolean>,
+  fallbackName: string,
+): Promise<void> {
+  try {
+    const resp = await apiClient.get(path, { params, responseType: "blob", timeout: 5 * 60_000 })
+    if (!resp.data || (resp.data as Blob).size === 0) {
+      throw new Error("Server returned an empty file. Try again.")
+    }
+    const url = URL.createObjectURL(new Blob([resp.data], { type: XLSX_MIME }))
+    const a   = document.createElement("a")
+    a.href    = url
+    const cd  = resp.headers["content-disposition"] as string | undefined
+    const m   = cd?.match(/filename="?([^";]+)/)
+    a.download = m?.[1] ?? fallbackName
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: Blob; status?: number }; message?: string; code?: string }
+    if (err.code === "ECONNABORTED") throw new Error("Export timed out — please try again.")
+    if (err.response?.data instanceof Blob) {
+      try {
+        const txt = await err.response.data.text()
+        const parsed = JSON.parse(txt) as { detail?: string }
+        throw new Error(parsed.detail ?? `HTTP ${err.response.status}`)
+      } catch (pe) {
+        if (pe instanceof Error && pe.message.startsWith("HTTP")) throw pe
+        throw new Error(err.message ?? "Export failed")
+      }
+    }
+    throw new Error(err.message ?? "Export failed — check your network and try again.")
+  }
+}
+
+/** Full financial-package workbook (statements + every schedule). */
+async function exportFinancialsExcel(
+  periodEnd: string, periodStart: string | undefined,
+  comparative: boolean, source: FinancialSource,
+): Promise<void> {
+  const params: Record<string, string | boolean> = { period_end: periodEnd, comparative, source }
+  if (periodStart) params.period_start = periodStart
+  await downloadXlsx("/api/exports/financials", params, `financial-package-${periodEnd}.xlsx`)
+}
+
+/** A single financial schedule (cover + one sheet). */
+async function exportScheduleExcel(
+  slug: string, periodEnd: string, periodStart: string | undefined,
+  comparative: boolean, source: FinancialSource,
+): Promise<void> {
+  const params: Record<string, string | boolean> = { period_end: periodEnd, comparative, source }
+  if (periodStart) params.period_start = periodStart
+  await downloadXlsx(`/api/exports/financials/${slug}`, params, `${slug}-${periodEnd}.xlsx`)
+}
+
+// ── Schedule catalog (presentational — drives the "Schedules & exports" card) ──
+
+export interface ScheduleDef {
+  slug:        string
+  label:       string
+  description: string
+  group:       "Statements" | "Subledgers & agings" | "Account schedules" | "Support"
+}
+
+export const FINANCIAL_SCHEDULES: ScheduleDef[] = [
+  { slug: "income-statement",       label: "Income Statement",        description: "Revenue, COGS, gross profit, OpEx, net income.", group: "Statements" },
+  { slug: "balance-sheet",          label: "Balance Sheet",           description: "Assets, liabilities, and equity, point-in-time.", group: "Statements" },
+  { slug: "cash-flow",              label: "Statement of Cash Flows", description: "Indirect method — operating, investing, financing.", group: "Statements" },
+  { slug: "ar-aging",               label: "Accounts Receivable Aging", description: "Customer balances by aging bucket.", group: "Subledgers & agings" },
+  { slug: "ap-aging",               label: "Accounts Payable Aging",  description: "Vendor balances by aging bucket.", group: "Subledgers & agings" },
+  { slug: "prepaids",               label: "Prepaid Expense Schedule", description: "Amortization + unamortized carrying value.", group: "Account schedules" },
+  { slug: "fixed-assets",           label: "Fixed Assets & Depreciation", description: "Cost, accumulated depreciation, net book value.", group: "Account schedules" },
+  { slug: "accruals",               label: "Accrued Expense Schedule", description: "Accruals and reversals by period.", group: "Account schedules" },
+  { slug: "leases",                 label: "Lease Schedule",          description: "ROU asset and lease liability detail.", group: "Account schedules" },
+  { slug: "loans",                  label: "Loan Schedule",           description: "Principal, rate, term, and payment type.", group: "Account schedules" },
+  { slug: "trial-balance",          label: "Trial Balance",           description: "Every GL account, debit/credit, balanced.", group: "Support" },
+  { slug: "cash",                   label: "Cash & Cash Equivalents", description: "Bank account balances detail.", group: "Support" },
+  { slug: "equity",                 label: "Equity Roll-forward",     description: "Beginning equity + net income +/- owner activity.", group: "Support" },
+  { slug: "reconciliation-summary", label: "Reconciliation Summary",  description: "GL vs subledger, variance, and status per account.", group: "Support" },
+]
+
+export const SCHEDULE_GROUPS: ScheduleDef["group"][] = [
+  "Statements", "Subledgers & agings", "Account schedules", "Support",
+]
+
 export const financialsApi = {
   getIncomeStatement,
   getBalanceSheet,
   getCashFlow,
   exportPdf,
   exportExecutiveReport,
+  exportFinancialsExcel,
+  exportScheduleExcel,
 }

@@ -7,14 +7,14 @@ Design language matches an audited financial-statement package:
   • Body pages: every statement page has a centered MASTHEAD that
     repeats the entity name and statement title — so any page
     photocopied out of context is still identifiable.
-  • Helvetica throughout; navy (#1f3a5f) accent only; otherwise
-    conservative grey/black.
+  • Helvetica throughout; fully MONOCHROME — near-black accents on
+    grey/black, no color anywhere.
   • Flat-row rendering with kind-driven styling:
-      section_header   → uppercase navy, no values, top padding
+      section_header   → uppercase bold, no values, top padding
       data             → indented per level, plain
-      total            → bold + single navy rule on top
-      computed         → bold + single navy rule on top
-      grand_total      → bold + navy + double navy rule (top + bottom)
+      total            → bold + single rule on top
+      computed         → bold + single rule on top
+      grand_total      → bold + double rule (top + bottom)
   • Numbers right-aligned, parens for negatives, em-dash for zero,
     comma thousands. $ only on the first row of each section + on
     totals (a audit-ready convention).
@@ -42,12 +42,15 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-# Brand palette
-NAVY      = colors.HexColor("#1f3a5f")
+# Monochrome palette (no color — CPA-workpaper aesthetic). "NAVY" is kept as a
+# name so the accent references below don't all need renaming, but it now
+# resolves to near-black. Negatives use the body grey (parentheses carry the
+# sign), not red.
+NAVY      = colors.HexColor("#111827")   # near-black accent (was navy)
 GREY_DARK = colors.HexColor("#374151")
 GREY_MID  = colors.HexColor("#6b7280")
 GREY_LIGHT= colors.HexColor("#d1d5db")
-RED       = colors.HexColor("#b91c1c")
+RED       = colors.HexColor("#374151")   # negatives render in body grey (mono)
 
 
 # ── Styles ──────────────────────────────────────────────────────────────────
@@ -171,7 +174,7 @@ def _cover_page(story: list, styles: dict, *, company: str, period_end: date,
     story.append(Spacer(1, 1.4 * inch))
     if is_draft:
         story.append(Paragraph(
-            '<font color="#b91c1c"><b>— DRAFT —</b></font>', styles["cover_meta"],
+            '<font color="#374151"><b>— DRAFT —</b></font>', styles["cover_meta"],
         ))
         story.append(Spacer(1, 0.15 * inch))
     story.append(Paragraph(company, styles["cover_company"]))
