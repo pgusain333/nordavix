@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +30,7 @@ from core.auth.dependencies import (
 )
 from core.config import settings
 from core.db.session import get_db
+from core.email.welcome import send_welcome_email
 from models.qbo_connection import QboConnection
 from models.tenant import Tenant
 from models.user import User
@@ -98,6 +99,7 @@ async def list_members(
 async def get_me(
     user: CurrentUser,
     tenant_id: CurrentTenantId,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -132,6 +134,28 @@ async def get_me(
                 },
             )
             await db.commit()
+
+    # First-sign-in welcome email — once per person. `welcomed_at` gates it;
+    # the cross-tenant check stops a multi-workspace founder being welcomed
+    # twice. Cheap no-op after the first call (welcomed_at is set thereafter).
+    if user.welcomed_at is None:
+        first_ever = (await db.execute(
+            select(User.id).where(
+                User.clerk_user_id == user.clerk_user_id,
+                User.welcomed_at.isnot(None),
+            ),
+            execution_options={"skip_tenant_filter": True},
+        )).first() is None
+        user.welcomed_at = datetime.now(UTC)
+        await db.commit()
+        if first_ever and settings.email_enabled and user.email:
+            background_tasks.add_task(
+                send_welcome_email,
+                to_email=user.email,
+                clerk_user_id=user.clerk_user_id,
+                cta_url=settings.web_url + "/app",
+            )
+
     return {
         "id":            str(user.id),
         "clerk_user_id": user.clerk_user_id,

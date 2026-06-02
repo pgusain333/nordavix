@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, String, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,3 +40,6 @@ class User(TimestampMixin, TenantBase):
     email_notifications_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true"),
     )
+    # Set the first time the user reaches /workspace/me — gates the one-time
+    # welcome email so we never send it twice.
+    welcomed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
