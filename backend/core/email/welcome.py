@@ -39,7 +39,9 @@ def render_welcome_email(*, name: str | None, cta_url: str) -> tuple[str, str, s
     """Return (subject, html, text) for the welcome email."""
     parts = urlsplit(cta_url)
     origin = f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
-    logo_url = escape((origin + "/email-logo.png") if origin else "", quote=True)
+    # Versioned query so a logo update can't be masked by a stale CDN/edge cache
+    # (Vercel's stale-while-revalidate) or by an email client's image proxy cache.
+    logo_url = escape((origin + "/email-logo.png?v=2") if origin else "", quote=True)
     safe_url = escape(cta_url, quote=True)
 
     first = escape(name.strip()) if name and name.strip() else ""
