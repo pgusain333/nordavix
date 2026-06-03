@@ -663,12 +663,14 @@ function TrustStrip() {
 
 function CloseLoopHero() {
   const NODES = [
-    { label: "Connect",   Icon: Plug,            color: "#3b82f6" },
-    { label: "Sync",      Icon: RefreshCw,       color: "#06b6d4" },
-    { label: "Reconcile", Icon: Scale,           color: "#10b981" },
-    { label: "Analyze",   Icon: BarChart3,       color: "#8b5cf6" },
-    { label: "Approve",   Icon: UserCheck,       color: "#ec4899" },
-    { label: "Close",     Icon: Lock,            color: "#f59e0b" },
+    // Brand-cohesive palette (was a rainbow) — green tones for the working
+    // steps, burgundy as the punctuation on the final "Close".
+    { label: "Connect",   Icon: Plug,            color: "#5BB089" },
+    { label: "Sync",      Icon: RefreshCw,       color: "#3E8F66" },
+    { label: "Reconcile", Icon: Scale,           color: "#2F7E57" },
+    { label: "Analyze",   Icon: BarChart3,       color: "#3E8F66" },
+    { label: "Approve",   Icon: UserCheck,       color: "#5BB089" },
+    { label: "Close",     Icon: Lock,            color: "#8B1538" },
   ]
   // Geometry expressed as percentages of the container, so the loop
   // and every node scale together with whatever width the parent gives
