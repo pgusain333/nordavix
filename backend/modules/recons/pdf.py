@@ -4,9 +4,9 @@ Per-account reconciliation PDF — "reconciliation packet" layout.
 One working paper for a single (account, period), styled as a modern audit
 packet: a slim top bar, a green eyebrow, a large account title, a four-card
 meta row, a Balance summary (per general ledger = per source, two big
-numbers), the reconciliation build-up (opening + the reconciled/ticked items
-= reconciled balance), the open reconciling items (un-ticked outstanding), the
-AI reconciliation summary (kept verbatim), prepared/approved sign-off, and the
+numbers), the reconciliation build-up (opening + every ticked reconciling
+item = reconciled balance), any explicitly-outstanding open items, the AI
+reconciliation summary (kept verbatim), prepared/approved sign-off, and the
 audit trail.
 
 Design notes:
@@ -330,10 +330,13 @@ def _buildup(data, body_w) -> Table:
     def sub(s):
         return f"<br/><font size='7.5' color='{GREY_MID.hexval()}'>{s}</font>"
 
-    # The build-up is the RECONCILED composition: opening + the items the
-    # preparer has ticked (cleared) = reconciled balance. Un-ticked items are
-    # NOT here — they show in the separate "open reconciling items" table.
-    cleared = [it for it in items if it.get("cleared")]
+    # The build-up IS the reconciled composition: opening balance + every
+    # reconciling item the preparer ticked = reconciled balance. The recon
+    # drawer only ever persists ticked items, so a saved item is reconciled
+    # by default — it counts as still-open ONLY when explicitly flagged
+    # cleared=False (those are listed separately under "Reconciling items ·
+    # open"). This is why ticked items must never fall through to "open".
+    reconciled = [it for it in items if it.get("cleared") is not False]
 
     header = ["Date", "Description", "Reference", "Amount"]
     rows = [header]
@@ -343,11 +346,11 @@ def _buildup(data, body_w) -> Table:
                  "rolled forward", _fmt_signed(opening)])
     open_idx = len(rows) - 1
 
-    cleared_sum = Decimal("0")
+    reconciled_sum = Decimal("0")
     item_rows: list[int] = []
     item_vals: list[Decimal] = []
-    for it in cleared:
-        s = signed(it); cleared_sum += s
+    for it in reconciled:
+        s = signed(it); reconciled_sum += s
         rows.append([_fmt_date_short(it.get("txn_date") or ""),
                      Paragraph((it.get("memo") or it.get("txn_type") or "Reconciling item")[:120], memo),
                      (it.get("txn_number") or "—")[:16],
@@ -355,7 +358,7 @@ def _buildup(data, body_w) -> Table:
         item_rows.append(len(rows) - 1)
         item_vals.append(s)
 
-    adj = saved_sl - (opening + cleared_sum)
+    adj = saved_sl - (opening + reconciled_sum)
     if abs(adj) >= Decimal("0.01"):
         rows.append(["", Paragraph("Other adjustments to subledger"
                      + sub("net of open items below, aging, or manual override"), memo),
@@ -396,9 +399,12 @@ def _buildup(data, body_w) -> Table:
     return t
 
 
-# ── Open reconciling items (un-ticked / outstanding) ─────────────────────────
+# ── Open reconciling items (explicitly un-cleared / outstanding) ─────────────
 def _reconciling_items(data, body_w) -> list[Any] | None:
-    items = [it for it in (data.get("reconciling_items") or []) if not it.get("cleared")]
+    # Only genuinely-open items belong here: ones EXPLICITLY flagged not
+    # cleared. Everything else is part of the reconciled build-up above, so a
+    # ticked reconciling item never wrongly appears as "open".
+    items = [it for it in (data.get("reconciling_items") or []) if it.get("cleared") is False]
     if not items:
         return None
     memo = ParagraphStyle("rm", fontName="Helvetica", fontSize=8.5, leading=11, textColor=GREY_DARK)
@@ -671,10 +677,10 @@ def build_account_pdf(buffer: BinaryIO, *, data: dict) -> None:
     story.append(Spacer(1, 0.14 * inch))
     story.append(_buildup(data, body_w))
 
-    # ── Open reconciling items (un-ticked) ──
+    # ── Open reconciling items (explicitly un-cleared / outstanding) ──
     item_tbl = _reconciling_items(data, body_w)
     if item_tbl:
-        open_n = sum(1 for it in (data.get("reconciling_items") or []) if not it.get("cleared"))
+        open_n = sum(1 for it in (data.get("reconciling_items") or []) if it.get("cleared") is False)
         story.append(_section(num(), "Reconciling items · open",
                               f"{open_n} item{'' if open_n == 1 else 's'}", body_w))
         story.append(Spacer(1, 0.08 * inch))
