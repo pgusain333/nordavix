@@ -416,7 +416,7 @@ function Header({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-lg sm:text-xl font-bold text-theme leading-tight">Insights</h1>
+              <h1 className="text-lg sm:text-xl font-bold text-theme leading-tight lg:hidden">Insights</h1>
               {loadedLabel && (
                 <span className="text-[11px] font-medium px-2 py-0.5 rounded-full"
                   style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>

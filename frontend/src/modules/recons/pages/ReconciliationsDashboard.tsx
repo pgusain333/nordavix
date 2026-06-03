@@ -934,6 +934,7 @@ export function ReconciliationsDashboard() {
             </button>
             <div className="min-w-0">
               <h1
+                className="lg:hidden"
                 style={{
                   fontSize: "clamp(16px, 3vw, 20px)",
                   fontWeight: 700,

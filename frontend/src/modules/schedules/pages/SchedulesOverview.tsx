@@ -126,7 +126,7 @@ export function SchedulesOverview() {
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 lg:hidden">
               <BookOpen size={20} strokeWidth={1.8} style={{ color: "var(--green)" }} />
               <h1 className="text-2xl font-bold text-theme" style={{ letterSpacing: "-0.01em" }}>
                 Schedules
