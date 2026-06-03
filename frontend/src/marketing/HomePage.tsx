@@ -899,7 +899,7 @@ function BentoTile({ Icon, title, blurb, size, children }: BentoProps) {
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-60px" }}
       transition={{ duration: 0.5, ease: "easeOut" }}
-      className={`rounded-2xl p-6 flex flex-col group transition-all hover:shadow-lg ${sizeClasses[size]}`}
+      className={`rounded-2xl p-6 flex flex-col group transition-all duration-200 ease-out hover:-translate-y-1 hover:shadow-xl ${sizeClasses[size]}`}
       style={{
         background: "var(--bg)",
         border: "1px solid var(--border)",
@@ -1200,19 +1200,19 @@ function Personas() {
       Icon: Building2, title: "Controllers",
       pitch: "Stop spending the first week of every month pulling reports and arguing with spreadsheets. Get to insights faster than the audit team can ask.",
       bullets: ["Trial-balance verification", "Sequential close gate", "Lockable periods"],
-      gradient: "from-blue-500/10 to-transparent",
+      gradient: "from-[var(--green-subtle)] to-transparent",
     },
     {
       Icon: TrendingUp, title: "Fractional CFOs",
       pitch: "Run close for ten clients in the time you used to run it for three. Same audit-grade output, none of the spreadsheet rebuild between clients.",
       bullets: ["Multi-company workspaces", "Per-client roles", "Client-ready PDFs"],
-      gradient: "from-purple-500/10 to-transparent",
+      gradient: "from-[#8B1538]/10 to-transparent",
     },
     {
       Icon: Users, title: "CPA Firms",
       pitch: "Give your preparers a tool that captures their work AND your reviewers a tool that surfaces what to look at first. The audit trail is already done.",
       bullets: ["Maker / checker workflow", "Evidence verification", "Reviewer dashboard"],
-      gradient: "from-emerald-500/10 to-transparent",
+      gradient: "from-[var(--green-subtle)] to-transparent",
     },
   ]
 
@@ -1243,7 +1243,7 @@ function Personas() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.08, duration: 0.5 }}
-              className="rounded-2xl p-7 relative overflow-hidden"
+              className="rounded-2xl p-7 relative overflow-hidden transition-all duration-200 ease-out hover:-translate-y-1 hover:shadow-xl"
               style={{
                 background: "var(--bg)",
                 border: "1px solid var(--border)",
