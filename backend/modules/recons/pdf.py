@@ -4,21 +4,22 @@ Per-account reconciliation PDF — "reconciliation packet" layout.
 One working paper for a single (account, period), styled as a modern audit
 packet: a slim top bar, a green eyebrow, a large account title, a four-card
 meta row, a Balance summary (per general ledger = per source, two big
-numbers), the reconciliation build-up, the open reconciling items, the AI
-reconciliation summary (kept verbatim from the agent), and supporting
-documents.
+numbers), the reconciliation build-up (opening + the reconciled/ticked items
+= reconciled balance), the open reconciling items (un-ticked outstanding), the
+AI reconciliation summary (kept verbatim), prepared/approved sign-off, and the
+audit trail.
 
 Design notes:
   * No logo / brand mark anywhere.
   * Generalized beyond bank rec — the "source" side adapts to the account
     type (bank statement / AR aging / AP aging / card statement / subledger).
-  * No attestation or signature block.
+  * No attestation / signature scrawl — just prepared-by / approved-by names.
   * Green = brand accent + positive amounts; red = negative amounts.
   * A faint DRAFT watermark until the account is approved.
   * WinAnsi-safe glyphs only (ReportLab base-14 Helvetica): plain text,
     en-dashes, and an ASCII "=" — no check-marks or U+2212.
 """
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, BinaryIO
 
@@ -38,16 +39,15 @@ from reportlab.platypus import (
 )
 
 # ── Palette ──────────────────────────────────────────────────────────────────
-INK        = colors.HexColor("#14181A")   # titles, big numbers
-GREY_DARK  = colors.HexColor("#3C4146")   # body
-GREY_MID   = colors.HexColor("#8A8F98")   # labels, captions
-GREY_LIGHT = colors.HexColor("#C9CCD1")   # faint rules
-BORDER     = colors.HexColor("#E6E4DF")   # card / table borders
-CARD_BG    = colors.HexColor("#FAFAF8")   # meta-card fill
+INK        = colors.HexColor("#14181A")
+GREY_DARK  = colors.HexColor("#3C4146")
+GREY_MID   = colors.HexColor("#8A8F98")
+BORDER     = colors.HexColor("#E6E4DF")
+CARD_BG    = colors.HexColor("#FAFAF8")
 ZEBRA      = colors.HexColor("#FAF9F6")
-GREEN      = colors.HexColor("#3E8F66")   # brand accent + positive
-GREEN_TINT = colors.HexColor("#EAF4EE")   # AI note background
-RED        = colors.HexColor("#C0392B")   # negative amounts
+GREEN      = colors.HexColor("#3E8F66")
+GREEN_TINT = colors.HexColor("#EAF4EE")
+RED        = colors.HexColor("#C0392B")
 WHITE      = colors.white
 
 
@@ -60,7 +60,6 @@ def _to_decimal(v: Any, default: str = "0") -> Decimal:
 
 
 def _fmt_money(v: Decimal | str | None) -> str:
-    """Big-number format with $: $1,234.56 / $(1,234.56) / $0.00."""
     d = _to_decimal(v)
     if d == 0:
         return "$0.00"
@@ -69,7 +68,6 @@ def _fmt_money(v: Decimal | str | None) -> str:
 
 
 def _fmt_signed(v: Decimal | str | None) -> str:
-    """Table amount with explicit sign, no $: + 1,234.56 / - 35.00 / 0.00."""
     d = _to_decimal(v)
     if d == 0:
         return "0.00"
@@ -108,9 +106,18 @@ def _fmt_date_short(d: date | str | None) -> str:
     return d.strftime("%d %b")
 
 
+def _fmt_ts(iso: str | None) -> str:
+    if not iso:
+        return ""
+    try:
+        d = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return d.strftime("%d %b %Y · %H:%M")
+    except Exception:
+        return iso[:16].replace("T", " ")
+
+
 def _period_label(pe: date) -> str:
     q = (pe.month - 1) // 3 + 1
-    # Quarter-end months read as "Qn YYYY"; otherwise "Mon YYYY".
     if pe.month in (3, 6, 9, 12):
         return f"Q{q} {pe.year}"
     return pe.strftime("%b %Y")
@@ -125,8 +132,6 @@ _STATUS = {
 
 
 def _source_label(account_type: str | None) -> tuple[str, str]:
-    """(big-number label, short caption) for the right-hand 'source' side,
-    generalized from the account type so this isn't bank-only."""
     t = (account_type or "").lower()
     if "bank" in t or "cash" in t:
         return ("Per bank statement", "Bank statement")
@@ -155,8 +160,6 @@ def _styles() -> dict[str, ParagraphStyle]:
                        textColor=GREY_MID, spaceAfter=2),
         "lede":     mk("lede", fontName="Helvetica", fontSize=9.5, leading=14,
                        textColor=GREY_DARK, spaceBefore=6, spaceAfter=2),
-        "section":  mk("section", fontName="Helvetica-Bold", fontSize=11, leading=14,
-                       textColor=INK, spaceBefore=18, spaceAfter=8),
         "body":     mk("body", fontName="Helvetica", fontSize=9.5, leading=14,
                        textColor=GREY_DARK, spaceAfter=4),
         "note":     mk("note", fontName="Helvetica", fontSize=9.5, leading=14.5,
@@ -221,7 +224,7 @@ def _make_doc(buffer, *, company, account_label, doc_ref, period_end, is_draft):
     return doc
 
 
-# ── Meta card row (Account / Period ending / Variance / Status) ─────────────
+# ── Meta card row ────────────────────────────────────────────────────────────
 def _meta_cards(data, pe, body_w) -> Table:
     def sx(**k):
         return ParagraphStyle("x", **k)
@@ -310,8 +313,8 @@ def _balance_summary(data, pe, body_w) -> Table:
     return t
 
 
-# ── Reconciliation build-up ─────────────────────────────────────────────────
-def _buildup(data) -> Table:
+# ── Reconciliation build-up — opening + RECONCILED (ticked) items ──────────
+def _buildup(data, body_w) -> Table:
     flip = -1 if data.get("is_credit_natural") else 1
     opening = _to_decimal(data.get("opening_balance"))
     items = data.get("reconciling_items") or []
@@ -327,86 +330,73 @@ def _buildup(data) -> Table:
     def sub(s):
         return f"<br/><font size='7.5' color='{GREY_MID.hexval()}'>{s}</font>"
 
-    header = ["", "Description", "Reference", "Date", "Amount"]
-    rows = [header]
-    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    li = 0
-
-    open_items = [it for it in items if not it.get("cleared")]
+    # The build-up is the RECONCILED composition: opening + the items the
+    # preparer has ticked (cleared) = reconciled balance. Un-ticked items are
+    # NOT here — they show in the separate "open reconciling items" table.
     cleared = [it for it in items if it.get("cleared")]
 
-    # Opening
+    header = ["Date", "Description", "Reference", "Amount"]
+    rows = [header]
+
     op_src = (data.get("opening_source") or "").strip()
-    rows.append([letters[li], Paragraph("Opening balance" + (sub(op_src) if op_src else ""), memo_b),
-                 "rolled forward", "", _fmt_signed(opening)]); li += 1
+    rows.append(["", Paragraph("Opening balance" + (sub(op_src) if op_src else ""), memo_b),
+                 "rolled forward", _fmt_signed(opening)])
     open_idx = len(rows) - 1
 
-    items_sum = Decimal("0")
-    item_rows = []
-    for it in open_items:
-        s = signed(it); items_sum += s
-        rows.append([letters[li] if li < 26 else "·",
+    cleared_sum = Decimal("0")
+    item_rows: list[int] = []
+    item_vals: list[Decimal] = []
+    for it in cleared:
+        s = signed(it); cleared_sum += s
+        rows.append([_fmt_date_short(it.get("txn_date") or ""),
                      Paragraph((it.get("memo") or it.get("txn_type") or "Reconciling item")[:120], memo),
                      (it.get("txn_number") or "—")[:16],
-                     _fmt_date_short(it.get("txn_date") or ""),
                      _fmt_signed(s)])
-        item_rows.append(len(rows) - 1); li += 1
+        item_rows.append(len(rows) - 1)
+        item_vals.append(s)
 
-    cleared_sum = sum((signed(it) for it in cleared), Decimal("0"))
-    if cleared:
-        rows.append([letters[li] if li < 26 else "·",
-                     Paragraph("Cleared items"
-                               + sub(f"{len(cleared)} item{'' if len(cleared) == 1 else 's'} reconciled this period"),
-                               memo_b),
-                     "auto-matched", "", _fmt_signed(cleared_sum)]); li += 1
-
-    adj = saved_sl - (opening + items_sum + cleared_sum)
+    adj = saved_sl - (opening + cleared_sum)
     if abs(adj) >= Decimal("0.01"):
-        rows.append([letters[li] if li < 26 else "·",
-                     Paragraph("Other adjustments" + sub("aging / AI-prepared closing / manual override"), memo),
-                     "auto", "", _fmt_signed(adj)]); li += 1
+        rows.append(["", Paragraph("Other adjustments to subledger"
+                     + sub("net of open items below, aging, or manual override"), memo),
+                     "auto", _fmt_signed(adj)])
+        item_rows.append(len(rows) - 1)
+        item_vals.append(adj)
 
-    rows.append(["", Paragraph("Reconciled balance — matches source", memo_b), "", "", _fmt_money(saved_sl)])
+    rows.append(["", Paragraph("Reconciled balance — matches source", memo_b), "", _fmt_money(saved_sl)])
     reconciled_idx = len(rows) - 1
 
-    body_w = LETTER[0] - 2 * (0.72 * inch)
-    t = Table(rows, colWidths=[0.32 * inch, body_w - 0.32 * inch - 1.05 * inch - 0.85 * inch - 1.15 * inch,
-                               1.05 * inch, 0.85 * inch, 1.15 * inch], repeatRows=1)
+    desc_w = body_w - 0.8 * inch - 1.15 * inch - 1.2 * inch
+    t = Table(rows, colWidths=[0.8 * inch, desc_w, 1.15 * inch, 1.2 * inch], repeatRows=1)
     style = [
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7.5),
         ("TEXTCOLOR", (0, 0), (-1, 0), GREY_MID),
         ("LINEBELOW", (0, 0), (-1, 0), 0.75, INK),
         ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
-        ("ALIGN", (0, 0), (0, -1), "CENTER"),
         ("FONT", (0, 1), (-1, -1), "Helvetica", 9),
+        ("FONT", (0, 1), (0, -1), "Helvetica", 8),
+        ("FONT", (2, 1), (2, -1), "Helvetica", 8),
         ("TEXTCOLOR", (0, 1), (0, -1), GREY_MID),
-        ("TEXTCOLOR", (2, 1), (3, -1), GREY_MID),
-        ("FONT", (2, 1), (3, -1), "Helvetica", 8),
+        ("TEXTCOLOR", (2, 1), (2, -1), GREY_MID),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("FONT", (-1, 1), (-1, -1), "Helvetica", 9),
-        # Opening row
         ("LINEBELOW", (0, open_idx), (-1, open_idx), 0.25, BORDER),
-        # Reconciled balance — green, heavy top rule
         ("LINEABOVE", (0, reconciled_idx), (-1, reconciled_idx), 1.0, INK),
         ("FONT", (0, reconciled_idx), (-1, reconciled_idx), "Helvetica-Bold", 10),
-        ("TEXTCOLOR", (1, reconciled_idx), (1, reconciled_idx), INK),
         ("TEXTCOLOR", (-1, reconciled_idx), (-1, reconciled_idx), GREEN),
         ("TOPPADDING", (0, reconciled_idx), (-1, reconciled_idx), 9),
         ("BOTTOMPADDING", (0, reconciled_idx), (-1, reconciled_idx), 9),
     ]
-    # Amount colors on item rows
-    for idx, it in zip(item_rows, open_items, strict=False):
-        style.append(("TEXTCOLOR", (-1, idx), (-1, idx), _amount_color(signed(it))))
     for n, idx in enumerate(item_rows):
+        style.append(("TEXTCOLOR", (-1, idx), (-1, idx), _amount_color(item_vals[n])))
         if n % 2 == 1:
             style.append(("BACKGROUND", (0, idx), (-1, idx), ZEBRA))
     t.setStyle(TableStyle(style))
     return t
 
 
-# ── Open reconciling items table ────────────────────────────────────────────
+# ── Open reconciling items (un-ticked / outstanding) ─────────────────────────
 def _reconciling_items(data, body_w) -> list[Any] | None:
     items = [it for it in (data.get("reconciling_items") or []) if not it.get("cleared")]
     if not items:
@@ -469,7 +459,7 @@ def _reconciling_items(data, body_w) -> list[Any] | None:
     return [t]
 
 
-# ── AI reconciliation summary (kept verbatim) — green note callout ──────────
+# ── AI reconciliation summary — green note callout (kept verbatim) ──────────
 def _ai_summary(commentary: dict, styles, body_w) -> list[Any]:
     out: list[Any] = []
     narrative = (commentary.get("narrative") or "").strip()
@@ -529,6 +519,65 @@ def _ai_summary(commentary: dict, styles, body_w) -> list[Any]:
     return out
 
 
+# ── Prepared / approved sign-off (names + dates, not a signature) ───────────
+def _signoff(data, body_w) -> Table:
+    def col(label, name, when):
+        inner = [Paragraph(label.upper(), ParagraphStyle(
+            "so_l", fontName="Helvetica-Bold", fontSize=7, leading=10, textColor=GREY_MID, spaceAfter=5))]
+        inner.append(Paragraph(name or "Not yet recorded", ParagraphStyle(
+            "so_n", fontName="Helvetica-Bold", fontSize=12, leading=15,
+            textColor=(INK if name else GREY_MID))))
+        ts = _fmt_ts(when)
+        inner.append(Paragraph(ts if ts else "—", ParagraphStyle(
+            "so_w", fontName="Helvetica", fontSize=8, leading=11, textColor=GREY_MID, spaceBefore=3)))
+        return inner
+
+    gap = 0.3 * inch
+    cw = (body_w - gap) / 2.0
+    t = Table([[col("Prepared by", data.get("prepared_by_name"), data.get("prepared_at")),
+                "",
+                col("Approved by", data.get("approved_by_name"), data.get("approved_at"))]],
+              colWidths=[cw, gap, cw])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (0, 0), CARD_BG), ("BACKGROUND", (2, 0), (2, 0), CARD_BG),
+        ("BOX", (0, 0), (0, 0), 0.5, BORDER), ("BOX", (2, 0), (2, 0), 0.5, BORDER),
+        ("LEFTPADDING", (0, 0), (0, 0), 14), ("RIGHTPADDING", (0, 0), (0, 0), 14),
+        ("LEFTPADDING", (2, 0), (2, 0), 14), ("RIGHTPADDING", (2, 0), (2, 0), 14),
+        ("LEFTPADDING", (1, 0), (1, 0), 0), ("RIGHTPADDING", (1, 0), (1, 0), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 14), ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+    ]))
+    return t
+
+
+# ── Audit trail ──────────────────────────────────────────────────────────────
+def _audit_trail(data, styles, body_w) -> list[Any]:
+    events = data.get("audit_trail") or []
+    if not events:
+        return [Paragraph("No recorded activity for this reconciliation yet.", styles["oblique"])]
+    rows = [["When (UTC)", "Actor", "Event"]]
+    for a in events:
+        rows.append([_fmt_ts(a.get("when")), a.get("actor") or "System",
+                     Paragraph(a.get("summary") or "—", styles["body"])])
+    t = Table(rows, colWidths=[1.5 * inch, 1.5 * inch, body_w - 3.0 * inch], repeatRows=1)
+    style = [
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7.5),
+        ("TEXTCOLOR", (0, 0), (-1, 0), GREY_MID),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, BORDER),
+        ("FONT", (0, 1), (-1, -1), "Helvetica", 8.5),
+        ("TEXTCOLOR", (0, 1), (0, -1), GREY_MID),
+        ("FONT", (1, 1), (1, -1), "Helvetica-Bold", 8.5),
+        ("TEXTCOLOR", (1, 1), (1, -1), INK),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]
+    for ri in range(1, len(rows) - 1):
+        style.append(("LINEBELOW", (0, ri), (-1, ri), 0.25, BORDER))
+    t.setStyle(TableStyle(style))
+    return [t]
+
+
 def _docs(data, styles) -> list[Any]:
     files = data.get("evidence_files") or []
     if not files:
@@ -544,7 +593,7 @@ def _docs(data, styles) -> list[Any]:
     return out
 
 
-def _section(num: str, title: str, right: str, styles, body_w) -> Table:
+def _section(num: str, title: str, right: str, body_w) -> Table:
     left = Paragraph(
         f"<font color='{GREEN.hexval()}'>{num}</font>&nbsp;&nbsp;&nbsp;"
         f"<font color='{INK.hexval()}'>{title}</font>",
@@ -555,7 +604,7 @@ def _section(num: str, title: str, right: str, styles, body_w) -> Table:
     t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 18), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("LINEBELOW", (0, 0), (-1, -1), 0.5, BORDER),
     ]))
     return t
@@ -579,6 +628,12 @@ def build_account_pdf(buffer: BinaryIO, *, data: dict) -> None:
     doc = _make_doc(buffer, company=company, account_label=account_label,
                     doc_ref=doc_ref, period_end=pe, is_draft=is_draft)
     story: list[Any] = []
+
+    _counter = [0]
+
+    def num() -> str:
+        _counter[0] += 1
+        return f"{_counter[0]:02d}"
 
     # ── Top bar: company (left) · packet label + ref (right). No logo. ──
     topbar = Table([[
@@ -607,46 +662,53 @@ def build_account_pdf(buffer: BinaryIO, *, data: dict) -> None:
         styles["lede"]))
     story.append(Spacer(1, 0.16 * inch))
 
-    # ── Meta cards ──
     story.append(_meta_cards(data, pe, body_w))
-    story.append(Spacer(1, 0.05 * inch))
 
-    # ── 01 Balance summary ──
-    story.append(_section("01", "Balance summary", f"USD · ending {_fmt_date(pe)}", styles, body_w))
+    # ── Balance summary + build-up ──
+    story.append(_section(num(), "Balance summary", f"USD · ending {_fmt_date(pe)}", body_w))
     story.append(Spacer(1, 0.10 * inch))
     story.append(_balance_summary(data, pe, body_w))
     story.append(Spacer(1, 0.14 * inch))
-    story.append(_buildup(data))
+    story.append(_buildup(data, body_w))
 
-    # ── 02 Reconciling items ──
+    # ── Open reconciling items (un-ticked) ──
     item_tbl = _reconciling_items(data, body_w)
     if item_tbl:
         open_n = sum(1 for it in (data.get("reconciling_items") or []) if not it.get("cleared"))
-        story.append(_section("02", "Reconciling items · open",
-                              f"{open_n} item{'' if open_n == 1 else 's'}", styles, body_w))
+        story.append(_section(num(), "Reconciling items · open",
+                              f"{open_n} item{'' if open_n == 1 else 's'}", body_w))
         story.append(Spacer(1, 0.08 * inch))
         story.extend(item_tbl)
 
-    # ── AI reconciliation summary (kept) ──
+    # ── AI reconciliation summary ──
     commentary = data.get("ai_commentary")
     if commentary and isinstance(commentary, dict) and (commentary.get("narrative") or commentary.get("checks")):
-        story.append(Spacer(1, 0.06 * inch))
-        story.append(_section("03", "AI reconciliation summary", "generated by the agent", styles, body_w))
+        story.append(_section(num(), "AI reconciliation summary", "generated by the agent", body_w))
         story.append(Spacer(1, 0.08 * inch))
         story.extend(_ai_summary(commentary, styles, body_w))
 
     # ── Notes (optional) ──
     notes = (data.get("notes") or "").strip()
     if notes:
-        story.append(_section("04", "Preparer notes", "", styles, body_w))
+        story.append(_section(num(), "Preparer notes", "", body_w))
         story.append(Spacer(1, 0.06 * inch))
         story.append(Paragraph(notes, styles["body"]))
 
     # ── Supporting documents ──
     nf = len(data.get("evidence_files") or [])
-    story.append(_section("05" if notes else "04", "Supporting documents",
-                          f"{nf} attachment{'' if nf == 1 else 's'}", styles, body_w))
+    story.append(_section(num(), "Supporting documents", f"{nf} attachment{'' if nf == 1 else 's'}", body_w))
     story.append(Spacer(1, 0.06 * inch))
     story.extend(_docs(data, styles))
+
+    # ── Prepared / approved ──
+    story.append(_section(num(), "Prepared & approved", "names + timestamps", body_w))
+    story.append(Spacer(1, 0.10 * inch))
+    story.append(_signoff(data, body_w))
+
+    # ── Audit trail ──
+    ev = data.get("audit_trail") or []
+    story.append(_section(num(), "Audit trail", f"{len(ev)} event{'' if len(ev) == 1 else 's'}", body_w))
+    story.append(Spacer(1, 0.06 * inch))
+    story.extend(_audit_trail(data, styles, body_w))
 
     doc.build(story)

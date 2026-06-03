@@ -809,6 +809,38 @@ async def export_account_pdf(
         # is a draft (watermarked).
         is_draft = status_str != "approved"
 
+        # Audit trail — every recorded action on this account/period review.
+        audit_trail: list[dict] = []
+        if review is not None:
+            from models.audit_log import AuditLog
+            audit_rows = list((await db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "account_review_status",
+                    AuditLog.entity_id == review.id,
+                )
+                .order_by(AuditLog.created_at.asc())
+                .limit(50)
+            )).scalars().all())
+            extra_ids = [a.user_id for a in audit_rows
+                         if a.user_id and a.user_id not in names_by_id]
+            if extra_ids:
+                for u2 in (await db.execute(
+                    select(User).where(User.id.in_(set(extra_ids)))
+                )).scalars().all():
+                    nm = u2.email or None
+                    if u2.clerk_user_id:
+                        cu = await get_clerk_user(u2.clerk_user_id)
+                        if cu:
+                            nm = _format_display_name(cu) or nm
+                    names_by_id[u2.id] = nm or f"User {str(u2.id)[:8]}"
+            for a in audit_rows:
+                audit_trail.append({
+                    "when": a.created_at.isoformat() if a.created_at else None,
+                    "actor": (names_by_id.get(a.user_id) if a.user_id else None) or "System",
+                    "summary": (a.event_data or {}).get("summary") or a.action,
+                })
+
         data = {
             "company":            company,
             "account_number":     snap.account_number or "",
@@ -848,6 +880,7 @@ async def export_account_pdf(
             # surfaces it as a section before Notes so the reviewer reads
             # AI's checks and recommendation when reviewing the document.
             "ai_commentary":      (review.ai_commentary if review else None),
+            "audit_trail":        audit_trail,
         }
 
         logger.info(
