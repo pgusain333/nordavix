@@ -249,7 +249,9 @@ export function LeftNav({ onClose }: Props) {
         <OrgNameInline organizationName={organization.name} onRename={(n) => organization.update({ name: n })} />
       )}
 
-      {/* Quick search → opens the ⌘K command palette + notifications bell. */}
+      {/* Quick search + bell — desktop has these in the top bar now, so this
+          row renders only inside the mobile drawer (onClose present). */}
+      {onClose && (
       <div className={cn("px-2 pt-2.5 flex gap-1.5", isCollapsed ? "flex-col items-center" : "items-center")}>
         {isCollapsed ? (
           <button
@@ -275,10 +277,11 @@ export function LeftNav({ onClose }: Props) {
               style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>⌘K</kbd>
           </button>
         )}
-        {/* Bell lives in the desktop top bar now; keep it in the mobile drawer
-            (onClose present) so the drawer still has quick access. */}
-        {onClose && <NotificationBell onOpen={onClose} className="h-9 w-9" />}
+        {/* Bell lives in the desktop top bar now; this row is mobile-only, so
+            it shows here for quick access inside the drawer. */}
+        <NotificationBell onOpen={onClose} className="h-9 w-9" />
       </div>
+      )}
 
       <nav className="shrink-0 px-2 py-3 space-y-0.5">
         {NAV_ITEMS.map((item) => {
