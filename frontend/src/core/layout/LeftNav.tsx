@@ -289,8 +289,8 @@ export function LeftNav({ onClose }: Props) {
                   isCollapsed ? "relative justify-center h-10" : "gap-2.5 px-3 py-2",
                   // Hover-slide: expanded items glide right with a soft green
                   // fill; collapsed icons just get the fill (no slide).
-                  !isCollapsed && "hover:translate-x-1 hover:bg-[var(--green-subtle)]",
-                  isCollapsed && "hover:bg-[var(--green-subtle)]",
+                  !isCollapsed && "hover:translate-x-1.5 hover:bg-[var(--nav-hover)]",
+                  isCollapsed && "hover:bg-[var(--nav-hover)]",
                   isActive ? "font-medium" : "")
               }
               style={({ isActive }) => isActive
@@ -467,7 +467,7 @@ function UtilLink({ to, icon: Icon, label, title, isCollapsed, onClose }: {
           "w-full inline-flex items-center rounded-md text-sm font-medium transition-all duration-200 ease-out",
           isCollapsed ? "justify-center h-10" : "gap-2.5 px-3 py-2",
           !isCollapsed && "hover:translate-x-1",
-          isActive ? "" : "hover:bg-[var(--green-subtle)]",
+          isActive ? "" : "hover:bg-[var(--nav-hover)]",
         )
       }
       style={({ isActive }) => ({
