@@ -84,20 +84,32 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
   return (
     <div className="relative">
       {variant === "breadcrumb" ? (
-        <button
-          ref={triggerRef}
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="inline-flex items-center gap-1.5 min-w-0 rounded-md px-1.5 py-1 transition-colors hover:bg-[var(--surface-2)]"
-          title={`Switch workspace · ${otherCount} other${otherCount === 1 ? "" : "s"}`}
-        >
-          <Building2 size={15} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
-          <span className="text-sm font-semibold truncate max-w-[200px]" style={{ color: "var(--text)" }}>
-            {organization?.name ?? "Workspace"}
-          </span>
-          <ChevronDown size={13} strokeWidth={1.8} className="shrink-0 transition-transform"
-            style={{ color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "rotate(0deg)" }} />
-        </button>
+        <div className="inline-flex items-center min-w-0">
+          {/* Company name → dashboard */}
+          <button
+            type="button"
+            onClick={() => { navigate("/app"); onAfterSwitch?.() }}
+            className="inline-flex items-center gap-1.5 min-w-0 rounded-md px-1.5 py-1 transition-colors hover:bg-[var(--surface-2)]"
+            title={`${organization?.name ?? "Workspace"} — go to dashboard`}
+          >
+            <Building2 size={15} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+            <span className="text-sm font-semibold truncate max-w-[200px]" style={{ color: "var(--text)" }}>
+              {organization?.name ?? "Workspace"}
+            </span>
+          </button>
+          {/* Chevron → toggle the workspace switcher */}
+          <button
+            ref={triggerRef}
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="flex items-center justify-center h-6 w-6 rounded-md transition-colors hover:bg-[var(--surface-2)]"
+            title={`Switch workspace · ${otherCount} other${otherCount === 1 ? "" : "s"}`}
+            aria-label="Switch workspace"
+          >
+            <ChevronDown size={13} strokeWidth={1.8} className="transition-transform"
+              style={{ color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "rotate(0deg)" }} />
+          </button>
+        </div>
       ) : (
         <button
           ref={triggerRef}
