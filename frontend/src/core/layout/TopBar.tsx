@@ -34,14 +34,26 @@ const PAGE_TITLES: [string, string][] = [
   ["/app",                 "Dashboard"],
 ]
 
+// One level deeper — sub-pages that earn a third breadcrumb crumb (the section
+// above stays clickable). Currently the individual schedule pages.
+const SUB_TITLES: [string, string][] = [
+  ["/app/schedules/prepaids",     "Prepaid Expenses"],
+  ["/app/schedules/accruals",     "Accrued Expenses"],
+  ["/app/schedules/fixed-assets", "Fixed Assets"],
+  ["/app/schedules/leases",       "Leases"],
+  ["/app/schedules/loans",        "Loans"],
+]
+
 export function TopBar() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { organization } = useOrganization()
   const { user } = useUser()
 
-  const pageTitle =
-    PAGE_TITLES.find(([p]) => pathname === p || pathname.startsWith(p + "/"))?.[1] ?? ""
+  const section = PAGE_TITLES.find(([p]) => pathname === p || pathname.startsWith(p + "/"))
+  const pageTitle = section?.[1] ?? ""
+  const sectionPath = section?.[0] ?? ""
+  const subTitle = SUB_TITLES.find(([p]) => pathname === p || pathname.startsWith(p + "/"))?.[1] ?? ""
 
   // Role → chip. Same source + mapping the nav used; long staleTime.
   const { data: me } = useQuery({
@@ -80,7 +92,23 @@ export function TopBar() {
         {pageTitle && (
           <>
             <ChevronRight size={14} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
-            <span className="text-sm truncate" style={{ color: "var(--text-2)" }}>{pageTitle}</span>
+            {subTitle ? (
+              <button
+                onClick={() => navigate(sectionPath)}
+                className="text-sm truncate transition-opacity hover:opacity-80"
+                style={{ color: "var(--text-2)" }}
+              >
+                {pageTitle}
+              </button>
+            ) : (
+              <span className="text-sm truncate" style={{ color: "var(--text-2)" }}>{pageTitle}</span>
+            )}
+          </>
+        )}
+        {subTitle && (
+          <>
+            <ChevronRight size={14} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+            <span className="text-sm font-medium truncate" style={{ color: "var(--text)" }}>{subTitle}</span>
           </>
         )}
       </div>

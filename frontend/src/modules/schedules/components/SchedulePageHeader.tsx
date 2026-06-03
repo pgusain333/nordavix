@@ -46,7 +46,7 @@ export function SchedulePageHeader({
       </Link>
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
-          <div className="flex items-center gap-2.5 mb-1">
+          <div className="flex items-center gap-2.5 mb-1 lg:hidden">
             <div className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
               style={{ background: accent.bg, color: accent.fg }}>
               {icon}
