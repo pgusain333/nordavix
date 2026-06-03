@@ -260,61 +260,56 @@ function Hero() {
   const { isSignedIn } = useUser()
   return (
     <section
-      className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 px-6 overflow-hidden"
-      style={{ background: "#8B1538" }}>
+      className="relative pt-32 pb-24 sm:pt-40 sm:pb-32 px-6 overflow-hidden"
+      // Deep, layered burgundy — darker at the top (so the white navbar reads)
+      // and bottom, brand burgundy through the middle. The flat single-tone
+      // fill is gone; this base already carries depth before any glow lands.
+      style={{ background: "linear-gradient(180deg, #5E0E22 0%, #8B1538 44%, #6B1029 100%)" }}>
 
-      {/* Layer 1 — static radial mesh */}
+      {/* Layer 1 — directional mood: a bright rose spotlight lighting the
+          headline (upper-left), a green glow anchoring the product card
+          (right), and oxblood corners for rich, expensive contrast. */}
       <div
         aria-hidden="true"
         className="absolute inset-0 pointer-events-none"
         style={{
           background: `
-            radial-gradient(ellipse 60% 50% at 15% 20%, rgba(220, 80, 120, 0.30), transparent 60%),
-            radial-gradient(ellipse 50% 40% at 85% 75%, rgba(40, 5, 20, 0.55), transparent 60%),
-            radial-gradient(ellipse 40% 35% at 70% 15%, rgba(16, 185, 129, 0.10), transparent 55%)
+            radial-gradient(ellipse 55% 50% at 22% 24%, rgba(236, 126, 163, 0.42), transparent 58%),
+            radial-gradient(ellipse 50% 55% at 84% 60%, rgba(62, 143, 102, 0.22), transparent 60%),
+            radial-gradient(ellipse 60% 55% at 102% -5%, rgba(44, 7, 21, 0.60), transparent 55%),
+            radial-gradient(ellipse 60% 55% at -5% 105%, rgba(44, 7, 21, 0.55), transparent 55%)
           `,
         }}
       />
 
-      {/* Layer 2 — three breathing orbs */}
+      {/* Layer 2 — two slow breathing glows so the light feels alive (read as
+          light moving in the room, not as shapes). */}
       <motion.div
         aria-hidden="true"
         className="absolute pointer-events-none rounded-full"
         style={{
-          width: 520, height: 520,
-          top: "8%", left: "-12%",
-          background: "radial-gradient(circle, rgba(230, 110, 150, 0.28), transparent 70%)",
-          filter: "blur(48px)",
+          width: 560, height: 560,
+          top: "0%", left: "-10%",
+          background: "radial-gradient(circle, rgba(240, 140, 176, 0.30), transparent 70%)",
+          filter: "blur(60px)",
         }}
-        animate={{ x: [0, 30, 0], y: [0, -22, 0], scale: [1, 1.08, 1] }}
-        transition={{ duration: 13, repeat: Infinity, ease: "easeInOut" }}
+        animate={{ x: [0, 26, 0], y: [0, -18, 0], scale: [1, 1.08, 1] }}
+        transition={{ duration: 15, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
         aria-hidden="true"
         className="absolute pointer-events-none rounded-full"
         style={{
-          width: 620, height: 620,
-          bottom: "-18%", right: "-14%",
-          background: "radial-gradient(circle, rgba(16, 185, 129, 0.16), transparent 70%)",
-          filter: "blur(64px)",
+          width: 660, height: 660,
+          bottom: "-24%", right: "-12%",
+          background: "radial-gradient(circle, rgba(62, 143, 102, 0.20), transparent 70%)",
+          filter: "blur(72px)",
         }}
-        animate={{ x: [0, -36, 0], y: [0, 28, 0], scale: [1, 1.12, 1] }}
-        transition={{ duration: 16, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        aria-hidden="true"
-        className="absolute pointer-events-none rounded-full"
-        style={{
-          width: 420, height: 420,
-          top: "38%", right: "18%",
-          background: "radial-gradient(circle, rgba(255, 255, 255, 0.07), transparent 70%)",
-          filter: "blur(52px)",
-        }}
-        animate={{ x: [0, 22, 0], y: [0, -28, 0] }}
-        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
+        animate={{ x: [0, -32, 0], y: [0, 24, 0], scale: [1, 1.12, 1] }}
+        transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
       />
 
-      {/* Layer 3 — faint grid (radially masked) */}
+      {/* Layer 3 — faint grid (radially masked) for a technical, precise feel */}
       <div
         aria-hidden="true"
         className="absolute inset-0 pointer-events-none"
@@ -323,69 +318,99 @@ function Hero() {
             linear-gradient(rgba(255,255,255,1) 1px, transparent 1px),
             linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px)
           `,
-          backgroundSize: "64px 64px",
-          opacity: 0.045,
-          maskImage: "radial-gradient(ellipse at center, black 25%, transparent 75%)",
-          WebkitMaskImage: "radial-gradient(ellipse at center, black 25%, transparent 75%)",
+          backgroundSize: "72px 72px",
+          opacity: 0.05,
+          maskImage: "radial-gradient(ellipse at center, black 18%, transparent 72%)",
+          WebkitMaskImage: "radial-gradient(ellipse at center, black 18%, transparent 72%)",
         }}
       />
 
-      {/* Layer 4 — cinematic vignette */}
+      {/* Layer 4 — fine film grain. The detail that separates "expensive" from
+          "flat": a sub-pixel fractal-noise texture over the whole field. */}
       <div
         aria-hidden="true"
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: "radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.28) 100%)",
+          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
+          opacity: 0.08,
+          mixBlendMode: "overlay",
         }}
       />
 
-      <div className="max-w-6xl mx-auto relative">
-        <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-          {/* Left: copy */}
-          <div className="text-center lg:text-left">
+      {/* Layer 5 — top fade so the transparent navbar's white logo + links
+          stay crisp against the lit hero. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 top-0 h-32 pointer-events-none"
+        style={{ background: "linear-gradient(180deg, rgba(20,2,10,0.38), transparent)" }}
+      />
+
+      {/* Layer 6 — cinematic vignette */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.30) 100%)",
+        }}
+      />
+
+      <div className="max-w-4xl mx-auto relative text-center">
             {/* "What's new" badge */}
             <motion.a
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
               href="#features"
-              className="inline-flex items-center gap-2 rounded-full pl-1 pr-3 py-1 mb-6 text-xs font-medium transition-all hover:scale-[1.02]"
+              className="group inline-flex items-center gap-2 rounded-full pl-1 pr-3 py-1 mb-7 text-xs font-medium transition-all hover:scale-[1.02]"
               style={{
-                background: "var(--surface)",
-                border: "1px solid var(--border-strong)",
-                color: "var(--text-2)",
+                background: "rgba(255,255,255,0.08)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                color: "rgba(255,255,255,0.92)",
+                backdropFilter: "blur(8px)",
+                WebkitBackdropFilter: "blur(8px)",
               }}>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white"
-                style={{ background: "var(--green)" }}>
+                style={{ background: "var(--green)", boxShadow: "0 2px 12px rgba(91,176,137,0.55)" }}>
                 New
               </span>
-              Agentic Mode is live <ChevronRight size={12} strokeWidth={2} />
+              Agentic Mode is live
+              <ChevronRight size={12} strokeWidth={2} className="transition-transform group-hover:translate-x-0.5" />
             </motion.a>
 
             <motion.h1
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.05 }}
-              className="font-bold leading-[1.05] tracking-tight"
-              // White text on the abstract burgundy field. The
-              // softly-moving glow orbs vary the local brightness
-              // behind the headline, so a slight text-shadow keeps
-              // every glyph crisp wherever an orb happens to pass.
+              className="font-bold tracking-tight"
+              // Big, tight, white. The lit field varies brightness behind it,
+              // so a soft shadow keeps every glyph crisp wherever light passes.
               style={{
-                fontSize: "clamp(36px, 6.5vw, 64px)",
+                fontSize: "clamp(40px, 7vw, 68px)",
+                lineHeight: 1.03,
+                letterSpacing: "-0.02em",
                 color: "#FFFFFF",
-                textShadow: "0 2px 18px rgba(0,0,0,0.40), 0 1px 2px rgba(0,0,0,0.25)",
+                textShadow: "0 2px 24px rgba(0,0,0,0.42), 0 1px 2px rgba(0,0,0,0.25)",
               }}>
               Close the books{" "}
               <span className="relative inline-block">
                 <span style={{
-                  color: "var(--green)",
-                  textShadow: "0 2px 18px rgba(0,0,0,0.45), 0 0 24px rgba(16,185,129,0.30)",
+                  background: "linear-gradient(135deg, #6FE0AC 0%, #3E8F66 100%)",
+                  WebkitBackgroundClip: "text",
+                  backgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  color: "transparent",
+                  filter: "drop-shadow(0 2px 16px rgba(91,176,137,0.45))",
                 }}>in days,</span>
-                <svg className="absolute -bottom-2 left-0 w-full h-2 print:hidden" viewBox="0 0 200 8" preserveAspectRatio="none">
+                <svg className="absolute -bottom-2 left-0 w-full h-2.5 print:hidden" viewBox="0 0 200 8" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="ndvxUnderline" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#6FE0AC" />
+                      <stop offset="100%" stopColor="#3E8F66" />
+                    </linearGradient>
+                  </defs>
                   <motion.path
                     d="M0 4 Q 50 0, 100 4 T 200 4"
-                    stroke="var(--green)" strokeWidth="2" fill="none"
+                    stroke="url(#ndvxUnderline)" strokeWidth="2.5" fill="none" strokeLinecap="round"
                     initial={{ pathLength: 0 }}
                     animate={{ pathLength: 1 }}
                     transition={{ duration: 1.2, delay: 0.8 }}
@@ -399,7 +424,7 @@ function Hero() {
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.15 }}
-              className="mt-6 text-base sm:text-lg leading-relaxed max-w-xl mx-auto lg:mx-0"
+              className="mt-6 text-base sm:text-lg leading-relaxed max-w-2xl mx-auto"
               // Slightly softer than pure white (88%) so the body copy
               // sits a half-step behind the headline visually. Soft
               // shadow keeps it legible where the breathing orbs pass.
@@ -415,33 +440,36 @@ function Hero() {
             {/* Signed-in visitors get a personalized launchpad straight back
                 into their close; everyone else gets the marketing dual CTA. */}
             {isSignedIn ? (
-              <LoggedInLaunchpad />
+              <div className="flex justify-center">
+                <LoggedInLaunchpad />
+              </div>
             ) : (
               <motion.div
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.25 }}
-                className="mt-8 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
+                className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
                 <Link to="/sign-up"
                   className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold text-white transition-all hover:scale-[1.02] active:scale-[0.99]"
                   style={{
-                    background: "var(--green)",
-                    boxShadow: "0 12px 32px -8px rgba(16,185,129,0.45)",
+                    background: "linear-gradient(135deg, var(--green-light) 0%, var(--green) 100%)",
+                    boxShadow: "0 16px 40px -10px rgba(91,176,137,0.55), inset 0 1px 0 rgba(255,255,255,0.30)",
                   }}>
                   Start free — no card required <ArrowRight size={15} strokeWidth={2.2} />
                 </Link>
                 <Link to="/solutions"
-                  // Secondary CTA: white text + semi-transparent white
-                  // border so it reads as a glass button against the
-                  // burgundy field. Hover lifts the bg to a soft white film.
+                  // Secondary CTA: a frosted-glass button on the burgundy
+                  // field. Hover lifts the film + brightens the border.
                   className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold transition-all"
                   style={{
-                    background: "transparent",
-                    border: "1px solid rgba(255,255,255,0.35)",
+                    background: "rgba(255,255,255,0.07)",
+                    border: "1px solid rgba(255,255,255,0.30)",
                     color: "#FFFFFF",
+                    backdropFilter: "blur(8px)",
+                    WebkitBackdropFilter: "blur(8px)",
                   }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.10)" }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent" }}>
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.14)" }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.07)" }}>
                   Take the product tour
                 </Link>
               </motion.div>
@@ -452,28 +480,40 @@ function Hero() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.4 }}
-              className="mt-8 flex items-center justify-center lg:justify-start gap-4 text-xs"
+              className="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs"
               style={{
-                color: "rgba(255,255,255,0.78)",
+                color: "rgba(255,255,255,0.80)",
                 textShadow: "0 1px 6px rgba(0,0,0,0.25)",
               }}>
-              <span>Built by a CPA who's lived through 100+ closes</span>
+              <span className="inline-flex items-center gap-1.5">
+                <UserCheck size={13} strokeWidth={2} style={{ color: "#7BC9A1" }} />
+                Built by a CPA, for accountants
+              </span>
+              <span aria-hidden="true" className="opacity-30">·</span>
+              <span className="inline-flex items-center gap-1.5">
+                <Plug size={13} strokeWidth={2} style={{ color: "#7BC9A1" }} />
+                Works on top of QuickBooks
+              </span>
+              <span aria-hidden="true" className="opacity-30">·</span>
+              <Link to="/security" className="inline-flex items-center gap-1.5 transition-colors hover:text-white">
+                <ShieldCheck size={13} strokeWidth={2} style={{ color: "#7BC9A1" }} />
+                Bank-grade security
+              </Link>
             </motion.div>
-          </div>
+      </div>
 
-          {/* Right: live AI Commentary card */}
-          <LiveAICard />
-        </div>
+      {/* ── Big product window — the hero shot, floating in an aurora ── */}
+      <div className="max-w-5xl mx-auto relative mt-16 sm:mt-20">
+        <HeroProductWindow />
       </div>
     </section>
   )
 }
 
-// The centerpiece — a fake but realistic Nordavix variance row with a
-// typewriter-animated AI commentary. Lifts gently to add depth. Updates
-// the variance every full cycle so the visitor sees Nordavix handle
-// different account types.
-function LiveAICard() {
+// The hero shot — a realistic Nordavix app window (chrome bar · nav rail · close
+// dashboard) whose flux AI commentary types itself out live, then rotates
+// through account scenarios. Floats in a slow aurora glow.
+function HeroProductWindow() {
   const SCENARIOS = [
     {
       account: "6100 · Marketing",
@@ -533,141 +573,168 @@ function LiveAICard() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30, rotate: -1 }}
-      animate={{ opacity: 1, y: 0,  rotate: 0 }}
-      transition={{ duration: 0.7, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      initial={{ opacity: 0, y: 40 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.8, delay: 0.25, ease: [0.16, 1, 0.3, 1] }}
       className="relative">
-      {/* Floating sparkle accents */}
+      {/* Rotating aurora behind the window — the premium "alive" glow */}
       <motion.div
-        className="absolute -top-4 -left-4 inline-flex items-center justify-center h-9 w-9 rounded-xl print:hidden"
-        style={{ background: "var(--green)", color: "white", boxShadow: "0 8px 20px rgba(16,185,129,0.4)" }}
-        animate={{ y: [0, -6, 0], rotate: [0, 8, 0] }}
-        transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}>
-        <Sparkles size={16} strokeWidth={2} />
-      </motion.div>
+        aria-hidden="true"
+        className="absolute -inset-10 rounded-[3rem] pointer-events-none print:hidden"
+        style={{
+          background: "conic-gradient(from 0deg, rgba(91,176,137,0) 0%, rgba(91,176,137,0.50) 16%, rgba(255,255,255,0.28) 30%, rgba(236,126,163,0.48) 50%, rgba(91,176,137,0) 76%)",
+          filter: "blur(48px)",
+          opacity: 0.5,
+        }}
+        animate={{ rotate: 360 }}
+        transition={{ duration: 26, repeat: Infinity, ease: "linear" }}
+      />
 
-      <motion.div
-        className="rounded-2xl overflow-hidden"
+      {/* The app window */}
+      <div className="relative rounded-2xl overflow-hidden text-left"
         style={{
           background: "var(--surface)",
           border: "1px solid var(--border)",
-          boxShadow: "0 24px 64px -12px rgba(0,0,0,0.20), 0 8px 24px -8px rgba(0,0,0,0.12)",
-        }}
-        animate={{ y: [0, -6, 0] }}
-        transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}>
-        {/* Header bar */}
-        <div className="px-5 py-3 flex items-center gap-2 border-b"
+          boxShadow: "0 50px 110px -30px rgba(0,0,0,0.65), 0 16px 40px -16px rgba(0,0,0,0.40), inset 0 1px 0 rgba(255,255,255,0.10)",
+        }}>
+        {/* Chrome bar */}
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b"
           style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider"
+          <span className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-full" style={{ background: "#ef5f56" }} />
+            <span className="h-3 w-3 rounded-full" style={{ background: "#f5bd4f" }} />
+            <span className="h-3 w-3 rounded-full" style={{ background: "#5bc46b" }} />
+          </span>
+          <span className="mx-auto hidden sm:inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[11px] font-medium"
+            style={{ background: "var(--bg)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+            <Lock size={10} strokeWidth={2} /> app.nordavix.com/close/december-2025
+          </span>
+          <span className="ml-auto sm:ml-0 inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider"
             style={{ color: "var(--green)" }}>
             <motion.span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "var(--green)" }}
-              animate={{ opacity: [1, 0.3, 1] }}
-              transition={{ duration: 1.5, repeat: Infinity }} />
-            Live · Flux Analysis
-          </span>
-          <span className="ml-auto text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
-            Period: Dec 2025
+              animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.5, repeat: Infinity }} />
+            On track
           </span>
         </div>
 
-        {/* Account row */}
-        <div className="px-5 pt-5 pb-3">
-          <div className="flex items-start justify-between gap-3 mb-4">
-            <div>
-              <p className="text-xs font-medium mb-0.5" style={{ color: "var(--text-muted)" }}>
-                {scenario.tag}
-              </p>
-              <h3 className="text-base font-bold text-theme">
-                {scenario.account}
-              </h3>
+        {/* Body: nav rail + main */}
+        <div className="flex">
+          {/* Left nav rail */}
+          <div className="hidden sm:flex flex-col items-center gap-1.5 py-4 px-2.5 border-r"
+            style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+            <img src="/logo-mark-dark.svg" alt="" className="h-7 w-7 mb-2 dark:hidden" />
+            <img src="/logo-mark-light.svg" alt="" className="h-7 w-7 mb-2 hidden dark:block" />
+            {[
+              { Icon: Layers, active: true },
+              { Icon: Scale, active: false },
+              { Icon: GitCompareArrows, active: false },
+              { Icon: BarChart3, active: false },
+              { Icon: FileCheck, active: false },
+            ].map(({ Icon, active }, i) => (
+              <div key={i} className="h-9 w-9 rounded-lg flex items-center justify-center"
+                style={{
+                  background: active ? "var(--green-subtle)" : "transparent",
+                  color: active ? "var(--green)" : "var(--text-muted)",
+                }}>
+                <Icon size={16} strokeWidth={1.8} />
+              </div>
+            ))}
+          </div>
+
+          {/* Main */}
+          <div className="flex-1 min-w-0 p-4 sm:p-6">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div className="min-w-0">
+                <h3 className="text-base sm:text-lg font-bold text-theme">Month-End Close</h3>
+                <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
+                  December 2025 · Northwind Trading Co.
+                </p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold shrink-0"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                <Clock size={12} strokeWidth={2} /> 2.1-day close
+              </span>
             </div>
-            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider"
-              style={{ background: "#fef3c7", color: "#92400e" }}>
-              Material
-            </span>
-          </div>
 
-          {/* Numbers grid */}
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <Metric label="Current" value={money(scenario.current)} tone="var(--text)" />
-            <Metric label="Prior"   value={money(scenario.prior)}   tone="var(--text-2)" />
-            <Metric label="Δ"
-              value={`${pctVariance >= 0 ? "+" : ""}${pctVariance.toFixed(0)}%`}
-              tone={pctVariance >= 0 ? "var(--green)" : "#dc2626"}
-              sub={`${dollarVariance >= 0 ? "+" : ""}${money(dollarVariance)}`} />
+            {/* KPI row */}
+            <div className="grid grid-cols-3 gap-3 mb-5">
+              <Metric label="Reconciliations" value="24 / 24"  tone="var(--text)"  sub="all approved" />
+              <Metric label="Flux explained"  value="18 / 18"  tone="var(--text)"  sub="AI-drafted" />
+              <Metric label="Close time"      value="2.1 days" tone="var(--green)" sub="↓ 73% YoY" />
+            </div>
+
+            {/* Live flux variance + AI commentary */}
+            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+              <div className="px-4 py-2.5 flex items-center gap-2 border-b"
+                style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider"
+                  style={{ color: "var(--green)" }}>
+                  <motion.span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "var(--green)" }}
+                    animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.5, repeat: Infinity }} />
+                  Live · Flux Analysis
+                </span>
+                <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                  style={{ background: "#fef3c7", color: "#92400e" }}>
+                  Material
+                </span>
+              </div>
+
+              <div className="p-4">
+                <div className="mb-3">
+                  <p className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>{scenario.tag}</p>
+                  <h4 className="text-sm font-bold text-theme">{scenario.account}</h4>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  <Metric label="Current" value={money(scenario.current)} tone="var(--text)" />
+                  <Metric label="Prior"   value={money(scenario.prior)}   tone="var(--text-2)" />
+                  <Metric label="Δ"
+                    value={`${pctVariance >= 0 ? "+" : ""}${pctVariance.toFixed(0)}%`}
+                    tone={pctVariance >= 0 ? "var(--green)" : "#dc2626"}
+                    sub={`${dollarVariance >= 0 ? "+" : ""}${money(dollarVariance)}`} />
+                </div>
+
+                {/* AI commentary — typewriter */}
+                <div className="rounded-lg p-3.5"
+                  style={{
+                    background: "var(--green-subtle)",
+                    border: "1px solid color-mix(in oklab, var(--green) 25%, transparent)",
+                  }}>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Sparkles size={12} strokeWidth={2} style={{ color: "var(--green)" }} />
+                    <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--green)" }}>
+                      AI Commentary
+                    </span>
+                    <span className="ml-auto text-[10px] font-medium" style={{ color: "var(--green)" }}>
+                      {scenario.confidence}% conf · {scenario.sources} txns
+                    </span>
+                  </div>
+                  <p className="text-[12.5px] leading-relaxed min-h-[5.5rem]" style={{ color: "var(--text)" }}>
+                    {typed}
+                    <motion.span className="inline-block w-[2px] h-[13px] -mb-[2px] ml-[1px]"
+                      style={{ background: "var(--green)" }}
+                      animate={{ opacity: [1, 0, 1] }} transition={{ duration: 0.9, repeat: Infinity }} />
+                  </p>
+                  <div className="flex items-center gap-2 mt-3">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-white"
+                      style={{ background: "var(--green)" }}>
+                      <CheckCircle2 size={11} strokeWidth={2.2} /> Approve
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+                      style={{ background: "var(--surface)", color: "var(--text-2)", border: "1px solid var(--border-strong)" }}>
+                      <RefreshCw size={11} strokeWidth={2} /> Regenerate
+                    </span>
+                    <span className="ml-auto text-[10px] hidden sm:block" style={{ color: "var(--text-muted)" }}>
+                      Reviewed by Sarah K. · 2m ago
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-
-        {/* AI commentary — typewriter */}
-        <div className="mx-5 mb-5 rounded-xl p-4"
-          style={{
-            background: "var(--green-subtle)",
-            border: "1px solid color-mix(in oklab, var(--green) 25%, transparent)",
-          }}>
-          <div className="flex items-center gap-1.5 mb-2">
-            <Sparkles size={12} strokeWidth={2} style={{ color: "var(--green)" }} />
-            <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--green)" }}>
-              AI Commentary
-            </span>
-            <span className="ml-auto text-[10px] font-medium" style={{ color: "var(--green)" }}>
-              {scenario.confidence}% conf · {scenario.sources} txns
-            </span>
-          </div>
-          <p className="text-[13px] leading-relaxed min-h-[6.5rem]" style={{ color: "var(--text)" }}>
-            {typed}
-            <motion.span
-              className="inline-block w-[2px] h-[14px] -mb-[2px] ml-[1px]"
-              style={{ background: "var(--green)" }}
-              animate={{ opacity: [1, 0, 1] }}
-              transition={{ duration: 0.9, repeat: Infinity }}
-            />
-          </p>
-        </div>
-
-        {/* Action footer */}
-        <div className="px-5 pb-5 flex items-center gap-2">
-          <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-white"
-            style={{ background: "var(--green)" }}>
-            <CheckCircle2 size={11} strokeWidth={2.2} /> Approve
-          </button>
-          <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
-            style={{
-              background: "var(--surface-2)",
-              color: "var(--text-2)",
-              border: "1px solid var(--border-strong)",
-            }}>
-            <RefreshCw size={11} strokeWidth={2} /> Regenerate
-          </button>
-          <span className="ml-auto text-[10px]" style={{ color: "var(--text-muted)" }}>
-            Reviewed by Sarah K. · 2m ago
-          </span>
-        </div>
-      </motion.div>
-
-      {/* Floating mini-card under the main one for depth */}
-      <motion.div
-        className="absolute -bottom-6 -right-6 rounded-xl px-3 py-2.5 print:hidden hidden sm:block"
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          boxShadow: "0 12px 32px -8px rgba(0,0,0,0.15)",
-        }}
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.6, duration: 0.6 }}>
-        <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-md flex items-center justify-center"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-            <Clock size={13} strokeWidth={2} />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-              Close time
-            </p>
-            <p className="text-xs font-bold text-theme">2.1 days <span style={{ color: "var(--green)" }}>↓ 73%</span></p>
-          </div>
-        </div>
-      </motion.div>
+      </div>
     </motion.div>
   )
 }
