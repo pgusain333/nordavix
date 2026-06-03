@@ -799,6 +799,8 @@ async def export_account_pdf(
         else:
             subledger_balance = opening_balance
             for it in (review.reconciling_items if review else []) or []:
+                if it.get("cleared") is False:
+                    continue  # open/un-ticked item — the unreconciled gap, not in the SL
                 is_manual = str(it.get("txn_id", "")).startswith("manual-")
                 raw = Decimal(str(it.get("amount", "0") or "0"))
                 signed = raw if is_manual else ((-1 if is_credit_natural else 1) * raw)
@@ -1442,8 +1444,11 @@ async def _freeze_displayed_subledger(
     has_prior = prior is not None and prior.subledger_total is not None
     opening = Decimal(prior.subledger_total) if has_prior else Decimal("0")
 
-    # Signed sum of any existing reconciling items
-    items = (row.reconciling_items if row else []) or []
+    # Signed sum of any existing reconciling items. Only reconciled (ticked)
+    # items roll into the subledger — open/un-ticked items (cleared=False) are
+    # the unreconciled gap, recorded for the PDF but never part of the balance.
+    items = [it for it in ((row.reconciling_items if row else []) or [])
+             if it.get("cleared") is not False]
     items_sum = Decimal("0")
     for it in items:
         is_manual = str(it.get("txn_id", "")).startswith("manual-")

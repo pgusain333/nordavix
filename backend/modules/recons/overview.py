@@ -678,7 +678,11 @@ async def fetch_variance_detail(
         )
     )).scalar_one_or_none()
     if review is not None and review.status == "approved":
-        items = review.reconciling_items or []
+        # Frozen variance detail shows the reconciled (ticked) items only —
+        # open/un-ticked items (cleared=False) are surfaced separately in the
+        # PDF and never counted in the subledger total here.
+        items = [it for it in (review.reconciling_items or [])
+                 if it.get("cleared") is not False]
         rows = [{
             "txn_id":     it.get("txn_id") or "",
             "txn_type":   it.get("txn_type") or "",

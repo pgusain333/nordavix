@@ -2302,7 +2302,14 @@ function InlineSubledgerForm({
   // selection round-trips cleanly. Map txn_id → ReconcilingItem.
   const [selectedItemMap, setSelectedItemMap] = useState<Record<string, ReconcilingItem>>(() => {
     const m: Record<string, ReconcilingItem> = {}
-    for (const it of account.reconciling_items ?? []) m[it.txn_id] = it
+    // Only TICKED items belong in the selection map. Persisted open items
+    // (cleared === false) are the un-ticked entries we record for the PDF —
+    // keep them OUT so they don't render as ticked; they're re-derived at
+    // save time from the live period entries.
+    for (const it of account.reconciling_items ?? []) {
+      if (it.cleared === false) continue
+      m[it.txn_id] = it
+    }
     return m
   })
   const selectedItemsRef = useRef(selectedItemMap)
@@ -2460,7 +2467,11 @@ function InlineSubledgerForm({
   // case the parent re-uses the form across accounts without a key.
   useEffect(() => {
     const m: Record<string, ReconcilingItem> = {}
-    for (const it of account.reconciling_items ?? []) m[it.txn_id] = it
+    // Skip persisted open items (cleared === false) — ticked only.
+    for (const it of account.reconciling_items ?? []) {
+      if (it.cleared === false) continue
+      m[it.txn_id] = it
+    }
     setSelectedItemMap(m)
     // Only resync on identity / status change — re-running every render
     // would clobber the user's in-flight ticks before the debounced
@@ -2538,21 +2549,42 @@ function InlineSubledgerForm({
   //
   // Hashing keeps the comparison cheap even with many items: same set
   // of (txn_id, amount, memo) tuples → no save needed.
+  //
+  // The persisted payload is the FULL picture: ticked items (cleared:true)
+  // PLUS the un-ticked current-period entries (cleared:false). The un-ticked
+  // ones surface as "open items" in the PDF — they're the unreconciled gap.
+  // Open items are NEVER part of the subledger math: computedSubledger uses
+  // ticked items only, and the backend skips cleared:false when summing.
+  // Schedule-backed accounts have no GL-drill-in candidate set, so no open
+  // items are derived for them.
+  const buildSavePayload = (): ReconcilingItem[] => {
+    const sel = selectedItemsRef.current
+    const ticked = Object.values(sel).map((it) => ({ ...it, cleared: true }))
+    const open = isScheduleBacked
+      ? []
+      : (periodEntries?.rows ?? [])
+          .filter((r) => !sel[r.txn_id])
+          .map((r) => ({ ...r, cleared: false }))
+    return [...ticked, ...open]
+  }
   useEffect(() => {
     if (readOnly || !onAutoSave) return
     const hash = (items: ReconcilingItem[]) => items
-      .map((it) => `${it.txn_id}:${it.amount}:${it.memo ?? ""}`)
+      .map((it) => `${it.txn_id}:${it.amount}:${it.memo ?? ""}:${it.cleared === false ? "0" : "1"}`)
       .sort()
       .join("|")
-    const currentHash = hash(Object.values(selectedItemMap))
+    const currentHash = hash(buildSavePayload())
     const serverHash  = hash(account.reconciling_items ?? [])
     if (currentHash === serverHash) return  // matches server → resync, not user edit
 
     const handle = setTimeout(() => {
-      const itemsList = Object.values(selectedItemsRef.current)
+      const itemsList = buildSavePayload()
+      const tickedCount = itemsList.filter((it) => it.cleared !== false).length
+      const openCount   = itemsList.length - tickedCount
       const source = itemsList.length === 0
         ? "Auto-saved (no reconciling items)"
-        : `Auto-saved ${itemsList.length} reconciling item${itemsList.length === 1 ? "" : "s"}`
+        : `Auto-saved ${tickedCount} reconciling item${tickedCount === 1 ? "" : "s"}`
+          + (openCount > 0 ? ` · ${openCount} open` : "")
       onAutoSave(computedSubledger, source, itemsList)
     }, 500)
     return () => clearTimeout(handle)
@@ -2560,9 +2592,10 @@ function InlineSubledgerForm({
     // it changes whenever `prior` resolves — and a prior-query result
     // changing should NOT trigger a save. The save body reads the
     // current computedSubledger at fire time from the ref-backed live
-    // closure, so it'll pick up whatever the latest value is.
+    // closure, so it'll pick up whatever the latest value is. periodEntries
+    // is included so newly-loaded open items get persisted once known.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItemMap, account.reconciling_items, readOnly, onAutoSave])
+  }, [selectedItemMap, account.reconciling_items, readOnly, onAutoSave, isScheduleBacked, periodEntries])
 
   // Manual reconciling item form — for items that don't exist in QBO yet
   // (outstanding bank checks, deposits in transit, journal entries not
