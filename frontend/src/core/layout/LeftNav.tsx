@@ -109,16 +109,17 @@ export function LeftNav({ onClose }: Props) {
   })
   // Peek-on-hover: when the rail is collapsed, hovering it slides the full
   // sidebar open — floating OVER the page (no content reflow) — and moving
-  // away collapses it back. A short close delay avoids flicker at the edge.
+  // away collapses it back. Short open + close delays keep a quick mouse
+  // pass-by from triggering it and avoid flicker at the edge.
   const [hovered, setHovered] = useState(false)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   function onRailEnter() {
-    if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null }
-    setHovered(true)
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setHovered(true), 130)   // open delay
   }
   function onRailLeave() {
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
-    hoverTimer.current = setTimeout(() => setHovered(false), 140)
+    hoverTimer.current = setTimeout(() => setHovered(false), 140)  // close delay
   }
   useEffect(() => () => { if (hoverTimer.current) clearTimeout(hoverTimer.current) }, [])
 
