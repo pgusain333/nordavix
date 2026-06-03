@@ -61,10 +61,10 @@ export function CookieBanner() {
         {needsDecision && bannerVisible && !dialogOpen && (
           <motion.div
             key="cookie-banner"
-            initial={{ opacity: 0, y: 24, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0,  scale: 1 }}
-            exit={{    opacity: 0, y: 24, scale: 0.96 }}
-            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            initial={{ opacity: 0, y: 110 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{    opacity: 0, y: 110 }}
+            transition={{ type: "spring", stiffness: 300, damping: 26 }}
             role="dialog"
             aria-label="Cookie preferences"
             aria-describedby="cookie-banner-body"

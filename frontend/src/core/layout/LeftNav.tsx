@@ -1,6 +1,12 @@
 /**
  * Left navigation sidebar — Nordavix app shell.
  * Theme-aware, mobile-ready (accepts onClose for overlay dismiss).
+ *
+ * Collapsible: on desktop the rail defaults to ICON-ONLY (~68px) and can be
+ * expanded to the full labelled sidebar (240px) via the toggle in the header.
+ * The choice persists in localStorage. When collapsed, every icon carries a
+ * native `title` tooltip so labels are one hover away. The mobile slide-in
+ * drawer (onClose present) is always full-width — collapse is desktop-only.
  */
 import { useEffect, useRef, useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
@@ -9,6 +15,7 @@ import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
   MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList, Search,
+  PanelLeft, PanelLeftClose,
   type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
@@ -21,6 +28,8 @@ import { workspaceApi } from "@/modules/workspace/api"
 import { tasksApi } from "@/modules/tasks/api"
 import { CMDK_EVENT } from "@/core/ui/CommandPalette"
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
+
+const COLLAPSE_KEY = "ndvx.nav.collapsed"
 
 interface NavItem {
   label:     string
@@ -91,6 +100,22 @@ export function LeftNav({ onClose }: Props) {
   const navigate = useNavigate()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
 
+  // Collapsed (icon-only) rail — persisted; defaults to collapsed so the app
+  // opens lean. Only applies to the desktop rail; the mobile drawer (onClose
+  // present) is always the full labelled sidebar.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true
+    return localStorage.getItem(COLLAPSE_KEY) !== "0"
+  })
+  const isCollapsed = collapsed && !onClose
+  function toggleCollapsed() {
+    setCollapsed((c) => {
+      const next = !c
+      try { localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0") } catch { /* private mode */ }
+      return next
+    })
+  }
+
   // Resolve the current user's role so we can show a small chip next to
   // the account email at the bottom of the nav. Long staleTime — role
   // changes rarely.
@@ -119,37 +144,56 @@ export function LeftNav({ onClose }: Props) {
 
   return (
     <aside
-      // h-screen + overflow-y-auto on the aside itself (not just the inner
-      // <nav>) so on short mobile viewports the user can scroll all the way
-      // down to the account section + theme toggle. The previous layout
-      // pinned the bottom of the aside to the screen edge, which on iOS
-      // Safari + small Android phones often hid the account row behind
-      // the browser chrome — leaving no way for users to reach Settings,
-      // Send feedback, or switch theme. min-h-0 on flex children stops
-      // the inner <nav>'s overflow-y-auto from fighting the outer scroll.
-      className="flex h-screen w-60 shrink-0 flex-col overflow-y-auto"
+      // h-screen + overflow-y-auto on the aside itself so short mobile
+      // viewports can scroll to the account section. transition-[width] gives
+      // a smooth expand/collapse. overflow-x-hidden stops labels from spilling
+      // during the width animation.
+      className={cn(
+        "flex h-screen shrink-0 flex-col overflow-y-auto overflow-x-hidden transition-[width] duration-200",
+        isCollapsed ? "w-[68px]" : "w-60",
+      )}
       style={{ background: "var(--nav-bg)", borderRight: "1px solid var(--nav-border)" }}
     >
-      {/* Brand */}
-      <div className="flex items-center justify-between px-4 py-[18px]"
-        style={{ borderBottom: "1px solid var(--nav-border)" }}>
+      {/* Brand + collapse toggle */}
+      <div
+        className={cn(
+          "flex px-3 py-[18px]",
+          isCollapsed ? "flex-col items-center gap-2" : "items-center justify-between",
+        )}
+        style={{ borderBottom: "1px solid var(--nav-border)" }}
+      >
         <button
           onClick={() => { navigate("/"); onClose?.() }}
-          className="flex items-center gap-2.5 min-w-0 flex-1"
+          className={cn("flex items-center min-w-0", isCollapsed ? "justify-center" : "gap-2.5 flex-1")}
+          title="Nordavix home"
         >
-          {/* Logo + wordmark — smaller on mobile (32px / 20px) so the
-              header doesn't dominate the narrow slide-in drawer;
-              full size on desktop (40px / 26px) where the 240px
-              sidebar has room to breathe. */}
           <img src="/logo-mark-dark.svg"  alt="Nordavix"
-            className="h-8 w-8 lg:h-10 lg:w-10 shrink-0 dark:hidden" />
+            className="h-8 w-8 lg:h-9 lg:w-9 shrink-0 dark:hidden" />
           <img src="/logo-mark-light.svg" alt="Nordavix"
-            className="h-8 w-8 lg:h-10 lg:w-10 shrink-0 hidden dark:block" />
-          <span className="text-xl lg:text-[26px] font-semibold tracking-tight text-theme leading-none truncate">
-            nordavix<span style={{ color: "var(--green)" }}>.</span>
-          </span>
+            className="h-8 w-8 lg:h-9 lg:w-9 shrink-0 hidden dark:block" />
+          {!isCollapsed && (
+            <span className="text-xl lg:text-[24px] font-semibold tracking-tight text-theme leading-none truncate">
+              nordavix<span style={{ color: "var(--green)" }}>.</span>
+            </span>
+          )}
         </button>
-        {/* Mobile close button */}
+
+        {/* Collapse / expand — desktop only (hidden inside the mobile drawer) */}
+        {!onClose && (
+          <button
+            onClick={toggleCollapsed}
+            className="hidden lg:flex items-center justify-center h-8 w-8 rounded-md transition-colors shrink-0"
+            style={{ color: "var(--text-muted)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-2)"; e.currentTarget.style.color = "var(--text)" }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-muted)" }}
+            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {isCollapsed ? <PanelLeft size={16} strokeWidth={1.8} /> : <PanelLeftClose size={16} strokeWidth={1.8} />}
+          </button>
+        )}
+
+        {/* Mobile close button (drawer only) */}
         {onClose && (
           <button
             onClick={onClose}
@@ -160,31 +204,37 @@ export function LeftNav({ onClose }: Props) {
         )}
       </div>
 
-      {/* Org name — click to rename */}
-      {organization && (
+      {/* Org name — click to rename (hidden when collapsed) */}
+      {organization && !isCollapsed && (
         <OrgNameInline organizationName={organization.name} onRename={(n) => organization.update({ name: n })} />
       )}
 
-      {/* Navigation. flex-shrink-0 (not flex-1) so it doesn't try to
-          fill the aside — outer aside scroll handles overflow. The nav
-          takes its natural content height; bottom sections sit right
-          below it on small viewports, which the outer scroll then
-          reveals when needed. On desktop the aside is tall enough that
-          everything fits without scrolling. */}
-      {/* Quick search → opens the ⌘K command palette. Also reachable via the
-          ⌘K / Ctrl-K shortcut anywhere in the app. */}
-      <div className="px-2 pt-2.5 flex items-center gap-1.5">
-        <button
-          onClick={() => { window.dispatchEvent(new Event(CMDK_EVENT)); onClose?.() }}
-          className="flex-1 min-w-0 inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
-          title="Search and jump anywhere (⌘K)"
-        >
-          <Search size={16} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
-          <span className="flex-1 text-left" style={{ color: "var(--text-muted)" }}>Search…</span>
-          <kbd className="text-[10px] px-1 py-0.5 rounded"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>⌘K</kbd>
-        </button>
+      {/* Quick search → opens the ⌘K command palette + notifications bell. */}
+      <div className={cn("px-2 pt-2.5 flex gap-1.5", isCollapsed ? "flex-col items-center" : "items-center")}>
+        {isCollapsed ? (
+          <button
+            // Collapsed rail is desktop-only (collapse never applies in the
+            // mobile drawer), so there's no drawer to close here.
+            onClick={() => window.dispatchEvent(new Event(CMDK_EVENT))}
+            className="flex items-center justify-center h-10 w-10 rounded-md transition-colors"
+            style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+            title="Search and jump anywhere (⌘K)" aria-label="Search"
+          >
+            <Search size={18} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+          </button>
+        ) : (
+          <button
+            onClick={() => { window.dispatchEvent(new Event(CMDK_EVENT)); onClose?.() }}
+            className="flex-1 min-w-0 inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors"
+            style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+            title="Search and jump anywhere (⌘K)"
+          >
+            <Search size={16} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+            <span className="flex-1 text-left" style={{ color: "var(--text-muted)" }}>Search…</span>
+            <kbd className="text-[10px] px-1 py-0.5 rounded"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>⌘K</kbd>
+          </button>
+        )}
         {/* Bell opens the right-side notifications panel; badge polls unread. */}
         <NotificationBell onOpen={onClose} className="h-9 w-9" />
       </div>
@@ -194,6 +244,18 @@ export function LeftNav({ onClose }: Props) {
           const Icon = item.icon
 
           if (!item.available) {
+            if (isCollapsed) {
+              return (
+                <div
+                  key={item.path}
+                  className="flex items-center justify-center h-10 rounded-md opacity-35 cursor-not-allowed"
+                  style={{ color: "var(--nav-text)" }}
+                  title={`${item.label} (coming soon)`}
+                >
+                  <Icon size={20} strokeWidth={1.6} />
+                </div>
+              )
+            }
             return (
               <div
                 key={item.path}
@@ -215,14 +277,14 @@ export function LeftNav({ onClose }: Props) {
               to={item.path}
               end={item.path === "/app"}
               onClick={() => onClose?.()}
-              // Prefetch the destination's lazy chunk + its primary
-              // query when the user hovers the nav item. Means clicking
-              // the link starts rendering immediately instead of waiting
-              // for JS + JSON to land. Fire-and-forget; safe to spam.
+              // Prefetch the destination's lazy chunk on hover/focus so the
+              // click renders immediately instead of waiting for JS.
               onMouseEnter={() => prefetchRoute(item.path)}
               onFocus={() => prefetchRoute(item.path)}
+              title={isCollapsed ? item.label : undefined}
               className={({ isActive }) =>
-                cn("flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-all duration-150",
+                cn("flex items-center rounded-md text-sm transition-all duration-150",
+                  isCollapsed ? "relative justify-center h-10" : "gap-2.5 px-3 py-2",
                   isActive ? "font-medium" : "")
               }
               style={({ isActive }) => isActive
@@ -231,10 +293,7 @@ export function LeftNav({ onClose }: Props) {
               }
             >
               {({ isActive }) => {
-                // Tasks nav item gets a count badge when there's open
-                // work. Critical items get a red pill; routine open
-                // count gets a neutral pill. Hides entirely at 0 so
-                // the nav doesn't look noisy on a clean day.
+                // Tasks nav item gets a count badge when there's open work.
                 const isTasksItem = item.path === "/app/tasks"
                 const taskBadge = isTasksItem && tasksCount
                   ? (tasksCount.critical > 0
@@ -243,6 +302,22 @@ export function LeftNav({ onClose }: Props) {
                         ? { count: tasksCount.open, bg: "var(--green-subtle)", fg: "var(--green)" }
                         : null)
                   : null
+
+                if (isCollapsed) {
+                  return (
+                    <>
+                      <Icon size={20} strokeWidth={1.8}
+                        style={{ color: isActive ? "var(--green)" : "var(--nav-text)" }} />
+                      {taskBadge && (
+                        <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center min-w-[15px] h-[15px] rounded-full px-1 text-[9px] font-bold tabular-nums"
+                          style={{ background: taskBadge.bg, color: taskBadge.fg }}
+                          title={`${tasksCount?.open ?? 0} open tasks`}>
+                          {taskBadge.count > 9 ? "9+" : taskBadge.count}
+                        </span>
+                      )}
+                    </>
+                  )
+                }
                 return (
                   <>
                     <Icon size={22} strokeWidth={1.6} className="shrink-0"
@@ -269,104 +344,133 @@ export function LeftNav({ onClose }: Props) {
         })}
       </nav>
 
-      {/* Settings + Feedback — utility actions above the Theme/User
-          section. Settings goes first since it's a more frequent
-          destination; Feedback stays below as a secondary action. */}
-      <div className="px-3 pt-2 pb-1 space-y-1.5" style={{ borderTop: "1px solid var(--nav-border)" }}>
-        <NavLink
-          to="/app/settings"
-          onClick={onClose}
-          className={({ isActive }) =>
-            cn(
-              "w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              isActive ? "" : "hover:opacity-90",
-            )
-          }
-          style={({ isActive }) => ({
-            color: isActive ? "var(--green)" : "var(--nav-text)",
-            background: isActive ? "var(--green-subtle)" : "transparent",
-          })}
+      {/* Settings + Help + Feedback — utility actions. */}
+      <div
+        className={cn("pt-2 pb-1", isCollapsed ? "px-2 space-y-1" : "px-3 space-y-1.5")}
+        style={{ borderTop: "1px solid var(--nav-border)" }}
+      >
+        <UtilLink to="/app/settings" icon={Settings} label="Settings"
           title="Edit company profile, address, tax info, accounting defaults"
-        >
-          <Settings size={16} strokeWidth={1.8} className="shrink-0" />
-          <span className="flex-1 text-left">Settings</span>
-        </NavLink>
-        <NavLink
-          to="/app/help"
-          onClick={onClose}
-          className={({ isActive }) =>
-            cn(
-              "w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              isActive ? "" : "hover:opacity-90",
-            )
-          }
-          style={({ isActive }) => ({
-            color: isActive ? "var(--green)" : "var(--nav-text)",
-            background: isActive ? "var(--green-subtle)" : "transparent",
-          })}
+          isCollapsed={isCollapsed} onClose={onClose} />
+        <UtilLink to="/app/help" icon={LifeBuoy} label="Help"
           title="Step-by-step guide — every workflow, every screen"
-        >
-          <LifeBuoy size={16} strokeWidth={1.8} className="shrink-0" />
-          <span className="flex-1 text-left">Help</span>
-        </NavLink>
-        <button
-          type="button"
-          onClick={() => setFeedbackOpen(true)}
-          className="w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-all"
-          style={{
-            color: "var(--nav-text)",
-            background: "transparent",
-            border: "1px dashed var(--border-strong)",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--green-subtle)"
-            e.currentTarget.style.color = "var(--green)"
-            e.currentTarget.style.borderColor = "var(--green)"
-            e.currentTarget.style.borderStyle = "solid"
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent"
-            e.currentTarget.style.color = "var(--nav-text)"
-            e.currentTarget.style.borderColor = "var(--border-strong)"
-            e.currentTarget.style.borderStyle = "dashed"
-          }}
-          title="Share a bug, idea, or comment with the Nordavix team"
-        >
-          <MessageSquare size={16} strokeWidth={1.8} className="shrink-0" />
-          <span className="flex-1 text-left">Send feedback</span>
-        </button>
+          isCollapsed={isCollapsed} onClose={onClose} />
+
+        {isCollapsed ? (
+          <button
+            type="button"
+            onClick={() => setFeedbackOpen(true)}
+            title="Share a bug, idea, or comment with the Nordavix team"
+            className="w-full flex items-center justify-center h-10 rounded-md transition-colors"
+            style={{ color: "var(--nav-text)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--green-subtle)"; e.currentTarget.style.color = "var(--green)" }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--nav-text)" }}
+          >
+            <MessageSquare size={18} strokeWidth={1.8} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setFeedbackOpen(true)}
+            className="w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-all"
+            style={{
+              color: "var(--nav-text)",
+              background: "transparent",
+              border: "1px dashed var(--border-strong)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--green-subtle)"
+              e.currentTarget.style.color = "var(--green)"
+              e.currentTarget.style.borderColor = "var(--green)"
+              e.currentTarget.style.borderStyle = "solid"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent"
+              e.currentTarget.style.color = "var(--nav-text)"
+              e.currentTarget.style.borderColor = "var(--border-strong)"
+              e.currentTarget.style.borderStyle = "dashed"
+            }}
+            title="Share a bug, idea, or comment with the Nordavix team"
+          >
+            <MessageSquare size={16} strokeWidth={1.8} className="shrink-0" />
+            <span className="flex-1 text-left">Send feedback</span>
+          </button>
+        )}
       </div>
       <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
 
       {/* Bottom: theme + user */}
-      <div className="px-3 py-3 space-y-3" style={{ borderTop: "1px solid var(--nav-border)" }}>
-        <div className="flex items-center justify-between px-1">
-          <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Theme</span>
-          <ThemeToggle />
-        </div>
-        <div className="flex items-center gap-2 px-1">
+      <div
+        className={cn("py-3", isCollapsed ? "px-2 flex flex-col items-center gap-3" : "px-3 space-y-3")}
+        style={{ borderTop: "1px solid var(--nav-border)" }}
+      >
+        {isCollapsed ? (
+          <div title="Toggle theme"><ThemeToggle /></div>
+        ) : (
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Theme</span>
+            <ThemeToggle />
+          </div>
+        )}
+
+        <div className={cn("flex items-center", isCollapsed ? "justify-center" : "gap-2 px-1")}>
           <UserButton
             afterSignOutUrl="/sign-in"
             appearance={{ elements: { avatarBox: "h-7 w-7" } }}
           />
-          <div className="min-w-0 flex-1">
-            <p className="text-xs truncate" style={{ color: "var(--nav-text)" }}>
-              {user?.primaryEmailAddress?.emailAddress ?? "Account"}
-            </p>
-            {roleMeta && (
-              <span
-                onClick={() => { navigate("/app/team"); onClose?.() }}
-                className="mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide cursor-pointer transition-opacity hover:opacity-80"
-                style={{ background: roleMeta.bg, color: roleMeta.fg }}
-                title="Click to open the Team page"
-              >
-                {roleMeta.label}
-              </span>
-            )}
-          </div>
+          {!isCollapsed && (
+            <div className="min-w-0 flex-1">
+              <p className="text-xs truncate" style={{ color: "var(--nav-text)" }}>
+                {user?.primaryEmailAddress?.emailAddress ?? "Account"}
+              </p>
+              {roleMeta && (
+                <span
+                  onClick={() => { navigate("/app/team"); onClose?.() }}
+                  className="mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide cursor-pointer transition-opacity hover:opacity-80"
+                  style={{ background: roleMeta.bg, color: roleMeta.fg }}
+                  title="Click to open the Team page"
+                >
+                  {roleMeta.label}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </aside>
+  )
+}
+
+// ── Utility nav link (Settings / Help) — collapses to an icon button ─────────
+
+function UtilLink({ to, icon: Icon, label, title, isCollapsed, onClose }: {
+  to: string
+  icon: LucideIcon
+  label: string
+  title?: string
+  isCollapsed: boolean
+  onClose?: () => void
+}) {
+  return (
+    <NavLink
+      to={to}
+      onClick={onClose}
+      title={isCollapsed ? label : title}
+      className={({ isActive }) =>
+        cn(
+          "w-full inline-flex items-center rounded-md text-sm font-medium transition-colors",
+          isCollapsed ? "justify-center h-10" : "gap-2.5 px-3 py-2",
+          isActive ? "" : "hover:opacity-90",
+        )
+      }
+      style={({ isActive }) => ({
+        color: isActive ? "var(--green)" : "var(--nav-text)",
+        background: isActive ? "var(--green-subtle)" : "transparent",
+      })}
+    >
+      <Icon size={isCollapsed ? 18 : 16} strokeWidth={1.8} className="shrink-0" />
+      {!isCollapsed && <span className="flex-1 text-left">{label}</span>}
+    </NavLink>
   )
 }
 
@@ -480,10 +584,7 @@ function OrgNameInline({ organizationName, onRename }: OrgNameInlineProps) {
             />
           </button>
           {/* Workspace switcher — dropdown listing every org the user
-              belongs to, + "Create company" footer. Replaces the
-              previous plain-text "Switch company" link with a proper
-              menu so users can flip workspaces without leaving the
-              sidebar. */}
+              belongs to, + "Create company" footer. */}
           <div className="mt-1">
             <WorkspaceSwitcher />
           </div>

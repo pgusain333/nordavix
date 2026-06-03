@@ -260,7 +260,7 @@ function Hero() {
   const { isSignedIn } = useUser()
   return (
     <section
-      className="relative pt-32 pb-24 sm:pt-40 sm:pb-32 px-6 overflow-hidden"
+      className="relative pt-32 pb-16 sm:pt-40 sm:pb-20 px-6 overflow-hidden"
       // Deep, layered burgundy — darker at the top (so the white navbar reads)
       // and bottom, brand burgundy through the middle. The flat single-tone
       // fill is gone; this base already carries depth before any glow lands.
@@ -502,8 +502,9 @@ function Hero() {
             </motion.div>
       </div>
 
-      {/* ── Big product window — the hero shot, floating in an aurora ── */}
-      <div className="max-w-5xl mx-auto relative mt-16 sm:mt-20">
+      {/* ── Product window — the hero shot, floating in an aurora. Kept
+          compact (max-w-3xl) so the hero doesn't run too tall. ── */}
+      <div className="max-w-3xl mx-auto relative mt-12 sm:mt-14">
         <HeroProductWindow />
       </div>
     </section>
@@ -710,7 +711,7 @@ function HeroProductWindow() {
                       {scenario.confidence}% conf · {scenario.sources} txns
                     </span>
                   </div>
-                  <p className="text-[12.5px] leading-relaxed min-h-[5.5rem]" style={{ color: "var(--text)" }}>
+                  <p className="text-[12.5px] leading-relaxed min-h-[4.5rem]" style={{ color: "var(--text)" }}>
                     {typed}
                     <motion.span className="inline-block w-[2px] h-[13px] -mb-[2px] ml-[1px]"
                       style={{ background: "var(--green)" }}
