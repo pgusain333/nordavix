@@ -275,8 +275,9 @@ export function LeftNav({ onClose }: Props) {
               style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>⌘K</kbd>
           </button>
         )}
-        {/* Bell opens the right-side notifications panel; badge polls unread. */}
-        <NotificationBell onOpen={onClose} className="h-9 w-9" />
+        {/* Bell lives in the desktop top bar now; keep it in the mobile drawer
+            (onClose present) so the drawer still has quick access. */}
+        {onClose && <NotificationBell onOpen={onClose} className="h-9 w-9" />}
       </div>
 
       <nav className="shrink-0 px-2 py-3 space-y-0.5">
@@ -455,29 +456,33 @@ export function LeftNav({ onClose }: Props) {
           </div>
         )}
 
-        <div className={cn("flex items-center", isCollapsed ? "justify-center" : "gap-2 px-1")}>
-          <UserButton
-            afterSignOutUrl="/sign-in"
-            appearance={{ elements: { avatarBox: "h-7 w-7" } }}
-          />
-          {!isCollapsed && (
-            <div className="min-w-0 flex-1">
-              <p className="text-xs truncate" style={{ color: "var(--nav-text)" }}>
-                {user?.primaryEmailAddress?.emailAddress ?? "Account"}
-              </p>
-              {roleMeta && (
-                <span
-                  onClick={() => { navigate("/app/team"); onClose?.() }}
-                  className="mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide cursor-pointer transition-opacity hover:opacity-80"
-                  style={{ background: roleMeta.bg, color: roleMeta.fg }}
-                  title="Click to open the Team page"
-                >
-                  {roleMeta.label}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
+        {/* Account block lives in the desktop top bar now; keep it in the
+            mobile drawer (onClose present) for sign-out + role access. */}
+        {onClose && (
+          <div className={cn("flex items-center", isCollapsed ? "justify-center" : "gap-2 px-1")}>
+            <UserButton
+              afterSignOutUrl="/sign-in"
+              appearance={{ elements: { avatarBox: "h-7 w-7" } }}
+            />
+            {!isCollapsed && (
+              <div className="min-w-0 flex-1">
+                <p className="text-xs truncate" style={{ color: "var(--nav-text)" }}>
+                  {user?.fullName ?? user?.primaryEmailAddress?.emailAddress ?? "Account"}
+                </p>
+                {roleMeta && (
+                  <span
+                    onClick={() => { navigate("/app/team"); onClose?.() }}
+                    className="mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide cursor-pointer transition-opacity hover:opacity-80"
+                    style={{ background: roleMeta.bg, color: roleMeta.fg }}
+                    title="Click to open the Team page"
+                  >
+                    {roleMeta.label}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </aside>
     </>

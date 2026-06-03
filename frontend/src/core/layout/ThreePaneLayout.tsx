@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from "react"
 import { Menu, X, Search } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
 import { LeftNav } from "./LeftNav"
+import { TopBar } from "./TopBar"
 import { ClerkApiWirer } from "@/core/auth/ClerkProvider"
 import { CommandPalette, CMDK_EVENT } from "@/core/ui/CommandPalette"
 import { NotificationsPanel } from "@/modules/notifications/NotificationsPanel"
@@ -73,6 +74,9 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
       <div className="flex flex-1 flex-col overflow-hidden min-w-0">
 
         <DemoBanner />
+
+        {/* Desktop top bar — notification bell + signed-in user (lg+ only). */}
+        <TopBar />
 
         {/* Mobile top bar */}
         <div
