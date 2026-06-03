@@ -7,6 +7,7 @@ Workspace endpoints — team / member management.
 Used by the frontend to render "Reviewed by Jatin" instead of
 "Reviewed by 4c1d8a-...-uuid" in the audit log and on the dashboards.
 """
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -468,13 +469,37 @@ async def lookup_users(
     if not uuid_list:
         return {"users": {}}
 
+    # Defensive cap: a lookup only ever needs the handful of distinct ids on a
+    # view, so bound it — a crafted request can't fan the call out to Clerk
+    # unboundedly.
+    uuid_list = uuid_list[:200]
+
     users = list((await db.execute(
         select(User).where(User.id.in_(uuid_list))
     )).scalars().all())
 
+    # Resolve Clerk profiles CONCURRENTLY. This used to be a serial per-user
+    # loop, so a cold-cache lookup of N users meant N sequential Clerk round-
+    # trips — the slow path behind reviewed-by / approved-by chips (and the
+    # discussion fallback). gather collapses that to ~one round-trip of latency;
+    # get_clerk_user still caches 5 min so warm lookups stay instant. A small
+    # semaphore bounds the fan-out so a big id list can't stampede Clerk.
+    sem = asyncio.Semaphore(8)
+
+    async def _resolve(u: User) -> tuple[User, dict | None]:
+        if not u.clerk_user_id:
+            return u, None
+        async with sem:
+            try:
+                return u, await get_clerk_user(u.clerk_user_id)
+            except Exception:
+                logger.debug("clerk lookup failed for %s", u.clerk_user_id, exc_info=True)
+                return u, None
+
+    resolved = await asyncio.gather(*(_resolve(u) for u in users))
+
     out: dict[str, dict] = {}
-    for u in users:
-        clerk = await get_clerk_user(u.clerk_user_id) if u.clerk_user_id else None
+    for u, clerk in resolved:
         if clerk:
             out[str(u.id)] = {
                 "display_name":  _format_display_name(clerk),
@@ -491,8 +516,8 @@ async def lookup_users(
             }
     # Also include UUIDs that aren't in our DB at all (rare race condition)
     # — frontend will fall back to "Unknown" for these.
-    for u in uuid_list:
-        out.setdefault(str(u), {"display_name": "Unknown user", "email": None, "image_url": None, "clerk_user_id": None})
+    for uid in uuid_list:
+        out.setdefault(str(uid), {"display_name": "Unknown user", "email": None, "image_url": None, "clerk_user_id": None})
     return {"users": out}
 
 
