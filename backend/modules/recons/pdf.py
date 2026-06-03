@@ -1,37 +1,24 @@
 """
-Per-account reconciliation PDF.
+Per-account reconciliation PDF — "reconciliation packet" layout.
 
-Single working paper for one (account, period). Monochrome by design — no
-color anywhere (fonts, rules, fills are black / white / grey only) so it
-prints cleanly, photocopies, and reads as a formal audit document. Hierarchy
-comes from weight, size, rules, and boxes rather than colour.
+One working paper for a single (account, period), styled as a modern audit
+packet: a slim top bar, a green eyebrow, a large account title, a four-card
+meta row, a Balance summary (per general ledger = per source, two big
+numbers), the reconciliation build-up, the open reconciling items, the AI
+reconciliation summary (kept verbatim from the agent), and supporting
+documents.
 
-  +-------------------------------------------------------------------+
-  |  COMPANY                                ACCOUNT RECONCILIATION     |
-  |  reconciliation working paper                     Working Paper    |
-  |  =============================================================== = |
-  |  1010 - Cash - Operating                                          |
-  |  Bank - Period ending Apr 30, 2026 - Reconciled & Approved        |
-  |                                                                   |
-  |  +---------------+   +---------------+   +---------------+        |
-  |  | GENERAL LEDGER|   |  SUBLEDGER    |   |   VARIANCE    |        |
-  |  |  $125,400.00  |   |  $125,400.00  |   |    $0.00      |        |
-  |  | Per QuickBooks|   | Supporting... |   |  IN BALANCE   |        |
-  |  +---------------+   +---------------+   +---------------+        |
-  |                                                                   |
-  |  ACCOUNT INFORMATION    [grid]                                    |
-  |  RECONCILIATION BUILD-UP  opening + items = closing -> GL -> var  |
-  |  AI COMMENTARY (opt) / NOTES (opt) / SUPPORTING ATTACHMENTS       |
-  +-------------------------------------------------------------------+
-
-Long reconciling-item lists spill onto page 2/3 with the header row
-repeating. A faint DRAFT watermark is applied until the account is approved.
-
-WinAnsi-safe glyphs only: ReportLab's base-14 Helvetica can't render
-check-marks or the U+2212 minus sign (they'd show as blank boxes), so the
-document uses plain text + en-dashes throughout.
+Design notes:
+  * No logo / brand mark anywhere.
+  * Generalized beyond bank rec — the "source" side adapts to the account
+    type (bank statement / AR aging / AP aging / card statement / subledger).
+  * No attestation or signature block.
+  * Green = brand accent + positive amounts; red = negative amounts.
+  * A faint DRAFT watermark until the account is approved.
+  * WinAnsi-safe glyphs only (ReportLab base-14 Helvetica): plain text,
+    en-dashes, and an ASCII "=" — no check-marks or U+2212.
 """
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Any, BinaryIO
 
@@ -50,82 +37,21 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-# Monochrome palette — black / white / greys only. No colour anywhere.
-INK        = colors.HexColor("#111827")   # near-black: headings, emphasis, big numbers
-GREY_DARK  = colors.HexColor("#374151")   # body text
-GREY_MID   = colors.HexColor("#6b7280")   # secondary text, labels, captions
-GREY_LIGHT = colors.HexColor("#c8ccd2")   # hairlines, light rules
-GREY_BG    = colors.Color(0.965, 0.965, 0.965)   # light card / row fill
-GREY_BG2   = colors.Color(0.915, 0.915, 0.915)   # medium fill (emphasis rows / boxes)
+# ── Palette ──────────────────────────────────────────────────────────────────
+INK        = colors.HexColor("#14181A")   # titles, big numbers
+GREY_DARK  = colors.HexColor("#3C4146")   # body
+GREY_MID   = colors.HexColor("#8A8F98")   # labels, captions
+GREY_LIGHT = colors.HexColor("#C9CCD1")   # faint rules
+BORDER     = colors.HexColor("#E6E4DF")   # card / table borders
+CARD_BG    = colors.HexColor("#FAFAF8")   # meta-card fill
+ZEBRA      = colors.HexColor("#FAF9F6")
+GREEN      = colors.HexColor("#3E8F66")   # brand accent + positive
+GREEN_TINT = colors.HexColor("#EAF4EE")   # AI note background
+RED        = colors.HexColor("#C0392B")   # negative amounts
 WHITE      = colors.white
 
 
-# ── Styles ──────────────────────────────────────────────────────────────────
-
-def _styles() -> dict[str, ParagraphStyle]:
-    base = getSampleStyleSheet()
-    return {
-        "letterhead_company": ParagraphStyle(
-            "letterhead_company", parent=base["Title"], fontName="Helvetica-Bold",
-            fontSize=22, leading=26, textColor=INK, spaceAfter=2,
-        ),
-        "letterhead_kicker": ParagraphStyle(
-            "letterhead_kicker", parent=base["BodyText"], fontName="Helvetica-Bold",
-            fontSize=8, leading=10, textColor=GREY_MID, spaceAfter=6,
-        ),
-        "letterhead_title": ParagraphStyle(
-            "letterhead_title", parent=base["BodyText"], fontName="Helvetica",
-            fontSize=14, leading=17, textColor=GREY_DARK, spaceAfter=2,
-        ),
-        "letterhead_meta": ParagraphStyle(
-            "letterhead_meta", parent=base["BodyText"], fontName="Helvetica",
-            fontSize=10, leading=13, textColor=GREY_MID,
-        ),
-        # Big account identifier that sits above the balance boxes.
-        "account_title": ParagraphStyle(
-            "account_title", parent=base["Title"], fontName="Helvetica-Bold",
-            fontSize=15, leading=18, textColor=INK, spaceBefore=2, spaceAfter=2,
-        ),
-        "account_meta": ParagraphStyle(
-            "account_meta", parent=base["BodyText"], fontName="Helvetica",
-            fontSize=9.5, leading=12, textColor=GREY_MID,
-        ),
-        "section": ParagraphStyle(
-            "section", parent=base["BodyText"], fontName="Helvetica-Bold",
-            fontSize=9, leading=11, textColor=INK,
-            spaceBefore=15, spaceAfter=5,
-        ),
-        "note_body": ParagraphStyle(
-            "note_body", parent=base["BodyText"], fontName="Helvetica",
-            fontSize=9.5, leading=13, textColor=GREY_DARK, spaceBefore=4,
-        ),
-        "note_oblique": ParagraphStyle(
-            "note_oblique", parent=base["BodyText"], fontName="Helvetica-Oblique",
-            fontSize=9, leading=12, textColor=GREY_MID, spaceBefore=4,
-        ),
-    }
-
-
-# ── Number / date formatting ───────────────────────────────────────────────
-
-def _fmt_money(v: Decimal | str | None, with_dollar: bool = True) -> str:
-    """Accounting format: $1,234.56 / $(1,234.56) / em-dash for zero."""
-    if v is None or v == "":
-        return ""
-    try:
-        d = v if isinstance(v, Decimal) else Decimal(str(v))
-    except Exception:
-        return str(v)
-    if d == 0:
-        return "$0.00" if with_dollar else "—"
-    sign = -1 if d < 0 else 1
-    abs_v = abs(d).quantize(Decimal("0.01"))
-    n_str = f"{abs_v:,.2f}"
-    if sign < 0:
-        return f"$({n_str})" if with_dollar else f"({n_str})"
-    return f"${n_str}" if with_dollar else n_str
-
-
+# ── Formatters ───────────────────────────────────────────────────────────────
 def _to_decimal(v: Any, default: str = "0") -> Decimal:
     try:
         return v if isinstance(v, Decimal) else Decimal(str(v if v not in (None, "") else default))
@@ -133,9 +59,32 @@ def _to_decimal(v: Any, default: str = "0") -> Decimal:
         return Decimal(default)
 
 
+def _fmt_money(v: Decimal | str | None) -> str:
+    """Big-number format with $: $1,234.56 / $(1,234.56) / $0.00."""
+    d = _to_decimal(v)
+    if d == 0:
+        return "$0.00"
+    abs_s = f"{abs(d).quantize(Decimal('0.01')):,.2f}"
+    return f"$({abs_s})" if d < 0 else f"${abs_s}"
+
+
+def _fmt_signed(v: Decimal | str | None) -> str:
+    """Table amount with explicit sign, no $: + 1,234.56 / - 35.00 / 0.00."""
+    d = _to_decimal(v)
+    if d == 0:
+        return "0.00"
+    abs_s = f"{abs(d).quantize(Decimal('0.01')):,.2f}"
+    return f"- {abs_s}" if d < 0 else f"+ {abs_s}"
+
+
+def _amount_color(v: Decimal | str | None) -> colors.Color:
+    d = _to_decimal(v)
+    return GREEN if d > 0 else (RED if d < 0 else GREY_MID)
+
+
 def _fmt_date(d: date | str | None) -> str:
     if d is None or d == "":
-        return ""
+        return "—"
     if isinstance(d, str):
         try:
             d = date.fromisoformat(d[:10])
@@ -144,650 +93,560 @@ def _fmt_date(d: date | str | None) -> str:
     return d.strftime("%b %d, %Y")
 
 
-_STATUS_DISPLAY = {
-    "approved": "Reconciled & Approved",
-    "reviewed": "Prepared - Pending Review",
-    "flagged":  "Flagged for Follow-up",
-    "pending":  "Open",
+def _fmt_date_long(d: date) -> str:
+    return d.strftime("%d %B %Y")
+
+
+def _fmt_date_short(d: date | str | None) -> str:
+    if d is None or d == "":
+        return ""
+    if isinstance(d, str):
+        try:
+            d = date.fromisoformat(d[:10])
+        except Exception:
+            return d
+    return d.strftime("%d %b")
+
+
+def _period_label(pe: date) -> str:
+    q = (pe.month - 1) // 3 + 1
+    # Quarter-end months read as "Qn YYYY"; otherwise "Mon YYYY".
+    if pe.month in (3, 6, 9, 12):
+        return f"Q{q} {pe.year}"
+    return pe.strftime("%b %Y")
+
+
+_STATUS = {
+    "approved": ("Reconciled", GREEN),
+    "reviewed": ("In review", colors.HexColor("#B45309")),
+    "flagged":  ("Flagged", RED),
+    "pending":  ("Open", GREY_MID),
 }
 
 
-# ── Small helper flowables ─────────────────────────────────────────────────
+def _source_label(account_type: str | None) -> tuple[str, str]:
+    """(big-number label, short caption) for the right-hand 'source' side,
+    generalized from the account type so this isn't bank-only."""
+    t = (account_type or "").lower()
+    if "bank" in t or "cash" in t:
+        return ("Per bank statement", "Bank statement")
+    if "credit card" in t or "creditcard" in t:
+        return ("Per card statement", "Card statement")
+    if "receivable" in t or t.strip() == "ar":
+        return ("Per AR subledger", "AR aging detail")
+    if "payable" in t or t.strip() == "ap":
+        return ("Per AP subledger", "AP aging detail")
+    return ("Per subledger", "Supporting subledger")
 
 
+# ── Styles ───────────────────────────────────────────────────────────────────
+def _styles() -> dict[str, ParagraphStyle]:
+    base = getSampleStyleSheet()
+
+    def mk(n, **kw):
+        return ParagraphStyle(n, parent=base["BodyText"], **kw)
+
+    return {
+        "eyebrow":  mk("eyebrow", fontName="Helvetica-Bold", fontSize=8, leading=11,
+                       textColor=GREEN, spaceAfter=4),
+        "title":    mk("title", fontName="Helvetica-Bold", fontSize=23, leading=27,
+                       textColor=INK, spaceAfter=2),
+        "subtitle": mk("subtitle", fontName="Helvetica", fontSize=11, leading=14,
+                       textColor=GREY_MID, spaceAfter=2),
+        "lede":     mk("lede", fontName="Helvetica", fontSize=9.5, leading=14,
+                       textColor=GREY_DARK, spaceBefore=6, spaceAfter=2),
+        "section":  mk("section", fontName="Helvetica-Bold", fontSize=11, leading=14,
+                       textColor=INK, spaceBefore=18, spaceAfter=8),
+        "body":     mk("body", fontName="Helvetica", fontSize=9.5, leading=14,
+                       textColor=GREY_DARK, spaceAfter=4),
+        "note":     mk("note", fontName="Helvetica", fontSize=9.5, leading=14.5,
+                       textColor=GREY_DARK),
+        "oblique":  mk("oblique", fontName="Helvetica-Oblique", fontSize=9, leading=12,
+                       textColor=GREY_MID),
+    }
+
+
+# ── Hairline ─────────────────────────────────────────────────────────────────
 class _Hairline(Flowable):
-    """A horizontal rule that spans the full body frame width."""
-    def __init__(self, color: colors.Color, width_pts: float = 1.0):
+    def __init__(self, color: colors.Color, w: float = 0.75):
         super().__init__()
-        self.line_color = color
-        self.line_width = width_pts
-        self.width: float = 0
-        self.height: float = self.line_width
+        self.c, self.w, self.width, self.height = color, w, 0, w
 
-    def wrap(self, avail_w: float, avail_h: float) -> tuple[float, float]:
-        self.width = avail_w
-        return (self.width, self.height)
+    def wrap(self, aw, ah):
+        self.width = aw
+        return (aw, self.height)
 
-    def draw(self) -> None:
-        self.canv.setStrokeColor(self.line_color)
-        self.canv.setLineWidth(self.line_width)
+    def draw(self):
+        self.canv.setStrokeColor(self.c)
+        self.canv.setLineWidth(self.w)
         self.canv.line(0, 0, self.width, 0)
 
 
-def _hairline(color: colors.Color, width_pts: float = 1.0) -> _Hairline:
-    return _Hairline(color, width_pts)
-
-
-# ── Page template ──────────────────────────────────────────────────────────
-
-def _make_doc(
-    buffer: BinaryIO,
-    *,
-    company: str,
-    account_label: str,
-    period_end: date,
-    is_draft: bool,
-) -> BaseDocTemplate:
-    margin = 0.7 * inch
+# ── Page template (footer, watermark — NO logo) ─────────────────────────────
+def _make_doc(buffer, *, company, account_label, doc_ref, period_end, is_draft):
+    margin = 0.72 * inch
     page_w, page_h = LETTER
+    frame = Frame(margin, margin, page_w - 2 * margin, page_h - 2 * margin - 0.35 * inch,
+                  id="body", topPadding=0, bottomPadding=0)
 
-    body_frame = Frame(
-        margin, margin, page_w - 2 * margin, page_h - 2 * margin - 0.4 * inch,
-        id="body", topPadding=0, bottomPadding=0,
-    )
-
-    def on_page(canvas, doc) -> None:
+    def on_page(canvas, doc):
         canvas.saveState()
-        # DRAFT watermark — light grey, monochrome.
         if is_draft:
             canvas.setFont("Helvetica-Bold", 100)
-            canvas.setFillColor(colors.Color(0.85, 0.85, 0.85, alpha=0.45))
+            canvas.setFillColor(colors.Color(0.86, 0.86, 0.86, alpha=0.42))
             canvas.translate(page_w / 2, page_h / 2)
             canvas.rotate(45)
             canvas.drawCentredString(0, 0, "DRAFT")
-            canvas.translate(-page_w / 2, -page_h / 2)
-            canvas.rotate(-45)
-
-        # Footer — company - account label - page X - timestamp
-        canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(GREY_MID)
-        y = 0.4 * inch
-        ts = datetime.now().strftime("%B %d, %Y")
-        left = f"{company} · {account_label}"
-        canvas.drawString(margin, y, left[:90])
-        canvas.drawCentredString(page_w / 2, y, f"Page {canvas.getPageNumber()}")
-        canvas.drawRightString(page_w - margin, y, f"Generated {ts}")
-        # Thin rule above the footer.
-        canvas.setStrokeColor(GREY_LIGHT)
+            canvas.restoreState()
+            canvas.saveState()
+        y = 0.42 * inch
+        canvas.setStrokeColor(BORDER)
         canvas.setLineWidth(0.5)
         canvas.line(margin, y + 12, page_w - margin, y + 12)
+        canvas.setFont("Helvetica", 7.5)
+        canvas.setFillColor(GREY_MID)
+        canvas.drawString(margin, y, f"{company} · {account_label}"[:88])
+        canvas.setFillColor(GREEN)
+        canvas.drawCentredString(page_w / 2, y, "Locked · replayable for 7 years")
+        canvas.setFillColor(GREY_MID)
+        canvas.drawRightString(page_w - margin, y, f"Page {canvas.getPageNumber()} · {doc_ref}")
         canvas.restoreState()
 
-    body_tpl = PageTemplate(id="body", frames=[body_frame], onPage=on_page)
-    doc = BaseDocTemplate(
-        buffer, pagesize=LETTER, leftMargin=margin, rightMargin=margin,
-        topMargin=margin, bottomMargin=margin,
-        title=f"Account Reconciliation - {company} - {account_label} - {period_end.isoformat()}",
-        author=company,
-    )
-    doc.addPageTemplates([body_tpl])
+    tpl = PageTemplate(id="body", frames=[frame], onPage=on_page)
+    doc = BaseDocTemplate(buffer, pagesize=LETTER, leftMargin=margin, rightMargin=margin,
+                          topMargin=margin, bottomMargin=margin,
+                          title=f"Reconciliation · {account_label} · {period_end.isoformat()}",
+                          author=company)
+    doc.addPageTemplates([tpl])
     return doc
 
 
-# ── Headline balance boxes (GL / Subledger / Variance) ─────────────────────
+# ── Meta card row (Account / Period ending / Variance / Status) ─────────────
+def _meta_cards(data, pe, body_w) -> Table:
+    def sx(**k):
+        return ParagraphStyle("x", **k)
+    lab = sx(fontName="Helvetica-Bold", fontSize=6.5, leading=9, textColor=GREY_MID)
+    val = sx(fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=INK)
+    sub = sx(fontName="Helvetica", fontSize=7.5, leading=10, textColor=GREY_MID)
 
-def _kpi_boxes(data: dict) -> Table:
-    """Three prominent boxes across the top of the working paper: the General
-    Ledger balance, the Subledger balance, and the Variance between them. This
-    is the headline answer — "does it tie?" — readable at a glance.
-
-    Monochrome: identical light boxes with black borders + big black numbers.
-    When out of balance, the Variance box gets a heavier border and a darker
-    fill so the eye lands on it without any colour.
-    """
     gl = _to_decimal(data.get("gl_balance"))
     sl = _to_decimal(data.get("subledger_balance"))
     variance = gl - sl
     tied = abs(variance) < Decimal("1.00")
-    variance_value = Decimal("0") if tied else variance
-    status_text = "IN BALANCE" if tied else "OUT OF BALANCE"
+    status_word, status_col = _STATUS.get(data.get("status", "pending"),
+                                          (str(data.get("status", "")).title(), GREY_MID))
+    val_g = sx(fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=status_col)
+    val_v = sx(fontName="Helvetica-Bold", fontSize=11, leading=14,
+               textColor=(GREEN if tied else RED))
 
-    label_style = ParagraphStyle(
-        "kpi_label", fontName="Helvetica-Bold", fontSize=7.5, leading=10,
-        textColor=GREY_MID, alignment=1,  # centered
-    )
-    num_style = ParagraphStyle(
-        "kpi_num", fontName="Helvetica-Bold", fontSize=16, leading=19,
-        textColor=INK, alignment=1,
-    )
-    sub_style = ParagraphStyle(
-        "kpi_sub", fontName="Helvetica", fontSize=7, leading=9,
-        textColor=GREY_MID, alignment=1,
-    )
-    status_style = ParagraphStyle(
-        "kpi_status", fontName="Helvetica-Bold", fontSize=8, leading=10,
-        textColor=INK, alignment=1,
-    )
+    acct_no = data.get("account_number") or "—"
+    acct_nm = (data.get("account_name") or "—")
+    src_cap = _source_label(data.get("account_type"))[1]
 
-    # 5 columns: box / gap / box / gap / box
-    gap = 0.16 * inch
-    body_w = LETTER[0] - 2 * (0.7 * inch)
-    box_w = (body_w - 2 * gap) / 3.0
+    def cell(label, value, sub_text, vstyle=val):
+        return [Paragraph(label.upper(), lab), Spacer(1, 4),
+                Paragraph(value, vstyle), Paragraph(sub_text, sub)]
 
-    rows = [
-        [Paragraph("GENERAL LEDGER", label_style), "",
-         Paragraph("SUBLEDGER", label_style), "",
-         Paragraph("VARIANCE (GL - SL)", label_style)],
-        [Paragraph(_fmt_money(gl), num_style), "",
-         Paragraph(_fmt_money(sl), num_style), "",
-         Paragraph(_fmt_money(variance_value), num_style)],
-        [Paragraph("Balance per general ledger", sub_style), "",
-         Paragraph("Supporting subledger detail", sub_style), "",
-         Paragraph(status_text, status_style)],
+    cells = [
+        cell("Account", acct_no, acct_nm[:30]),
+        cell("Period ending", _fmt_date(pe), _period_label(pe)),
+        cell("Variance", _fmt_money(Decimal("0") if tied else variance),
+             ("Tied to source" if tied else "Out of balance"), val_v),
+        cell("Status", status_word, f"vs {src_cap.lower()}", val_g),
     ]
-    tbl = Table(rows, colWidths=[box_w, gap, box_w, gap, box_w])
+    gap = 0.14 * inch
+    cw = (body_w - 3 * gap) / 4.0
+    row, widths = [], []
+    for i, c in enumerate(cells):
+        row.append(c)
+        widths.append(cw)
+        if i < 3:
+            row.append("")
+            widths.append(gap)
+    t = Table([row], colWidths=widths)
+    style = [("VALIGN", (0, 0), (-1, -1), "TOP")]
+    for ci in (0, 2, 4, 6):
+        style += [
+            ("BACKGROUND", (ci, 0), (ci, 0), CARD_BG),
+            ("BOX", (ci, 0), (ci, 0), 0.5, BORDER),
+            ("LEFTPADDING", (ci, 0), (ci, 0), 10), ("RIGHTPADDING", (ci, 0), (ci, 0), 10),
+            ("TOPPADDING", (ci, 0), (ci, 0), 9), ("BOTTOMPADDING", (ci, 0), (ci, 0), 10),
+        ]
+    for gi in (1, 3, 5):
+        style += [("LEFTPADDING", (gi, 0), (gi, 0), 0), ("RIGHTPADDING", (gi, 0), (gi, 0), 0)]
+    t.setStyle(TableStyle(style))
+    return t
 
-    box_cols = (0, 2, 4)
-    style: list[tuple] = [
+
+# ── Balance summary: per GL  =  per source ──────────────────────────────────
+def _balance_summary(data, pe, body_w) -> Table:
+    gl = _to_decimal(data.get("gl_balance"))
+    sl = _to_decimal(data.get("subledger_balance"))
+    tied = abs(gl - sl) < Decimal("1.00")
+    src_label, src_cap = _source_label(data.get("account_type"))
+
+    lab = ParagraphStyle("bl", fontName="Helvetica-Bold", fontSize=7.5, leading=10, textColor=GREY_MID)
+    big = ParagraphStyle("bb", fontName="Helvetica-Bold", fontSize=21, leading=25, textColor=INK)
+    sub = ParagraphStyle("bs", fontName="Helvetica", fontSize=8, leading=11, textColor=GREY_MID)
+    eq = ParagraphStyle("eq", fontName="Helvetica", fontSize=22, leading=25,
+                        textColor=(GREEN if tied else RED), alignment=1)
+
+    def side(label, amount, caption):
+        return [Paragraph(label.upper(), lab), Spacer(1, 3),
+                Paragraph(_fmt_money(amount), big), Spacer(1, 2),
+                Paragraph(caption, sub)]
+
+    eq_w = 0.5 * inch
+    col = (body_w - eq_w) / 2.0
+    left = side("Per general ledger", gl, f"As reported · acct {data.get('account_number') or '—'}")
+    right = side(src_label, sl, f"{src_cap} · {pe.strftime('%d %b')}")
+    t = Table([[left, Paragraph("=" if tied else "≠", eq), right]],
+              colWidths=[col, eq_w, col])
+    t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        # vertical rhythm inside the boxes
-        ("TOPPADDING",    (0, 0), (-1, 0), 11),   # space above labels
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
-        ("TOPPADDING",    (0, 1), (-1, 1), 0),
-        ("BOTTOMPADDING", (0, 1), (-1, 1), 5),    # below big number
-        ("TOPPADDING",    (0, 2), (-1, 2), 0),
-        ("BOTTOMPADDING", (0, 2), (-1, 2), 11),   # space below sub
-    ]
-    for c in box_cols:
-        emphasize = (c == 4 and not tied)
-        style.append(("BACKGROUND", (c, 0), (c, -1), GREY_BG2 if emphasize else GREY_BG))
-        style.append(("BOX", (c, 0), (c, -1), 1.5 if emphasize else 0.75, INK))
-        style.append(("LEFTPADDING",  (c, 0), (c, -1), 8))
-        style.append(("RIGHTPADDING", (c, 0), (c, -1), 8))
-    # gap columns: no fill, no border, no padding
-    for g in (1, 3):
-        style.append(("LEFTPADDING",  (g, 0), (g, -1), 0))
-        style.append(("RIGHTPADDING", (g, 0), (g, -1), 0))
-    tbl.setStyle(TableStyle(style))
-    return tbl
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    return t
 
 
-# ── Account Information (tabular) ──────────────────────────────────────────
-
-def _account_info_table(data: dict, account_label: str) -> Table:
-    """Account Information block — 4-column grid: label | value | label | value."""
-    pe = data["period_end"]
-    if not isinstance(pe, date):
-        pe = date.fromisoformat(str(pe))
-
-    status_raw = data.get("status", "pending")
-    status_display = _STATUS_DISPLAY.get(status_raw, status_raw.replace("_", " ").title())
-
-    def actor_line(name: str | None, when: str | None) -> str:
-        if not name:
-            return "—"
-        if when:
-            return f"{name}\n{_fmt_date(when)}"
-        return name
-
-    acct_num = data.get("account_number") or "—"
-    acct_name = data.get("account_name") or "—"
-
-    rows: list[list[Any]] = [
-        ["Account No.",   acct_num,                        "Status",     status_display],
-        ["Account Name",  acct_name,                       "Period End", _fmt_date(pe)],
-        ["Account Type",  data.get("account_type") or "—", "Currency", "USD"],
-        ["Prepared By",   actor_line(data.get("prepared_by_name"), data.get("prepared_at")),
-         "Approved By",   actor_line(data.get("approved_by_name"), data.get("approved_at"))],
-    ]
-    tbl = Table(
-        rows,
-        colWidths=[1.05 * inch, 2.45 * inch, 1.05 * inch, 2.55 * inch],
-    )
-    style: list[tuple] = [
-        # Labels (cols 0 + 2)
-        ("FONT",          (0, 0), (0, -1), "Helvetica-Bold", 7.5),
-        ("FONT",          (2, 0), (2, -1), "Helvetica-Bold", 7.5),
-        ("TEXTCOLOR",     (0, 0), (0, -1), GREY_MID),
-        ("TEXTCOLOR",     (2, 0), (2, -1), GREY_MID),
-        # Values (cols 1 + 3)
-        ("FONT",          (1, 0), (1, -1), "Helvetica", 9.5),
-        ("FONT",          (3, 0), (3, -1), "Helvetica", 9.5),
-        ("TEXTCOLOR",     (1, 0), (1, -1), GREY_DARK),
-        ("TEXTCOLOR",     (3, 0), (3, -1), GREY_DARK),
-        # Layout
-        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-        ("TOPPADDING",    (0, 0), (-1, -1), 7),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
-        # Light dividing rule between rows
-        ("LINEBELOW",     (0, 0), (-1, -2), 0.25, GREY_LIGHT),
-        # Black top + bottom rule frames the block
-        ("LINEABOVE",     (0, 0), (-1, 0), 1.0, INK),
-        ("LINEBELOW",     (0, -1), (-1, -1), 0.75, INK),
-        # Subtle grey fill on the label/value pairs
-        ("BACKGROUND",    (0, 0), (1, -1), colors.Color(0.985, 0.985, 0.985)),
-        ("BACKGROUND",    (2, 0), (3, -1), colors.Color(0.97, 0.97, 0.97)),
-    ]
-    # Account Name is the most-identifying field — bump it.
-    style.append(("FONT", (1, 1), (1, 1), "Helvetica-Bold", 10))
-    style.append(("TEXTCOLOR", (1, 1), (1, 1), INK))
-    tbl.setStyle(TableStyle(style))
-    return tbl
-
-
-# ── Reconciliation Build-up (opening + items = closing -> GL -> variance) ──
-
-def _reconciliation_table(data: dict) -> Table:
-    """The whole reconciliation in one table:
-
-        Opening Subledger Balance (Rolled Forward)   $opening
-      + Reconciling item 1                           $+/-
-      ...
-      = Closing Subledger Balance                    $closing
-        General Ledger Balance                       $gl
-        Variance (GL - Subledger)                    $0.00
-
-    Sign on each reconciling item follows the account's natural side:
-    credit-natural accounts flip the QBO amount; manual items are entered
-    signed and are NOT flipped.
-    """
+# ── Reconciliation build-up ─────────────────────────────────────────────────
+def _buildup(data) -> Table:
     flip = -1 if data.get("is_credit_natural") else 1
     opening = _to_decimal(data.get("opening_balance"))
     items = data.get("reconciling_items") or []
-    gl_balance = _to_decimal(data.get("gl_balance"))
-    saved_subledger = _to_decimal(data.get("subledger_balance"))
+    saved_sl = _to_decimal(data.get("subledger_balance"))
 
-    header = ["Date", "Type", "Ref #", "Memo / Description", "Amount"]
-    rows: list[list[Any]] = [header]
-
-    memo_style = ParagraphStyle(
-        "recon_memo", fontName="Helvetica", fontSize=9, leading=11, textColor=GREY_DARK,
-    )
-    memo_bold = ParagraphStyle(
-        "recon_memo_bold", fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=GREY_DARK,
-    )
-    memo_total = ParagraphStyle(
-        "recon_memo_total", fontName="Helvetica-Bold", fontSize=10, leading=12.5, textColor=INK,
-    )
-
-    # 1. Opening
-    opening_subnote = (data.get("opening_source") or "").strip()
-    opening_label_html = "Opening Subledger Balance"
-    if opening_subnote:
-        opening_label_html += (
-            f"<br/><font size='8' color='{GREY_MID.hexval()}'>{opening_subnote}</font>"
-        )
-    rows.append(["", "", "", Paragraph(opening_label_html, memo_bold), _fmt_money(opening)])
-    opening_row_idx = len(rows) - 1
-
-    # 2. Reconciling items — split into OPEN (outstanding; listed individually
-    #    as the open items) and CLEARED (ticked as reconciled; they still feed
-    #    the build-up math but are summarized in one line, not listed). An item
-    #    with no `cleared` flag defaults to open.
-    open_items    = [it for it in items if not it.get("cleared")]
-    cleared_items = [it for it in items if it.get("cleared")]
-
-    def _signed(it: dict) -> Decimal:
+    def signed(it):
         raw = _to_decimal(it.get("amount"))
-        return raw if str(it.get("txn_id", "")).startswith("manual-") else (flip * raw)
+        return raw if str(it.get("txn_id", "")).startswith("manual-") else flip * raw
+
+    memo = ParagraphStyle("m", fontName="Helvetica", fontSize=9, leading=12, textColor=GREY_DARK)
+    memo_b = ParagraphStyle("mb", fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=INK)
+
+    def sub(s):
+        return f"<br/><font size='7.5' color='{GREY_MID.hexval()}'>{s}</font>"
+
+    header = ["", "Description", "Reference", "Date", "Amount"]
+    rows = [header]
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    li = 0
+
+    open_items = [it for it in items if not it.get("cleared")]
+    cleared = [it for it in items if it.get("cleared")]
+
+    # Opening
+    op_src = (data.get("opening_source") or "").strip()
+    rows.append([letters[li], Paragraph("Opening balance" + (sub(op_src) if op_src else ""), memo_b),
+                 "rolled forward", "", _fmt_signed(opening)]); li += 1
+    open_idx = len(rows) - 1
 
     items_sum = Decimal("0")
-    items_start_idx = len(rows)
+    item_rows = []
     for it in open_items:
-        is_manual = str(it.get("txn_id", "")).startswith("manual-")
-        signed = _signed(it)
-        items_sum += signed
-        memo_text = (it.get("memo") or "")[:200]
-        if is_manual and "Manual" not in (it.get("txn_type") or ""):
-            type_label = ((it.get("txn_type") or "Manual")[:18]) + " · Manual"
-        else:
-            type_label = (it.get("txn_type") or "")[:24]
-        rows.append([
-            _fmt_date(it.get("txn_date") or ""),
-            type_label,
-            (it.get("txn_number") or "")[:14],
-            Paragraph(memo_text, memo_style) if memo_text else "",
-            _fmt_money(signed),
-        ])
-    items_end_idx = len(rows) - 1
+        s = signed(it); items_sum += s
+        rows.append([letters[li] if li < 26 else "·",
+                     Paragraph((it.get("memo") or it.get("txn_type") or "Reconciling item")[:120], memo),
+                     (it.get("txn_number") or "—")[:16],
+                     _fmt_date_short(it.get("txn_date") or ""),
+                     _fmt_signed(s)])
+        item_rows.append(len(rows) - 1); li += 1
 
-    # 2b. Cleared items — one summary line (tie into the math, not listed).
-    cleared_sum: Decimal = sum((_signed(it) for it in cleared_items), Decimal("0"))
-    cleared_row_idx: int | None = None
-    if cleared_items:
-        rows.append([
-            "", "", "",
-            Paragraph(
-                "Cleared items"
-                f"<br/><font size='8' color='{GREY_MID.hexval()}'>"
-                f"{len(cleared_items)} item{'' if len(cleared_items) == 1 else 's'} "
-                "reconciled / cleared this period</font>",
-                memo_bold,
-            ),
-            _fmt_money(cleared_sum),
-        ])
-        cleared_row_idx = len(rows) - 1
+    cleared_sum = sum((signed(it) for it in cleared), Decimal("0"))
+    if cleared:
+        rows.append([letters[li] if li < 26 else "·",
+                     Paragraph("Cleared items"
+                               + sub(f"{len(cleared)} item{'' if len(cleared) == 1 else 's'} reconciled this period"),
+                               memo_b),
+                     "auto-matched", "", _fmt_signed(cleared_sum)]); li += 1
 
-    # 3a. Reconcile opening + items to the SAVED subledger via an explicit
-    # "Other adjustments" row when they differ.
-    computed_from_items = opening + items_sum + cleared_sum
-    adjustment = saved_subledger - computed_from_items
-    adjustment_row_idx: int | None = None
-    if abs(adjustment) >= Decimal("0.01"):
-        rows.append([
-            "", "", "",
-            Paragraph(
-                "Other adjustments to subledger"
-                "<br/><font size='8' color='" + GREY_MID.hexval() + "'>"
-                "Difference between rolled-forward opening + items and the "
-                "recorded subledger balance - typically AR/AP aging, "
-                "AI-prepared closing, or a manual override."
-                "</font>",
-                memo_bold,
-            ),
-            _fmt_money(adjustment),
-        ])
-        adjustment_row_idx = len(rows) - 1
+    adj = saved_sl - (opening + items_sum + cleared_sum)
+    if abs(adj) >= Decimal("0.01"):
+        rows.append([letters[li] if li < 26 else "·",
+                     Paragraph("Other adjustments" + sub("aging / AI-prepared closing / manual override"), memo),
+                     "auto", "", _fmt_signed(adj)]); li += 1
 
-    # 3b. Closing Subledger Balance — the SAVED value.
-    rows.append(["", "", "", Paragraph("Closing Subledger Balance", memo_total), _fmt_money(saved_subledger)])
-    closing_row_idx = len(rows) - 1
+    rows.append(["", Paragraph("Reconciled balance — matches source", memo_b), "", "", _fmt_money(saved_sl)])
+    reconciled_idx = len(rows) - 1
 
-    # 4. GL Balance
-    rows.append(["", "", "", Paragraph("General Ledger Balance", memo_total), _fmt_money(gl_balance)])
-    gl_row_idx = len(rows) - 1
-
-    # 5. Variance — should be $0.00 on a reconciled account.
-    variance = gl_balance - saved_subledger
-    tied_out = abs(variance) < Decimal("1.00")
-    variance_display = _fmt_money(Decimal("0")) if tied_out else _fmt_money(variance)
-    status_word = "IN BALANCE" if tied_out else "OUT OF BALANCE"
-    rows.append([
-        "", "", "",
-        Paragraph(
-            f"Variance (GL - Subledger)"
-            f"<br/><font size='7.5' color='{GREY_MID.hexval()}'>{status_word}</font>",
-            memo_total,
-        ),
-        variance_display,
-    ])
-    var_row_idx = len(rows) - 1
-
-    tbl = Table(
-        rows,
-        colWidths=[0.85 * inch, 1.15 * inch, 0.75 * inch, 3.15 * inch, 1.20 * inch],
-        repeatRows=1,
-    )
-
-    style: list[tuple] = [
-        # Header — black band on top, white text.
-        ("FONT",          (0, 0), (-1, 0), "Helvetica-Bold", 8.5),
-        ("TEXTCOLOR",     (0, 0), (-1, 0), WHITE),
-        ("BACKGROUND",    (0, 0), (-1, 0), INK),
-        ("ALIGN",         (-1, 0), (-1, 0), "RIGHT"),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
-        ("TOPPADDING",    (0, 0), (-1, 0), 7),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
-        # Body defaults
-        ("FONT",          (0, 1), (-1, -1), "Helvetica", 9),
-        ("TEXTCOLOR",     (0, 1), (-1, -1), GREY_DARK),
-        ("ALIGN",         (-1, 1), (-1, -1), "RIGHT"),
-        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
-        ("TOPPADDING",    (0, 1), (-1, -1), 5),
-        # Opening — bold + light fill
-        ("FONT",          (0, opening_row_idx), (-1, opening_row_idx), "Helvetica-Bold", 9.5),
-        ("BACKGROUND",    (0, opening_row_idx), (-1, opening_row_idx), GREY_BG),
-        ("TOPPADDING",    (0, opening_row_idx), (-1, opening_row_idx), 8),
-        ("BOTTOMPADDING", (0, opening_row_idx), (-1, opening_row_idx), 8),
-        ("LINEBELOW",     (0, opening_row_idx), (-1, opening_row_idx), 0.5, GREY_LIGHT),
-        # Closing — bold + heavy rule above
-        ("FONT",          (0, closing_row_idx), (-1, closing_row_idx), "Helvetica-Bold", 10),
-        ("LINEABOVE",     (0, closing_row_idx), (-1, closing_row_idx), 1.0, GREY_DARK),
-        ("TOPPADDING",    (0, closing_row_idx), (-1, closing_row_idx), 7),
-        ("BOTTOMPADDING", (0, closing_row_idx), (-1, closing_row_idx), 5),
-        ("BACKGROUND",    (0, closing_row_idx), (-1, closing_row_idx), GREY_BG),
-        # GL Balance — bold (target value)
-        ("FONT",          (0, gl_row_idx), (-1, gl_row_idx), "Helvetica-Bold", 10),
-        ("TOPPADDING",    (0, gl_row_idx), (-1, gl_row_idx), 5),
-        ("BOTTOMPADDING", (0, gl_row_idx), (-1, gl_row_idx), 5),
-        ("BACKGROUND",    (0, gl_row_idx), (-1, gl_row_idx), GREY_BG),
-        # Variance — heaviest weight, double rule, medium fill.
-        ("FONT",          (0, var_row_idx), (-1, var_row_idx), "Helvetica-Bold", 11),
-        ("TEXTCOLOR",     (0, var_row_idx), (-1, var_row_idx), INK),
-        ("LINEABOVE",     (0, var_row_idx), (-1, var_row_idx), 0.75, INK),
-        ("LINEBELOW",     (0, var_row_idx), (-1, var_row_idx), 2.0, INK),
-        ("BACKGROUND",    (0, var_row_idx), (-1, var_row_idx), GREY_BG2),
-        ("TOPPADDING",    (0, var_row_idx), (-1, var_row_idx), 10),
-        ("BOTTOMPADDING", (0, var_row_idx), (-1, var_row_idx), 10),
-        # Outer frame around the whole build-up.
-        ("BOX",           (0, 0), (-1, -1), 0.75, GREY_DARK),
+    body_w = LETTER[0] - 2 * (0.72 * inch)
+    t = Table(rows, colWidths=[0.32 * inch, body_w - 0.32 * inch - 1.05 * inch - 0.85 * inch - 1.15 * inch,
+                               1.05 * inch, 0.85 * inch, 1.15 * inch], repeatRows=1)
+    style = [
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7.5),
+        ("TEXTCOLOR", (0, 0), (-1, 0), GREY_MID),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.75, INK),
+        ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("FONT", (0, 1), (-1, -1), "Helvetica", 9),
+        ("TEXTCOLOR", (0, 1), (0, -1), GREY_MID),
+        ("TEXTCOLOR", (2, 1), (3, -1), GREY_MID),
+        ("FONT", (2, 1), (3, -1), "Helvetica", 8),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("FONT", (-1, 1), (-1, -1), "Helvetica", 9),
+        # Opening row
+        ("LINEBELOW", (0, open_idx), (-1, open_idx), 0.25, BORDER),
+        # Reconciled balance — green, heavy top rule
+        ("LINEABOVE", (0, reconciled_idx), (-1, reconciled_idx), 1.0, INK),
+        ("FONT", (0, reconciled_idx), (-1, reconciled_idx), "Helvetica-Bold", 10),
+        ("TEXTCOLOR", (1, reconciled_idx), (1, reconciled_idx), INK),
+        ("TEXTCOLOR", (-1, reconciled_idx), (-1, reconciled_idx), GREEN),
+        ("TOPPADDING", (0, reconciled_idx), (-1, reconciled_idx), 9),
+        ("BOTTOMPADDING", (0, reconciled_idx), (-1, reconciled_idx), 9),
     ]
-    # Per-item zebra striping (negatives already show as accounting parentheses).
-    for n, idx in enumerate(range(items_start_idx, items_end_idx + 1)):
+    # Amount colors on item rows
+    for idx, it in zip(item_rows, open_items, strict=False):
+        style.append(("TEXTCOLOR", (-1, idx), (-1, idx), _amount_color(signed(it))))
+    for n, idx in enumerate(item_rows):
         if n % 2 == 1:
-            style.append(("BACKGROUND", (0, idx), (-1, idx), colors.Color(0.975, 0.975, 0.975)))
-    # "Other adjustments" row (when present)
-    if adjustment_row_idx is not None:
-        style.append(("BACKGROUND", (0, adjustment_row_idx), (-1, adjustment_row_idx), colors.Color(0.955, 0.955, 0.955)))
-        style.append(("LINEABOVE",  (0, adjustment_row_idx), (-1, adjustment_row_idx), 0.5, GREY_LIGHT))
-        style.append(("TOPPADDING", (0, adjustment_row_idx), (-1, adjustment_row_idx), 7))
-        style.append(("BOTTOMPADDING", (0, adjustment_row_idx), (-1, adjustment_row_idx), 7))
-    # Cleared-items summary row (when present)
-    if cleared_row_idx is not None:
-        style.append(("BACKGROUND", (0, cleared_row_idx), (-1, cleared_row_idx), colors.Color(0.965, 0.965, 0.965)))
-        style.append(("TOPPADDING", (0, cleared_row_idx), (-1, cleared_row_idx), 6))
-        style.append(("BOTTOMPADDING", (0, cleared_row_idx), (-1, cleared_row_idx), 6))
-    tbl.setStyle(TableStyle(style))
-    return tbl
+            style.append(("BACKGROUND", (0, idx), (-1, idx), ZEBRA))
+    t.setStyle(TableStyle(style))
+    return t
 
 
-# ── AI Commentary ──────────────────────────────────────────────────────────
+# ── Open reconciling items table ────────────────────────────────────────────
+def _reconciling_items(data, body_w) -> list[Any] | None:
+    items = [it for it in (data.get("reconciling_items") or []) if not it.get("cleared")]
+    if not items:
+        return None
+    memo = ParagraphStyle("rm", fontName="Helvetica", fontSize=8.5, leading=11, textColor=GREY_DARK)
+    typ = ParagraphStyle("rt", fontName="Helvetica-Bold", fontSize=8.5, leading=11, textColor=INK)
+    flip = -1 if data.get("is_credit_natural") else 1
+
+    def signed(it):
+        raw = _to_decimal(it.get("amount"))
+        return raw if str(it.get("txn_id", "")).startswith("manual-") else flip * raw
+
+    header = ["Type", "Description", "Reference", "Date", "Amount", "Status"]
+    rows = [header]
+    total = Decimal("0")
+    amt_idx = []
+    for it in items:
+        s = signed(it); total += s
+        is_manual = str(it.get("txn_id", "")).startswith("manual-")
+        status = "Manual" if is_manual else "Open"
+        rows.append([
+            Paragraph((it.get("txn_type") or "Item")[:18], typ),
+            Paragraph((it.get("memo") or "—")[:90], memo),
+            (it.get("txn_number") or "—")[:14],
+            _fmt_date_short(it.get("txn_date") or ""),
+            _fmt_signed(s),
+            status,
+        ])
+        amt_idx.append(len(rows) - 1)
+    rows.append(["", Paragraph("Net reconciling adjustment", typ), "", "", _fmt_signed(total), ""])
+    total_idx = len(rows) - 1
+
+    widths = [0.95 * inch, body_w - 0.95 * inch - 1.0 * inch - 0.75 * inch - 1.0 * inch - 0.7 * inch,
+              1.0 * inch, 0.75 * inch, 1.0 * inch, 0.7 * inch]
+    t = Table(rows, colWidths=widths, repeatRows=1)
+    style = [
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7.5),
+        ("TEXTCOLOR", (0, 0), (-1, 0), GREY_MID),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.75, INK),
+        ("ALIGN", (4, 0), (4, -1), "RIGHT"),
+        ("FONT", (2, 1), (3, -1), "Helvetica", 8),
+        ("TEXTCOLOR", (2, 1), (3, -1), GREY_MID),
+        ("FONT", (4, 1), (4, -1), "Helvetica", 9),
+        ("FONT", (5, 1), (5, -1), "Helvetica-Bold", 7.5),
+        ("TEXTCOLOR", (5, 1), (5, -1), GREY_MID),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("LINEABOVE", (0, total_idx), (-1, total_idx), 0.75, INK),
+        ("FONT", (1, total_idx), (1, total_idx), "Helvetica-Bold", 9),
+        ("TEXTCOLOR", (4, total_idx), (4, total_idx), (GREEN if abs(total) < Decimal("1") else INK)),
+        ("FONT", (4, total_idx), (4, total_idx), "Helvetica-Bold", 9.5),
+        ("TOPPADDING", (0, total_idx), (-1, total_idx), 8), ("BOTTOMPADDING", (0, total_idx), (-1, total_idx), 8),
+    ]
+    for n, (idx, it) in enumerate(zip(amt_idx, items, strict=False)):
+        style.append(("TEXTCOLOR", (4, idx), (4, idx), _amount_color(signed(it))))
+        if n % 2 == 1:
+            style.append(("BACKGROUND", (0, idx), (-1, idx), ZEBRA))
+    t.setStyle(TableStyle(style))
+    return [t]
 
 
-def _ai_commentary_table(commentary: dict, styles: dict) -> list[Any]:
-    """AI commentary block: confidence / recommendation header, narrative, and
-    a checks table. Monochrome — status shown as PASS / WARN / FAIL text."""
+# ── AI reconciliation summary (kept verbatim) — green note callout ──────────
+def _ai_summary(commentary: dict, styles, body_w) -> list[Any]:
     out: list[Any] = []
-    conf = (commentary.get("confidence") or "").lower()
-    rec = (commentary.get("recommendation") or "").lower()
     narrative = (commentary.get("narrative") or "").strip()
+    conf = (commentary.get("confidence") or "").title()
+    rec = (commentary.get("recommendation") or "").lower()
+    rec_label = {"approve": "Approve as-is", "review": "Review flagged items",
+                 "investigate": "Investigate before approving"}.get(rec, rec.title())
     checks = commentary.get("checks") or []
 
-    rec_label = {
-        "approve": "Approve as-is",
-        "review": "Review flagged items",
-        "investigate": "Investigate before approving",
-    }.get(rec, rec.title())
-    pill_row = [[
-        Paragraph(f"<b>Confidence:</b> {conf.title() or '—'}", styles["note_body"]),
-        Paragraph(f"<b>AI Recommendation:</b> {rec_label or '—'}", styles["note_body"]),
-    ]]
-    pill_tbl = Table(pill_row, colWidths=[3.55 * inch, 3.55 * inch])
-    pill_tbl.setStyle(TableStyle([
-        ("BACKGROUND",    (0, 0), (-1, -1), GREY_BG),
-        ("BOX",           (0, 0), (-1, -1), 0.5, GREY_LIGHT),
-        ("TEXTCOLOR",     (0, 0), (-1, -1), GREY_DARK),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 10),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
-        ("TOPPADDING",    (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
-    out.append(pill_tbl)
-
+    inner = [Paragraph("AI RECONCILIATION SUMMARY", ParagraphStyle(
+        "ainote_h", fontName="Helvetica-Bold", fontSize=7.5, leading=11, textColor=GREEN, spaceAfter=4))]
     if narrative:
-        out.append(Paragraph(narrative, styles["note_body"]))
+        inner.append(Paragraph(narrative, styles["note"]))
+    if conf or rec_label:
+        inner.append(Spacer(1, 4))
+        inner.append(Paragraph(
+            f"<font color='{GREY_MID.hexval()}'><b>Confidence:</b></font> {conf or '—'}"
+            f" &nbsp;&nbsp;·&nbsp;&nbsp; <font color='{GREY_MID.hexval()}'><b>Recommendation:</b></font> {rec_label or '—'}",
+            ParagraphStyle("ai_meta", fontName="Helvetica", fontSize=8.5, leading=12, textColor=GREY_DARK)))
+    note = Table([[inner]], colWidths=[body_w])
+    note.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), GREEN_TINT),
+        ("LINEBEFORE", (0, 0), (0, -1), 3, GREEN),
+        ("LEFTPADDING", (0, 0), (-1, -1), 13), ("RIGHTPADDING", (0, 0), (-1, -1), 13),
+        ("TOPPADDING", (0, 0), (-1, -1), 11), ("BOTTOMPADDING", (0, 0), (-1, -1), 11),
+    ]))
+    out.append(note)
 
     if checks:
-        header = ["Check", "Status", "Detail"]
-        rows: list[list[Any]] = [header]
+        rows = [["Check", "Status", "Detail"]]
         for c in checks:
-            status_raw = (c.get("status") or "pass").lower()
-            status_label = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}.get(status_raw, status_raw.upper())
-            rows.append([
-                c.get("name") or "—",
-                status_label,
-                Paragraph(c.get("detail") or "—", styles["note_body"]),
-            ])
-        tbl = Table(rows, colWidths=[1.8 * inch, 0.85 * inch, 4.45 * inch], repeatRows=1)
-        style: list[tuple] = [
-            ("FONT",          (0, 0), (-1, 0), "Helvetica-Bold", 9),
-            ("TEXTCOLOR",     (0, 0), (-1, 0), WHITE),
-            ("BACKGROUND",    (0, 0), (-1, 0), INK),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
-            ("TOPPADDING",    (0, 0), (-1, 0), 5),
-            ("FONT",          (0, 1), (-1, -1), "Helvetica", 9),
-            ("TEXTCOLOR",     (0, 1), (-1, -1), GREY_DARK),
-            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-            ("TOPPADDING",    (0, 1), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
-            ("LINEBELOW",     (0, 1), (-1, -2), 0.25, GREY_LIGHT),
-            ("BOX",           (0, 0), (-1, -1), 0.5, GREY_DARK),
+            sraw = (c.get("status") or "pass").lower()
+            rows.append([c.get("name") or "—",
+                         {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}.get(sraw, sraw.upper()),
+                         Paragraph(c.get("detail") or "—", styles["body"])])
+        t = Table(rows, colWidths=[1.7 * inch, 0.8 * inch, body_w - 2.5 * inch], repeatRows=1)
+        cstyle = [
+            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7.5),
+            ("TEXTCOLOR", (0, 0), (-1, 0), GREY_MID),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.5, BORDER),
+            ("FONT", (0, 1), (-1, -1), "Helvetica", 8.5),
+            ("TEXTCOLOR", (0, 1), (-1, -1), GREY_DARK),
+            ("FONT", (1, 1), (1, -1), "Helvetica-Bold", 8.5),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ]
-        # Status column bold for all rows (PASS/WARN/FAIL).
-        style.append(("FONT", (1, 1), (1, -1), "Helvetica-Bold", 9))
-        tbl.setStyle(TableStyle(style))
-        out.append(tbl)
+        for ri in range(1, len(rows)):
+            sval = rows[ri][1]
+            col = {"PASS": GREEN, "WARN": colors.HexColor("#B45309"), "FAIL": RED}.get(sval, GREY_MID)
+            cstyle.append(("TEXTCOLOR", (1, ri), (1, ri), col))
+            if ri < len(rows) - 1:
+                cstyle.append(("LINEBELOW", (0, ri), (-1, ri), 0.25, BORDER))
+        t.setStyle(TableStyle(cstyle))
+        out.append(Spacer(1, 8))
+        out.append(t)
     return out
 
 
-# ── Attachments list ───────────────────────────────────────────────────────
-
-def _attachments(data: dict, styles: dict) -> list[Any]:
+def _docs(data, styles) -> list[Any]:
     files = data.get("evidence_files") or []
     if not files:
-        return [Paragraph(
-            "No supporting attachments uploaded for this period.",
-            styles["note_oblique"],
-        )]
-    bullets: list[Any] = []
+        return [Paragraph("No supporting documents uploaded for this period.", styles["oblique"])]
+    out = []
     for f in files:
         name = f.get("file_name") or "(unnamed file)"
         when = _fmt_date(f.get("uploaded_at"))
-        bullets.append(Paragraph(
-            f"• <b>{name}</b>"
-            + (f" <font color='#6b7280'>· uploaded {when}</font>" if when else ""),
-            styles["note_body"],
-        ))
-    return bullets
+        out.append(Paragraph(
+            f"<font color='{GREEN.hexval()}'>•</font>&nbsp;&nbsp;<b>{name}</b>"
+            + (f" &nbsp;<font color='{GREY_MID.hexval()}'>· uploaded {when}</font>" if when != "—" else ""),
+            styles["body"]))
+    return out
 
 
-# ── Public entry point ─────────────────────────────────────────────────────
+def _section(num: str, title: str, right: str, styles, body_w) -> Table:
+    left = Paragraph(
+        f"<font color='{GREEN.hexval()}'>{num}</font>&nbsp;&nbsp;&nbsp;"
+        f"<font color='{INK.hexval()}'>{title}</font>",
+        ParagraphStyle("sec_l", fontName="Helvetica-Bold", fontSize=11, leading=14))
+    rp = Paragraph(right, ParagraphStyle("sec_r", fontName="Helvetica", fontSize=8,
+                                         leading=12, textColor=GREY_MID, alignment=2))
+    t = Table([[left, rp]], colWidths=[body_w * 0.6, body_w * 0.4])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.5, BORDER),
+    ]))
+    return t
 
+
+# ── Public entry point (unchanged signature + data schema) ───────────────────
 def build_account_pdf(buffer: BinaryIO, *, data: dict) -> None:
-    """
-    Build the per-account reconciliation PDF.
-
-    `data` schema (built by the router):
-      company, account_number, account_name, account_type, period_end, status,
-      gl_balance, subledger_balance, opening_balance, opening_source,
-      is_credit_natural, reconciling_items, notes, prepared_by_name/at,
-      approved_by_name/at, evidence_files, is_draft, prepared_by, ai_commentary
-    """
     is_draft = data.get("is_draft", False)
     company = data["company"]
     pe = data["period_end"]
     if not isinstance(pe, date):
         pe = date.fromisoformat(str(pe))
 
-    account_label = (
-        f"{data['account_number']} · {data['account_name']}"
-        if data.get("account_number")
-        else data["account_name"]
-    )
+    acct_no = data.get("account_number")
+    acct_nm = data.get("account_name") or "Account"
+    account_label = f"{acct_no} · {acct_nm}" if acct_no else acct_nm
+    doc_ref = f"REC-{pe.strftime('%Y%m')}" + (f"-{acct_no}" if acct_no else "")
+    body_w = LETTER[0] - 2 * (0.72 * inch)
 
     styles = _styles()
-    doc = _make_doc(
-        buffer, company=company, account_label=account_label,
-        period_end=pe, is_draft=is_draft,
-    )
+    doc = _make_doc(buffer, company=company, account_label=account_label,
+                    doc_ref=doc_ref, period_end=pe, is_draft=is_draft)
     story: list[Any] = []
 
-    # ── Letterhead — company (left) + document title / period (right) ──
-    period_label_lines = (
-        f'<font color="{GREY_MID.hexval()}">PERIOD ENDING</font><br/>'
-        f'<font color="{INK.hexval()}"><b>{_fmt_date(pe).upper()}</b></font>'
-    )
-    title_lines = (
-        f'<font color="{GREY_MID.hexval()}"><b>ACCOUNT RECONCILIATION</b></font><br/>'
-        f'<font color="{GREY_DARK.hexval()}">Working Paper</font>'
-    )
-    letterhead_data = [[
-        Paragraph(company, styles["letterhead_company"]),
-        Paragraph(title_lines, ParagraphStyle(
-            "lh_title_right", parent=styles["letterhead_meta"],
-            fontSize=10, leading=14, alignment=2,
-        )),
-    ], [
-        Paragraph(
-            f'<font color="{GREY_MID.hexval()}"><b>RECONCILIATION WORKING PAPER</b></font>',
-            ParagraphStyle("lh_kicker", parent=styles["letterhead_kicker"], alignment=0),
-        ),
-        Paragraph(period_label_lines, ParagraphStyle(
-            "lh_period_right", parent=styles["letterhead_meta"],
-            fontSize=10, leading=14, alignment=2,
-        )),
-    ]]
-    letterhead = Table(letterhead_data, colWidths=[3.5 * inch, 3.6 * inch])
-    letterhead.setStyle(TableStyle([
-        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
-        ("TOPPADDING",    (0, 0), (-1, 0), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 4),
-        ("TOPPADDING",    (0, 1), (-1, 1), 0),
-        ("BOTTOMPADDING", (0, 1), (-1, 1), 0),
+    # ── Top bar: company (left) · packet label + ref (right). No logo. ──
+    topbar = Table([[
+        Paragraph(company.upper(), ParagraphStyle("tb_l", fontName="Helvetica-Bold",
+                  fontSize=8, leading=11, textColor=GREY_MID)),
+        Paragraph(f"RECONCILIATION PACKET<br/><font color='{GREY_MID.hexval()}'>{doc_ref}</font>",
+                  ParagraphStyle("tb_r", fontName="Helvetica-Bold", fontSize=8, leading=11,
+                                 textColor=INK, alignment=2)),
+    ]], colWidths=[body_w * 0.5, body_w * 0.5])
+    topbar.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
     ]))
-    story.append(letterhead)
-    story.append(Spacer(1, 0.06 * inch))
-    story.append(_hairline(INK, 1.2))
+    story.append(topbar)
+    story.append(_Hairline(BORDER, 0.75))
+    story.append(Spacer(1, 0.22 * inch))
+
+    # ── Eyebrow · title · subtitle · lede ──
+    story.append(Paragraph("GENERAL LEDGER RECONCILIATION", styles["eyebrow"]))
+    story.append(Paragraph(f"{acct_nm} · {acct_no}" if acct_no else acct_nm, styles["title"]))
+    story.append(Paragraph(f"{_period_label(pe)} · period close", styles["subtitle"]))
+    status_word = _STATUS.get(data.get("status", "pending"), ("Open", GREY_MID))[0]
+    story.append(Paragraph(
+        f"{company} · {_fmt_date_long(pe)}. Reconciled and reviewed in the close workflow · {status_word.lower()}.",
+        styles["lede"]))
     story.append(Spacer(1, 0.16 * inch))
 
-    # ── Account identifier + headline balance boxes ────────────────────
-    status_display = _STATUS_DISPLAY.get(
-        data.get("status", "pending"),
-        str(data.get("status", "")).replace("_", " ").title(),
-    )
-    meta_bits = [b for b in [data.get("account_type"), f"Period ending {_fmt_date(pe)}", status_display] if b]
-    story.append(Paragraph(account_label, styles["account_title"]))
-    story.append(Paragraph(" · ".join(meta_bits), styles["account_meta"]))
+    # ── Meta cards ──
+    story.append(_meta_cards(data, pe, body_w))
+    story.append(Spacer(1, 0.05 * inch))
+
+    # ── 01 Balance summary ──
+    story.append(_section("01", "Balance summary", f"USD · ending {_fmt_date(pe)}", styles, body_w))
+    story.append(Spacer(1, 0.10 * inch))
+    story.append(_balance_summary(data, pe, body_w))
     story.append(Spacer(1, 0.14 * inch))
-    story.append(_kpi_boxes(data))
-    story.append(Spacer(1, 0.04 * inch))
+    story.append(_buildup(data))
 
-    # ── 1. Account Information ─────────────────────────────────────────
-    story.append(Paragraph("ACCOUNT INFORMATION", styles["section"]))
-    story.append(_account_info_table(data, account_label))
+    # ── 02 Reconciling items ──
+    item_tbl = _reconciling_items(data, body_w)
+    if item_tbl:
+        open_n = sum(1 for it in (data.get("reconciling_items") or []) if not it.get("cleared"))
+        story.append(_section("02", "Reconciling items · open",
+                              f"{open_n} item{'' if open_n == 1 else 's'}", styles, body_w))
+        story.append(Spacer(1, 0.08 * inch))
+        story.extend(item_tbl)
 
-    # ── 2. Reconciliation build-up ─────────────────────────────────────
-    items = data.get("reconciling_items") or []
-    open_n = sum(1 for it in items if not it.get("cleared"))
-    item_count_label = f"{open_n} OPEN ITEM{'' if open_n == 1 else 'S'}"
-    story.append(Paragraph(
-        f"RECONCILIATION BUILD-UP  &nbsp;&nbsp;<font size='7' color='{GREY_MID.hexval()}'>· {item_count_label}</font>",
-        styles["section"],
-    ))
-    story.append(_reconciliation_table(data))
-
-    # ── 3. AI commentary (optional) ────────────────────────────────────
+    # ── AI reconciliation summary (kept) ──
     commentary = data.get("ai_commentary")
-    if commentary and isinstance(commentary, dict):
-        story.append(Paragraph("AI COMMENTARY", styles["section"]))
-        story.extend(_ai_commentary_table(commentary, styles))
+    if commentary and isinstance(commentary, dict) and (commentary.get("narrative") or commentary.get("checks")):
+        story.append(Spacer(1, 0.06 * inch))
+        story.append(_section("03", "AI reconciliation summary", "generated by the agent", styles, body_w))
+        story.append(Spacer(1, 0.08 * inch))
+        story.extend(_ai_summary(commentary, styles, body_w))
 
-    # ── 4. Notes (optional) ────────────────────────────────────────────
+    # ── Notes (optional) ──
     notes = (data.get("notes") or "").strip()
     if notes:
-        story.append(Paragraph("NOTES", styles["section"]))
-        story.append(Paragraph(notes, styles["note_body"]))
+        story.append(_section("04", "Preparer notes", "", styles, body_w))
+        story.append(Spacer(1, 0.06 * inch))
+        story.append(Paragraph(notes, styles["body"]))
 
-    # ── 5. Attachments ─────────────────────────────────────────────────
-    story.append(Paragraph("SUPPORTING ATTACHMENTS", styles["section"]))
-    story.extend(_attachments(data, styles))
+    # ── Supporting documents ──
+    nf = len(data.get("evidence_files") or [])
+    story.append(_section("05" if notes else "04", "Supporting documents",
+                          f"{nf} attachment{'' if nf == 1 else 's'}", styles, body_w))
+    story.append(Spacer(1, 0.06 * inch))
+    story.extend(_docs(data, styles))
 
     doc.build(story)
