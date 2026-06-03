@@ -2470,6 +2470,11 @@ function InlineSubledgerForm({
   }, [account.qbo_id, account.review_status])
 
   function toggleItem(item: ReconcilingItem) {
+    // Schedule-sourced items (prepaid/accrual/FA/lease/loan) are the
+    // authoritative subledger source — they are locked and can't be
+    // unticked/removed from the reconciliation here (manage them in
+    // Schedules). Adding still flows in via the schedule auto-merge.
+    if (item.txn_id.startsWith("schedule-")) return
     setSelectedItemMap((prev) => {
       const next = { ...prev }
       if (next[item.txn_id]) delete next[item.txn_id]
@@ -3497,6 +3502,9 @@ function SubledgerBuildup({
           <ul className="space-y-0.5 max-h-48 overflow-y-auto">
             {selectedItems.map((it) => {
               const isManual = it.txn_id.startsWith("manual-")
+              // Schedule-sourced items (prepaid/accrual/FA/lease/loan) are the
+              // authoritative subledger source — locked, can't be removed here.
+              const isSchedule = it.txn_id.startsWith("schedule-")
               // Signed effective amount. For QBO items on a credit-
               // natural account this is the NEGATIVE of the raw QBO
               // amount (so a credit invoice on AP shows here as
@@ -3515,6 +3523,12 @@ function SubledgerBuildup({
                     <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded"
                       style={{ background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b" }}>
                       Manual
+                    </span>
+                  )}
+                  {isSchedule && (
+                    <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded inline-flex items-center gap-0.5"
+                      style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                      <Lock size={8} strokeWidth={2.4} /> Schedule
                     </span>
                   )}
                   <span className="flex-1 truncate text-theme">
@@ -3545,6 +3559,13 @@ function SubledgerBuildup({
                         <X size={12} strokeWidth={1.8} />
                       </button>
                     </>
+                  ) : isSchedule ? (
+                    <span
+                      className="h-5 w-5 inline-flex items-center justify-center rounded"
+                      title="Flows from a schedule — the authoritative subledger source. Manage it in Schedules; it can't be removed here."
+                      style={{ color: "var(--text-muted)", cursor: "default" }}>
+                      <Lock size={11} strokeWidth={1.8} />
+                    </span>
                   ) : (
                     <button type="button"
                       onClick={() => onUntickItem(it)}

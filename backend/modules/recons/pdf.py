@@ -366,8 +366,30 @@ def _buildup(data, body_w) -> Table:
         item_rows.append(len(rows) - 1)
         item_vals.append(adj)
 
-    rows.append(["", Paragraph("Reconciled balance — matches source", memo_b), "", _fmt_money(saved_sl)])
-    reconciled_idx = len(rows) - 1
+    # Footer — be honest about whether the GL actually ties to the subledger.
+    # The build-up always foots to the closing subledger; only call it
+    # "reconciled / matches source" (green) when the GL truly equals it.
+    # Otherwise show the GL and the unreconciled variance so the packet never
+    # claims a tie that isn't there.
+    gl = _to_decimal(data.get("gl_balance"))
+    tied = abs(gl - saved_sl) < Decimal("1.00")
+    acct_no = data.get("account_number") or "—"
+
+    if tied:
+        rows.append(["", Paragraph("Reconciled balance — matches source", memo_b),
+                     "", _fmt_money(saved_sl)])
+        total_idx = len(rows) - 1
+        gl_idx = var_idx = None
+    else:
+        rows.append(["", Paragraph("Closing balance — per subledger", memo_b),
+                     "", _fmt_money(saved_sl)])
+        total_idx = len(rows) - 1
+        rows.append(["", Paragraph("Per general ledger" + sub(f"acct {acct_no} · as reported"), memo),
+                     "", _fmt_money(gl)])
+        gl_idx = len(rows) - 1
+        rows.append(["", Paragraph("Unreconciled variance — does not tie to GL", memo_b),
+                     "", _fmt_money(saved_sl - gl)])
+        var_idx = len(rows) - 1
 
     desc_w = body_w - 0.8 * inch - 1.15 * inch - 1.2 * inch
     t = Table(rows, colWidths=[0.8 * inch, desc_w, 1.15 * inch, 1.2 * inch], repeatRows=1)
@@ -385,12 +407,23 @@ def _buildup(data, body_w) -> Table:
         ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ("LINEBELOW", (0, open_idx), (-1, open_idx), 0.25, BORDER),
-        ("LINEABOVE", (0, reconciled_idx), (-1, reconciled_idx), 1.0, INK),
-        ("FONT", (0, reconciled_idx), (-1, reconciled_idx), "Helvetica-Bold", 10),
-        ("TEXTCOLOR", (-1, reconciled_idx), (-1, reconciled_idx), GREEN),
-        ("TOPPADDING", (0, reconciled_idx), (-1, reconciled_idx), 9),
-        ("BOTTOMPADDING", (0, reconciled_idx), (-1, reconciled_idx), 9),
+        ("LINEABOVE", (0, total_idx), (-1, total_idx), 1.0, INK),
+        ("FONT", (0, total_idx), (-1, total_idx), "Helvetica-Bold", 10),
+        ("TEXTCOLOR", (-1, total_idx), (-1, total_idx), GREEN if tied else INK),
+        ("TOPPADDING", (0, total_idx), (-1, total_idx), 9),
+        ("BOTTOMPADDING", (0, total_idx), (-1, total_idx), 9 if tied else 4),
     ]
+    if not tied:
+        style += [
+            ("TOPPADDING", (0, gl_idx), (-1, gl_idx), 2),
+            ("BOTTOMPADDING", (0, gl_idx), (-1, gl_idx), 4),
+            ("TEXTCOLOR", (-1, gl_idx), (-1, gl_idx), GREY_MID),
+            ("LINEABOVE", (0, var_idx), (-1, var_idx), 0.5, BORDER),
+            ("FONT", (0, var_idx), (-1, var_idx), "Helvetica-Bold", 10),
+            ("TEXTCOLOR", (-1, var_idx), (-1, var_idx), RED),
+            ("TOPPADDING", (0, var_idx), (-1, var_idx), 6),
+            ("BOTTOMPADDING", (0, var_idx), (-1, var_idx), 9),
+        ]
     for n, idx in enumerate(item_rows):
         style.append(("TEXTCOLOR", (-1, idx), (-1, idx), _amount_color(item_vals[n])))
         if n % 2 == 1:
