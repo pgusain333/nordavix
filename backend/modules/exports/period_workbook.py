@@ -627,7 +627,11 @@ async def _build_audit_log_sheet(
         write_row(ws, row, [
             (r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "", "nx_cell_text"),
             (r.action or "",  "nx_cell_text"),
-            (r.summary or "", "nx_cell_text"),
+            # AuditLog has no `summary` column — it's derived from event_data
+            # (mirrors the /api/audit serializer). The old `r.summary` raised
+            # AttributeError on the first row, so the section's try/except left
+            # the sheet headers-only ("blank, no details").
+            ((r.event_data or {}).get("summary") or r.action or "", "nx_cell_text"),
             (str(r.user_id) if r.user_id else "", "nx_cell_muted"),
         ])
         row += 1
