@@ -17,7 +17,7 @@
  * All data is pulled LIVE from QuickBooks on each period change — no
  * persistence overhead, always fresh.
  */
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -689,6 +689,38 @@ export function ReconciliationsDashboard() {
     },
   })
 
+  /** Patch the overview cache for one account so the dashboard figures
+   *  (per-row subledger/variance + the KPI strip) update INSTANTLY — used
+   *  both by the live tick preview (before any network call) and by the
+   *  mutation's onSuccess (to reconcile with the server result). */
+  const patchOverviewCache = useCallback(
+    (qboId: string, total: number | null, source: string | null, items?: ReconcilingItem[]) => {
+      const prev = qc.getQueryData<Overview>(["recons-overview", periodEnd])
+      if (!prev) return
+      const patched = prev.accounts.map((a) =>
+        a.qbo_id === qboId
+          ? {
+              ...a,
+              subledger_is_manual: total !== null,
+              subledger_balance:   total !== null ? String(total) : a.gl_balance,
+              subledger_source:    total !== null ? (source ?? a.subledger_source) : a.subledger_source,
+              reconciling_items:   items ?? a.reconciling_items,
+              variance:            total !== null
+                                    ? String((parseFloat(a.gl_balance) - total).toFixed(2))
+                                    : "0.00",
+              subledger_entered_at: total !== null ? new Date().toISOString() : null,
+            }
+          : a,
+      )
+      qc.setQueryData<Overview>(["recons-overview", periodEnd], {
+        ...prev,
+        accounts: patched,
+        totals: recomputeTotals(patched),
+      })
+    },
+    [qc, periodEnd],
+  )
+
   /** Manual subledger override — used by the inline editor below. */
   const subledgerMut = useMutation({
     mutationFn: (v: {
@@ -706,32 +738,9 @@ export function ReconciliationsDashboard() {
       // Explicit saves (Save button, Clear override) close the drawer.
       // Auto-saves leave it open so the user can keep ticking.
       if (!v.autoSave) setDrawerAcctId(null)
-      // Optimistic patch so the manual badge / value flips immediately.
-      const prev = qc.getQueryData<Overview>(["recons-overview", periodEnd])
-      if (prev) {
-        const patched = prev.accounts.map((a) =>
-          a.qbo_id === v.qboId
-            ? {
-                ...a,
-                subledger_is_manual: v.total !== null,
-                subledger_balance:   v.total !== null ? String(v.total) : a.gl_balance,
-                subledger_source:    v.total !== null ? (v.source ?? a.subledger_source) : a.subledger_source,
-                reconciling_items:   v.items ?? [],
-                variance:            v.total !== null
-                                      ? String((parseFloat(a.gl_balance) - v.total).toFixed(2))
-                                      : "0.00",
-                subledger_entered_at: v.total !== null ? new Date().toISOString() : null,
-              }
-            : a,
-        )
-        qc.setQueryData<Overview>(["recons-overview", periodEnd], {
-          ...prev,
-          accounts: patched,
-          // Recompute KPI totals so the top cards reflect the new state
-          // immediately — no waiting for a refetch.
-          totals: recomputeTotals(patched),
-        })
-      }
+      // Reconcile the cache with the saved result. (For ticks this usually
+      // matches what the live preview already painted — it's idempotent.)
+      patchOverviewCache(v.qboId, v.total, v.source, v.items)
     },
   })
 
@@ -1961,6 +1970,15 @@ export function ReconciliationsDashboard() {
                 qboId: a.qbo_id, total, source, items, autoSave: true,
               })
             }}
+            onPreview={(total) => {
+              // Instant, network-free: paint the dashboard figures the moment
+              // a row is ticked. We deliberately DON'T pass items here — leaving
+              // the cached reconciling_items as the server's copy keeps the
+              // debounced onAutoSave's "matches server" gate honest, so the
+              // real persist still fires a beat later.
+              if (a.review_status === "approved") return
+              patchOverviewCache(a.qbo_id, total, "Saving…")
+            }}
             onClear={() => {
               if (a.review_status === "approved") return
               subledgerMut.mutate({ qboId: a.qbo_id, total: null, source: null, items: [] })
@@ -2217,7 +2235,7 @@ type FormSection = "items" | "suggestions" | "evidence" | "ai"
 
 function InlineSubledgerForm({
   account, periodEnd, saving, readOnly = false, periodClosed = false,
-  onSave, onClear, onClose, onAutoSave,
+  onSave, onClear, onClose, onAutoSave, onPreview,
   visibleSection, hideHeader, hideFooter,
 }: {
   account: OverviewAccount
@@ -2241,6 +2259,11 @@ function InlineSubledgerForm({
       top KPI cards reflect the new state without an explicit save.
       Does NOT bump status to "reviewed" (only the Save button does). */
   onAutoSave?: (total: number, source: string | null, items: ReconcilingItem[]) => void
+  /** Instant (non-debounced, network-free) preview: fires the moment the
+      ticked selection changes so the dashboard figures update spontaneously.
+      The parent uses it to optimistically patch the overview cache (figures
+      only — not reconciling_items, so the debounced save still fires). */
+  onPreview?: (total: number) => void
   /** Drawer-mode tab filter: when set, only sections matching this tab
    *  render (others stay mounted but display:none so state survives).
    *  Undefined = stack all sections vertically (inline-accordion mode). */
@@ -2596,6 +2619,23 @@ function InlineSubledgerForm({
     // is included so newly-loaded open items get persisted once known.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItemMap, account.reconciling_items, readOnly, onAutoSave, isScheduleBacked, periodEntries])
+
+  // Live preview — INSTANT and network-free. The moment the ticked selection
+  // changes, paint the dashboard's per-row subledger/variance and KPI strip
+  // optimistically. The debounced auto-save above persists the same numbers a
+  // beat later; this just removes the wait so the figures move spontaneously.
+  // Gated on a real edit (payload differs from the server) so merely OPENING
+  // the drawer never flips a row — same protection as the auto-save effect.
+  useEffect(() => {
+    if (readOnly || !onPreview) return
+    const hash = (items: ReconcilingItem[]) => items
+      .map((it) => `${it.txn_id}:${it.amount}:${it.memo ?? ""}:${it.cleared === false ? "0" : "1"}`)
+      .sort()
+      .join("|")
+    if (hash(buildSavePayload()) === hash(account.reconciling_items ?? [])) return
+    onPreview(computedSubledger)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItemMap, computedSubledger, account.reconciling_items])
 
   // Manual reconciling item form — for items that don't exist in QBO yet
   // (outstanding bank checks, deposits in transit, journal entries not

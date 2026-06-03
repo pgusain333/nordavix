@@ -6,8 +6,7 @@ packet: a slim top bar, a green eyebrow, a large account title, a four-card
 meta row, a Balance summary (per general ledger = per source, two big
 numbers), the reconciliation build-up (opening + every ticked reconciling
 item = reconciled balance), any explicitly-outstanding open items, the AI
-reconciliation summary (kept verbatim), prepared/approved sign-off, and the
-audit trail.
+reconciliation summary (kept verbatim), and the prepared/approved sign-off.
 
 Design notes:
   * No logo / brand mark anywhere.
@@ -589,34 +588,6 @@ def _signoff(data, body_w) -> Table:
     return t
 
 
-# ── Audit trail ──────────────────────────────────────────────────────────────
-def _audit_trail(data, styles, body_w) -> list[Any]:
-    events = data.get("audit_trail") or []
-    if not events:
-        return [Paragraph("No recorded activity for this reconciliation yet.", styles["oblique"])]
-    rows = [["When (UTC)", "Actor", "Event"]]
-    for a in events:
-        rows.append([_fmt_ts(a.get("when")), a.get("actor") or "System",
-                     Paragraph(a.get("summary") or "—", styles["body"])])
-    t = Table(rows, colWidths=[1.5 * inch, 1.5 * inch, body_w - 3.0 * inch], repeatRows=1)
-    style = [
-        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7.5),
-        ("TEXTCOLOR", (0, 0), (-1, 0), GREY_MID),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.5, BORDER),
-        ("FONT", (0, 1), (-1, -1), "Helvetica", 8.5),
-        ("TEXTCOLOR", (0, 1), (0, -1), GREY_MID),
-        ("FONT", (1, 1), (1, -1), "Helvetica-Bold", 8.5),
-        ("TEXTCOLOR", (1, 1), (1, -1), INK),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-    ]
-    for ri in range(1, len(rows) - 1):
-        style.append(("LINEBELOW", (0, ri), (-1, ri), 0.25, BORDER))
-    t.setStyle(TableStyle(style))
-    return [t]
-
-
 def _docs(data, styles) -> list[Any]:
     files = data.get("evidence_files") or []
     if not files:
@@ -743,11 +714,5 @@ def build_account_pdf(buffer: BinaryIO, *, data: dict) -> None:
     story.append(_section(num(), "Prepared & approved", "names + timestamps", body_w))
     story.append(Spacer(1, 0.10 * inch))
     story.append(_signoff(data, body_w))
-
-    # ── Audit trail ──
-    ev = data.get("audit_trail") or []
-    story.append(_section(num(), "Audit trail", f"{len(ev)} event{'' if len(ev) == 1 else 's'}", body_w))
-    story.append(Spacer(1, 0.06 * inch))
-    story.extend(_audit_trail(data, styles, body_w))
 
     doc.build(story)
