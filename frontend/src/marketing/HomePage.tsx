@@ -1458,45 +1458,61 @@ function FAQ() {
 
 function FinalCTA() {
   return (
-    <section className="px-6 py-24 sm:py-32">
-      <div className="max-w-4xl mx-auto">
-        <div className="rounded-3xl p-10 sm:p-14 text-center relative overflow-hidden"
-          style={{
-            background: "linear-gradient(135deg, var(--green) 0%, color-mix(in oklab, var(--green) 80%, #0a0a0a) 100%)",
-          }}>
-          {/* Decorative blobs */}
-          <div className="absolute -top-20 -right-20 h-60 w-60 rounded-full"
-            style={{ background: "rgba(255,255,255,0.08)", filter: "blur(40px)" }} />
-          <div className="absolute -bottom-20 -left-20 h-60 w-60 rounded-full"
-            style={{ background: "rgba(255,255,255,0.08)", filter: "blur(40px)" }} />
+    <section className="relative px-6 py-24 sm:py-32 overflow-hidden"
+      // Dark closing band — mirrors the hero's deep burgundy and flows straight
+      // into the dark footer below, bookending the page (dark · light · dark).
+      style={{ background: "linear-gradient(180deg, #1E0813 0%, #160610 100%)" }}>
+      {/* Soft light from above, like the hero. */}
+      <div aria-hidden="true" className="absolute pointer-events-none rounded-full"
+        style={{
+          width: 900, height: 900, top: "-52%", left: "50%", marginLeft: -450,
+          background: "radial-gradient(circle, rgba(190,55,95,0.26) 0%, rgba(62,143,102,0.10) 45%, transparent 68%)",
+          filter: "blur(50px)",
+        }} />
 
-          <div className="relative">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium text-white mb-5"
-              style={{ background: "rgba(255,255,255,0.2)" }}>
-              <Sparkles size={12} strokeWidth={2} />
-              Free during beta
-            </div>
-            <h2 className="font-bold text-white leading-[1.1] tracking-tight mb-4"
-              style={{ fontSize: "clamp(32px, 5.5vw, 52px)" }}>
-              Your next close, but easier.
-            </h2>
-            <p className="text-base sm:text-lg text-white/85 max-w-xl mx-auto mb-8 leading-relaxed">
-              Connect QuickBooks in 60 seconds. Run your first reconciliation in 5 minutes.
-              No credit card, no contract, no kicking the tires for weeks.
-            </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-              <Link to="/sign-up"
-                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-bold transition-all hover:scale-[1.02]"
-                style={{ background: "white", color: "var(--green)" }}>
-                Start free <ArrowRight size={15} strokeWidth={2.2} />
-              </Link>
-              <Link to="/solutions"
-                className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold text-white transition-all hover:bg-white/10"
-                style={{ border: "1px solid rgba(255,255,255,0.4)" }}>
-                See the product tour
-              </Link>
-            </div>
-          </div>
+      <div className="relative max-w-3xl mx-auto text-center">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-6"
+          style={{
+            background: "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.16)",
+            color: "rgba(255,255,255,0.90)",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
+          }}>
+          <Sparkles size={12} strokeWidth={2} style={{ color: "var(--green-light)" }} />
+          Free during beta
+        </div>
+        <h2 className="font-bold tracking-tight"
+          style={{ fontSize: "clamp(34px, 5.5vw, 56px)", lineHeight: 1.05, letterSpacing: "-0.02em", color: "#FFFFFF" }}>
+          Your next close, but{" "}
+          <span style={{
+            background: "linear-gradient(135deg, #7BE3B2 0%, #4BA87B 100%)",
+            WebkitBackgroundClip: "text", backgroundClip: "text",
+            WebkitTextFillColor: "transparent", color: "transparent",
+          }}>easier.</span>
+        </h2>
+        <p className="mt-5 text-base sm:text-lg leading-relaxed max-w-xl mx-auto"
+          style={{ color: "rgba(255,255,255,0.66)" }}>
+          Connect QuickBooks in 60 seconds, run your first reconciliation in five minutes.
+          No credit card, no contract.
+        </p>
+        <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3">
+          <Link to="/sign-up"
+            className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold text-white transition-all hover:scale-[1.02] active:scale-[0.99]"
+            style={{
+              background: "linear-gradient(135deg, var(--green-light) 0%, var(--green) 100%)",
+              boxShadow: "0 16px 40px -12px rgba(91,176,137,0.5)",
+            }}>
+            Start free — no card required <ArrowRight size={15} strokeWidth={2.2} />
+          </Link>
+          <Link to="/solutions"
+            className="group inline-flex items-center gap-1.5 px-4 py-3.5 text-sm font-semibold transition-colors"
+            style={{ color: "rgba(255,255,255,0.82)" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#FFFFFF" }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.82)" }}>
+            See the product tour
+            <ArrowRight size={14} strokeWidth={2.2} className="transition-transform group-hover:translate-x-0.5" />
+          </Link>
         </div>
       </div>
     </section>
