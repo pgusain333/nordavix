@@ -897,9 +897,13 @@ function BentoTile({ Icon, title, blurb, size, children }: BentoProps) {
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
+      // Hover lift via framer (not a CSS hover:-translate) — framer owns this
+      // element's transform from the scroll-in animation, so a CSS transform
+      // would be overridden. Shadow stays CSS (no transform conflict).
+      whileHover={{ y: -4, transition: { duration: 0.2, ease: "easeOut" } }}
       viewport={{ once: true, margin: "-60px" }}
       transition={{ duration: 0.5, ease: "easeOut" }}
-      className={`rounded-2xl p-6 flex flex-col group transition-all duration-200 ease-out hover:-translate-y-1 hover:shadow-xl ${sizeClasses[size]}`}
+      className={`rounded-2xl p-6 flex flex-col group transition-shadow duration-200 ease-out hover:shadow-xl ${sizeClasses[size]}`}
       style={{
         background: "var(--bg)",
         border: "1px solid var(--border)",
@@ -1241,9 +1245,10 @@ function Personas() {
               key={role.title}
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
+              whileHover={{ y: -4, transition: { duration: 0.2, ease: "easeOut" } }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.08, duration: 0.5 }}
-              className="rounded-2xl p-7 relative overflow-hidden transition-all duration-200 ease-out hover:-translate-y-1 hover:shadow-xl"
+              className="rounded-2xl p-7 relative overflow-hidden transition-shadow duration-200 ease-out hover:shadow-xl"
               style={{
                 background: "var(--bg)",
                 border: "1px solid var(--border)",
