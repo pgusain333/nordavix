@@ -101,7 +101,11 @@ export function CommentThread({ entityType, entityId, link }: Props) {
     staleTime: 5 * 60_000,
   })
 
-  // Resolve every author + mentioned id to a display name in one batch.
+  // Resolve every author + mentioned id to a display name. Names come straight
+  // from the already-fetched workspace `members` (one warm, 5-min-cached call) —
+  // so there's NO second per-user Clerk round-trip on the hot path, which was
+  // the lag. Only ids missing from members (e.g. a teammate who has since left
+  // the workspace) fall back to the lookup endpoint, and only for those ids.
   const nameIds = useMemo(() => {
     const set = new Set<string>()
     for (const c of comments) {
@@ -110,7 +114,20 @@ export function CommentThread({ entityType, entityId, link }: Props) {
     }
     return Array.from(set)
   }, [comments])
-  const names = useUserNames(nameIds)
+  const memberNames = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const m of members) if (m.id) map[m.id] = m.display_name
+    return map
+  }, [members])
+  const missingIds = useMemo(
+    () => nameIds.filter((id) => !memberNames[id]),
+    [nameIds, memberNames],
+  )
+  const fallbackNames = useUserNames(missingIds)  // disabled (no request) when empty
+  const names = useMemo(
+    () => ({ ...fallbackNames, ...memberNames }),
+    [fallbackNames, memberNames],
+  )
 
   // Members that can actually be mentioned (have an internal id).
   const mentionable = useMemo(
@@ -128,12 +145,34 @@ export function CommentThread({ entityType, entityId, link }: Props) {
   const create = useMutation({
     mutationFn: (input: { body: string; mentionedUserIds: string[] }) =>
       commentsApi.create({ entityType, entityId, link, ...input }),
-    onSuccess: () => {
+    // Optimistic: the comment appears instantly (social-media feel). me.id lets
+    // its author name resolve immediately from members; the real row reconciles
+    // on settle. On failure we roll back and restore the composer text.
+    onMutate: async (input) => {
+      const key = ["comments", entityType, entityId]
+      await qc.cancelQueries({ queryKey: key })
+      const prev = qc.getQueryData<CommentItem[]>(key)
+      const optimistic: CommentItem = {
+        id: `tmp-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)}`,
+        entity_type: entityType,
+        entity_id: entityId,
+        author_user_id: me?.id ?? "",
+        body: input.body,
+        mentions: input.mentionedUserIds,
+        created_at: new Date().toISOString(),
+        deleted: false,
+      }
+      qc.setQueryData<CommentItem[]>(key, [...(prev ?? []), optimistic])
       setValue("")
       setPicked([])
       setMenuQuery(null)
-      qc.invalidateQueries({ queryKey: ["comments", entityType, entityId] })
+      return { prev }
     },
+    onError: (_e, input, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["comments", entityType, entityId], ctx.prev)
+      setValue(input.body)  // don't lose what they typed
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["comments", entityType, entityId] }),
   })
   const del = useMutation({
     mutationFn: (id: string) => commentsApi.remove(id),
