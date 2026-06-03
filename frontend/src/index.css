@@ -121,6 +121,12 @@
   .shadow-card-theme { box-shadow: var(--card-shadow); }
   .shadow-card-hover-theme { box-shadow: var(--card-shadow-hover); }
 
+  /* Hide the scrollbar chrome while keeping the element scrollable — used on
+     the left nav rail so it can scroll on short viewports without showing a
+     bar. */
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+
   .animation-delay-100  { animation-delay: 100ms; }
   .animation-delay-200  { animation-delay: 200ms; }
   .animation-delay-300  { animation-delay: 300ms; }

@@ -149,8 +149,10 @@ export function LeftNav({ onClose }: Props) {
       // a smooth expand/collapse. overflow-x-hidden stops labels from spilling
       // during the width animation.
       className={cn(
-        "flex h-screen shrink-0 flex-col overflow-y-auto overflow-x-hidden transition-[width] duration-200",
-        isCollapsed ? "w-[68px]" : "w-60",
+        // no-scrollbar: the rail can still scroll on short viewports, we just
+        // hide the scrollbar chrome for a cleaner look.
+        "no-scrollbar flex h-screen shrink-0 flex-col overflow-y-auto overflow-x-hidden transition-[width] duration-200",
+        isCollapsed ? "w-[76px]" : "w-72",
       )}
       style={{ background: "var(--nav-bg)", borderRight: "1px solid var(--nav-border)" }}
     >
