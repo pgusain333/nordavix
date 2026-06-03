@@ -61,7 +61,7 @@ export function AuthPage({ mode }: Props) {
   // form controls + social buttons.
   const appearance = useMemo(() => ({
     variables: {
-      colorPrimary:   "#16a34a",  // var(--green) hex equivalent
+      colorPrimary:   "#3E8F66",  // brand --green
       colorBackground: "transparent",
       borderRadius:    "8px",
       fontFamily:      "inherit",
@@ -107,9 +107,9 @@ export function AuthPage({ mode }: Props) {
           <div className="absolute -top-32 -left-32 w-[500px] h-[500px] rounded-full opacity-50 blur-3xl"
             style={{ background: "radial-gradient(circle, var(--green-subtle), transparent 70%)" }} />
           <div className="absolute -bottom-32 -right-32 w-[600px] h-[600px] rounded-full opacity-40 blur-3xl"
-            style={{ background: "radial-gradient(circle, #6366f150, transparent 70%)" }} />
+            style={{ background: "radial-gradient(circle, rgba(139,21,56,0.22), transparent 70%)" }} />
           <div className="absolute top-1/3 left-1/4 w-[300px] h-[300px] rounded-full opacity-30 blur-3xl"
-            style={{ background: "radial-gradient(circle, #f59e0b40, transparent 70%)" }} />
+            style={{ background: "radial-gradient(circle, rgba(123,201,161,0.22), transparent 70%)" }} />
         </div>
 
         {/* Faint grid pattern */}
@@ -141,7 +141,7 @@ export function AuthPage({ mode }: Props) {
           {/* Tagline + sub */}
           <div className="mt-16 max-w-md">
             <h1 className="text-4xl xl:text-5xl font-bold leading-tight" style={{ color: "var(--text)" }}>
-              Close the month in <span style={{ color: "var(--green)" }}>hours</span>,
+              Close the books in <span style={{ color: "var(--green)" }}>days</span>,
               not weeks.
             </h1>
             <p className="mt-4 text-base xl:text-lg leading-relaxed" style={{ color: "var(--text-2)" }}>
@@ -185,11 +185,12 @@ export function AuthPage({ mode }: Props) {
               <Quote size={20} strokeWidth={1.8} style={{ color: "var(--green)" }} className="shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm italic leading-relaxed max-w-md" style={{ color: "var(--text-2)" }}>
-                  "I used to spend nine days on month-end. With Nordavix I'm down to two,
-                  and the audit trail is cleaner than anything I had in Excel."
+                  "I built Nordavix after living through 100+ month-end closes — it's the
+                  close I always wished I'd had: faster, with an audit trail cleaner than
+                  any spreadsheet."
                 </p>
                 <p className="text-[11px] mt-2 font-semibold" style={{ color: "var(--text-muted)" }}>
-                  Senior Accountant, mid-market SaaS
+                  The Nordavix founder · CPA
                 </p>
               </div>
             </div>

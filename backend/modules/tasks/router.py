@@ -44,7 +44,7 @@ from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
 from models.account_review_status import AccountReviewStatus
 from models.closed_period import ClosedPeriod
-from models.qbo_connection import QboConnection
+from models.gl_balance_snapshot import GlBalanceSnapshot
 from models.schedule import (
     ScheduleAccrual,
     ScheduleFixedAsset,
@@ -219,25 +219,42 @@ async def _list_qbo_accounts(
     db: AsyncSession, tenant_id: uuid.UUID,
 ) -> dict[str, dict]:
     """
-    {qbo_id: {Name, AccountType, AcctNum}} for every active
-    balance-sheet account in QBO. Single /query call; empty dict when
-    QBO isn't connected.
+    {qbo_id: {Id, Name, AccountType, AcctNum}} for every account we've synced,
+    sourced from the persisted GL snapshots.
+
+    PERF: this used to make a live QuickBooks `/query` round-trip on every call
+    — a multi-second hit to Intuit on the request path, which made the tasks
+    list (and the dashboard that depends on it) "load for a while" before the
+    figures appeared. We already store every synced account's name/type/number
+    in gl_balance_snapshots, so we read from there instead (a fast DB query).
+    The snapshot universe is exactly the set of accounts that have recon data,
+    which is what tasks need; an account that exists in QBO but has never been
+    synced simply has no task yet (it gets one on its first sync). The SELECT is
+    tenant-auto-filtered; the explicit tenant_id keeps it unambiguous.
     """
-    conn = (await db.execute(
-        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
-        execution_options={"skip_tenant_filter": True},
-    )).scalar_one_or_none()
-    if conn is None:
-        return {}
+    # Only reconcilable balance-sheet account types become recon tasks. The
+    # snapshots also include income-statement accounts (persisted for the
+    # financial package), which must NOT be turned into recon tasks.
+    from modules.recons.overview import ACCOUNT_TYPE_GROUPS  # local: avoid cycle
 
-    try:
-        from modules.recons.overview import _list_balance_sheet_accounts
-        accts = await _list_balance_sheet_accounts(conn, db)
-    except Exception:
-        logger.exception("Could not list QBO accounts for tasks")
-        return {}
-
-    return {str(a.get("Id")): a for a in accts if a.get("Id")}
+    rows = list((await db.execute(
+        select(GlBalanceSnapshot)
+        .where(GlBalanceSnapshot.tenant_id == tenant_id)
+        .order_by(GlBalanceSnapshot.period_end.desc())
+    )).scalars().all())
+    out: dict[str, dict] = {}
+    for r in rows:
+        if r.account_type not in ACCOUNT_TYPE_GROUPS:
+            continue  # skip income-statement accounts
+        if r.qbo_account_id in out:
+            continue  # rows are newest-first → keep the most-recent name/type
+        out[r.qbo_account_id] = {
+            "Id":          r.qbo_account_id,
+            "Name":        r.account_name,
+            "AccountType": r.account_type,
+            "AcctNum":     r.account_number or "",
+        }
+    return out
 
 
 async def _enumerate_open_periods(

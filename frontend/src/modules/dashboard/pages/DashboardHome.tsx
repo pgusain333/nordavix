@@ -173,7 +173,7 @@ export function DashboardHome() {
     queryKey: ["period-tracker"],
     queryFn:  reconsApi.listPeriodTracker,
     enabled:  books?.seeded === true,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   })
 
   // Workspace members count
@@ -187,7 +187,7 @@ export function DashboardHome() {
   const { data: trialBalances, isError: tbErr, refetch: refetchTb } = useQuery({
     queryKey: ["flux-trial-balances"],
     queryFn:  fluxApi.listTrialBalances,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   })
 
   // TBs whose current period falls in the selected month — the "flux for
@@ -222,7 +222,7 @@ export function DashboardHome() {
     queryKey: ["tasks", "all-with-closed"],
     queryFn:  () => tasksApi.list(true),
     enabled:  books?.seeded === true,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   })
   // Schedule-task count for the SELECTED period — drives close progress.
   // Empty kinds are skipped server-side so the count auto-scales to

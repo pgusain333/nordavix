@@ -59,7 +59,10 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 60_000,
-      gcTime:    5 * 60_000,
+      gcTime:    30 * 60_000,         // keep data warm in memory for 30 min so
+                                      // returning to a page is instant — cached
+                                      // figures show immediately while a quiet
+                                      // background refetch updates them.
       placeholderData: keepPreviousData,
       retry: smartRetry,
       retryDelay: (attempt) => Math.min(800 * 2 ** attempt, 4000),
