@@ -168,7 +168,7 @@ export function LeftNav({ onClose }: Props) {
           aria-hidden
           className={cn(
             "hidden lg:block shrink-0 transition-[width] duration-200 ease-out",
-            pinnedCollapsed ? "w-[84px]" : "w-[376px]",
+            pinnedCollapsed ? "w-[84px]" : "w-[282px]",
           )}
         />
       )}
@@ -187,7 +187,7 @@ export function LeftNav({ onClose }: Props) {
         // holds the layout width). Mobile drawer (onClose) stays a normal
         // full-width panel inside its own fixed parent.
         onClose ? "w-[376px]" : "fixed inset-y-0 left-0 z-40",
-        !onClose && (isCollapsed ? "w-[84px]" : "w-[376px]"),
+        !onClose && (isCollapsed ? "w-[84px]" : "w-[282px]"),
         // Lift the rail with a shadow only while it's peeking open over content.
         !onClose && hovered && pinnedCollapsed && "shadow-2xl",
       )}
@@ -322,12 +322,10 @@ export function LeftNav({ onClose }: Props) {
               onFocus={() => prefetchRoute(item.path)}
               title={isCollapsed ? item.label : undefined}
               className={({ isActive }) =>
-                cn("flex items-center rounded-md text-sm transition-all duration-200 ease-out",
+                cn("flex items-center rounded-md text-sm transition-colors duration-150",
                   isCollapsed ? "relative justify-center h-10" : "gap-2.5 px-3 py-2",
-                  // Hover-slide: expanded items glide right with a soft green
-                  // fill; collapsed icons just get the fill (no slide).
-                  !isCollapsed && "hover:translate-x-1.5 hover:bg-[var(--nav-hover)]",
-                  isCollapsed && "hover:bg-[var(--nav-hover)]",
+                  // Hover = simple row highlight only — no slide / motion.
+                  "hover:bg-[var(--nav-hover)]",
                   isActive ? "font-medium" : "")
               }
               style={({ isActive }) => isActive
@@ -502,9 +500,8 @@ function UtilLink({ to, icon: Icon, label, title, isCollapsed, onClose }: {
       title={isCollapsed ? label : title}
       className={({ isActive }) =>
         cn(
-          "w-full inline-flex items-center rounded-md text-sm font-medium transition-all duration-200 ease-out",
+          "w-full inline-flex items-center rounded-md text-sm font-medium transition-colors duration-150",
           isCollapsed ? "justify-center h-10" : "gap-2.5 px-3 py-2",
-          !isCollapsed && "hover:translate-x-1",
           isActive ? "" : "hover:bg-[var(--nav-hover)]",
         )
       }
