@@ -152,7 +152,7 @@ export function LeftNav({ onClose }: Props) {
         // no-scrollbar: the rail can still scroll on short viewports, we just
         // hide the scrollbar chrome for a cleaner look.
         "no-scrollbar flex h-screen shrink-0 flex-col overflow-y-auto overflow-x-hidden transition-[width] duration-200",
-        isCollapsed ? "w-[76px]" : "w-72",
+        isCollapsed ? "w-[84px]" : "w-[376px]",
       )}
       style={{ background: "var(--nav-bg)", borderRight: "1px solid var(--nav-border)" }}
     >
@@ -254,7 +254,7 @@ export function LeftNav({ onClose }: Props) {
                   style={{ color: "var(--nav-text)" }}
                   title={`${item.label} (coming soon)`}
                 >
-                  <Icon size={20} strokeWidth={1.6} />
+                  <Icon size={23} strokeWidth={1.6} />
                 </div>
               )
             }
@@ -265,7 +265,7 @@ export function LeftNav({ onClose }: Props) {
                 style={{ color: "var(--nav-text)" }}
               >
                 <span className="flex items-center gap-2.5">
-                  <Icon size={22} strokeWidth={1.6} className="shrink-0" />
+                  <Icon size={24} strokeWidth={1.6} className="shrink-0" />
                   {item.label}
                 </span>
                 <Badge variant="soon">soon</Badge>
@@ -308,7 +308,7 @@ export function LeftNav({ onClose }: Props) {
                 if (isCollapsed) {
                   return (
                     <>
-                      <Icon size={20} strokeWidth={1.8}
+                      <Icon size={23} strokeWidth={1.8}
                         style={{ color: isActive ? "var(--green)" : "var(--nav-text)" }} />
                       {taskBadge && (
                         <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center min-w-[15px] h-[15px] rounded-full px-1 text-[9px] font-bold tabular-nums"
@@ -322,7 +322,7 @@ export function LeftNav({ onClose }: Props) {
                 }
                 return (
                   <>
-                    <Icon size={22} strokeWidth={1.6} className="shrink-0"
+                    <Icon size={24} strokeWidth={1.6} className="shrink-0"
                       style={{ color: isActive ? "var(--green)" : "var(--nav-text)" }} />
                     <span className="truncate flex-1">{item.label}</span>
                     {taskBadge && (
@@ -470,7 +470,7 @@ function UtilLink({ to, icon: Icon, label, title, isCollapsed, onClose }: {
         background: isActive ? "var(--green-subtle)" : "transparent",
       })}
     >
-      <Icon size={isCollapsed ? 18 : 16} strokeWidth={1.8} className="shrink-0" />
+      <Icon size={isCollapsed ? 20 : 18} strokeWidth={1.8} className="shrink-0" />
       {!isCollapsed && <span className="flex-1 text-left">{label}</span>}
     </NavLink>
   )

@@ -260,180 +260,150 @@ function Hero() {
   const { isSignedIn } = useUser()
   return (
     <section
-      className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 px-6 overflow-hidden"
-      // Refined burgundy. A single smooth diagonal gradient carries the depth;
-      // one soft light source + a quiet vignette do the rest. Deliberately
-      // restrained — no grid, grain, or competing orbs — so the typography and
-      // the live product card carry the page (premium through restraint).
-      style={{ background: "linear-gradient(150deg, #6E1029 0%, #8B1538 48%, #5C0E22 100%)" }}>
+      className="relative pt-32 pb-24 sm:pt-40 sm:pb-28 px-6 overflow-hidden"
+      // Linear-grade: a deep, near-black burgundy with a single soft light from
+      // above. Calm and minimal — the typography + one product shot carry it.
+      style={{ background: "linear-gradient(180deg, #1E0813 0%, #160610 58%, #110509 100%)" }}>
 
-      {/* Soft light behind the product card (right) — slowly breathes so the
-          field feels alive without being busy. */}
+      {/* The one light source — a large, soft burgundy/rose glow, high-center.
+          A gentle opacity breathe keeps it alive without drawing attention. */}
       <motion.div
+        aria-hidden="true"
+        className="absolute pointer-events-none rounded-full"
+        style={{
+          width: 1100, height: 1100,
+          top: "-44%", left: "50%", marginLeft: -550,
+          background: "radial-gradient(circle, rgba(190,55,95,0.30) 0%, rgba(139,21,56,0.16) 38%, transparent 68%)",
+          filter: "blur(40px)",
+        }}
+        animate={{ opacity: [0.85, 1, 0.85] }}
+        transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
+      />
+      {/* A whisper of brand green, low, for warmth. */}
+      <div
         aria-hidden="true"
         className="absolute pointer-events-none rounded-full"
         style={{
           width: 760, height: 760,
-          top: "-16%", right: "-12%",
-          background: "radial-gradient(circle, rgba(236,126,163,0.34) 0%, rgba(62,143,102,0.12) 48%, transparent 70%)",
+          bottom: "-34%", left: "50%", marginLeft: -380,
+          background: "radial-gradient(circle, rgba(62,143,102,0.12), transparent 70%)",
           filter: "blur(80px)",
         }}
-        animate={{ scale: [1, 1.06, 1] }}
-        transition={{ duration: 16, repeat: Infinity, ease: "easeInOut" }}
-      />
-      {/* Faint warm light low-left, behind the headline. */}
-      <motion.div
-        aria-hidden="true"
-        className="absolute pointer-events-none rounded-full"
-        style={{
-          width: 560, height: 560,
-          bottom: "-26%", left: "-14%",
-          background: "radial-gradient(circle, rgba(240,150,182,0.16), transparent 70%)",
-          filter: "blur(70px)",
-        }}
-        animate={{ scale: [1, 1.08, 1] }}
-        transition={{ duration: 19, repeat: Infinity, ease: "easeInOut" }}
       />
 
-      {/* Top fade keeps the white navbar crisp; vignette adds quiet depth. */}
+      {/* Top fade keeps the white navbar crisp against the lit hero. */}
       <div
         aria-hidden="true"
-        className="absolute inset-x-0 top-0 h-32 pointer-events-none"
-        style={{ background: "linear-gradient(180deg, rgba(18,2,9,0.40), transparent)" }}
-      />
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 pointer-events-none"
-        style={{ background: "radial-gradient(ellipse 95% 85% at 50% 45%, transparent 58%, rgba(0,0,0,0.30) 100%)" }}
+        className="absolute inset-x-0 top-0 h-28 pointer-events-none"
+        style={{ background: "linear-gradient(180deg, rgba(8,2,5,0.55), transparent)" }}
       />
 
-      <div className="max-w-6xl mx-auto relative">
-        <div className="grid lg:grid-cols-2 gap-y-12 gap-x-10 lg:gap-x-12 items-center">
-          {/* ── Left: the message ── */}
-          <div className="text-center lg:text-left">
-            <motion.a
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              href="#features"
-              className="group inline-flex items-center gap-2 rounded-full pl-1 pr-3 py-1 mb-7 text-xs font-medium transition-all hover:scale-[1.02]"
-              style={{
-                background: "rgba(255,255,255,0.08)",
-                border: "1px solid rgba(255,255,255,0.18)",
-                color: "rgba(255,255,255,0.92)",
-                backdropFilter: "blur(8px)",
-                WebkitBackdropFilter: "blur(8px)",
-              }}>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white"
-                style={{ background: "var(--green)", boxShadow: "0 2px 12px rgba(91,176,137,0.55)" }}>
-                New
-              </span>
-              Agentic Mode is live
-              <ChevronRight size={12} strokeWidth={2} className="transition-transform group-hover:translate-x-0.5" />
-            </motion.a>
+      <div className="max-w-3xl mx-auto relative text-center">
+        {/* Eyebrow */}
+        <motion.a
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          href="#features"
+          className="group inline-flex items-center gap-2 rounded-full pl-1 pr-3 py-1 mb-8 text-xs font-medium transition-all hover:scale-[1.02]"
+          style={{
+            background: "rgba(255,255,255,0.06)",
+            border: "1px solid rgba(255,255,255,0.14)",
+            color: "rgba(255,255,255,0.88)",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
+          }}>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white"
+            style={{ background: "var(--green)" }}>
+            New
+          </span>
+          Agentic Mode is live
+          <ChevronRight size={12} strokeWidth={2} className="transition-transform group-hover:translate-x-0.5" />
+        </motion.a>
 
-            <motion.h1
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.05 }}
-              className="font-bold tracking-tight"
-              style={{
-                fontSize: "clamp(38px, 5.4vw, 60px)",
-                lineHeight: 1.05,
-                letterSpacing: "-0.02em",
-                color: "#FFFFFF",
-                textShadow: "0 2px 24px rgba(0,0,0,0.40), 0 1px 2px rgba(0,0,0,0.25)",
-              }}>
-              Close the books in{" "}
-              <span style={{
-                background: "linear-gradient(135deg, #6FE0AC 0%, #3E8F66 100%)",
-                WebkitBackgroundClip: "text",
-                backgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                color: "transparent",
-              }}>days, not weeks.</span>
-            </motion.h1>
+        {/* Headline — big, tight, monochrome with a green accent. */}
+        <motion.h1
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.05 }}
+          className="font-bold mx-auto"
+          style={{
+            fontSize: "clamp(44px, 7.2vw, 82px)",
+            lineHeight: 1.04,
+            letterSpacing: "-0.03em",
+            color: "#FFFFFF",
+          }}>
+          Close the books in{" "}
+          <span style={{
+            background: "linear-gradient(135deg, #7BE3B2 0%, #4BA87B 100%)",
+            WebkitBackgroundClip: "text",
+            backgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            color: "transparent",
+          }}>days, not weeks.</span>
+        </motion.h1>
 
-            <motion.p
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.15 }}
-              className="mt-6 text-base sm:text-lg leading-relaxed max-w-xl mx-auto lg:mx-0"
-              style={{
-                color: "rgba(255,255,255,0.88)",
-                textShadow: "0 1px 10px rgba(0,0,0,0.28)",
-              }}>
-              The AI-native close platform for controllers and CPA firms. Reconcile every
-              balance-sheet account, explain every material variance, and lock the period —
-              without the spreadsheet swivel-chair.
-            </motion.p>
+        {/* Subhead — one calm line. */}
+        <motion.p
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.15 }}
+          className="mt-6 text-base sm:text-lg leading-relaxed max-w-xl mx-auto"
+          style={{ color: "rgba(255,255,255,0.66)" }}>
+          The AI-native close platform for controllers and CPA firms — reconcile every
+          account, explain every variance, and lock the period.
+        </motion.p>
 
-            {/* Signed-in visitors get a personalized launchpad; everyone else
-                gets the marketing dual CTA. */}
-            {isSignedIn ? (
-              <div className="mt-8 flex justify-center lg:justify-start">
-                <LoggedInLaunchpad />
-              </div>
-            ) : (
-              <motion.div
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.25 }}
-                className="mt-8 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
-                <Link to="/sign-up"
-                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold text-white transition-all hover:scale-[1.02] active:scale-[0.99]"
-                  style={{
-                    background: "linear-gradient(135deg, var(--green-light) 0%, var(--green) 100%)",
-                    boxShadow: "0 16px 40px -10px rgba(91,176,137,0.55), inset 0 1px 0 rgba(255,255,255,0.30)",
-                  }}>
-                  Start free — no card required <ArrowRight size={15} strokeWidth={2.2} />
-                </Link>
-                <Link to="/solutions"
-                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold transition-all"
-                  style={{
-                    background: "rgba(255,255,255,0.07)",
-                    border: "1px solid rgba(255,255,255,0.30)",
-                    color: "#FFFFFF",
-                    backdropFilter: "blur(8px)",
-                    WebkitBackdropFilter: "blur(8px)",
-                  }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.14)" }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.07)" }}>
-                  Take the product tour
-                </Link>
-              </motion.div>
-            )}
-
-            {/* Credential row */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.4 }}
-              className="mt-8 flex flex-wrap items-center justify-center lg:justify-start gap-x-5 gap-y-2 text-xs"
-              style={{
-                color: "rgba(255,255,255,0.78)",
-                textShadow: "0 1px 6px rgba(0,0,0,0.25)",
-              }}>
-              <span className="inline-flex items-center gap-1.5">
-                <UserCheck size={13} strokeWidth={2} style={{ color: "#7BC9A1" }} />
-                Built by a CPA, for accountants
-              </span>
-              <span aria-hidden="true" className="opacity-30">·</span>
-              <span className="inline-flex items-center gap-1.5">
-                <Plug size={13} strokeWidth={2} style={{ color: "#7BC9A1" }} />
-                Works on top of QuickBooks
-              </span>
-              <span aria-hidden="true" className="opacity-30">·</span>
-              <Link to="/security" className="inline-flex items-center gap-1.5 transition-colors hover:text-white">
-                <ShieldCheck size={13} strokeWidth={2} style={{ color: "#7BC9A1" }} />
-                Bank-grade security
-              </Link>
-            </motion.div>
+        {/* Signed-in launchpad; otherwise a primary CTA + a ghost secondary. */}
+        {isSignedIn ? (
+          <div className="mt-9 flex justify-center">
+            <LoggedInLaunchpad />
           </div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.25 }}
+            className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Link to="/sign-up"
+              className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-sm font-semibold text-white transition-all hover:scale-[1.02] active:scale-[0.99]"
+              style={{
+                background: "linear-gradient(135deg, var(--green-light) 0%, var(--green) 100%)",
+                boxShadow: "0 16px 40px -12px rgba(91,176,137,0.5)",
+              }}>
+              Start free — no card required <ArrowRight size={15} strokeWidth={2.2} />
+            </Link>
+            <Link to="/solutions"
+              className="group inline-flex items-center gap-1.5 px-4 py-3.5 text-sm font-semibold transition-colors"
+              style={{ color: "rgba(255,255,255,0.82)" }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#FFFFFF" }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.82)" }}>
+              Take the tour
+              <ArrowRight size={14} strokeWidth={2.2} className="transition-transform group-hover:translate-x-0.5" />
+            </Link>
+          </motion.div>
+        )}
 
-          {/* ── Right: the live product card ── */}
-          <HeroProductCard />
-        </div>
+        {/* Minimal trust line. */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.4 }}
+          className="mt-7 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs"
+          style={{ color: "rgba(255,255,255,0.5)" }}>
+          <span className="inline-flex items-center gap-1.5"><UserCheck size={12} strokeWidth={2} /> Built by a CPA</span>
+          <span aria-hidden="true" className="opacity-40">·</span>
+          <span className="inline-flex items-center gap-1.5"><Plug size={12} strokeWidth={2} /> Works on QuickBooks</span>
+          <span aria-hidden="true" className="opacity-40">·</span>
+          <Link to="/security" className="inline-flex items-center gap-1.5 transition-colors hover:text-white">
+            <ShieldCheck size={12} strokeWidth={2} /> Bank-grade security
+          </Link>
+        </motion.div>
+      </div>
+
+      {/* Product shot — centered, floating in light below the fold-line. */}
+      <div className="relative mt-16 sm:mt-20 max-w-2xl mx-auto">
+        <HeroProductCard />
       </div>
     </section>
   )
@@ -505,7 +475,7 @@ function HeroProductCard() {
       initial={{ opacity: 0, y: 30 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.7, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      className="relative w-full max-w-md mx-auto lg:max-w-none lg:ml-auto">
+      className="relative w-full mx-auto">
       {/* Soft, calm glow behind the card — one source, no busy rotation. */}
       <div
         aria-hidden="true"
