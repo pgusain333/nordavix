@@ -142,6 +142,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
         # Bootstrap queries use skip_tenant_filter because current_tenant_id is not set yet.
         skip = {"skip_tenant_filter": True}
         async with AsyncSessionLocal() as session:
+            # Track whether this request actually creates or heals a row. The
+            # vast majority of requests touch nothing — for those we skip the
+            # commit + two refreshes entirely (3 DB round-trips saved on EVERY
+            # authenticated request).
+            dirty = False
             tenant_result = await session.execute(
                 select(Tenant).where(Tenant.clerk_org_id == effective_org_id),
                 execution_options=skip,
@@ -176,6 +181,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 )
                 session.add(tenant)
                 await session.flush()
+                dirty = True
 
             # Look up the User row PER (clerk_user_id, tenant_id), not by
             # clerk_user_id alone.
@@ -258,6 +264,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     role=role,
                 )
                 session.add(user)
+                dirty = True
 
             # Heal legacy role values on every request — covers the case
             # where migration 011 hasn't run for an old workspace yet.
@@ -266,6 +273,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
             # endpoint session causes "detached instance" errors.
             if user.role in (None, "", "member"):
                 user.role = "admin"
+                dirty = True
 
             # Heal empty email on the signed-in user (rows created
             # before middleware did the Clerk fallback above). Cheap:
@@ -277,13 +285,23 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     cu = await get_clerk_user(user.clerk_user_id)
                     if cu and cu.get("email"):
                         user.email = cu["email"]
+                        dirty = True
                 except Exception:
                     pass
 
-            await session.commit()
-            # Refresh to get server-side timestamps after commit
-            await session.refresh(tenant)
-            await session.refresh(user)
+            if dirty:
+                await session.commit()
+                # Refresh to pull server-side timestamps onto the new/healed rows.
+                await session.refresh(tenant)
+                await session.refresh(user)
+            else:
+                # Steady state — nothing was created or healed, so there is
+                # nothing to persist. Skip the commit + two refreshes (3 DB
+                # round-trips on EVERY authenticated request). expunge_all
+                # detaches the already-loaded rows in memory (no round-trip) so
+                # request.state can still read their columns after the session
+                # closes — exactly as the committed path does.
+                session.expunge_all()
 
         # Set the ContextVar — all ORM queries from here forward are tenant-scoped.
         current_tenant_id.set(tenant.id)
