@@ -198,7 +198,7 @@ export function InsightsPage() {
 
       {pending && data && <JumpNav data={data} />}
 
-      <div className="flex-1 px-4 sm:px-8 py-6 max-w-7xl w-full mx-auto">
+      <div className="flex-1 px-4 sm:px-8 py-6 w-full">
         {/* Empty state — never auto-loaded */}
         {!pending && (
           <EmptyState onGenerate={generate} />
@@ -408,7 +408,7 @@ function Header({
   return (
     <div className="px-4 sm:px-8 py-5 sm:py-6 shrink-0"
       style={{ borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
-      <div className="max-w-7xl mx-auto">
+      <div className="w-full">
         <div className="flex items-start gap-3 flex-wrap">
           <div className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
             style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
@@ -644,7 +644,7 @@ function JumpNav({ data }: { data: InsightsOverview }) {
         background: "color-mix(in oklab, var(--bg) 92%, transparent)",
         borderBottom: "1px solid var(--border)",
       }}>
-      <div className="max-w-7xl mx-auto flex items-center gap-1.5 overflow-x-auto"
+      <div className="w-full flex items-center gap-1.5 overflow-x-auto"
         style={{ scrollbarWidth: "none" }}>
         {SECTIONS.map((s) => {
           const Icon = s.icon

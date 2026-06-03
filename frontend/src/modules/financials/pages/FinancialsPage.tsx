@@ -245,7 +245,7 @@ export function FinancialsPage() {
           stacking context that lands under the sibling tab bar. */}
       <motion.div
         initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-        className="px-4 sm:px-8 pt-6 pb-4 relative z-30"
+        className="px-4 sm:px-8 pt-4 pb-3 relative z-30"
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
@@ -260,11 +260,9 @@ export function FinancialsPage() {
             }}>
               Financial Package
             </h1>
-            <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              Audit-ready Income Statement, Balance Sheet, and Statement of Cash Flows.
-              {" "}<b>Nordavix synced</b> source builds from GL snapshots captured during
-              reconciliation work — works offline, respects manual overrides.
-              {" "}<b>QuickBooks live</b> calls QBO reports directly. Cash Flow always uses QBO.
+            <p className="text-xs sm:text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+              Audit-ready Income Statement, Balance Sheet, and Statement of Cash Flows —
+              from your synced books or QuickBooks live.
             </p>
           </div>
           <div className="flex items-end gap-2 flex-wrap">
