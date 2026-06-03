@@ -97,6 +97,7 @@ export function ConnectionsPage() {
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
       >
         <h1
+          className="lg:hidden"
           style={{
             fontSize: "clamp(22px, 5.5vw, 28px)",
             fontWeight: 700,

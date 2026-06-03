@@ -28,7 +28,7 @@ export function HelpPage() {
         </button>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 lg:hidden">
               <BookOpen size={20} strokeWidth={1.8} style={{ color: "var(--green)" }} />
               <h1 style={{
                 fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 700,

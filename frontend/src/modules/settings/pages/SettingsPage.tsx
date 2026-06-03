@@ -113,7 +113,7 @@ export function SettingsPage() {
       <div className="px-4 sm:px-8 py-5 sm:py-6 shrink-0"
         style={{ borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
         <div className="max-w-6xl mx-auto">
-          <h1 className="text-lg sm:text-xl font-bold text-theme leading-tight">Settings</h1>
+          <h1 className="text-lg sm:text-xl font-bold text-theme leading-tight lg:hidden">Settings</h1>
           <p className="text-xs sm:text-sm mt-1" style={{ color: "var(--text-muted)" }}>
             Manage your company profile, account, preferences, and exports.
           </p>

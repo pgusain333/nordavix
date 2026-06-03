@@ -167,7 +167,7 @@ export function IntercompanyPage() {
               style={{ color: "var(--text-muted)" }}>
               <ArrowLeft size={12} strokeWidth={2} /> Back to dashboard
             </button>
-            <h1 style={{
+            <h1 className="lg:hidden" style={{
               fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 700,
               letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
             }}>

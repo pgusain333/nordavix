@@ -129,7 +129,7 @@ export function TeamPage() {
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
       <div className="px-4 sm:px-8 pt-6 pb-4"
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-        <h1 style={{
+        <h1 className="lg:hidden" style={{
           fontSize: "clamp(22px, 5vw, 28px)", fontWeight: 700, lineHeight: 1.2,
           letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
         }}>
