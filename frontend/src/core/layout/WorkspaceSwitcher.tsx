@@ -21,9 +21,12 @@ interface Props {
   /** Called after a successful switch so the LeftNav can close its
    * mobile slide-out drawer. Optional. */
   onAfterSwitch?: () => void
+  /** "menu" = full-width "Switch workspace" trigger (nav). "breadcrumb" =
+   * shows the active company name + chevron, for the top-bar breadcrumb. */
+  variant?: "menu" | "breadcrumb"
 }
 
-export function WorkspaceSwitcher({ onAfterSwitch }: Props) {
+export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
   const navigate = useNavigate()
   const { organization } = useOrganization()
   const { session } = useSession()
@@ -80,25 +83,42 @@ export function WorkspaceSwitcher({ onAfterSwitch }: Props) {
 
   return (
     <div className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full inline-flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors hover:bg-[var(--surface-2)]"
-        style={{ color: "var(--text-muted)" }}
-        title={`Switch workspace · ${otherCount} other${otherCount === 1 ? "" : "s"}`}
-      >
-        <span className="inline-flex items-center gap-1.5 min-w-0">
-          <Building2 size={11} strokeWidth={1.8} className="shrink-0" />
-          <span className="truncate">Switch workspace</span>
-        </span>
-        <ChevronDown
-          size={11}
-          strokeWidth={1.8}
-          className="shrink-0 transition-transform"
-          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
-        />
-      </button>
+      {variant === "breadcrumb" ? (
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="inline-flex items-center gap-1.5 min-w-0 rounded-md px-1.5 py-1 transition-colors hover:bg-[var(--surface-2)]"
+          title={`Switch workspace · ${otherCount} other${otherCount === 1 ? "" : "s"}`}
+        >
+          <Building2 size={15} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+          <span className="text-sm font-semibold truncate max-w-[200px]" style={{ color: "var(--text)" }}>
+            {organization?.name ?? "Workspace"}
+          </span>
+          <ChevronDown size={13} strokeWidth={1.8} className="shrink-0 transition-transform"
+            style={{ color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "rotate(0deg)" }} />
+        </button>
+      ) : (
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="w-full inline-flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors hover:bg-[var(--surface-2)]"
+          style={{ color: "var(--text-muted)" }}
+          title={`Switch workspace · ${otherCount} other${otherCount === 1 ? "" : "s"}`}
+        >
+          <span className="inline-flex items-center gap-1.5 min-w-0">
+            <Building2 size={11} strokeWidth={1.8} className="shrink-0" />
+            <span className="truncate">Switch workspace</span>
+          </span>
+          <ChevronDown
+            size={11}
+            strokeWidth={1.8}
+            className="shrink-0 transition-transform"
+            style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
+          />
+        </button>
+      )}
 
       <AnimatePresence>
         {open && (
@@ -108,7 +128,7 @@ export function WorkspaceSwitcher({ onAfterSwitch }: Props) {
             animate={{ opacity: 1, y: 0,  scale: 1 }}
             exit={{ opacity: 0, y: -4, scale: 0.97 }}
             transition={{ duration: 0.12, ease: "easeOut" }}
-            className="absolute left-0 right-0 mt-1 z-40 rounded-lg overflow-hidden"
+            className={`absolute mt-1 rounded-lg overflow-hidden ${variant === "breadcrumb" ? "left-0 w-64 z-50" : "left-0 right-0 z-40"}`}
             style={{
               background: "var(--surface)",
               border: "1px solid var(--border-strong)",

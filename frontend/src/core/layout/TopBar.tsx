@@ -8,12 +8,14 @@
  * (search + bell) and the nav drawer keeps the account block, so these
  * controls never double-render on mobile.
  */
+import { useEffect, useState } from "react"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Search, Building2, ChevronRight } from "lucide-react"
+import { Search, ChevronRight, HelpCircle } from "lucide-react"
 import { workspaceApi } from "@/modules/workspace/api"
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
+import { WorkspaceSwitcher } from "@/core/layout/WorkspaceSwitcher"
 import { CMDK_EVENT } from "@/core/ui/CommandPalette"
 
 // Route → page title. Longest/most-specific paths first; "/app" (Dashboard)
@@ -70,25 +72,34 @@ export function TopBar() {
 
   const name = user?.fullName ?? user?.primaryEmailAddress?.emailAddress ?? "Account"
 
+  // Subtle shadow under the bar once page content scrolls beneath it. Capture
+  // phase catches scrolls inside nested page containers; the height filter
+  // ignores small inner scrollers (tables, drawers) so only the main content
+  // area toggles it.
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    const onScroll = (e: Event) => {
+      const t = e.target as HTMLElement | null
+      if (!t || typeof t.scrollTop !== "number" || t.clientHeight < 240) return
+      setScrolled(t.scrollTop > 8)
+    }
+    document.addEventListener("scroll", onScroll, true)
+    return () => document.removeEventListener("scroll", onScroll, true)
+  }, [])
+
   return (
     <div
-      className="hidden lg:flex shrink-0 h-14 items-center gap-3 px-6"
-      style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
+      className="hidden lg:flex shrink-0 h-14 items-center gap-3 px-6 relative z-20 transition-shadow duration-200"
+      style={{
+        background: "var(--surface)",
+        borderBottom: "1px solid var(--border)",
+        boxShadow: scrolled ? "0 6px 16px -10px rgba(0,0,0,0.28)" : "none",
+      }}
     >
       {/* Left — company › page context */}
       <div className="flex-1 flex items-center gap-2 min-w-0">
-        {organization && (
-          <button
-            onClick={() => navigate("/app")}
-            className="inline-flex items-center gap-1.5 min-w-0 transition-opacity hover:opacity-80"
-            title={`${organization.name} — go to dashboard`}
-          >
-            <Building2 size={15} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
-            <span className="text-sm font-semibold truncate max-w-[200px]" style={{ color: "var(--text)" }}>
-              {organization.name}
-            </span>
-          </button>
-        )}
+        {/* Active company — click to switch workspaces */}
+        <WorkspaceSwitcher variant="breadcrumb" />
         {pageTitle && (
           <>
             <ChevronRight size={14} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
@@ -126,8 +137,16 @@ export function TopBar() {
           style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>⌘K</kbd>
       </button>
 
-      {/* Right — bell · divider · user */}
-      <div className="flex-1 flex items-center justify-end gap-2.5">
+      {/* Right — help · bell · divider · user */}
+      <div className="flex-1 flex items-center justify-end gap-2">
+        <button
+          onClick={() => navigate("/app/help")}
+          className="flex items-center justify-center h-9 w-9 rounded-md transition-colors hover:bg-[var(--surface-2)]"
+          title="Help & guide"
+          aria-label="Help"
+        >
+          <HelpCircle size={18} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+        </button>
         <NotificationBell className="h-9 w-9" />
 
         <div className="h-6 w-px" style={{ background: "var(--border)" }} aria-hidden />
