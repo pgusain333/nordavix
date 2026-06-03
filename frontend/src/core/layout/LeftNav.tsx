@@ -107,7 +107,23 @@ export function LeftNav({ onClose }: Props) {
     if (typeof window === "undefined") return true
     return localStorage.getItem(COLLAPSE_KEY) !== "0"
   })
-  const isCollapsed = collapsed && !onClose
+  // Peek-on-hover: when the rail is collapsed, hovering it slides the full
+  // sidebar open — floating OVER the page (no content reflow) — and moving
+  // away collapses it back. A short close delay avoids flicker at the edge.
+  const [hovered, setHovered] = useState(false)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function onRailEnter() {
+    if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null }
+    setHovered(true)
+  }
+  function onRailLeave() {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setHovered(false), 140)
+  }
+  useEffect(() => () => { if (hoverTimer.current) clearTimeout(hoverTimer.current) }, [])
+
+  const pinnedCollapsed = collapsed && !onClose    // the user's persisted desktop choice
+  const isCollapsed = pinnedCollapsed && !hovered  // whether it's visually icon-only right now
   function toggleCollapsed() {
     setCollapsed((c) => {
       const next = !c
@@ -143,7 +159,22 @@ export function LeftNav({ onClose }: Props) {
   } as const)[me.role as "admin" | "reviewer" | "preparer"] : null
 
   return (
+    <>
+      {/* Desktop spacer — reserves the *pinned* width in the flex row so the
+          rail's hover-peek floats OVER the page instead of reflowing it.
+          (Not rendered in the mobile drawer, which is full-width already.) */}
+      {!onClose && (
+        <div
+          aria-hidden
+          className={cn(
+            "hidden lg:block shrink-0 transition-[width] duration-200 ease-out",
+            pinnedCollapsed ? "w-[84px]" : "w-[376px]",
+          )}
+        />
+      )}
     <aside
+      onMouseEnter={onClose ? undefined : onRailEnter}
+      onMouseLeave={onClose ? undefined : onRailLeave}
       // h-screen + overflow-y-auto on the aside itself so short mobile
       // viewports can scroll to the account section. transition-[width] gives
       // a smooth expand/collapse. overflow-x-hidden stops labels from spilling
@@ -151,8 +182,14 @@ export function LeftNav({ onClose }: Props) {
       className={cn(
         // no-scrollbar: the rail can still scroll on short viewports, we just
         // hide the scrollbar chrome for a cleaner look.
-        "no-scrollbar flex h-screen shrink-0 flex-col overflow-y-auto overflow-x-hidden transition-[width] duration-200",
-        isCollapsed ? "w-[84px]" : "w-[376px]",
+        "no-scrollbar flex h-screen flex-col overflow-y-auto overflow-x-hidden transition-[width] duration-200 ease-out",
+        // Desktop: fixed so a hover-peek floats over content (the spacer above
+        // holds the layout width). Mobile drawer (onClose) stays a normal
+        // full-width panel inside its own fixed parent.
+        onClose ? "w-[376px]" : "fixed inset-y-0 left-0 z-40",
+        !onClose && (isCollapsed ? "w-[84px]" : "w-[376px]"),
+        // Lift the rail with a shadow only while it's peeking open over content.
+        !onClose && hovered && pinnedCollapsed && "shadow-2xl",
       )}
       style={{ background: "var(--nav-bg)", borderRight: "1px solid var(--nav-border)" }}
     >
@@ -188,10 +225,10 @@ export function LeftNav({ onClose }: Props) {
             style={{ color: "var(--text-muted)" }}
             onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-2)"; e.currentTarget.style.color = "var(--text)" }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-muted)" }}
-            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Keep sidebar open" : "Collapse sidebar"}
+            aria-label={collapsed ? "Keep sidebar open" : "Collapse sidebar"}
           >
-            {isCollapsed ? <PanelLeft size={16} strokeWidth={1.8} /> : <PanelLeftClose size={16} strokeWidth={1.8} />}
+            {collapsed ? <PanelLeft size={16} strokeWidth={1.8} /> : <PanelLeftClose size={16} strokeWidth={1.8} />}
           </button>
         )}
 
@@ -444,6 +481,7 @@ export function LeftNav({ onClose }: Props) {
         </div>
       </div>
     </aside>
+    </>
   )
 }
 
