@@ -155,20 +155,43 @@ function Navbar() {
   )
 }
 
-// ─── Hero (fixed arrow + rotating phrase) ───────────────────────────────────
+// ─── Hero (copy left · fixed-arrow rotating list right) ─────────────────────
 const ROTATION = [
-  "reconcile every account.",
-  "explain every variance.",
-  "forecast your cash runway.",
-  "pinpoint the break-even.",
-  "build the financial package.",
-  "write the executive report.",
-  "lock the period — defensibly.",
+  "Reconcile every account",
+  "Explain every variance",
+  "Forecast your cash runway",
+  "Pinpoint the break-even",
+  "Build the financial package",
+  "Write the executive report",
+  "Lock the period — defensibly",
 ]
+const N = ROTATION.length
+const LH = 52            // px height of each rotating row
+const VIS = 7            // rows visible in the window
+const ARROW_SLOT = 3     // 0-indexed row the fixed arrow points at
+const TRIPLE = [...ROTATION, ...ROTATION, ...ROTATION]
+
 function Hero() {
   const { isSignedIn } = useUser()
-  const [active, setActive] = useState(0)
-  useEffect(() => { const t = setInterval(() => setActive((p) => (p + 1) % ROTATION.length), 2600); return () => clearInterval(t) }, [])
+  // Vertical carousel: the list scrolls up one row per tick so each phrase
+  // arrives at the FIXED arrow line; then we snap back across the duplicated
+  // copies with NO transition so it loops seamlessly. The row at the arrow is
+  // bright; the rest are a lighter shade.
+  const [active, setActive] = useState(N)
+  const [withT, setWithT] = useState(true)
+  useEffect(() => { const id = setInterval(() => setActive((a) => a + 1), 2600); return () => clearInterval(id) }, [])
+  useEffect(() => {
+    if (active < 2 * N) return
+    const timer = setTimeout(() => { setWithT(false); setActive(N) }, 620)
+    return () => clearTimeout(timer)
+  }, [active])
+  useEffect(() => {
+    if (withT) return
+    const id = requestAnimationFrame(() => setWithT(true))
+    return () => cancelAnimationFrame(id)
+  }, [withT])
+  const y = -((active - ARROW_SLOT) * LH)
+
   return (
     <header className="relative overflow-hidden" style={{ background: INK }}>
       <div aria-hidden className="pointer-events-none absolute inset-0">
@@ -178,53 +201,60 @@ function Hero() {
         <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(${LINE} 1px, transparent 1px), linear-gradient(90deg, ${LINE} 1px, transparent 1px)`, backgroundSize: "56px 56px", maskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", WebkitMaskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", opacity: 0.5 }} />
       </div>
 
-      <div className="relative max-w-4xl mx-auto px-6 pt-36 md:pt-44 pb-20 md:pb-28 text-center">
-        <Reveal>
-          <span className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-semibold" style={{ background: "rgba(255,255,255,0.06)", color: TXT, border: `1px solid ${LINE_2}` }}>
-            <Sparkles size={13} strokeWidth={2} style={{ color: ROSE }} /> Built by a CPA · Agentic month-end close
-          </span>
-        </Reveal>
-        <Reveal delay={0.05}>
-          <h1 className="mt-6 text-[2.7rem] leading-[1.04] sm:text-6xl md:text-[4.2rem] font-bold tracking-tight" style={{ color: TXT }}>
-            Close the books in <GradWord>days</GradWord>, not weeks.
-          </h1>
-        </Reveal>
-
-        {/* fixed arrow · rotating phrase */}
-        <Reveal delay={0.1}>
-          <div className="mt-7 flex items-center justify-center gap-3">
-            <svg width="15" height="17" viewBox="0 0 13 15" aria-hidden className="shrink-0"><path d="M0 0 L13 7.5 L0 15 Z" fill={ROSE} /></svg>
-            <div className="relative h-[2.2em] overflow-hidden" style={{ minWidth: 280 }}>
-              <AnimatePresence mode="wait">
-                <motion.span key={active}
-                  initial={{ y: "110%", opacity: 0 }} animate={{ y: "0%", opacity: 1 }} exit={{ y: "-110%", opacity: 0 }}
-                  transition={{ duration: 0.5, ease: EASE }}
-                  className="absolute inset-0 flex items-center justify-center sm:justify-start text-xl sm:text-2xl md:text-[1.75rem] font-bold tracking-tight whitespace-nowrap"
-                  style={{ color: TXT }}>
-                  Nordavix can {ROTATION[active]}
-                </motion.span>
-              </AnimatePresence>
-            </div>
-          </div>
-        </Reveal>
-
-        <Reveal delay={0.15}>
-          <p className="mt-5 mx-auto max-w-2xl text-lg leading-relaxed" style={{ color: TXT_2 }}>
-            Every account reconciled, every variance explained, every report written — AI-prepared, you approve.
-            Right on top of QuickBooks Online.
-          </p>
-        </Reveal>
-        <Reveal delay={0.2}>
-          <div className="mt-9">
-            {isSignedIn ? <div className="max-w-xl mx-auto"><LoggedInLaunchpad /></div> : (
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                <Link to="/sign-up" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Start free <ArrowRight size={16} /></Link>
-                <a href="#explore" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE_2}` }}>See it work</a>
+      <div className="relative max-w-6xl mx-auto px-6 pt-36 md:pt-44 pb-20 md:pb-28">
+        <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-12 lg:gap-10 items-center">
+          {/* left — copy */}
+          <div>
+            <Reveal>
+              <span className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-semibold" style={{ background: "rgba(255,255,255,0.06)", color: TXT, border: `1px solid ${LINE_2}` }}>
+                <Sparkles size={13} strokeWidth={2} style={{ color: ROSE }} /> Built by a CPA · Agentic month-end close
+              </span>
+            </Reveal>
+            <Reveal delay={0.05}>
+              <h1 className="mt-6 text-[2.7rem] leading-[1.04] sm:text-6xl md:text-[4rem] font-bold tracking-tight" style={{ color: TXT }}>
+                Close the books in <GradWord>days</GradWord>, not weeks.
+              </h1>
+            </Reveal>
+            <Reveal delay={0.1}>
+              <p className="mt-6 max-w-xl text-lg leading-relaxed" style={{ color: TXT_2 }}>
+                Every account reconciled, every variance explained, every report written — AI-prepared, you approve. Right on top of QuickBooks Online.
+              </p>
+            </Reveal>
+            <Reveal delay={0.15}>
+              <div className="mt-9">
+                {isSignedIn ? <div className="max-w-md"><LoggedInLaunchpad /></div> : (
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                    <Link to="/sign-up" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Start free <ArrowRight size={16} /></Link>
+                    <a href="#explore" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE_2}` }}>See it work</a>
+                  </div>
+                )}
               </div>
-            )}
+            </Reveal>
+            <Reveal delay={0.2}><p className="mt-7 text-[13px]" style={{ color: TXT_3 }}>QuickBooks-native · Maker-checker enforced · Bank-grade security</p></Reveal>
           </div>
-        </Reveal>
-        <Reveal delay={0.25}><p className="mt-7 text-[13px]" style={{ color: TXT_3 }}>QuickBooks-native · Maker-checker enforced · Bank-grade security</p></Reveal>
+
+          {/* right — fixed arrow + rotating list */}
+          <Reveal delay={0.15} className="lg:pl-8">
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] mb-3" style={{ color: TXT_3 }}>One workspace that can</div>
+            <div className="relative overflow-hidden" style={{ height: VIS * LH, WebkitMaskImage: "linear-gradient(transparent, #000 16%, #000 84%, transparent)", maskImage: "linear-gradient(transparent, #000 16%, #000 84%, transparent)" }}>
+              {/* fixed arrow marker */}
+              <div className="absolute left-0 z-10 flex items-center" style={{ top: ARROW_SLOT * LH, height: LH }}>
+                <svg width="16" height="18" viewBox="0 0 13 15" aria-hidden><path d="M0 0 L13 7.5 L0 15 Z" fill={ROSE} /></svg>
+              </div>
+              {/* scrolling strip (3 copies → seamless loop) */}
+              <div style={{ transform: `translateY(${y}px)`, transition: withT ? "transform 0.6s cubic-bezier(0.22,1,0.36,1)" : "none" }}>
+                {TRIPLE.map((phrase, i) => {
+                  const on = i === active
+                  return (
+                    <div key={i} className="flex items-center pl-9" style={{ height: LH }}>
+                      <span className="text-2xl md:text-[1.7rem] tracking-tight transition-colors duration-300" style={{ color: on ? TXT : "#474d4c", fontWeight: on ? 800 : 600 }}>{phrase}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </Reveal>
+        </div>
       </div>
     </header>
   )
