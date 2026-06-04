@@ -938,10 +938,6 @@ function FinalCTA() {
   )
 }
 
-// Reference an otherwise-unused icon import so future sections can use it
-// without churn (keeps the curated import list intact).
-void BarChart3
-
 // ─── Page ────────────────────────────────────────────────────────────────────
 export function HomePage() {
   const faqSchemaObj = faqSchema(FAQ_QUESTIONS.map((q) => ({ question: q.q, answer: q.a })))
