@@ -35,6 +35,16 @@ export interface Statement {
   is_closed:         boolean
   closed_at:         string | null
   notes:             string[]
+  // Statement-integrity check (Phase 2 trust sweep). Null on the live-QBO
+  // source. When balanced is false, the UI shows a do-not-distribute banner
+  // and exported PDFs are watermarked DRAFT.
+  validation?: {
+    balanced:           boolean
+    bs_diff:            string
+    cf_plug:            string
+    unclassified_types: string[]
+    messages:           string[]
+  } | null
 }
 
 export type FinancialSource = "quickbooks" | "nordavix"

@@ -80,6 +80,10 @@ class StatementOut(BaseModel):
     is_closed:         bool
     closed_at:         str | None
     notes:             list[str]     # parser/source notes for footer disclosure
+    # Statement-integrity check (Phase 2 trust sweep): {balanced, bs_diff,
+    # cf_plug, unclassified_types, messages}. None on the live-QBO source
+    # (no snapshot to cross-check against).
+    validation:        dict | None = None
 
 
 # ── GAAP label translation ──────────────────────────────────────────────────
@@ -542,6 +546,7 @@ async def _build_statement(
         from modules.financials.internal import (
             build_income_statement as _is_internal,
         )
+        from modules.financials.internal import statement_validation
         rows_raw: list[dict] = []
         internal_notes: list[str] = []
         if statement_kind == "balance_sheet":
@@ -572,6 +577,9 @@ async def _build_statement(
                 kind=r["kind"],
             ) for r in rows_raw]
             closed = await _is_period_closed(db, pe)
+            # Statement-integrity cross-check (period-wide; shared by all three
+            # statements since they read the same snapshot).
+            _val = await statement_validation(db, tenant_id, pe)
             return StatementOut(
                 statement=statement_kind,
                 title=title,
@@ -585,6 +593,7 @@ async def _build_statement(
                 is_closed=closed is not None,
                 closed_at=closed.closed_at.isoformat() if closed and closed.closed_at else None,
                 notes=notes,
+                validation=_val,
             )
         notes.extend(internal_notes)  # CF fallback — carry the explanatory note
 
@@ -759,16 +768,22 @@ async def export_pdf(
         from modules.financials.pdf import build_pdf
         buf = io.BytesIO()
         company = statements[0].company if statements else "Your Company"
+        # Watermark as DRAFT when the period is unclosed OR any statement fails
+        # its integrity check (doesn't balance) — never let a broken statement
+        # leave the building looking clean.
+        _is_draft = (closed is None) or any(
+            not (s.validation or {}).get("balanced", True) for s in statements
+        )
         build_pdf(
             buf,
             company=company,
             period_end=pe,
             statements=statements,
             prepared_by=user.email or "",
-            is_draft=(closed is None),
+            is_draft=_is_draft,
         )
         buf.seek(0)
-        label = "draft-" if closed is None else ""
+        label = "draft-" if _is_draft else ""
         fname = f"{label}financial-package-{pe.isoformat()}.pdf"
         logger.info("PDF export done: %d bytes", buf.getbuffer().nbytes)
         return StreamingResponse(

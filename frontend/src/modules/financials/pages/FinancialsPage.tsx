@@ -838,6 +838,24 @@ function StatementView({ stmt }: { stmt: Statement }) {
         </p>
       </div>
 
+      {/* Integrity banner (Phase 2 trust sweep) — when the period's snapshot
+          fails a statement-integrity check, warn loudly and mark the statement
+          do-not-distribute. Exports are watermarked DRAFT until resolved. */}
+      {stmt.validation && !stmt.validation.balanced && (
+        <div className="px-8 py-3 text-xs"
+          style={{ background: "#fef2f2", color: "#991b1b", borderBottom: "1px solid #fecaca" }}>
+          <p className="font-bold uppercase tracking-wide text-[11px]">
+            Does not balance — do not distribute
+          </p>
+          {stmt.validation.messages.map((m, i) => (
+            <p key={i} className="mt-1">{m}</p>
+          ))}
+          <p className="mt-1 italic">
+            Exports are watermarked DRAFT until resolved — re-sync from QuickBooks to refresh the data.
+          </p>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

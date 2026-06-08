@@ -337,6 +337,75 @@ def _compute_net_income(rows: list[GlBalanceSnapshot]) -> Decimal:
     return income + other_inc - cogs - expense - other_exp
 
 
+# ── Statement integrity (Phase 2 trust sweep) ─────────────────────────────────
+_FIN_TOLERANCE = Decimal("1.00")
+
+
+async def statement_validation(
+    db: AsyncSession, tenant_id: uuid.UUID, period_end: date,
+) -> dict:
+    """Cross-check the period's GL snapshot for statement integrity:
+      • Balance sheet balances (Assets = Liabilities + Equity + net income)
+      • Cash flow has no material unexplained plug (other_recon)
+      • No account type is silently dropped from every statement
+    Reuses the same type sets + helpers the statement builders use, so the
+    verdict matches what those statements show. Returns a structured block the
+    UI renders as a 'does not balance — do not distribute' banner."""
+    rows = await _load_snapshot(db, tenant_id, period_end)
+    empty = {
+        "balanced": True, "bs_diff": "0.00", "cf_plug": "0.00",
+        "unclassified_types": [], "messages": [],
+    }
+    if not rows:
+        return empty
+
+    # Balance sheet: Assets = Liabilities + Equity + current-year net income.
+    total_assets = _presented_sum(rows, _ASSET_TYPES)
+    total_le = (
+        _presented_sum(rows, _LIABILITY_TYPES)
+        + _presented_sum(rows, _EQUITY_TYPES)
+        + _compute_net_income(rows)
+    )
+    bs_diff = (total_assets - total_le).quantize(Decimal("0.01"))
+
+    # Cash flow: the indirect decomposition's unexplained plug, if a beginning
+    # snapshot exists to difference against.
+    cf_plug = Decimal("0")
+    beg_rows, beg_date = await load_snapshot_on_or_before(
+        db, tenant_id, period_end.replace(day=1) - timedelta(days=1))
+    if beg_rows and beg_date is not None:
+        fig = _cash_flow_figures(rows, beg_rows, beg_date, period_end)
+        cf_plug = fig.other_recon.quantize(Decimal("0.01"))
+
+    # Any account type that falls into no statement bucket is silently dropped.
+    known = _ASSET_TYPES | _LIABILITY_TYPES | _EQUITY_TYPES | _PL_TYPES
+    unclassified = sorted({r.account_type for r in rows if r.account_type not in known})
+
+    messages: list[str] = []
+    if abs(bs_diff) > _FIN_TOLERANCE:
+        messages.append(
+            f"Balance sheet is out of balance by ${abs(bs_diff):,.2f} "
+            "(Assets ≠ Liabilities + Equity) — the snapshot is likely missing accounts."
+        )
+    if abs(cf_plug) > _FIN_TOLERANCE:
+        messages.append(
+            f"Cash flow has a ${abs(cf_plug):,.2f} unexplained reconciling difference."
+        )
+    if unclassified:
+        messages.append(
+            "These account types aren't classified into any statement and were "
+            f"dropped: {', '.join(unclassified)} — Net Income may be understated."
+        )
+
+    return {
+        "balanced": not messages,
+        "bs_diff": str(bs_diff),
+        "cf_plug": str(cf_plug),
+        "unclassified_types": unclassified,
+        "messages": messages,
+    }
+
+
 def _build_is_section(
     label: str, types: set[str], cur: list[GlBalanceSnapshot],
     prior: list[GlBalanceSnapshot] | None, level: int,
