@@ -553,9 +553,9 @@ export function DashboardHome() {
             </div>
             {books?.seeded && (
               <div className="flex items-center gap-3 text-[10px] flex-wrap" style={{ color: "var(--text-muted)" }}>
-                <span className="inline-flex items-center gap-1"><Lock size={9} strokeWidth={2} style={{ color: "#b45309" }} /> Closed</span>
+                <span className="inline-flex items-center gap-1"><Lock size={9} strokeWidth={2} style={{ color: "var(--green)" }} /> Closed</span>
                 <span className="inline-flex items-center gap-1"><CheckCircle2 size={9} strokeWidth={2} style={{ color: "var(--green)" }} /> Complete</span>
-                <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "#1d4ed8" }} /> In progress</span>
+                <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "#f59e0b" }} /> In progress</span>
                 <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "var(--text-muted)" }} /> Open</span>
               </div>
             )}
@@ -594,9 +594,9 @@ export function DashboardHome() {
               <div className="flex gap-2 px-4 py-3" style={{ minWidth: "min-content" }}>
                 {trackerPeriodsInYear.map((p) => {
                   const meta = {
-                    closed:      { bg: "rgba(245, 158, 11, 0.10)", border: "#f59e0b",         fg: "#b45309",         icon: <Lock size={12} strokeWidth={2} /> },
+                    closed:      { bg: "var(--green-subtle)",      border: "var(--green)",    fg: "var(--green)",    icon: <Lock size={12} strokeWidth={2} /> },
                     complete:    { bg: "var(--green-subtle)",      border: "var(--green)",    fg: "var(--green)",    icon: <CheckCircle2 size={12} strokeWidth={2} /> },
-                    in_progress: { bg: "#dbeafe",                  border: "#3b82f6",         fg: "#1d4ed8",         icon: <Circle size={12} strokeWidth={2} /> },
+                    in_progress: { bg: "rgba(245,158,11,0.12)",   border: "#f59e0b",         fg: "#b45309",         icon: <Circle size={12} strokeWidth={2} /> },
                     not_started: { bg: "var(--surface-2)",         border: "var(--border)",   fg: "var(--text-muted)", icon: <Circle size={12} strokeWidth={2} /> },
                   }[p.status]
                   const isSelected = p.period_end === period
@@ -729,9 +729,9 @@ export function DashboardHome() {
 
         {/* ── KPI strip — reflects the selected month ───────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <Kpi label={`Open in ${monthLabel}`} value={String(buckets.open)} tone="#dc2626"
+          <Kpi label={`Open in ${monthLabel}`} value={String(buckets.open)} tone="var(--text)"
             sub={buckets.total > 0 ? `${buckets.total} accounts total` : "—"} />
-          <Kpi label="Variance this month" value={fmtMoney(totalVariance)} tone={totalVariance > 0 ? "#dc2626" : "var(--green)"}
+          <Kpi label="Variance this month" value={fmtMoney(totalVariance)} tone="var(--text)"
             sub={buckets.total > 0 ? "absolute, all accounts" : "—"} />
           <Kpi label="Flux analyses" value={String(monthlyFlux.length)} tone="var(--text)"
             sub={monthlyFlux.length > 0 ? `for ${monthLabel}` : `no flux for ${monthLabel}`} />
@@ -812,9 +812,7 @@ export function DashboardHome() {
               const reconPct = buckets.total === 0
                 ? 0
                 : Math.round((buckets.approved / buckets.total) * 100)
-              const barColor = reconPct === 100
-                ? "var(--green)"
-                : reconPct >= 50 ? "#3b82f6" : "#f59e0b"
+              const barColor = "var(--green)"
               return (
                 <div className="px-4 pt-3 pb-3" style={{ borderBottom: "1px solid var(--border)" }}>
                   <div className="flex items-center justify-between text-[11px] mb-1.5">
@@ -835,8 +833,8 @@ export function DashboardHome() {
 
             {/* Buckets summary */}
             <div className="grid grid-cols-3 divide-x" style={{ borderBottom: "1px solid var(--border)" }}>
-              <BucketTile label="Open" count={buckets.open} fg="#b91c1c" bg="#fef2f2" />
-              <BucketTile label="Prepared" count={buckets.reviewed} fg="#1d4ed8" bg="#dbeafe" />
+              <BucketTile label="Open" count={buckets.open} fg="var(--text-2)" bg="var(--surface-2)" />
+              <BucketTile label="Prepared" count={buckets.reviewed} fg="#b45309" bg="rgba(245,158,11,0.12)" />
               <BucketTile label="Approved" count={buckets.approved} fg="var(--green)" bg="var(--green-subtle)" />
             </div>
             {/* Top 3 open accounts */}
@@ -862,7 +860,7 @@ export function DashboardHome() {
                         <span className="font-mono" style={{ color: "var(--text-muted)" }}>{a.account_number || "—"}</span>
                         <span className="flex-1 truncate text-theme">{a.account_name}</span>
                         <span className="tabular-nums font-semibold"
-                          style={{ color: Math.abs(v) >= 1 ? "#dc2626" : "var(--green)" }}>
+                          style={{ color: Math.abs(v) >= 1 ? "var(--text)" : "var(--green)" }}>
                           {fmtMoney(a.variance)}
                         </span>
                       </li>
@@ -933,9 +931,7 @@ export function DashboardHome() {
               const fluxPct = fluxStatus.total === 0
                 ? 0
                 : Math.round((fluxApproved / fluxStatus.total) * 100)
-              const barColor = fluxPct === 100
-                ? "var(--green)"
-                : fluxPct >= 50 ? "#3b82f6" : "#f59e0b"
+              const barColor = "var(--green)"
               return (
                 <div className="px-4 pt-3 pb-3" style={{ borderBottom: "1px solid var(--border)" }}>
                   <div className="flex items-center justify-between text-[11px] mb-1.5">
@@ -1301,7 +1297,7 @@ function CloseProgressCard({
           <div className="h-full rounded-full transition-all"
             style={{
               width: `${overallPct}%`,
-              background: overallPct === 100 ? "var(--green)" : overallPct >= 50 ? "#3b82f6" : "#f59e0b",
+              background: "var(--green)",
             }} />
         </div>
         <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
