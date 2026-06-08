@@ -115,8 +115,8 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
           ref={triggerRef}
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="w-full inline-flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors hover:bg-[var(--surface-2)]"
-          style={{ color: "var(--text-muted)" }}
+          className="w-full inline-flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors hover:bg-[var(--nav-hover)]"
+          style={{ color: "var(--nav-text)" }}
           title={`Switch workspace · ${otherCount} other${otherCount === 1 ? "" : "s"}`}
         >
           <span className="inline-flex items-center gap-1.5 min-w-0">

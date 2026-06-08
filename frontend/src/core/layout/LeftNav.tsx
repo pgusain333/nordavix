@@ -207,13 +207,14 @@ export function LeftNav({ onClose }: Props) {
           className={cn("flex items-center min-w-0", isCollapsed ? "justify-center" : "gap-2.5 flex-1")}
           title="Nordavix home"
         >
-          <img src="/logo-mark-dark.svg"  alt="Nordavix"
-            className="h-8 w-8 lg:h-9 lg:w-9 shrink-0 dark:hidden" />
+          {/* White logo on the burgundy rail — forced white in both themes. */}
           <img src="/logo-mark-light.svg" alt="Nordavix"
-            className="h-8 w-8 lg:h-9 lg:w-9 shrink-0 hidden dark:block" />
+            className="h-8 w-8 lg:h-9 lg:w-9 shrink-0"
+            style={{ filter: "brightness(0) invert(1)" }} />
           {!isCollapsed && (
-            <span className="text-xl lg:text-[24px] font-semibold tracking-tight text-theme leading-none truncate">
-              nordavix<span style={{ color: "var(--green)" }}>.</span>
+            <span className="text-xl lg:text-[24px] font-semibold tracking-tight leading-none truncate"
+              style={{ color: "#FFFFFF" }}>
+              nordavix<span style={{ color: "#FFFFFF" }}>.</span>
             </span>
           )}
         </button>
@@ -223,9 +224,9 @@ export function LeftNav({ onClose }: Props) {
           <button
             onClick={toggleCollapsed}
             className="hidden lg:flex items-center justify-center h-8 w-8 rounded-md transition-colors shrink-0"
-            style={{ color: "var(--text-muted)" }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-2)"; e.currentTarget.style.color = "var(--text)" }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-muted)" }}
+            style={{ color: "var(--nav-text)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--nav-hover)"; e.currentTarget.style.color = "var(--nav-text-act)" }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--nav-text)" }}
             title={collapsed ? "Keep sidebar open" : "Collapse sidebar"}
             aria-label={collapsed ? "Keep sidebar open" : "Collapse sidebar"}
           >
@@ -237,7 +238,8 @@ export function LeftNav({ onClose }: Props) {
         {onClose && (
           <button
             onClick={onClose}
-            className="lg:hidden ml-2 flex items-center justify-center h-7 w-7 rounded-md text-theme-muted hover:text-theme transition-colors"
+            className="lg:hidden ml-2 flex items-center justify-center h-7 w-7 rounded-md transition-colors"
+            style={{ color: "var(--nav-text)" }}
           >
             <X size={16} strokeWidth={1.6} />
           </button>
@@ -353,7 +355,7 @@ export function LeftNav({ onClose }: Props) {
                   return (
                     <>
                       <Icon size={23} strokeWidth={1.8}
-                        style={{ color: isActive ? "var(--green)" : "var(--nav-text)" }} />
+                        style={{ color: isActive ? "var(--nav-text-act)" : "var(--nav-text)" }} />
                       {taskBadge && (
                         <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center min-w-[15px] h-[15px] rounded-full px-1 text-[9px] font-bold tabular-nums"
                           style={{ background: taskBadge.bg, color: taskBadge.fg }}
@@ -367,7 +369,7 @@ export function LeftNav({ onClose }: Props) {
                 return (
                   <>
                     <Icon size={24} strokeWidth={1.6} className="shrink-0"
-                      style={{ color: isActive ? "var(--green)" : "var(--nav-text)" }} />
+                      style={{ color: isActive ? "var(--nav-text-act)" : "var(--nav-text)" }} />
                     <span className="truncate flex-1">{item.label}</span>
                     {taskBadge && (
                       <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold tabular-nums shrink-0"
@@ -380,7 +382,7 @@ export function LeftNav({ onClose }: Props) {
                     )}
                     {isActive && !taskBadge && (
                       <span className="ml-auto h-1.5 w-1.5 rounded-full shrink-0"
-                        style={{ background: "var(--green)" }} />
+                        style={{ background: "var(--nav-text-act)" }} />
                     )}
                   </>
                 )
@@ -409,7 +411,7 @@ export function LeftNav({ onClose }: Props) {
             title="Share a bug, idea, or comment with the Nordavix team"
             className="w-full flex items-center justify-center h-10 rounded-md transition-colors"
             style={{ color: "var(--nav-text)" }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--green-subtle)"; e.currentTarget.style.color = "var(--green)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--nav-hover)"; e.currentTarget.style.color = "var(--nav-text-act)" }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--nav-text)" }}
           >
             <MessageSquare size={18} strokeWidth={1.8} />
@@ -422,18 +424,18 @@ export function LeftNav({ onClose }: Props) {
             style={{
               color: "var(--nav-text)",
               background: "transparent",
-              border: "1px dashed var(--border-strong)",
+              border: "1px dashed rgba(255,255,255,0.35)",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--green-subtle)"
-              e.currentTarget.style.color = "var(--green)"
-              e.currentTarget.style.borderColor = "var(--green)"
+              e.currentTarget.style.background = "var(--nav-hover)"
+              e.currentTarget.style.color = "var(--nav-text-act)"
+              e.currentTarget.style.borderColor = "rgba(255,255,255,0.7)"
               e.currentTarget.style.borderStyle = "solid"
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = "transparent"
               e.currentTarget.style.color = "var(--nav-text)"
-              e.currentTarget.style.borderColor = "var(--border-strong)"
+              e.currentTarget.style.borderColor = "rgba(255,255,255,0.35)"
               e.currentTarget.style.borderStyle = "dashed"
             }}
             title="Share a bug, idea, or comment with the Nordavix team"
@@ -454,7 +456,7 @@ export function LeftNav({ onClose }: Props) {
           <div title="Toggle theme"><ThemeToggle /></div>
         ) : (
           <div className="flex items-center justify-between px-1">
-            <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Theme</span>
+            <span className="text-[11px] font-medium" style={{ color: "var(--nav-text)" }}>Theme</span>
             <ThemeToggle />
           </div>
         )}
@@ -515,8 +517,8 @@ function UtilLink({ to, icon: Icon, label, title, isCollapsed, onClose }: {
         )
       }
       style={({ isActive }) => ({
-        color: isActive ? "var(--green)" : "var(--nav-text)",
-        background: isActive ? "var(--green-subtle)" : "transparent",
+        color: isActive ? "var(--nav-text-act)" : "var(--nav-text)",
+        background: isActive ? "var(--nav-active)" : "transparent",
       })}
     >
       <Icon size={isCollapsed ? 20 : 18} strokeWidth={1.8} className="shrink-0" />
