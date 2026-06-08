@@ -384,6 +384,8 @@ async def cancel_agentic_endpoint(
 @router.post("/sync")
 async def sync_overview_endpoint(
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    background_tasks: BackgroundTasks,
     period_end: str = Query(..., description="Period end date YYYY-MM-DD"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -421,6 +423,14 @@ async def sync_overview_endpoint(
     overview["closed_by"] = str(cp.closed_by) if cp else None
     overview["closed_at"] = cp.closed_at.isoformat() if cp and cp.closed_at else None
     overview["closed_notes"] = cp.notes if cp else None
+
+    # Stale-approval guard: a re-sync that left an approved account no longer
+    # reconciled flips it back to needs-review + notifies its approver. Open
+    # periods only — closed periods are locked.
+    overview["reflagged"] = (
+        0 if cp is not None
+        else await _reflag_stale_approvals(db, tenant_id, pe, overview, user, background_tasks)
+    )
     return overview
 
 
@@ -978,6 +988,21 @@ async def update_account_review_status(
     ):
         raise HTTPException(status_code=422, detail=_STATEMENT_REQUIRED_MSG)
 
+    # Reconciliation gate: an account can't be approved while GL and subledger
+    # disagree beyond the materiality floor. The reconciling-items build-up
+    # feeds the subledger, so an explained gap collapses to ~0 and passes.
+    if status_value == "approved":
+        unrec = await _unreconciled_accounts(db, pe, [qbo_account_id])
+        if qbo_account_id in unrec:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Can't approve — this account isn't reconciled ({unrec[qbo_account_id]}). "
+                    "Tick the reconciling items that explain the difference, or fix the "
+                    "subledger, then approve."
+                ),
+            )
+
     if row is None:
         row = AccountReviewStatus(
             id=uuid.uuid4(),
@@ -1199,6 +1224,19 @@ async def bulk_update_account_review_status(
                     "Attach the bank statement (or supporting evidence) before "
                     "approving these bank reconciliations: "
                     + ", ".join(blocked) + "."
+                ),
+            )
+
+    # Reconciliation gate (bulk): every account being approved must tie out.
+    if status_value == "approved":
+        unrec = await _unreconciled_accounts(db, pe, ids)
+        if unrec:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Can't approve — these accounts aren't reconciled: "
+                    + "; ".join(f"{qid} ({reason})" for qid, reason in list(unrec.items())[:10])
+                    + (" …" if len(unrec) > 10 else "")
                 ),
             )
 
@@ -1773,6 +1811,20 @@ async def close_period(
             detail=(
                 f"No accounts have been reviewed for {pe}. "
                 "Reconcile and approve every account before closing the books."
+            ),
+        )
+
+    # Every account must also still tie out. Defense in depth: with the approval
+    # gate + stale re-flag this should already hold, but it also catches an
+    # account whose GL moved after approval. Guarantees close ⇒ every account ties.
+    unrec = await _unreconciled_accounts(db, pe, [r.qbo_account_id for r in status_rows])
+    if unrec:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot close — {len(unrec)} account(s) no longer tie out: "
+                + "; ".join(f"{qid} ({reason})" for qid, reason in list(unrec.items())[:10])
+                + (" …" if len(unrec) > 10 else "")
             ),
         )
 
@@ -3678,6 +3730,91 @@ async def _bank_acct_missing_statement(
         ).limit(1)
     )).first() is not None
     return not has_evidence
+
+
+async def _unreconciled_accounts(
+    db: AsyncSession, period_end, qbo_ids: list[str],
+) -> dict[str, str]:
+    """Of the given accounts, return {qbo_account_id: reason} for those NOT
+    reconciled for the period — reason is a short human string ('off by $X' or
+    'not synced for this period'). Uses the same snapshot-backed builder the
+    dashboard renders from, so the gate's variance matches the UI exactly. An
+    account with no synced balance counts as unreconciled (you can't sign off an
+    account the period was never synced for)."""
+    from modules.recons.overview import is_reconciled, read_overview_from_snapshots
+    ov = await read_overview_from_snapshots(db, period_end)
+    by_id = {a["qbo_id"]: a for a in ov.get("accounts", [])}
+    out: dict[str, str] = {}
+    for qid in set(qbo_ids):
+        a = by_id.get(qid)
+        if a is None:
+            out[qid] = "not synced for this period"
+            continue
+        gl = Decimal(a["gl_balance"])
+        sub = Decimal(a["subledger_balance"])
+        if not is_reconciled(gl, sub):
+            out[qid] = f"off by ${abs(gl - sub).quantize(Decimal('0.01'))}"
+    return out
+
+
+async def _reflag_stale_approvals(
+    db: AsyncSession, tenant_id, period_end, overview: dict, user, background_tasks,
+) -> int:
+    """After a re-sync, revert any approved account that no longer ties out back
+    to 'reviewed' (clearing the approval) and notify its approver — a sign-off
+    must always match the live books. Returns the count reverted. Mirrors the
+    per-account sync's revert behavior, scoped to genuinely-stale rows."""
+    from modules.recons.overview import is_reconciled
+    stale_ids = {
+        a["qbo_id"] for a in overview.get("accounts", [])
+        if a.get("review_status") == "approved"
+        and not is_reconciled(Decimal(a["gl_balance"]), Decimal(a["subledger_balance"]))
+    }
+    if not stale_ids:
+        return 0
+    rows = list((await db.execute(
+        select(AccountReviewStatus).where(
+            AccountReviewStatus.period_end == period_end,
+            AccountReviewStatus.qbo_account_id.in_(stale_ids),
+            AccountReviewStatus.status == "approved",
+        )
+    )).scalars().all())
+    if not rows:
+        return 0
+    approvers: set[uuid.UUID] = set()
+    for r in rows:
+        if r.approved_by:
+            approvers.add(r.approved_by)
+        r.status = "reviewed"
+        r.approved_by = None
+        r.approved_at = None
+    await db.commit()
+    # Reflect the revert in the overview payload we're about to return (it was
+    # built before the revert) so the client cache shows the corrected status
+    # immediately rather than on the next GET.
+    reverted = {r.qbo_account_id for r in rows}
+    for a in overview.get("accounts", []):
+        if a["qbo_id"] in reverted:
+            a["review_status"] = "reviewed"
+    # Tell the approver(s) their sign-off was cleared by the re-sync.
+    try:
+        from modules.notifications.emails import notify_and_email_users
+        recipients = [a for a in approvers if a != user.id]
+        if recipients:
+            await notify_and_email_users(
+                db, background_tasks, tenant_id=tenant_id, recipient_ids=recipients,
+                type="recon_reopened",
+                title=f"{len(rows)} reconciliation(s) need re-review",
+                body=(
+                    f"{user.email} re-synced {period_end.isoformat()} and "
+                    f"{len(rows)} approved account(s) no longer tie out — "
+                    "they were moved back to review."
+                ),
+                link="/app/reconciliations",
+            )
+    except Exception:
+        logger.warning("recon stale re-flag notifications failed", exc_info=True)
+    return len(rows)
 
 
 async def _run_bank_match(

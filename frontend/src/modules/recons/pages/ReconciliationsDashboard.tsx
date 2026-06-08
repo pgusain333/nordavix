@@ -494,7 +494,15 @@ export function ReconciliationsDashboard() {
     onSuccess: (data) => {
       qc.setQueryData(["recons-overview", periodEnd], data)
       const n = data.accounts.length
-      setSyncMsg(`Synced ${n} account${n === 1 ? "" : "s"} from QuickBooks at ${new Date().toLocaleTimeString()}.`)
+      const when = new Date().toLocaleTimeString()
+      const r = data.reflagged ?? 0
+      setSyncMsg(
+        r > 0
+          ? `Synced ${n} account${n === 1 ? "" : "s"} at ${when}. ${r} approved account${r === 1 ? "" : "s"} moved back to review — the balances changed, so the sign-off no longer ties out.`
+          : `Synced ${n} account${n === 1 ? "" : "s"} from QuickBooks at ${when}.`,
+      )
+      // Reverted rows changed status server-side — refresh the close tracker too.
+      if (r > 0) qc.invalidateQueries({ queryKey: ["period-tracker"] })
     },
     onError: (err: unknown) => {
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }

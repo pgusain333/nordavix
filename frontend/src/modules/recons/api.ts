@@ -313,6 +313,9 @@ export interface Overview {
   // that populates this and the snapshot tables.
   synced?:         boolean
   synced_at?:      string | null
+  // Count of approved accounts auto-reverted to needs-review because this sync
+  // changed their balances so they no longer tie out.
+  reflagged?:      number
 }
 
 export interface SubledgerRow {

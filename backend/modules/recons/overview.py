@@ -217,6 +217,22 @@ async def sync_overview(
     )
 
 
+# ── Reconciliation gate ────────────────────────────────────────────────
+# Server-side materiality floor for "is this account reconciled?". The
+# frontend soft-blocks Approve at $0.01 and the agentic preparer ties at
+# $1.00; $1 here is the hard backend floor — it never blocks a legitimate UI
+# approval but catches a material gap pushed through the API or a bulk action.
+# (A configurable per-workspace materiality threshold is a future enhancement.)
+RECON_TOLERANCE = Decimal("1.00")
+
+
+def is_reconciled(gl_balance: Decimal, subledger_balance: Decimal) -> bool:
+    """True when GL ties to the subledger within the materiality floor. The
+    reconciling-items build-up feeds subledger_balance, so an 'explained'
+    variance collapses to ~0 and passes here too."""
+    return abs(gl_balance - subledger_balance) <= RECON_TOLERANCE
+
+
 async def read_overview_from_snapshots(
     session: AsyncSession,
     period_end: date,

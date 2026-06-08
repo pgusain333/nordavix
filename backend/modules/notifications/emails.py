@@ -25,6 +25,7 @@ _TYPE_LABELS = {
     "task_assigned":   "Task assigned",
     "review_ready":    "Ready for review",
     "recon_approved":  "Reconciliation approved",
+    "recon_reopened":  "Needs re-review",
 }
 
 
