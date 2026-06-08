@@ -37,8 +37,8 @@ _GREEN = "#10b981"
 _GREEN_DK = "#059669"
 
 # CAN-SPAM requires a physical postal address in marketing email.
-# EDIT THIS to your real business mailing address before enabling the drip.
-_POSTAL_ADDRESS = "Nordavix · [Add your business mailing address here]"
+# Business mailing address shown in every drip email's footer.
+_POSTAL_ADDRESS = "Nordavix · West New York, NJ 07093"
 
 # ── The sequence. Edit the copy freely; keep the keys. ──────────────────────────
 _STEPS: list[dict] = [
