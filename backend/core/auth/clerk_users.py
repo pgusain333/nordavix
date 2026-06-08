@@ -79,6 +79,36 @@ async def get_clerk_user(clerk_user_id: str) -> ClerkUser | None:
     return user
 
 
+async def clerk_user_exists(clerk_user_id: str) -> bool | None:
+    """Whether a Clerk user still exists.
+
+    Returns True if Clerk returns the user, False if Clerk says it's gone
+    (404 — e.g. the account was deleted), and None on any other/transient
+    error (the caller should retry later rather than treat the user as
+    deleted). A warm get_clerk_user cache entry counts as 'exists'.
+    """
+    if not clerk_user_id:
+        return None
+    cached = _cache.get(clerk_user_id)
+    if cached and time.time() - cached[1] < _TTL_SECONDS:
+        return True
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"https://api.clerk.com/v1/users/{clerk_user_id}",
+                headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+            )
+    except Exception:
+        logger.exception("Clerk exists-check failed for %s", clerk_user_id)
+        return None
+    if resp.status_code == 200:
+        return True
+    if resp.status_code == 404:
+        return False
+    logger.warning("Clerk exists-check %s returned %s", clerk_user_id, resp.status_code)
+    return None
+
+
 async def list_org_memberships(clerk_org_id: str) -> list[dict]:
     """
     Return every Clerk membership for an organization. Each row contains:

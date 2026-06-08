@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 import models  # noqa: F401 — ensure every model is registered on Base.metadata
+from core.auth.clerk_users import clerk_user_exists
 from core.config import settings
 from core.db.session import AsyncSessionLocal
 from core.email.reengagement import MAX_STEPS, send_reengagement_email
@@ -59,6 +60,8 @@ async def run_reengagement(*, now: datetime | None = None, dry_run: bool = False
 
     def skip(reason: str) -> None:
         summary["skipped"][reason] = summary["skipped"].get(reason, 0) + 1
+
+    emailed_this_run: set[str] = set()
 
     async with AsyncSessionLocal() as session:
         # ── Candidates: welcomed humans, collapsed to the earliest welcome per person.
@@ -168,6 +171,27 @@ async def run_reengagement(*, now: datetime | None = None, dry_run: bool = False
                 continue
 
             step = enr.step_sent + 1
+
+            # Don't email accounts deleted in Clerk — the local users row lingers
+            # after a Clerk deletion. False = gone (stop the sequence for good);
+            # None = transient Clerk error (skip this run, retry next).
+            exists = await clerk_user_exists(cuid)
+            if exists is False:
+                if not dry_run:
+                    enr.status = "suppressed"
+                skip("clerk_deleted")
+                continue
+            if exists is None:
+                skip("clerk_unresolved")
+                continue
+
+            # Never email the same address twice in one sweep (e.g. duplicate
+            # signups that resolve to the same email address).
+            if email.lower() in emailed_this_run:
+                skip("dup_email")
+                continue
+            emailed_this_run.add(email.lower())
+
             summary["due"] += 1
 
             if dry_run:
