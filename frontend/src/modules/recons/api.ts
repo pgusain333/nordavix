@@ -316,6 +316,9 @@ export interface Overview {
   // Count of approved accounts auto-reverted to needs-review because this sync
   // changed their balances so they no longer tie out.
   reflagged?:      number
+  // Ingest integrity of the last sync: did our parse of the QBO trial balance
+  // tie out (debits = credits)? tb_balanced false = incomplete/bad data.
+  sync_health?:    { tb_balanced: boolean | null; tb_diff: string | null }
 }
 
 export interface SubledgerRow {

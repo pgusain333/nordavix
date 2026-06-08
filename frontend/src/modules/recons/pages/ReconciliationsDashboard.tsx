@@ -1081,6 +1081,27 @@ export function ReconciliationsDashboard() {
         )}
       </AnimatePresence>
 
+      {/* Ingest-integrity banner — our parse of QuickBooks' trial balance didn't
+          tie out (debits ≠ credits) on the last sync, so some balances may be
+          incomplete. Blocks period close; surfaced here so the user re-syncs. */}
+      {overview?.sync_health?.tb_balanced === false && (
+        <div className="px-4 sm:px-8 py-2.5 text-xs font-medium flex items-center gap-2"
+          style={{ background: "#fef2f2", color: "#991b1b", borderBottom: "1px solid #fecaca" }}>
+          <AlertTriangle size={14} strokeWidth={2} className="shrink-0" />
+          <span className="flex-1">
+            QuickBooks data didn't fully tie out on the last sync
+            {overview.sync_health.tb_diff
+              ? ` (off by $${Math.abs(parseFloat(overview.sync_health.tb_diff)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+              : ""}
+            {" "}— some balances may be incomplete, and the books can't be closed
+            until this is resolved. Re-sync before relying on this period.
+          </span>
+          <Button size="sm" variant="outline" loading={syncMut.isPending} onClick={handleSync}>
+            <RefreshCw size={11} strokeWidth={2} /> Re-sync
+          </Button>
+        </div>
+      )}
+
       {/* Agentic run-result banner — appears after the AI preparer
           finishes. Shows the prepared/analyzed/skipped counts and
           lets the user dismiss. Stays until dismissed so they can

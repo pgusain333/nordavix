@@ -38,6 +38,8 @@ class TbBalances(TypedDict):
     by_id:   dict[str, Decimal]    # Canonical: QBO Account.Id → balance
     by_name: dict[str, Decimal]    # Fallback: name variants → balance
     rows:    int                    # Total non-summary rows we recorded
+    debit_total:  Decimal          # Σ of parsed debit columns (integrity check)
+    credit_total: Decimal          # Σ of parsed credit columns (integrity check)
 
 
 async def fetch_trial_balance(
@@ -121,9 +123,11 @@ def parse_trial_balance(report: dict) -> TbBalances:
     out_id: dict[str, Decimal] = {}
     out_name: dict[str, Decimal] = {}
     count = 0
+    debit_sum = Decimal("0")
+    credit_sum = Decimal("0")
 
     def walk(rows: list[dict]) -> None:
-        nonlocal count
+        nonlocal count, debit_sum, credit_sum
         for r in rows:
             cols = r.get("ColData") or []
             sub  = r.get("Rows", {}).get("Row", []) or []
@@ -137,6 +141,8 @@ def parse_trial_balance(report: dict) -> TbBalances:
                     credit = _dec(cols[2].get("value", "")) if len(cols) > 2 else Decimal("0")
                     bal = debit - credit
                     count += 1
+                    debit_sum += debit
+                    credit_sum += credit
                     if acct_id:
                         out_id[str(acct_id)] = bal
                     out_name[name] = bal
@@ -151,7 +157,21 @@ def parse_trial_balance(report: dict) -> TbBalances:
                 walk(sub)
 
     walk(report.get("Rows", {}).get("Row", []) or [])
-    return {"by_id": out_id, "by_name": out_name, "rows": count}
+    return {
+        "by_id": out_id, "by_name": out_name, "rows": count,
+        "debit_total": debit_sum, "credit_total": credit_sum,
+    }
+
+
+def tb_imbalance(tb: TbBalances) -> Decimal:
+    """Σdebits − Σcredits across the parsed rows. A real QBO trial balance always
+    balances to 0, so a non-zero result means OUR parse dropped or misread a cell
+    (e.g. _dec coerced a bad value to 0) — the ingest is incomplete, not that QBO
+    is wrong. Callers treat a material imbalance as 'don't trust this snapshot'.
+    Uses .get() so a partial/legacy TbBalances (no totals) reads as 0."""
+    d = tb.get("debit_total", Decimal("0"))
+    c = tb.get("credit_total", Decimal("0"))
+    return (d - c).quantize(Decimal("0.01"))
 
 
 def lookup_balance(

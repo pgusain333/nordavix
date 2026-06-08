@@ -1828,6 +1828,24 @@ async def close_period(
             ),
         )
 
+    # Ingest-integrity gate: the last sync's trial balance must have tied out.
+    # tb_balanced is False only when our parse of QBO's data didn't balance —
+    # closing on questionable inputs would lock the books over bad data. (None =
+    # legacy/never-checked → don't block.)
+    from models.period_sync import PeriodSync as _PeriodSync
+    _ps = (await db.execute(
+        select(_PeriodSync).where(_PeriodSync.period_end == pe)
+    )).scalar_one_or_none()
+    if _ps is not None and _ps.tb_balanced is False:
+        _amt = f"${abs(_ps.tb_diff)}" if _ps.tb_diff is not None else "an unknown amount"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot close — QuickBooks data for {pe.strftime('%b %Y')} didn't tie "
+                f"out on the last sync (off by {_amt}). Re-sync from QuickBooks before closing."
+            ),
+        )
+
     # Flux gate — every flux analysis whose `period_current` falls in
     # the closing month must be approved. AND there must be at least
     # one flux analysis for the month. Matches the user-side close

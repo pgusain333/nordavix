@@ -10,7 +10,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Numeric, Text, func
+from sqlalchemy import Boolean, Date, DateTime, Numeric, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +31,11 @@ class PeriodSync(TenantBase):
     # card when this is None.
     actual_net_income: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     pl_error: Mapped[str | None] = mapped_column(Text)
+    # Ingest integrity: did the parsed trial balance tie (Σdebits = Σcredits,
+    # within $1) on the last sync? Null = legacy row (synced before this check
+    # existed). False blocks period close until a clean re-sync.
+    tb_balanced: Mapped[bool | None] = mapped_column(Boolean)
+    tb_diff: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     synced_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

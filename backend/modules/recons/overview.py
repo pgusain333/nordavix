@@ -146,6 +146,12 @@ async def sync_overview(
     # the current period's opening is $0 until that happens.
 
     tb_balances = await _qbo_trial_balance_by_account(conn, session, period_end)
+    # Ingest integrity: a real QBO trial balance always ties (Σdebits = Σcredits),
+    # so a parsed imbalance (or an empty pull → rows == 0) means our ingest is
+    # incomplete. Record it so the dashboard can flag + close can block.
+    from core.qbo_tb import tb_imbalance
+    tb_diff = tb_imbalance(tb_balances)
+    tb_balanced = (tb_balances.get("rows", 0) > 0 and abs(tb_diff) <= RECON_TOLERANCE)
 
     # Pull AR / AP aging totals + persist for instant subsequent reads.
     ar_aging_sum = await _aging_total(conn, session, "AgedReceivables", period_end)
@@ -190,12 +196,16 @@ async def sync_overview(
             ap_aging_total=ap_aging_sum.quantize(Decimal("0.01")),
             actual_net_income=actual_ni.quantize(Decimal("0.01")) if actual_ni is not None else None,
             pl_error=pl_error,
+            tb_balanced=tb_balanced,
+            tb_diff=tb_diff,
         ))
     else:
         existing.ar_aging_total = ar_aging_sum.quantize(Decimal("0.01"))
         existing.ap_aging_total = ap_aging_sum.quantize(Decimal("0.01"))
         existing.actual_net_income = actual_ni.quantize(Decimal("0.01")) if actual_ni is not None else None
         existing.pl_error = pl_error
+        existing.tb_balanced = tb_balanced
+        existing.tb_diff = tb_diff
         existing.synced_at = datetime.utcnow()
     try:
         await session.commit()
@@ -205,7 +215,7 @@ async def sync_overview(
 
     # Build the overview from the freshly-captured data (skip the DB
     # read — we already have everything in memory).
-    return await _build_overview_from_qbo_data(
+    overview = await _build_overview_from_qbo_data(
         session=session,
         accounts_meta=accounts_meta,
         tb_balances=tb_balances,
@@ -215,6 +225,8 @@ async def sync_overview(
         pl_error=pl_error,
         period_end=period_end,
     )
+    overview["sync_health"] = {"tb_balanced": tb_balanced, "tb_diff": str(tb_diff)}
+    return overview
 
 
 # ── Reconciliation gate ────────────────────────────────────────────────
@@ -295,7 +307,7 @@ async def read_overview_from_snapshots(
         "by_name": {s.account_name.lower(): s.balance for s in snap_rows},
         "rows":    len(snap_rows),
     }
-    return await _build_overview_from_qbo_data(
+    overview = await _build_overview_from_qbo_data(
         session=session,
         accounts_meta=accounts_meta,
         tb_balances=tb_balances,  # type: ignore[arg-type]
@@ -306,6 +318,11 @@ async def read_overview_from_snapshots(
         period_end=period_end,
         synced_at=ps.synced_at,
     )
+    overview["sync_health"] = {
+        "tb_balanced": ps.tb_balanced,
+        "tb_diff": str(ps.tb_diff) if ps.tb_diff is not None else None,
+    }
+    return overview
 
 
 # Back-compat alias — older code paths can keep importing fetch_overview.
