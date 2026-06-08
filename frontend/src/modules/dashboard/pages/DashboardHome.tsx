@@ -168,7 +168,10 @@ export function DashboardHome() {
     queryKey: ["recons-overview", period],
     queryFn:  () => reconsApi.getOverview(period),
     enabled:  !!qbo && books?.seeded === true,
-    staleTime: 5 * 60_000,
+    // The dashboard is the close command center, so keep it current: refetch
+    // on every visit so approvals made in other modules show up without a hard
+    // refresh. Snapshot-backed read, so this is cheap.
+    staleTime: 0,
   })
 
   // Month-end close tracker — one entry per month from books_start
@@ -177,14 +180,19 @@ export function DashboardHome() {
     queryKey: ["period-tracker"],
     queryFn:  reconsApi.listPeriodTracker,
     enabled:  books?.seeded === true,
-    staleTime: 5 * 60_000,
+    // Feeds the close-progress bar — refetch on every dashboard visit and on
+    // tab focus so recon approvals reflect in real time, not after a refresh.
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   })
 
   // Flux trial balances — list of recent analyses
   const { data: trialBalances, isError: tbErr, refetch: refetchTb } = useQuery({
     queryKey: ["flux-trial-balances"],
     queryFn:  fluxApi.listTrialBalances,
-    staleTime: 5 * 60_000,
+    // Feeds flux approval state in the close-progress bar — keep it live.
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   })
 
   // TBs whose current period falls in the selected month — the "flux for
@@ -219,7 +227,9 @@ export function DashboardHome() {
     queryKey: ["tasks", "all-with-closed"],
     queryFn:  () => tasksApi.list(true),
     enabled:  books?.seeded === true,
-    staleTime: 5 * 60_000,
+    // Feeds schedule-commit progress in the close-progress bar — keep live.
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   })
   // Schedule-task count for the SELECTED period — drives close progress.
   // Empty kinds are skipped server-side so the count auto-scales to
