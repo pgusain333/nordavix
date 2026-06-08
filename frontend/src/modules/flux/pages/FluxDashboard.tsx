@@ -138,7 +138,7 @@ export function FluxDashboard() {
   const { data: tbs = [], isLoading: tbsLoading } = useQuery({
     queryKey: ["trial-balances"],
     queryFn:  api.listTrialBalances,
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
     refetchInterval: (q) => {
       const list = q.state.data
       if (!list) return false
@@ -157,7 +157,12 @@ export function FluxDashboard() {
     queryKey: ["variances", tbId],
     queryFn:  () => api.listVariances(tbId!),
     enabled:  !!shouldFetchVariances,
-    staleTime: 15_000,
+    // Variances are DB-backed (no QBO call) and only change through this
+    // page's own mutations, which optimistically update + invalidate this
+    // exact cache. So a long staleTime is safe and lets re-opening an
+    // analysis render the table INSTANTLY from cache instead of re-fetching
+    // every time. Live polling still runs while a TB is generating.
+    staleTime: 5 * 60_000,
     refetchInterval: selectedTb?.status === "generating" ? 5_000 : false,
   })
 
