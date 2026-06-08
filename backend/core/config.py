@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     # APP_BASE_URL on Fly so email buttons point at the real app.
     app_base_url: str = ""
 
+    # Absolute base URL of the BACKEND/API itself (e.g. https://nordavix-api.fly.dev).
+    # Needed for links that must hit the API directly rather than the frontend —
+    # e.g. the one-click email unsubscribe endpoint. The SPA host rewrites all paths
+    # to index.html, so app_base_url (the frontend) can't serve /api routes. Empty =
+    # unset; the re-engagement drip refuses to send without a working unsubscribe URL.
+    # Set API_BASE_URL on Fly.
+    api_base_url: str = ""
+
     # Clerk org id of the seeded read-only "sample company" demo tenant. The
     # tenancy middleware maps the X-Nordavix-Demo header to this one tenant.
     demo_clerk_org_id: str = "org_nordavix_demo"
@@ -143,6 +151,13 @@ class Settings(BaseSettings):
         if not base:
             base = "http://localhost:5173"
         return base.rstrip("/")
+
+    @property
+    def api_url(self) -> str:
+        """Absolute base URL of the backend API, for links that must hit the API
+        directly (e.g. one-click email unsubscribe). Empty when API_BASE_URL is
+        unset. Never has a trailing slash."""
+        return self.api_base_url.strip().rstrip("/")
 
     @property
     def notifications_from_email(self) -> str:

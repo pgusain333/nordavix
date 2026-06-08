@@ -22,7 +22,10 @@ _PUBLIC_PATHS = {"/api/health", "/docs", "/redoc", "/openapi.json"}
 # /api/internal/ bypasses Clerk auth because it's called by schedulers/cron, not
 # users — those endpoints are instead gated by the X-Internal-Secret shared
 # secret (see modules/internal/router.py). They have NO tenant context.
-_PUBLIC_PREFIXES = {"/api/oauth/", "/api/internal/"}
+# /api/email/ is public too: the unsubscribe link is followed directly from an
+# email (and POSTed by mail clients for one-click), so it can't carry a JWT — its
+# token is HMAC-signed instead (modules/email/tokens.py).
+_PUBLIC_PREFIXES = {"/api/oauth/", "/api/internal/", "/api/email/"}
 
 
 class TenantMiddleware(BaseHTTPMiddleware):

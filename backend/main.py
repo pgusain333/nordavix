@@ -11,6 +11,7 @@ from core.security.crypto import encryption_configured
 from core.tenancy.middleware import TenantMiddleware
 from modules.audit.router import router as audit_router
 from modules.comments.router import router as comments_router
+from modules.email.router import router as email_router
 from modules.exports.router import router as exports_router
 from modules.feedback.router import router as feedback_router
 from modules.financials.router import router as financials_router
@@ -92,6 +93,7 @@ app.include_router(insights_router,     prefix="/api/insights",     tags=["insig
 app.include_router(schedules_router,     prefix="/api/schedules",    tags=["schedules"])
 app.include_router(feedback_router,      prefix="/api/feedback",     tags=["feedback"])
 app.include_router(internal_router,      prefix="/api/internal",     tags=["internal"])
+app.include_router(email_router,         prefix="/api/email",        tags=["email"])
 app.include_router(notifications_router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(onboarding_router,    prefix="/api/onboarding",   tags=["onboarding"])
 app.include_router(comments_router,      prefix="/api/comments",     tags=["comments"])

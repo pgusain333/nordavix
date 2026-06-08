@@ -16,6 +16,7 @@ import logging
 from fastapi import APIRouter, Header, HTTPException
 
 from core.config import settings
+from modules.reengagement.service import run_reengagement
 from modules.workspace.purge import purge_expired_tenants
 
 logger = logging.getLogger(__name__)
@@ -50,3 +51,20 @@ async def run_purge_expired_tenants(
     failed = sum(1 for s in summaries if not s.get("ok"))
     logger.info("Purge endpoint ran: %d purged, %d failed.", purged, failed)
     return {"purged": purged, "failed": failed, "results": summaries}
+
+
+@router.post("/run-reengagement")
+async def run_reengagement_endpoint(
+    dry_run: int = 0,
+    x_internal_secret: str | None = Header(default=None),
+) -> dict:
+    """
+    Run the re-engagement drip sweep: enroll signed-up-but-inactive users, exit
+    anyone who has since activated or unsubscribed, and send each due person the
+    next email in the 5-step sequence. Idempotent — safe to call daily.
+    ?dry_run=1 computes the summary without sending or writing anything.
+    """
+    _require_internal_secret(x_internal_secret)
+    summary = await run_reengagement(dry_run=bool(dry_run))
+    logger.info("Re-engagement endpoint ran (dry_run=%s): %s", bool(dry_run), summary)
+    return summary

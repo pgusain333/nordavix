@@ -1,0 +1,35 @@
+name: Re-engagement drip
+
+# Daily win-back sweep: enrolls users who signed up but never activated and sends
+# each one the next email in the 5-step sequence (every 3 days, max 5). All the
+# logic and safety gates live in the backend — this just pings the internal
+# endpoint once a day.
+#
+# Nothing sends unless ALL of these are true:
+#   * INTERNAL_TASK_SECRET is set as a repo Actions secret (and matches Fly), and
+#   * the backend has email configured (RESEND_API_KEY) + API_BASE_URL set.
+# If the secret isn't set, this job logs a note and exits green (never red-X's).
+
+on:
+  schedule:
+    - cron: "0 14 * * *"   # 14:00 UTC daily (~9–10am US Eastern)
+  workflow_dispatch: {}     # allow manual runs from the Actions tab
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger re-engagement sweep
+        env:
+          INTERNAL_TASK_SECRET: ${{ secrets.INTERNAL_TASK_SECRET }}
+        run: |
+          if [ -z "$INTERNAL_TASK_SECRET" ]; then
+            echo "INTERNAL_TASK_SECRET not set — add it under Settings -> Secrets"
+            echo "and variables -> Actions to enable the drip. Skipping."
+            exit 0
+          fi
+          curl -fsS -X POST "https://nordavix-api.fly.dev/api/internal/run-reengagement" \
+            -H "X-Internal-Secret: $INTERNAL_TASK_SECRET" \
+            -H "Content-Type: application/json"
+          echo
+          echo "Re-engagement sweep triggered."
