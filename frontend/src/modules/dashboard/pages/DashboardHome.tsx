@@ -49,16 +49,19 @@ import {
   Lightbulb,
   AlertCircle,
   RefreshCw,
+  ClipboardList,
+  ArrowLeftRight,
 } from "lucide-react"
 import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
+import { icApi } from "@/modules/intercompany/api"
 import { tasksApi } from "@/modules/tasks/api"
 import { OnboardingChecklist } from "@/modules/onboarding/OnboardingChecklist"
 import { useBooksStatus } from "@/modules/recons/hooks"
 import { workspaceApi } from "@/modules/workspace/api"
 import { Button, Spinner } from "@/core/ui/components"
-import { humanize } from "@/core/ui/utils"
+import { cn, humanize } from "@/core/ui/utils"
 import { BooksClosedCelebration } from "@/modules/dashboard/components/BooksClosedCelebration"
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -146,6 +149,7 @@ export function DashboardHome() {
     staleTime: 5 * 60_000,
   })
   const isAdmin = me?.role === "admin"
+  const closeTargetDays = useCloseTargetDays()
 
   // QBO connection — uses the localStorage-cached hook so refreshes
   // don't flash the "not connected" banner while the verify-fetch
@@ -174,13 +178,6 @@ export function DashboardHome() {
     queryFn:  reconsApi.listPeriodTracker,
     enabled:  books?.seeded === true,
     staleTime: 5 * 60_000,
-  })
-
-  // Workspace members count
-  const { data: members } = useQuery({
-    queryKey: ["workspace-members"],
-    queryFn:  workspaceApi.listMembers,
-    staleTime: 10 * 60_000,
   })
 
   // Flux trial balances — list of recent analyses
@@ -439,6 +436,27 @@ export function DashboardHome() {
       .sort((x, y) => Math.abs(parseFloat(y.variance)) - Math.abs(parseFloat(x.variance)))
       .slice(0, 5)
   }, [overview])
+
+  // Intercompany overview — used only to (a) decide whether to show the IC
+  // card and (b) surface unclassified accounts in "Needs attention". Cached;
+  // the card renders only when the workspace actually tracks IC accounts, so a
+  // non-IC tenant just carries one idle cached query.
+  const { data: icOverview } = useQuery({
+    queryKey: ["ic-overview", period],
+    queryFn:  () => icApi.getOverview(period),
+    enabled:  !!qbo && books?.seeded === true,
+    staleTime: 5 * 60_000,
+  })
+
+  // Days until the close target (period end + the workspace's close-target
+  // days, default 15). Negative = overdue. Drives the "Days to close" KPI.
+  const daysToClose = useMemo(() => {
+    if (!period) return null
+    const target = new Date(period + "T00:00:00")
+    target.setDate(target.getDate() + closeTargetDays)
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    return Math.round((target.getTime() - today.getTime()) / 86_400_000)
+  }, [period, closeTargetDays])
 
   // Recent audit activity (last ~10 events) — fetched directly. Names get
   // resolved by a second query so the feed shows "Jatin" not "4c1d-..."
@@ -727,15 +745,89 @@ export function DashboardHome() {
           )}
         </div>
 
+        {/* ── Needs attention — the prioritized "do next" list ─────
+            Synthesized from data already loaded on this page (no extra
+            queries): sequential-close blockers, overdue, open/awaiting
+            reconciliations, flux awaiting approval, schedules to commit,
+            and unclassified intercompany accounts. Empty = caught up. */}
+        {books?.seeded && (() => {
+          const items: { icon: typeof Lock; text: string; tone: string; onClick: () => void }[] = []
+          const openRecon = () => navigate(`/app/reconciliations/period/${period}`)
+          const RED = "#dc2626", AMBER = "#b45309", INK = "var(--text-2)"
+          const sb = blockedBy.get(period)
+          if (sb) items.push({ icon: Lock, tone: AMBER,
+            text: `Finish ${sb.label} first — ${sb.unapproved} open account${sb.unapproved === 1 ? "" : "s"}`,
+            onClick: () => { setBlockMsg(null); setPeriod(sb.period_end) } })
+          if (daysToClose !== null && daysToClose < 0 && (buckets.open > 0 || buckets.reviewed > 0))
+            items.push({ icon: Clock, tone: RED,
+              text: `${monthLabel} close is ${Math.abs(daysToClose)} day${Math.abs(daysToClose) === 1 ? "" : "s"} overdue`,
+              onClick: openRecon })
+          if (buckets.open > 0) items.push({ icon: Scale, tone: INK,
+            text: `${buckets.open} reconciliation${buckets.open === 1 ? "" : "s"} still open`, onClick: openRecon })
+          if (buckets.reviewed > 0) items.push({ icon: ListChecks, tone: AMBER,
+            text: `${buckets.reviewed} reconciliation${buckets.reviewed === 1 ? "" : "s"} awaiting approval`, onClick: openRecon })
+          if (fluxStatus.unapprovedCount > 0) items.push({ icon: BarChart3, tone: AMBER,
+            text: `${fluxStatus.unapprovedCount} flux analys${fluxStatus.unapprovedCount === 1 ? "is" : "es"} need approval`,
+            onClick: () => navigate(`/app/flux?period=${period}`) })
+          if (scheduleStatus.total > 0 && !scheduleStatus.allComplete) {
+            const left = scheduleStatus.total - scheduleStatus.completedCount
+            items.push({ icon: ClipboardList, tone: INK,
+              text: `${left} schedule${left === 1 ? "" : "s"} to commit`,
+              onClick: () => navigate(`/app/schedules?period=${period}`) })
+          }
+          if (icOverview && icOverview.detected_pending > 0) items.push({ icon: ArrowLeftRight, tone: AMBER,
+            text: `${icOverview.detected_pending} intercompany account${icOverview.detected_pending === 1 ? "" : "s"} to classify`,
+            onClick: () => navigate("/app/intercompany") })
+
+          return (
+            <div className="rounded-xl overflow-hidden"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+              <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
+                <ListChecks size={16} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                <h2 className="text-sm font-semibold text-theme">Needs attention</h2>
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>· {monthLabel}</span>
+                {items.length > 0 && (
+                  <span className="ml-auto inline-flex items-center justify-center min-w-[20px] h-5 rounded-full px-1.5 text-[11px] font-bold tabular-nums"
+                    style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>{items.length}</span>
+                )}
+              </div>
+              {items.length === 0 ? (
+                <div className="px-4 py-6 flex items-center justify-center gap-2 text-sm" style={{ color: "var(--green)" }}>
+                  <CheckCircle2 size={16} strokeWidth={2} /> You&apos;re all caught up for {monthLabel}.
+                </div>
+              ) : (
+                <ul>
+                  {items.map((it, i) => {
+                    const Icon = it.icon
+                    return (
+                      <li key={i} style={{ borderTop: i > 0 ? "1px solid var(--border)" : "none" }}>
+                        <button onClick={it.onClick}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[var(--surface-2)]">
+                          <Icon size={16} strokeWidth={1.9} className="shrink-0" style={{ color: it.tone }} />
+                          <span className="flex-1 text-sm text-theme">{it.text}</span>
+                          <ArrowRight size={14} strokeWidth={2} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          )
+        })()}
+
         {/* ── KPI strip — reflects the selected month ───────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Kpi label="Days to close"
+            value={daysToClose === null ? "—" : daysToClose < 0 ? `${Math.abs(daysToClose)}d over` : `${daysToClose}d`}
+            tone={daysToClose !== null && daysToClose < 0 ? "#dc2626" : "var(--text)"}
+            sub={daysToClose === null ? "—" : daysToClose < 0 ? "past target close" : "to target close"} />
           <Kpi label={`Open in ${monthLabel}`} value={String(buckets.open)} tone="var(--text)"
             sub={buckets.total > 0 ? `${buckets.total} accounts total` : "—"} />
-          <Kpi label="Variance this month" value={fmtMoney(totalVariance)} tone="var(--text)"
-            sub={buckets.total > 0 ? "absolute, all accounts" : "—"} />
-          <Kpi label="Flux analyses" value={String(monthlyFlux.length)} tone="var(--text)"
-            sub={monthlyFlux.length > 0 ? `for ${monthLabel}` : `no flux for ${monthLabel}`} />
-          <Kpi label="Team members" value={String(members?.length ?? 0)} tone="var(--text)" sub="see settings" />
+          <Kpi label="Awaiting review" value={String(buckets.reviewed)} tone="var(--text)"
+            sub={buckets.reviewed > 0 ? "prepared, not approved" : "none pending"} />
+          <Kpi label="Largest open variance" value={topOpen.length ? fmtMoney(topOpen[0].variance) : "$0"} tone="var(--text)"
+            sub={topOpen.length ? topOpen[0].account_name : "all tied out"} />
         </div>
 
         {/* ── Month-end Close Progress card ────────────────────────
@@ -999,6 +1091,91 @@ export function DashboardHome() {
             </div>
           </button>
         </div>
+
+        {/* ── Schedules + Intercompany — round out the close picture ──
+            Schedules is always shown (close gate requires it); Intercompany
+            renders only when the workspace actually tracks IC accounts. */}
+        {books?.seeded && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Schedules */}
+            <button
+              onClick={() => navigate(`/app/schedules?period=${period}`)}
+              className={cn("rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5",
+                !(icOverview && icOverview.accounts.length > 0) && "lg:col-span-2")}
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+              <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)" }}>
+                <div className="flex items-center gap-2">
+                  <ClipboardList size={18} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                  <h2 className="text-base font-semibold text-theme">Schedules</h2>
+                </div>
+                <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                  style={{ background: "var(--green-subtle)", color: "var(--green)" }}>{monthLabel}</span>
+              </div>
+              <div className="px-4 py-3">
+                {scheduleStatus.total === 0 ? (
+                  <p className="text-xs py-2" style={{ color: "var(--text-muted)" }}>
+                    No schedules tracked for {monthLabel} — set up prepaids, accruals, fixed assets, leases, or loans.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between text-[11px] mb-1.5">
+                      <span style={{ color: "var(--text-muted)" }}>Committed</span>
+                      <span className="tabular-nums font-semibold" style={{ color: "var(--text-2)" }}>
+                        {scheduleStatus.completedCount} / {scheduleStatus.total}
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: "rgba(0,0,0,0.06)" }}>
+                      <div className="h-full rounded-full transition-all"
+                        style={{ width: `${Math.round((scheduleStatus.completedCount / Math.max(1, scheduleStatus.total)) * 100)}%`, background: "var(--green)" }} />
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="px-4 py-2.5 flex items-center justify-end"
+                style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "var(--green)" }}>
+                  Open dashboard <ArrowRight size={12} strokeWidth={2} />
+                </span>
+              </div>
+            </button>
+
+            {/* Intercompany — only when the workspace tracks IC accounts */}
+            {icOverview && icOverview.accounts.length > 0 && (
+              <button
+                onClick={() => navigate("/app/intercompany")}
+                className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+                <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)" }}>
+                  <div className="flex items-center gap-2">
+                    <ArrowLeftRight size={18} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                    <h2 className="text-base font-semibold text-theme">Intercompany</h2>
+                  </div>
+                  <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                    style={{ background: "var(--green-subtle)", color: "var(--green)" }}>{monthLabel}</span>
+                </div>
+                <div className="px-4 py-3 grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Accounts</p>
+                    <p className="text-lg font-bold tabular-nums text-theme">{icOverview.accounts.length}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Net to eliminate</p>
+                    <p className="text-lg font-bold tabular-nums text-theme">{fmtMoney(icOverview.totals.net)}</p>
+                  </div>
+                </div>
+                <div className="px-4 py-2.5 flex items-center justify-between"
+                  style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    {icOverview.detected_pending > 0 ? `${icOverview.detected_pending} to classify` : "All classified"}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "var(--green)" }}>
+                    Open dashboard <ArrowRight size={12} strokeWidth={2} />
+                  </span>
+                </div>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* ── Insights tile (full width) ─────────────────────────── */}
         <button
