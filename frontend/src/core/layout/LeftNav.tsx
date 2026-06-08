@@ -207,10 +207,9 @@ export function LeftNav({ onClose }: Props) {
           className={cn("flex items-center min-w-0", isCollapsed ? "justify-center" : "gap-2.5 flex-1")}
           title="Nordavix home"
         >
-          {/* White logo on the burgundy rail — forced white in both themes. */}
-          <img src="/logo-mark-light.svg" alt="Nordavix"
-            className="h-8 w-8 lg:h-9 lg:w-9 shrink-0"
-            style={{ filter: "brightness(0) invert(1)" }} />
+          {/* White mark on the burgundy rail (same in light + dark). */}
+          <img src="/logo-mark-white.svg" alt="Nordavix"
+            className="h-8 w-8 lg:h-9 lg:w-9 shrink-0" />
           {!isCollapsed && (
             <span className="text-xl lg:text-[24px] font-semibold tracking-tight leading-none truncate"
               style={{ color: "#FFFFFF" }}>
