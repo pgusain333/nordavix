@@ -15,12 +15,13 @@
   --green:        #3E8F66;
   --green-light:  #5BB089;
   --green-subtle: #EEF7F2;
-  /* Sidebar — brand burgundy with white text, identical in light + dark. */
-  --nav-bg:       #8B1538;
-  --nav-border:   rgba(255,255,255,0.14);
-  --nav-active:   rgba(255,255,255,0.16);
-  --nav-hover:    rgba(255,255,255,0.10);
-  --nav-text:     rgba(255,255,255,0.82);
+  /* Sidebar — deep charcoal, white text, burgundy active highlight, green dot.
+     Identical in light + dark so the rail is a consistent brand anchor. */
+  --nav-bg:       #16181B;
+  --nav-border:   rgba(255,255,255,0.08);
+  --nav-active:   #8B1538;
+  --nav-hover:    rgba(255,255,255,0.06);
+  --nav-text:     rgba(255,255,255,0.78);
   --nav-text-act: #FFFFFF;
   --card-shadow:  0 1px 3px rgba(14,17,18,0.08), 0 1px 2px rgba(14,17,18,0.04);
   --card-shadow-hover: 0 4px 16px rgba(14,17,18,0.10), 0 2px 4px rgba(14,17,18,0.06);
@@ -40,12 +41,13 @@
   --green:        #5BB089;
   --green-light:  #7BC9A1;
   --green-subtle: #1A2E24;
-  /* Sidebar — brand burgundy with white text (same as light mode). */
-  --nav-bg:       #8B1538;
-  --nav-border:   rgba(255,255,255,0.14);
-  --nav-active:   rgba(255,255,255,0.16);
-  --nav-hover:    rgba(255,255,255,0.10);
-  --nav-text:     rgba(255,255,255,0.82);
+  /* Sidebar — deep charcoal, white text, burgundy active highlight, green dot
+     (same as light mode). */
+  --nav-bg:       #16181B;
+  --nav-border:   rgba(255,255,255,0.08);
+  --nav-active:   #8B1538;
+  --nav-hover:    rgba(255,255,255,0.06);
+  --nav-text:     rgba(255,255,255,0.78);
   --nav-text-act: #FFFFFF;
   --card-shadow:  0 1px 3px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20);
   --card-shadow-hover: 0 4px 16px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25);
