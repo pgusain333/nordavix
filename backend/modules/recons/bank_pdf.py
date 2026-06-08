@@ -39,6 +39,8 @@ from decimal import Decimal
 from typing import Any
 
 from modules.recons.bank_csv import (
+    _ENDING_WORDS,
+    _OPENING_WORDS,
     _parse_amount,
     _parse_date,
     _role_for,
@@ -234,13 +236,53 @@ def _extract_from_text(pdf, statement_year_hint: int | None = None) -> list[dict
     return out
 
 
+# ── Statement control totals (cross-foot) ──────────────────────────────
+
+
+def _extract_totals_text(pdf) -> dict[str, Decimal | None]:
+    """Scan page text for labeled 'Beginning/Ending Balance' lines and read
+    the balance figure (the last money token on the line). Best-effort —
+    returns None for whatever isn't found."""
+    opening: Decimal | None = None
+    ending: Decimal | None = None
+    for page in pdf.pages:
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            continue
+        for raw_line in text.splitlines():
+            low = raw_line.strip().lower()
+            if "balance" not in low:
+                continue
+            moneys = list(_LINE_MONEY_RE.finditer(raw_line))
+            if not moneys:
+                continue
+            # The balance figure is the last money token on the line
+            # ("Beginning Balance .... 10,000.00").
+            amt = _parse_amount(moneys[-1].group("amt"))
+            if amt is None:
+                continue
+            if opening is None and any(w in low for w in _OPENING_WORDS):
+                opening = amt
+            elif ending is None and any(w in low for w in _ENDING_WORDS):
+                ending = amt
+        if opening is not None and ending is not None:
+            break
+    return {"opening_balance": opening, "ending_balance": ending}
+
+
 # ── Public entry point ─────────────────────────────────────────────────
 
 
-def parse_bank_pdf(raw_bytes: bytes, filename: str = "") -> list[dict[str, Any]]:
-    """Parse a bank-statement PDF into the same shape as parse_bank_csv:
-    [{txn_date, amount, description, bank_ref}, ...] with `amount`
-    signed (positive = deposit, negative = withdrawal)."""
+def parse_bank_pdf(
+    raw_bytes: bytes, filename: str = ""
+) -> tuple[list[dict[str, Any]], dict[str, Decimal | None]]:
+    """Parse a bank-statement PDF.
+
+    Returns (lines, totals) — the same shape as parse_bank_csv:
+    lines  = [{txn_date, amount, description, bank_ref}, ...] with `amount`
+             signed (positive = deposit, negative = withdrawal);
+    totals = {opening_balance, ending_balance} (best-effort, None if absent)."""
     try:
         import pdfplumber
     except ImportError as exc:
@@ -303,7 +345,8 @@ def parse_bank_pdf(raw_bytes: bytes, filename: str = "") -> list[dict[str, Any]]
                 "bank_pdf: de-duped %d → %d rows in %s",
                 len(rows), len(deduped), filename or "<upload>",
             )
-        return deduped
+        totals = _extract_totals_text(pdf)
+        return deduped, totals
     finally:
         try:
             pdf.close()

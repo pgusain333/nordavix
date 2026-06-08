@@ -62,7 +62,7 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
 
   const queryKey = ["recon-bank-worksheet", qboAccountId, periodEnd]
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey,
     queryFn:  () => reconsApi.getBankWorksheet(qboAccountId, periodEnd),
     staleTime: 30_000,
@@ -89,6 +89,18 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
     },
   })
 
+  // Refresh = re-pull the period's GL from QuickBooks. The worksheet normally
+  // serves a cached GL snapshot (so opening it is a fast DB read), so this is
+  // the explicit "get the latest from QBO" action.
+  const refreshMut = useMutation({
+    mutationFn: () => reconsApi.getBankWorksheet(qboAccountId, periodEnd, true),
+    onSuccess: (res) => { qc.setQueryData(queryKey, res); setError(null) },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+      setError(msg ?? "Refresh failed — try again.")
+    },
+  })
+
   function onFilePick(ev: React.ChangeEvent<HTMLInputElement>) {
     const f = ev.target.files?.[0]
     if (f) uploadMut.mutate(f)
@@ -108,6 +120,8 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
     cleared: [], bank_only: [], gl_only: [],
     summary: { cleared_count: 0, bank_only_count: 0, gl_only_count: 0,
       cleared_total: "0", bank_only_total: "0", gl_only_total: "0" },
+    statement_totals: { opening_balance: null, ending_balance: null,
+      line_sum: null, tie_out_ok: null, tie_out_diff: null },
   }
 
   // Worksheet math (book-to-bank form):
@@ -174,9 +188,9 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
         </Button>
         {w.uploaded && (
           <>
-            <Button size="sm" variant="ghost" loading={false}
-              onClick={() => refetch()}>
-              <RefreshCw size={11} strokeWidth={2} /> Re-match
+            <Button size="sm" variant="ghost" loading={refreshMut.isPending}
+              onClick={() => refreshMut.mutate()}>
+              <RefreshCw size={11} strokeWidth={2} /> Refresh from QBO
             </Button>
             {!readOnly && (
               <button type="button"
@@ -192,6 +206,8 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
           </>
         )}
       </div>
+
+      {w.uploaded && <TieOutBanner totals={w.statement_totals} />}
 
       {error && (
         <div className="rounded-md px-3 py-2 text-[11px] flex items-start gap-2"
@@ -358,6 +374,53 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
           )}
         </>
       )}
+    </div>
+  )
+}
+
+
+// ── Statement tie-out (cross-foot control) ─────────────────────────────
+
+function TieOutBanner({ totals }: { totals: Worksheet["statement_totals"] }) {
+  const { opening_balance, ending_balance, tie_out_ok, tie_out_diff } = totals
+
+  // Couldn't read the statement's own opening/ending → completeness can't be
+  // proven. Surface as a caution, not a hard failure.
+  if (tie_out_ok === null) {
+    return (
+      <div className="rounded-md px-3 py-2 text-[11px] flex items-start gap-2"
+        style={{ background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+        <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
+        <span>
+          Couldn't read the statement's opening / ending balance, so completeness
+          isn't verified. Double-check the totals against your statement.
+        </span>
+      </div>
+    )
+  }
+
+  if (tie_out_ok) {
+    return (
+      <div className="rounded-md px-3 py-2 text-[11px] flex items-center gap-2 flex-wrap"
+        style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
+        <CheckCircle2 size={12} strokeWidth={2.2} className="shrink-0" />
+        <span className="font-semibold">Statement ties out.</span>
+        <span style={{ color: "var(--text-muted)" }}>
+          Opening {fmt(opening_balance ?? 0)} + activity = ending {fmt(ending_balance ?? 0)} — every line captured.
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-md px-3 py-2 text-[11px] flex items-start gap-2"
+      style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+      <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
+      <span>
+        <span className="font-semibold">Statement doesn't tie out — off by {fmt(tie_out_diff ?? 0)}.</span>{" "}
+        Opening {fmt(opening_balance ?? 0)} + parsed activity ≠ ending {fmt(ending_balance ?? 0)}.
+        A line may have been missed in parsing — re-check the statement or upload the bank's CSV export.
+      </span>
     </div>
   )
 }

@@ -3,6 +3,9 @@ Bank-to-GL auto-matcher.
 
 For each bank statement line, finds the best-fit GL transaction in the
 same period using:
+  - Check / document-number exact match (bank_ref ↔ GL doc_num) — the
+    strongest signal QBO gives us. When the number AND amount match, the
+    pair clears even if the check cleared weeks after it was written.
   - Sign match (deposit ↔ debit, withdrawal ↔ credit)
   - Exact absolute-amount match
   - Date proximity (within ±5 calendar days handles ACH lag, weekend
@@ -51,8 +54,28 @@ def _norm_words(s: str | None) -> set[str]:
     return {t for t in toks if t not in stop}
 
 
+def _norm_ref(s: str | None) -> str | None:
+    """Normalize a check / document number for exact comparison: lowercase,
+    drop punctuation/spaces, strip a leading 'check'/'chk'/'ck'/'no'/'ref'
+    token, and remove leading zeros. Returns None when nothing meaningful
+    remains, so blank refs (or a bare '0') never match each other."""
+    if not s:
+        return None
+    t = re.sub(r"[^0-9a-z]", "", s.lower())
+    t = re.sub(r"^(check|chk|ck|no|num|ref)", "", t)
+    t = t.lstrip("0")
+    return t or None
+
+
+# A check routinely clears weeks after it's cut, so once the document number
+# AND amount match we trust the pair far beyond the normal ±5-day window.
+_CHECK_MAX_DATE_LAG = 90
+
+
 def _score(bank_tx: dict, gl_tx: dict, max_lag: int) -> float:
-    """Return 0.0..~1.1 (memo bonus can push slightly above 1)."""
+    """Return a match score (0.0 = reject). An exact check-number + amount
+    match scores highest (≥1.05) and is trusted across a wide date window;
+    otherwise fall back to amount + date-proximity (+ memo) scoring."""
     # Sign + amount gate — fail closed
     bank_amt = Decimal(bank_tx["amount"])
     gl_amt = Decimal(gl_tx.get("amount") or 0)
@@ -63,12 +86,28 @@ def _score(bank_tx: dict, gl_tx: dict, max_lag: int) -> float:
     if abs(bank_amt) != abs(gl_amt):
         return 0.0
 
-    # Date proximity gate
     g_date = gl_tx.get("txn_date")
-    if not isinstance(g_date, date):
-        return 0.0
-    lag = abs((bank_tx["txn_date"] - g_date).days)
-    if lag > max_lag:
+    g_is_date = isinstance(g_date, date)
+    lag = abs((bank_tx["txn_date"] - g_date).days) if g_is_date else None
+
+    # ── Check / document-number match ──────────────────────────────────
+    # Amount + sign already match; if the bank reference equals the GL
+    # document number this is near-certain — the highest-precision way to
+    # clear an outstanding check, even when it cleared long after issue.
+    bank_ref = _norm_ref(bank_tx.get("bank_ref"))
+    gl_num = _norm_ref(gl_tx.get("txn_number"))
+    if bank_ref and gl_num and bank_ref == gl_num:
+        if lag is None or lag <= _CHECK_MAX_DATE_LAG:
+            # Small bonus when it's also within the normal date window, so a
+            # same-period check-match edges out a far-dated one competing for
+            # the same GL line.
+            return 1.15 + (0.05 if (lag is not None and lag <= max_lag) else 0.0)
+        # Number + amount match but cleared >90 days later — still very
+        # likely the same item, scored just below the in-window matches.
+        return 1.05
+
+    # ── No check-number match → require the date-proximity gate ─────────
+    if not g_is_date or lag is None or lag > max_lag:
         return 0.0
 
     # Score: 1.0 at zero lag, falls linearly to 0.70 at max lag.
@@ -83,12 +122,6 @@ def _score(bank_tx: dict, gl_tx: dict, max_lag: int) -> float:
     overlap = bank_words & gl_words
     if overlap:
         score += min(0.10, 0.04 * len(overlap))
-
-    # Bank ref ↔ GL txn number tie-break (exact match — strong signal)
-    bank_ref = (bank_tx.get("bank_ref") or "").strip()
-    gl_num = (gl_tx.get("txn_number") or "").strip()
-    if bank_ref and gl_num and bank_ref == gl_num:
-        score += 0.05
 
     return score
 

@@ -934,6 +934,20 @@ async def update_account_review_status(
         )
     )).scalar_one_or_none()
 
+    # Reopen gate: un-approving an approved reconciliation (back to pending or
+    # reviewed) is a reviewer/admin action. Preparers can still reset their own
+    # not-yet-approved work.
+    if (
+        row is not None
+        and row.status == "approved"
+        and status_value in ("pending", "reviewed")
+        and ROLE_ORDER.get(user.role or "preparer", 0) < ROLE_ORDER["reviewer"]
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only reviewers and admins can reopen an approved reconciliation.",
+        )
+
     # Maker/checker: a manual subledger override cannot be approved by
     # the same user who entered it. Self-approval defeats the whole point
     # of the control. Preparer enters → independent reviewer approves.
@@ -956,6 +970,13 @@ async def update_account_review_status(
                 "Admins can bypass this rule."
             ),
         )
+
+    # Bank/Credit-Card accounts: require a statement (or evidence) before
+    # approval — a bank rec can't be signed off with nothing attached.
+    if status_value == "approved" and await _bank_acct_missing_statement(
+        db, tenant_id, qbo_account_id, pe
+    ):
+        raise HTTPException(status_code=422, detail=_STATEMENT_REQUIRED_MSG)
 
     if row is None:
         row = AccountReviewStatus(
@@ -1124,6 +1145,24 @@ async def bulk_update_account_review_status(
     )).scalars().all())
     by_id = {r.qbo_account_id: r for r in existing}
 
+    # Reopen gate (bulk): downgrading any approved row (→ pending/reviewed) is
+    # a reviewer/admin action. Preparers can still reset their own un-approved
+    # work, so only block when the batch actually touches an approved row.
+    if (
+        status_value in ("pending", "reviewed")
+        and ROLE_ORDER.get(user.role or "preparer", 0) < ROLE_ORDER["reviewer"]
+    ):
+        approved_ids = [qid for qid, r in by_id.items() if r.status == "approved"]
+        if approved_ids:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Only reviewers and admins can reopen an approved "
+                    "reconciliation. Approved in this batch: "
+                    + ", ".join(approved_ids) + "."
+                ),
+            )
+
     # Maker/checker — block bulk approval of any account whose override the
     # current user entered. Bulk action either fully succeeds or fails as a
     # set, so we surface every conflict in the error message.
@@ -1143,6 +1182,23 @@ async def bulk_update_account_review_status(
                     f"{len(own_overrides)} account(s) in this batch — "
                     "approval must come from a different user (maker/checker). "
                     f"Conflicting account IDs: {', '.join(own_overrides)}."
+                ),
+            )
+
+    # Bank/Credit-Card accounts: every account being approved must have a
+    # statement or evidence attached. Fail the batch as a set, naming offenders.
+    if status_value == "approved":
+        blocked: list[str] = []
+        for qid in ids:
+            if await _bank_acct_missing_statement(db, tenant_id, qid, pe):
+                blocked.append(qid)
+        if blocked:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Attach the bank statement (or supporting evidence) before "
+                    "approving these bank reconciliations: "
+                    + ", ".join(blocked) + "."
                 ),
             )
 
@@ -3365,7 +3421,7 @@ async def upload_bank_statement(
     if ext in _BANK_PDF_EXTS:
         from modules.recons.bank_pdf import is_likely_scanned_pdf, parse_bank_pdf
         try:
-            parsed = parse_bank_pdf(raw, filename=name)
+            parsed, stmt_totals = parse_bank_pdf(raw, filename=name)
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not parsed:
@@ -3385,7 +3441,7 @@ async def upload_bank_statement(
             raise HTTPException(status_code=400, detail=detail)
     else:
         from modules.recons.bank_csv import parse_bank_csv
-        parsed = parse_bank_csv(raw, filename=name)
+        parsed, stmt_totals = parse_bank_csv(raw, filename=name)
         if not parsed:
             raise HTTPException(
                 status_code=400,
@@ -3419,10 +3475,41 @@ async def upload_bank_statement(
             uploaded_by=user_uuid,
             match_status="unmatched",
         ))
+
+    # Upsert the statement header: control totals + cross-foot tie-out. This
+    # is what lets the worksheet flag a parse that dropped a line (opening +
+    # activity won't equal ending) instead of silently under-reporting.
+    from models.bank_statement import BankStatement
+    line_sum = sum((p["amount"] for p in parsed), Decimal("0"))
+    opening = stmt_totals.get("opening_balance")
+    ending = stmt_totals.get("ending_balance")
+    tie_ok, tie_diff = _compute_tie_out(opening, ending, line_sum)
+    header = (await db.execute(
+        select(BankStatement).where(
+            BankStatement.tenant_id == tenant_id,
+            BankStatement.qbo_account_id == qbo_account_id,
+            BankStatement.period_end == pe,
+        )
+    )).scalar_one_or_none()
+    if header is None:
+        header = BankStatement(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            qbo_account_id=qbo_account_id,
+            period_end=pe,
+        )
+        db.add(header)
+    header.statement_filename = name
+    header.opening_balance = opening
+    header.ending_balance = ending
+    header.line_sum = line_sum
+    header.tie_out_ok = tie_ok
+    header.tie_out_diff = tie_diff
+    header.uploaded_by = user_uuid
     await db.commit()
 
-    # Run match + return worksheet
-    return await _run_bank_match(db, tenant_id, qbo_account_id, pe)
+    # Run match (fresh GL pull → cached on the header) + return worksheet.
+    return await _run_bank_match(db, tenant_id, qbo_account_id, pe, refresh=True)
 
 
 @router.get("/account/{qbo_account_id}/bank-statement")
@@ -3430,16 +3517,18 @@ async def get_bank_statement_worksheet(
     qbo_account_id: str,
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    refresh: bool = Query(False, description="Force a fresh GL pull from QBO"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Return the current bank-rec worksheet for (account, period). If
-    nothing has been uploaded yet, returns an empty-state payload."""
+    nothing has been uploaded yet, returns an empty-state payload. GL is
+    served from the cache unless refresh=1 (or the cache is empty)."""
     from datetime import date as _d
     try:
         pe = _d.fromisoformat(period_end)
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
-    return await _run_bank_match(db, tenant_id, qbo_account_id, pe)
+    return await _run_bank_match(db, tenant_id, qbo_account_id, pe, refresh=refresh)
 
 
 @router.delete("/account/{qbo_account_id}/bank-statement",
@@ -3472,16 +3561,142 @@ async def clear_bank_statement(
     return {"deleted": result.rowcount or 0}
 
 
+# ── Bank statement: control totals, GL cache + approval-gate helpers ─────
+
+_TIE_OUT_TOLERANCE = Decimal("0.01")
+_STATEMENT_REQUIRED_MSG = (
+    "Attach the bank statement (or supporting evidence) before approving "
+    "this bank reconciliation."
+)
+
+
+def _compute_tie_out(
+    opening: Decimal | None,
+    ending: Decimal | None,
+    line_sum: Decimal,
+) -> tuple[bool | None, Decimal | None]:
+    """Cross-foot: opening + Σ line activity should equal ending. Returns
+    (ok, diff). (None, None) when opening/ending weren't parsed — the caller
+    surfaces 'couldn't verify totals', not a tie-out failure."""
+    if opening is None or ending is None:
+        return None, None
+    diff = (opening + line_sum) - ending
+    return (abs(diff) < _TIE_OUT_TOLERANCE), diff
+
+
+def _gl_to_cache(gl_txns: list[dict]) -> list[dict]:
+    """JSON-safe form of the pulled GL txns for storage on the header."""
+    out: list[dict] = []
+    for g in gl_txns:
+        td = g.get("txn_date")
+        out.append({
+            "qbo_txn_id":  g.get("qbo_txn_id"),
+            "txn_type":    g.get("txn_type"),
+            "txn_number":  g.get("txn_number"),
+            "txn_date":    td.isoformat() if td else None,
+            "amount":      str(g.get("amount") or "0"),
+            "memo":        g.get("memo"),
+            "entity_name": g.get("entity_name"),
+        })
+    return out
+
+
+def _gl_from_cache(cached: list[dict]) -> list[dict]:
+    """Rehydrate cached GL txns (str→Decimal, ISO→date) for the matcher."""
+    from datetime import date as _d
+    out: list[dict] = []
+    for g in (cached or []):
+        td = g.get("txn_date")
+        out.append({
+            "qbo_txn_id":  g.get("qbo_txn_id"),
+            "txn_type":    g.get("txn_type"),
+            "txn_number":  g.get("txn_number"),
+            "txn_date":    _d.fromisoformat(td) if td else None,
+            "amount":      Decimal(str(g.get("amount") or "0")),
+            "memo":        g.get("memo"),
+            "entity_name": g.get("entity_name"),
+        })
+    return out
+
+
+def _serialize_statement_totals(header) -> dict:
+    """Statement control-total block for the worksheet payload."""
+    if header is None:
+        return {
+            "opening_balance": None, "ending_balance": None,
+            "line_sum": None, "tie_out_ok": None, "tie_out_diff": None,
+        }
+    def _s(v):
+        return str(v) if v is not None else None
+    return {
+        "opening_balance": _s(header.opening_balance),
+        "ending_balance":  _s(header.ending_balance),
+        "line_sum":        _s(header.line_sum),
+        "tie_out_ok":      header.tie_out_ok,
+        "tie_out_diff":    _s(header.tie_out_diff),
+    }
+
+
+async def _account_type_for(
+    db: AsyncSession, tenant_id: uuid.UUID, qbo_account_id: str,
+) -> str | None:
+    """QBO AccountType (e.g. 'Bank', 'Credit Card') for an account, read from
+    the latest GL balance snapshot. None when the account isn't synced — the
+    caller then skips type-specific gating (fail-open for unknown accounts)."""
+    from models.gl_balance_snapshot import GlBalanceSnapshot
+    return (await db.execute(
+        select(GlBalanceSnapshot.account_type).where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.qbo_account_id == qbo_account_id,
+        ).order_by(GlBalanceSnapshot.period_end.desc()).limit(1)
+    )).scalar_one_or_none()
+
+
+async def _bank_acct_missing_statement(
+    db: AsyncSession, tenant_id: uuid.UUID, qbo_account_id: str, period_end,
+) -> bool:
+    """True when this is a Bank/Credit-Card account with neither a parsed bank
+    statement nor an attached evidence file for the period — i.e. approval
+    should be blocked. Returns False for any non-bank account."""
+    acct_type = await _account_type_for(db, tenant_id, qbo_account_id)
+    if acct_type not in ("Bank", "Credit Card"):
+        return False
+    has_statement = (await db.execute(
+        select(BankStatementTxn.id).where(
+            BankStatementTxn.tenant_id == tenant_id,
+            BankStatementTxn.qbo_account_id == qbo_account_id,
+            BankStatementTxn.period_end == period_end,
+        ).limit(1)
+    )).first() is not None
+    if has_statement:
+        return False
+    has_evidence = (await db.execute(
+        select(SubledgerEvidence.id).where(
+            SubledgerEvidence.tenant_id == tenant_id,
+            SubledgerEvidence.qbo_account_id == qbo_account_id,
+            SubledgerEvidence.period_end == period_end,
+        ).limit(1)
+    )).first() is not None
+    return not has_evidence
+
+
 async def _run_bank_match(
     db: AsyncSession,
     tenant_id: uuid.UUID,
     qbo_account_id: str,
     period_end,
+    refresh: bool = False,
 ) -> dict:
-    """Shared core: load bank txns + GL txns, run matcher, persist
-    results, return worksheet payload."""
+    """Shared core: load bank txns + GL txns, run matcher, return worksheet
+    payload.
+
+    The GL pull is cached on the bank_statements header, so opening the
+    worksheet is a DB read — we only hit QBO on upload or an explicit refresh
+    (or the very first view, when the cache is empty). A cached read is
+    side-effect-free; only a fresh pull writes match results back."""
     from datetime import date as _d
 
+    from models.bank_statement import BankStatement
     from modules.recons.bank_match import match_bank_to_gl, summarize
 
     bank_rows = list((await db.execute(
@@ -3491,6 +3706,14 @@ async def _run_bank_match(
             BankStatementTxn.period_end == period_end,
         ).order_by(BankStatementTxn.txn_date)
     )).scalars().all())
+
+    header = (await db.execute(
+        select(BankStatement).where(
+            BankStatement.tenant_id == tenant_id,
+            BankStatement.qbo_account_id == qbo_account_id,
+            BankStatement.period_end == period_end,
+        )
+    )).scalar_one_or_none()
 
     if not bank_rows:
         return {
@@ -3504,26 +3727,42 @@ async def _run_bank_match(
                 "cleared_count": 0, "bank_only_count": 0, "gl_only_count": 0,
                 "cleared_total": "0", "bank_only_total": "0", "gl_only_total": "0",
             },
+            "statement_totals": _serialize_statement_totals(header),
         }
 
-    # Pull GL for the period — full month bracket containing period_end.
-    period_start = _d(period_end.year, period_end.month, 1)
-    conn = (await db.execute(
-        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
-        execution_options={"skip_tenant_filter": True},
-    )).scalar_one_or_none()
-
+    # GL transactions — serve from cache unless asked to refresh or the cache
+    # is empty (first view). Only this branch touches QBO.
+    need_pull = refresh or header is None or not header.gl_txns_cache
     gl_txns: list[dict] = []
-    if conn is not None:
-        from core.qbo_gl import pull_gl_transactions
-        try:
-            gl_txns = await pull_gl_transactions(
-                conn, db, qbo_account_id, period_start, period_end,
+    if need_pull:
+        period_start = _d(period_end.year, period_end.month, 1)
+        conn = (await db.execute(
+            select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+            execution_options={"skip_tenant_filter": True},
+        )).scalar_one_or_none()
+        if conn is not None:
+            from core.qbo_gl import pull_gl_transactions
+            try:
+                gl_txns = await pull_gl_transactions(
+                    conn, db, qbo_account_id, period_start, period_end,
+                )
+            except Exception:
+                logger.exception("Bank match: GL pull failed for acct=%s", qbo_account_id)
+        # Cache the fresh pull on the header (create it if missing).
+        if header is None:
+            header = BankStatement(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                qbo_account_id=qbo_account_id,
+                period_end=period_end,
+                statement_filename=bank_rows[0].statement_filename,
             )
-        except Exception:
-            logger.exception("Bank match: GL pull failed for acct=%s", qbo_account_id)
+            db.add(header)
+        header.gl_txns_cache = _gl_to_cache(gl_txns)
+        header.gl_refreshed_at = datetime.now(UTC)
+    else:
+        gl_txns = _gl_from_cache(header.gl_txns_cache)
 
-    # Adapt bank rows into matcher's expected dict shape
     bank_dicts = [
         {
             "id":          str(b.id),
@@ -3537,28 +3776,33 @@ async def _run_bank_match(
 
     cleared, bank_only, gl_only = match_bank_to_gl(bank_dicts, gl_txns)
 
-    # Persist match results on the bank rows (cleared.id → matched_gl_txn_id)
-    cleared_by_bank_id = {c["bank"]["id"]: c for c in cleared}
-    for row in bank_rows:
-        m = cleared_by_bank_id.get(str(row.id))
-        if m:
-            row.match_status      = "cleared"
-            row.matched_gl_txn_id = m["gl"].get("qbo_txn_id")
-            row.match_confidence  = Decimal(str(m["score"]))
-        else:
-            row.match_status      = "bank_only"
-            row.matched_gl_txn_id = None
-            row.match_confidence  = None
-    await db.commit()
+    # Persist match results onto the bank rows only when we pulled fresh GL —
+    # a cached read stays a side-effect-free GET.
+    if need_pull:
+        cleared_by_bank_id = {c["bank"]["id"]: c for c in cleared}
+        for row in bank_rows:
+            m = cleared_by_bank_id.get(str(row.id))
+            if m:
+                row.match_status      = "cleared"
+                row.matched_gl_txn_id = m["gl"].get("qbo_txn_id")
+                row.match_confidence  = Decimal(str(m["score"]))
+            else:
+                row.match_status      = "bank_only"
+                row.matched_gl_txn_id = None
+                row.match_confidence  = None
+        await db.commit()
 
-    # Re-load with fresh stamps
-    bank_rows = list((await db.execute(
-        select(BankStatementTxn).where(
-            BankStatementTxn.tenant_id == tenant_id,
-            BankStatementTxn.qbo_account_id == qbo_account_id,
-            BankStatementTxn.period_end == period_end,
-        ).order_by(BankStatementTxn.txn_date)
-    )).scalars().all())
+    def _ser_bank(bd: dict, status: str, matched: str | None = None, conf=None) -> dict:
+        return {
+            "id":                bd["id"],
+            "txn_date":          bd["txn_date"].isoformat(),
+            "amount":            str(bd["amount"]),
+            "description":       bd["description"],
+            "bank_ref":          bd["bank_ref"],
+            "match_status":      status,
+            "matched_gl_txn_id": matched,
+            "match_confidence":  str(conf) if conf is not None else None,
+        }
 
     def _serialize_gl(g: dict) -> dict:
         td = g.get("txn_date")
@@ -3574,17 +3818,18 @@ async def _run_bank_match(
 
     return {
         "uploaded":    True,
-        "filename":    bank_rows[0].statement_filename if bank_rows else None,
-        "uploaded_at": bank_rows[0].uploaded_at.isoformat() if bank_rows else None,
+        "filename":    bank_rows[0].statement_filename,
+        "uploaded_at": bank_rows[0].uploaded_at.isoformat() if bank_rows[0].uploaded_at else None,
         "cleared":     [
             {
-                "bank":  _serialize_bank_txn(next(b for b in bank_rows if str(b.id) == c["bank"]["id"])),
+                "bank":  _ser_bank(c["bank"], "cleared", c["gl"].get("qbo_txn_id"), c["score"]),
                 "gl":    _serialize_gl(c["gl"]),
                 "score": c["score"],
             }
             for c in cleared
         ],
-        "bank_only":   [_serialize_bank_txn(b) for b in bank_rows if b.match_status == "bank_only"],
+        "bank_only":   [_ser_bank(b, "bank_only") for b in bank_only],
         "gl_only":     [_serialize_gl(g) for g in gl_only],
         "summary":     summarize(cleared, bank_only, gl_only),
+        "statement_totals": _serialize_statement_totals(header),
     }

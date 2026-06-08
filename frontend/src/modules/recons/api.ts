@@ -717,6 +717,16 @@ export interface BankReconWorksheet {
     bank_only_total:   string
     gl_only_total:     string
   }
+  // Statement control totals for the cross-foot tie-out check. Values are
+  // null when the parser couldn't read the statement's opening/ending balance
+  // (tie_out_ok null = unverifiable, not a failure).
+  statement_totals: {
+    opening_balance: string | null
+    ending_balance:  string | null
+    line_sum:        string | null
+    tie_out_ok:      boolean | null
+    tie_out_diff:    string | null
+  }
 }
 
 async function uploadBankStatement(
@@ -740,10 +750,11 @@ async function uploadBankStatement(
 async function getBankWorksheet(
   qboAccountId: string,
   periodEnd: string,
+  refresh = false,
 ): Promise<BankReconWorksheet> {
   const { data } = await apiClient.get<BankReconWorksheet>(
     `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/bank-statement`,
-    { params: { period_end: periodEnd } },
+    { params: { period_end: periodEnd, ...(refresh ? { refresh: true } : {}) } },
   )
   return data
 }

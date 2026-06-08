@@ -2021,8 +2021,10 @@ export function ReconciliationsDashboard() {
                     : "Run AI on this account"}>
                   {a.ai_commentary ? "Re-run AI" : "Run AI"}
                 </Button>
-                {/* Re-open: only when row has been signed off */}
-                {a.review_status === "approved" && (
+                {/* Re-open: only when row has been signed off — and only for
+                    reviewers/admins. A preparer can't reopen an approved
+                    reconciliation (the backend enforces this too). */}
+                {a.review_status === "approved" && canReview && (
                   <Button
                     size="sm"
                     variant="outline"

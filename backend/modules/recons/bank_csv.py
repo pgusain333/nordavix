@@ -39,6 +39,7 @@ _AMOUNT_KEYS = ("amount", "amt")
 _DEBIT_KEYS  = ("debit", "withdrawal", "withdrawn", "paid out", "payment")
 _CREDIT_KEYS = ("credit", "deposit", "paid in", "received")
 _REF_KEYS    = ("ref", "check", "number", "id", "trace", "confirmation")
+_BALANCE_KEYS = ("balance",)
 
 
 def _role_for(header: str) -> str | None:
@@ -51,6 +52,10 @@ def _role_for(header: str) -> str | None:
         return "debit"
     if any(k in h for k in _CREDIT_KEYS):
         return "credit"
+    # Running-/available-balance column — used only to derive the statement's
+    # opening/ending control totals, never as a transaction amount.
+    if any(k in h for k in _BALANCE_KEYS):
+        return "balance"
     if any(k in h for k in _AMOUNT_KEYS):
         return "amount"
     if any(k in h for k in _DESC_KEYS):
@@ -112,19 +117,81 @@ def _parse_amount(s: str) -> Decimal | None:
     return -d if neg else d
 
 
+# ── Statement control totals (cross-foot) ──────────────────────────────
+
+def _first_money(cells: list[str]) -> Decimal | None:
+    """First parseable money value in a row of cells — used to read the
+    amount off a labeled 'Beginning/Ending Balance' summary row."""
+    for c in cells:
+        v = _parse_amount(c or "")
+        if v is not None:
+            return v
+    return None
+
+
+_OPENING_WORDS = (
+    "beginning balance", "opening balance", "previous balance",
+    "starting balance", "balance forward", "beginning of",
+)
+_ENDING_WORDS = (
+    "ending balance", "closing balance", "new balance",
+    "current balance", "statement balance", "end of",
+)
+
+
+def _statement_totals(
+    all_rows: list[list[str]],
+    running: list[tuple[Decimal, Decimal]],
+) -> dict[str, Decimal | None]:
+    """Best-effort statement opening + ending balance for the cross-foot
+    control check. Explicit labeled rows win; otherwise derive from a
+    running-balance column (opening = first row's balance − its amount;
+    ending = last row's balance). Returns None for whatever can't be found —
+    the caller treats that as 'unverifiable', not a tie-out failure."""
+    opening: Decimal | None = None
+    ending: Decimal | None = None
+
+    for raw in all_rows:
+        joined = " ".join((c or "") for c in raw).lower()
+        if "balance" not in joined:
+            continue
+        amt = _first_money(raw)
+        if amt is None:
+            continue
+        if opening is None and any(w in joined for w in _OPENING_WORDS):
+            opening = amt
+        elif ending is None and any(w in joined for w in _ENDING_WORDS):
+            ending = amt
+
+    if running:
+        first_amount, first_balance = running[0]
+        last_balance = running[-1][1]
+        if opening is None:
+            opening = first_balance - first_amount
+        if ending is None:
+            ending = last_balance
+
+    return {"opening_balance": opening, "ending_balance": ending}
+
+
 # ── Public parse entry point ───────────────────────────────────────────
 
-def parse_bank_csv(raw_bytes: bytes, filename: str = "") -> list[dict[str, Any]]:
+def parse_bank_csv(
+    raw_bytes: bytes, filename: str = ""
+) -> tuple[list[dict[str, Any]], dict[str, Decimal | None]]:
     """
-    Parse a bank-statement CSV into a list of structured rows.
+    Parse a bank-statement CSV.
 
-    Returns:
-      [{ "txn_date": date, "amount": Decimal, "description": str | None,
-         "bank_ref": str | None }, ...]
+    Returns (lines, totals):
+      lines  = [{ "txn_date": date, "amount": Decimal, "description": str | None,
+                  "bank_ref": str | None }, ...]
+      totals = { "opening_balance": Decimal | None,
+                 "ending_balance":  Decimal | None }
 
       `amount` is signed:
         positive = deposit / money in
         negative = withdrawal / money out
+      Totals are best-effort (None when the statement doesn't expose them).
     """
     # Tolerant decode — try UTF-8 first, fall back to latin-1 which
     # accepts any byte sequence (some old bank exports use Windows-1252
@@ -155,8 +222,9 @@ def parse_bank_csv(raw_bytes: bytes, filename: str = "") -> list[dict[str, Any]]
 
     reader = csv.reader(io.StringIO(text), dialect)
     rows = list(reader)
+    _empty_totals: dict[str, Decimal | None] = {"opening_balance": None, "ending_balance": None}
     if not rows:
-        return []
+        return [], _empty_totals
 
     # Find a header row — the first row whose cells map to known roles
     # for at least one date column. If no header row scores, assume the
@@ -185,10 +253,14 @@ def parse_bank_csv(raw_bytes: bytes, filename: str = "") -> list[dict[str, Any]]
             "bank_csv: no detectable header row in %s (first 5 rows scanned)",
             filename or "<upload>",
         )
-        return []
+        return [], _empty_totals
 
     data_rows = rows[header_idx + 1:]
     out: list[dict[str, Any]] = []
+    # (txn_amount, running_balance) for rows that carry a balance column —
+    # used to derive opening/ending control totals when the statement has no
+    # explicit "Beginning/Ending Balance" summary rows.
+    running: list[tuple[Decimal, Decimal]] = []
 
     for raw in data_rows:
         if not raw or all(not c.strip() for c in raw):
@@ -229,6 +301,10 @@ def parse_bank_csv(raw_bytes: bytes, filename: str = "") -> list[dict[str, Any]]
         if bank_ref:
             bank_ref = bank_ref[:100]
 
+        bal = _parse_amount(bucket.get("balance", "")) if "balance" in bucket else None
+        if bal is not None:
+            running.append((amount, bal))
+
         out.append({
             "txn_date":    txn_date,
             "amount":      amount,
@@ -236,4 +312,4 @@ def parse_bank_csv(raw_bytes: bytes, filename: str = "") -> list[dict[str, Any]]
             "bank_ref":    bank_ref,
         })
 
-    return out
+    return out, _statement_totals(rows, running)
