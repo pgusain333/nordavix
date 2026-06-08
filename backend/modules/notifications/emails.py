@@ -24,6 +24,7 @@ _TYPE_LABELS = {
     "period_reopened": "Books reopened",
     "task_assigned":   "Task assigned",
     "review_ready":    "Ready for review",
+    "recon_approved":  "Reconciliation approved",
 }
 
 

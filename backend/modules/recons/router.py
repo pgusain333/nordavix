@@ -1028,6 +1028,7 @@ async def update_account_review_status(
         },
     )
     review_row_id = str(row.id)
+    preparer_id = row.prepared_by
     await db.commit()
 
     # Preparer marked it prepared → tell the approvers it's ready for review.
@@ -1049,6 +1050,22 @@ async def update_account_review_status(
             )
         except Exception:
             logger.warning("recon review-ready notifications failed", exc_info=True)
+
+    # Reviewer approved it → tell the preparer their work was signed off.
+    elif status_value == "approved" and preparer_id and preparer_id != user.id:
+        try:
+            from modules.notifications.emails import notify_and_email_users
+            await notify_and_email_users(
+                db, background_tasks, tenant_id=tenant_id, recipient_ids=[preparer_id],
+                type="recon_approved",
+                title="Your reconciliation was approved",
+                body=f"{user.email} approved account {qbo_account_id} ({period_end}).",
+                link="/app/reconciliations",
+                entity_type="account_review_status", entity_id=review_row_id,
+                actor_name=user.email,
+            )
+        except Exception:
+            logger.warning("recon approved notifications failed", exc_info=True)
 
     return {
         "qbo_account_id": qbo_account_id,
@@ -1135,6 +1152,7 @@ async def bulk_update_account_review_status(
     # promote-only, never clear, and approve cascades through prepare
     # if prepare hasn't happened yet.
     rows_for_freeze: list[tuple[str, AccountReviewStatus]] = []
+    approved_preparer_ids: set[uuid.UUID] = set()
     for qid in ids:
         if qid in by_id:
             r = by_id[qid]
@@ -1151,6 +1169,8 @@ async def bulk_update_account_review_status(
                 r.approved_by = user.id
                 r.approved_at = now
                 rows_for_freeze.append((qid, r))
+                if r.prepared_by and r.prepared_by != user.id:
+                    approved_preparer_ids.add(r.prepared_by)
             elif status_value == "pending":
                 # Reset to pending = start over. Untick reconciling items,
                 # drop any saved subledger override, and wipe maker/checker
@@ -1226,6 +1246,24 @@ async def bulk_update_account_review_status(
             )
         except Exception:
             logger.warning("recon bulk review-ready notifications failed", exc_info=True)
+
+    # Bulk approve → tell each preparer (other than the approver) their work was
+    # signed off. One batched email to the distinct preparers. Best-effort.
+    elif status_value == "approved" and approved_preparer_ids:
+        try:
+            from modules.notifications.emails import notify_and_email_users
+            pe_txt = body.get("period_end")
+            await notify_and_email_users(
+                db, background_tasks, tenant_id=tenant_id,
+                recipient_ids=list(approved_preparer_ids),
+                type="recon_approved",
+                title="Your reconciliation work was approved",
+                body=f"{user.email} approved reconciliations for {pe_txt}.",
+                link="/app/reconciliations",
+                actor_name=user.email,
+            )
+        except Exception:
+            logger.warning("recon bulk approved notifications failed", exc_info=True)
 
     return {"updated": len(ids), "status": status_value}
 
