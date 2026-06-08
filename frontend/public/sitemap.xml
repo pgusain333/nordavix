@@ -60,6 +60,13 @@
   </url>
 
   <url>
+    <loc>https://nordavix.com/blog/month-end-close-is-broken</loc>
+    <lastmod>2026-06-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <url>
     <loc>https://nordavix.com/blog/balance-sheet-reconciliation</loc>
     <lastmod>2026-06-05</lastmod>
     <changefreq>monthly</changefreq>

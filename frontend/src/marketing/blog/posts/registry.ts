@@ -10,6 +10,7 @@
 import type { BlogPostModule } from "@/marketing/blog/types"
 
 import * as fluxAnalysisGuide               from "@/marketing/blog/posts/flux-analysis-guide"
+import * as monthEndCloseIsBroken           from "@/marketing/blog/posts/month-end-close-is-broken"
 import * as balanceSheetReconciliation      from "@/marketing/blog/posts/balance-sheet-reconciliation"
 import * as bankReconciliationQuickbooks    from "@/marketing/blog/posts/bank-reconciliation-quickbooks"
 import * as auditPrepChecklist              from "@/marketing/blog/posts/audit-prep-checklist"
@@ -20,6 +21,7 @@ import * as aiAccounting2026                from "@/marketing/blog/posts/ai-in-a
 
 const RAW_POSTS: BlogPostModule[] = [
   fluxAnalysisGuide               as BlogPostModule,
+  monthEndCloseIsBroken           as BlogPostModule,
   balanceSheetReconciliation      as BlogPostModule,
   bankReconciliationQuickbooks    as BlogPostModule,
   auditPrepChecklist              as BlogPostModule,
