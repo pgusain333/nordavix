@@ -1,19 +1,43 @@
 /**
  * Blog post — bank reconciliation in QuickBooks.
- * Target keyword: "bank reconciliation quickbooks" + "how to reconcile in
- *                  quickbooks online" — extremely high volume CPA query.
+ * Primary: "how to do a bank reconciliation in quickbooks (online)".
+ * Cluster: "bank reconciliation quickbooks", "qbo reconciliation",
+ *          "bank reconciliation in quickbooks online", "...desktop".
  */
 import { Link } from "react-router-dom"
 import type { BlogPostMeta } from "@/marketing/blog/types"
 
 export const meta: BlogPostMeta = {
   slug:        "bank-reconciliation-quickbooks",
-  title:       "Bank reconciliation in QuickBooks: the 2026 working guide",
-  description: "Step-by-step bank reconciliation in QuickBooks Online — the right cut-off, how to handle outstanding items, what to do when it doesn't tie, and how to make it audit-defensible. Written for working controllers.",
+  title:       "How to Do a Bank Reconciliation in QuickBooks Online (2026)",
+  description: "Step-by-step bank reconciliation in QuickBooks Online (QBO): the right cut-off, matching cleared transactions, handling outstanding items, what to do when it won't balance, and an audit-ready workpaper.",
   date:        "2026-05-30",
   readingTime: "9 min read",
   category:    "Reconciliation",
   excerpt:     "Bank rec is the first reconciliation anyone learns and the one most controllers still get wrong. Here's the version that ties cleanly, holds up under audit, and doesn't leave you chasing $0.32 differences at 11pm.",
+  lastModified: "2026-06-08",
+  faq: [
+    {
+      question: "How do you do a bank reconciliation in QuickBooks Online?",
+      answer:
+        "Go to Banking → Reconcile, choose the account, and enter the statement's ending balance and date. Tick every transaction that appears on the bank statement, leave uncleared items (deposits in transit, outstanding checks) unchecked, and make sure the difference reads $0.00 before clicking Finish. Then save the Reconciliation Report and attach the bank statement as evidence.",
+    },
+    {
+      question: "How do you reconcile a checking account in QBO?",
+      answer:
+        "It's the same Reconcile workflow: pick the checking account, match the cleared deposits and payments to the statement, and resolve any leftover difference — usually a changed beginning balance, a modified cleared transaction, or unbooked bank fees — before you finish.",
+    },
+    {
+      question: "Why won't my bank reconciliation balance in QuickBooks?",
+      answer:
+        "The difference is almost always one of five things: a changed beginning balance, a cleared transaction that was edited or deleted after the fact (run the Reconciliation Discrepancy Report), duplicate or missing bank-feed transactions, unbooked bank fees or interest, or foreign-currency revaluation.",
+    },
+    {
+      question: "Is reconciling in QuickBooks Desktop different from QuickBooks Online?",
+      answer:
+        "The screens differ but the method is identical: tie the GL cash balance to the statement using cleared items plus outstanding deposits and checks. In both, you'll find it under Banking → Reconcile.",
+    },
+  ],
 }
 
 export function Body() {
@@ -22,9 +46,10 @@ export function Body() {
       <p className="lead">
         Bank reconciliation in QuickBooks looks simple — match the GL balance to
         the bank statement. In practice, almost every close has at least one bank
-        rec that doesn&apos;t tie, and the chase eats hours. This is the version
-        we&apos;d hand a new senior on day one: the exact order, the gotchas, and
-        what to do when the reconciliation refuses to balance.
+        rec that doesn&apos;t tie, and the chase eats hours. Here&apos;s how to do a
+        bank reconciliation in QuickBooks Online (QBO) the right way, step by step —
+        the exact order, the gotchas, and what to do when it refuses to balance.
+        The same workflow reconciles a checking, savings, or credit-card account.
       </p>
 
       <h2>What &quot;reconciled&quot; actually means</h2>
@@ -56,7 +81,7 @@ export function Body() {
         outstanding checks. Anything else and you&apos;re lying to your BS.
       </aside>
 
-      <h2>The QBO workflow, step by step</h2>
+      <h2>How to do a bank reconciliation in QuickBooks Online (step by step)</h2>
       <ol>
         <li>
           <strong>Get the statement.</strong> Download the PDF + a CSV/QFX if
@@ -91,6 +116,12 @@ export function Body() {
           working papers.
         </li>
       </ol>
+      <p>
+        <strong>On QuickBooks Desktop?</strong> The screens look different, but the
+        method is identical — Banking → Reconcile, enter the statement ending
+        balance, tick the cleared items, and leave outstanding deposits and checks
+        unchecked until they clear next month.
+      </p>
 
       <h2>When it doesn&apos;t tie — the troubleshooting decision tree</h2>
       <p>
@@ -198,7 +229,9 @@ export function Body() {
         lender statement) — but the discipline is identical.
       </p>
       <p>
-        For more on running every account&apos;s reconciliation, see {" "}
+        For the full method that applies to every account, see our {" "}
+        <Link to="/blog/balance-sheet-reconciliation">balance sheet reconciliation guide</Link>,
+        and {" "}
         <Link to="/blog/month-end-close-checklist">the full month-end close checklist</Link>.
       </p>
 
@@ -217,6 +250,42 @@ export function Body() {
         and what the outstanding items look like. {" "}
         <Link to="/sign-up"><strong>Start a free workspace</strong></Link> and try
         it on your next close — free during beta.
+      </p>
+
+      <h2>Frequently asked questions</h2>
+
+      <h3>How do you do a bank reconciliation in QuickBooks Online?</h3>
+      <p>
+        Go to Banking → Reconcile, choose the account, and enter the
+        statement&apos;s ending balance and date. Tick every transaction that
+        appears on the bank statement, leave uncleared items (deposits in transit,
+        outstanding checks) unchecked, and make sure the difference reads $0.00
+        before clicking Finish. Then save the Reconciliation Report and attach the
+        bank statement as evidence.
+      </p>
+
+      <h3>How do you reconcile a checking account in QBO?</h3>
+      <p>
+        It&apos;s the same Reconcile workflow: pick the checking account, match the
+        cleared deposits and payments to the statement, and resolve any leftover
+        difference — usually a changed beginning balance, a modified cleared
+        transaction, or unbooked bank fees — before you finish.
+      </p>
+
+      <h3>Why won&apos;t my bank reconciliation balance in QuickBooks?</h3>
+      <p>
+        The difference is almost always one of five things: a changed beginning
+        balance, a cleared transaction that was edited or deleted after the fact
+        (run the Reconciliation Discrepancy Report), duplicate or missing bank-feed
+        transactions, unbooked bank fees or interest, or foreign-currency
+        revaluation.
+      </p>
+
+      <h3>Is reconciling in QuickBooks Desktop different from QuickBooks Online?</h3>
+      <p>
+        The screens differ but the method is identical: tie the GL cash balance to
+        the statement using cleared items plus outstanding deposits and checks. In
+        both, you&apos;ll find it under Banking → Reconcile.
       </p>
     </article>
   )
