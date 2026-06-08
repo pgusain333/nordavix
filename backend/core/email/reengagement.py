@@ -16,6 +16,7 @@ touching the rendering logic.
 from __future__ import annotations
 
 import logging
+import re
 from html import escape
 from urllib.parse import urlsplit
 
@@ -268,28 +269,43 @@ def render_reengagement_email(
     return subject, html, text
 
 
+def _resolve_name(cu: dict | None, email: str) -> str | None:
+    """Best-effort real name for the greeting: Clerk first name, then last name,
+    then a name derived from the email local-part, else None (renders 'Hi there')."""
+    if cu:
+        first = (cu.get("first_name") or "").strip()
+        if first:
+            return first
+        last = (cu.get("last_name") or "").strip()
+        if last:
+            return last
+    local = (email or "").split("@", 1)[0]
+    cleaned = re.sub(r"\d+", "", re.sub(r"[._+\-]+", " ", local)).strip()
+    if len(cleaned) >= 2 and any(c.isalpha() for c in cleaned):
+        return cleaned.title()
+    return None
+
+
 async def send_reengagement_email(
     *, to_email: str, clerk_user_id: str, step: int, cta_url: str, unsubscribe_url: str,
 ) -> bool:
-    """Resolve the first name from Clerk, render, and send step ``step``. Best-effort:
-    no-ops (returns False) when email is disabled; never raises. Returns True only on
-    a real send so the caller advances the sequence."""
+    """Resolve the recipient's name from Clerk, render, and send step ``step``.
+    Best-effort: no-ops (returns False) when email is disabled; never raises.
+    Returns True only on a real send so the caller advances the sequence."""
     if not settings.email_enabled or not to_email:
         return False
     try:
-        first: str | None = None
+        name: str | None = None
         try:
             cu = await get_clerk_user(clerk_user_id)
-            if cu:
-                first = (cu.get("first_name") or "").strip() or None
+            name = _resolve_name(cu, to_email)
         except Exception:
-            first = None  # name is a nice-to-have; send anyway
+            name = None  # name is a nice-to-have; send anyway
         subject, html, text = render_reengagement_email(
-            step=step, name=first, cta_url=cta_url, unsubscribe_url=unsubscribe_url,
+            step=step, name=name, cta_url=cta_url, unsubscribe_url=unsubscribe_url,
         )
         return await send_email(
             to=to_email, subject=subject, html=html, text=text,
-            reply_to=settings.feedback_to_email or None,
             from_email=settings.notifications_from_email,
             headers={
                 "List-Unsubscribe": f"<{unsubscribe_url}>",
