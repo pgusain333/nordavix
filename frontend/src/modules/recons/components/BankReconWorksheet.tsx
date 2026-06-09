@@ -74,6 +74,9 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
     onSuccess: (res) => {
       setError(null)
       qc.setQueryData(queryKey, res)
+      // Upload re-ran the matcher → bank-only items may have produced new
+      // proposed entries; refresh the inline cards + Adjustments queue.
+      qc.invalidateQueries({ queryKey: ["adjustments"] })
     },
     onError: (e: unknown) => {
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
@@ -95,7 +98,11 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
   // the explicit "get the latest from QBO" action.
   const refreshMut = useMutation({
     mutationFn: () => reconsApi.getBankWorksheet(qboAccountId, periodEnd, true),
-    onSuccess: (res) => { qc.setQueryData(queryKey, res); setError(null) },
+    onSuccess: (res) => {
+      qc.setQueryData(queryKey, res)
+      setError(null)
+      qc.invalidateQueries({ queryKey: ["adjustments"] })
+    },
     onError: (e: unknown) => {
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       setError(msg ?? "Refresh failed — try again.")

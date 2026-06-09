@@ -365,6 +365,9 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
           ),
         )
       }
+      // The deep agentic run may have drafted a proposed adjusting entry —
+      // refresh the inline card + Adjustments queue so it appears immediately.
+      qc.invalidateQueries({ queryKey: ["adjustments"] })
       onMessage?.({
         kind: "ok",
         text: `AI analysis done — risk: ${data.ai_commentary.risk_level}, justified: ${data.ai_commentary.justified}.`,

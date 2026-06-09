@@ -326,6 +326,9 @@ export function ReconciliationsDashboard() {
       setAgenticResult(data)
       qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
       qc.invalidateQueries({ queryKey: ["period-tracker"] })
+      // The agentic run may have drafted proposed adjusting entries — refresh
+      // the inline cards + Adjustments queue so they appear without a reload.
+      qc.invalidateQueries({ queryKey: ["adjustments"] })
     },
     onError: (err: unknown) => {
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }
@@ -346,6 +349,7 @@ export function ReconciliationsDashboard() {
       // shape mirrors the bulk runner so we surface the same
       // banner text.
       qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+      qc.invalidateQueries({ queryKey: ["adjustments"] })
       const account = data.accounts[0]
       if (account) {
         setSyncMsg(`AI ${account.action} on ${account.account_name}. ${account.reason}`)
