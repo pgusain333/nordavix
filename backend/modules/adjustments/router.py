@@ -16,7 +16,7 @@ import logging
 import uuid
 from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,7 @@ from models.user import User
 from modules.adjustments.service import (
     VALID_SOURCES,
     VALID_STATUSES,
+    build_qbo_je_csv,
     lines_balanced,
     normalize_lines,
     period_accounts,
@@ -142,6 +143,13 @@ async def _transition(
                 "An admin must reopen the period before changing proposed entries."
             ),
         )
+    # Saved entries are a locked batch: they can advance to 'posted' but can't be
+    # dismissed (the user's "never delete / saved" guarantee).
+    if new_status == "dismissed" and entry.saved_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This entry is part of a saved batch and is locked — saved adjustments can't be dismissed.",
+        )
     prev = entry.status
     entry.status = new_status
     entry.status_changed_at = datetime.now(UTC)
@@ -247,3 +255,90 @@ async def edit_proposal(
     await db.commit()
     await db.refresh(entry)
     return serialize(entry)
+
+
+# ── Save batch + QBO CSV export ───────────────────────────────────────────
+
+
+@router.post("/save")
+async def save_batch(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    user: User = Depends(require_role("reviewer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Finalize a period's adjustments once every entry is reviewed: stamp the
+    approved entries as 'Saved' (locked + permanent), which unlocks the QBO CSV
+    export and the posting check. Requires no entry left 'open'. Reviewer+."""
+    pe = _parse_period(period_end)
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
+    if await _is_closed(db, tenant_id, pe):
+        raise HTTPException(status_code=423, detail="Books are closed for this period.")
+
+    rows = (await db.execute(
+        select(ProposedEntry).where(ProposedEntry.period_end == pe)
+    )).scalars().all()
+    active = [r for r in rows if r.status != "dismissed"]
+    if not active:
+        raise HTTPException(status_code=400, detail="No approved entries to save for this period.")
+    open_n = sum(1 for r in active if r.status == "open")
+    if open_n:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Approve all {open_n} remaining entr{'y' if open_n == 1 else 'ies'} "
+                "before saving the batch."
+            ),
+        )
+
+    now = datetime.now(UTC)
+    newly_saved = 0
+    for r in active:
+        if r.saved_at is None:
+            r.saved_at = now
+            r.saved_by = user.id
+            newly_saved += 1
+
+    await write_audit_event(
+        db,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        action="adjustment.save_batch",
+        entity_type="proposed_entry",
+        entity_id=None,
+        metadata={"period_end": pe.isoformat(), "newly_saved": newly_saved, "total_saved": len(active)},
+    )
+    await db.commit()
+    return {"period_end": pe.isoformat(), "newly_saved": newly_saved, "saved_total": len(active)}
+
+
+@router.get("/export.csv")
+async def export_csv(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Download the saved adjustments for a period as a QuickBooks Online
+    Accountant 'Import journal entries' CSV. Only saved (approved + locked)
+    entries are included — open/dismissed drafts are excluded."""
+    pe = _parse_period(period_end)
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
+    rows = (await db.execute(
+        select(ProposedEntry)
+        .where(ProposedEntry.period_end == pe, ProposedEntry.saved_at.isnot(None))
+        .order_by(ProposedEntry.created_at.asc())
+    )).scalars().all()
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="No saved entries for this period. Approve the entries and click Save first.",
+        )
+    csv_text = build_qbo_je_csv(rows)
+    filename = f"nordavix_adjustments_{pe.isoformat()}.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

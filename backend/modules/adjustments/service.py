@@ -387,5 +387,55 @@ def serialize(entry: ProposedEntry) -> dict:
         "confidence": entry.confidence,
         "status": entry.status,
         "status_changed_at": entry.status_changed_at.isoformat() if entry.status_changed_at else None,
+        "saved_at": entry.saved_at.isoformat() if entry.saved_at else None,
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
     }
+
+
+# ── QuickBooks Online Accountant — "Import journal entries" CSV ────────────
+
+
+# QBOA's importer maps columns in a preview step, so exact header strings
+# aren't load-bearing — but these match the standard template so the upload is
+# one click. One row per JE line; lines of the same entry share a Journal No.
+_QBO_JE_HEADERS = [
+    "Journal No.", "Journal Date", "Account", "Debits", "Credits", "Description", "Name",
+]
+
+
+def _csv_amount(value) -> str:
+    """Blank for zero, else 2dp plain number (no thousands separator)."""
+    d = _q(value)
+    return "" if d == ZERO else f"{d:.2f}"
+
+
+def build_qbo_je_csv(entries: list[ProposedEntry]) -> str:
+    """Render saved adjusting entries as a QuickBooks Online Accountant
+    'Import journal entries' CSV. Each JE line is a row; the lines of one entry
+    share a Journal No (``ADJ-n``) so QBO groups them into a single journal
+    entry. Journal Date is the period end (MM/DD/YYYY). Only the entries passed
+    in are included — the caller filters to the saved/approved set."""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(_QBO_JE_HEADERS)
+    for i, e in enumerate(entries, start=1):
+        journal_no = f"ADJ-{i}"
+        jdate = e.period_end.strftime("%m/%d/%Y")
+        description = (e.memo or e.description or "").strip()[:1000]
+        for ln in (e.lines or []):
+            account = str(ln.get("account_name") or "").strip()
+            if not account:
+                continue
+            writer.writerow([
+                journal_no,
+                jdate,
+                account,
+                _csv_amount(ln.get("debit")),
+                _csv_amount(ln.get("credit")),
+                description,
+                "",  # Name (entity) — left blank; the user can add in QBO
+            ])
+    return buf.getvalue()

@@ -78,6 +78,13 @@ class ProposedEntry(TenantBase):
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status_changed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
+    # ── Saved batch ─────────────────────────────────────────────────────
+    # Stamped when a fully-approved period is "Saved": the entry is locked
+    # (immutable, never deleted) and eligible for the QBO CSV export + posting
+    # check. NULL = not yet saved. See modules/adjustments (save_batch).
+    saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    saved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
     # ── Audit ───────────────────────────────────────────────────────────
     # NULL = system / AI generated (deterministic bank, agentic AI runs)
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

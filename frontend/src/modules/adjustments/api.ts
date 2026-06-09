@@ -33,6 +33,7 @@ export interface ProposedEntry {
   confidence:        AdjustmentConfidence
   status:            AdjustmentStatus
   status_changed_at: string | null
+  saved_at:          string | null
   created_at:        string | null
 }
 
@@ -101,7 +102,38 @@ async function edit(id: string, body: EditBody): Promise<ProposedEntry> {
   return data
 }
 
-export const adjustmentsApi = { list, accounts, accept, dismiss, markPosted, edit }
+export interface SaveResult {
+  period_end:  string
+  newly_saved: number
+  saved_total: number
+}
+
+/** Finalize a fully-approved period: lock the approved entries as a 'Saved'
+ *  batch (reviewer+). Unlocks CSV export + posting check. */
+async function save(periodEnd: string): Promise<SaveResult> {
+  const { data } = await apiClient.post<SaveResult>(
+    "/api/adjustments/save", null, { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
+/** Download the saved adjustments as a QBO 'Import journal entries' CSV. */
+async function downloadCsv(periodEnd: string): Promise<void> {
+  const res = await apiClient.get("/api/adjustments/export.csv", {
+    params: { period_end: periodEnd },
+    responseType: "blob",
+  })
+  const url = URL.createObjectURL(res.data as Blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `nordavix_adjustments_${periodEnd}.csv`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+export const adjustmentsApi = { list, accounts, accept, dismiss, markPosted, edit, save, downloadCsv }
 
 /** Plain-text rendering of a proposed entry for the clipboard, so the user can
  *  paste a clean two-column JE into QuickBooks (or a working paper). */

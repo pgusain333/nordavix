@@ -15,7 +15,7 @@
  */
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, Copy, Sparkles, ThumbsDown } from "lucide-react"
+import { Check, Copy, Lock, Sparkles, ThumbsDown } from "lucide-react"
 
 import {
   adjustmentsApi,
@@ -101,6 +101,7 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
   const conf = CONFIDENCE[entry.confidence] ?? CONFIDENCE.medium
   const badge = STATUS_BADGE[entry.status]
   const isOpen = entry.status === "open"
+  const saved = !!entry.saved_at
   const dimmed = entry.status === "dismissed"
 
   async function copy() {
@@ -113,7 +114,8 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
 
   const showApprove = isOpen && canReview && !readOnly
   const showPosted  = (isOpen || entry.status === "accepted") && !readOnly
-  const showDismiss = (isOpen || entry.status === "accepted") && !readOnly
+  // Saved entries are locked — they can still be marked posted, but not dismissed.
+  const showDismiss = (isOpen || entry.status === "accepted") && !readOnly && !saved
 
   return (
     <div
@@ -145,6 +147,15 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
             style={{ background: badge.bg, color: badge.color }}
           >
             {badge.label}
+          </span>
+        )}
+        {saved && (
+          <span
+            className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+            title="Saved — locked. Part of the finalized batch; can't be edited or dismissed."
+          >
+            <Lock size={9} strokeWidth={2.6} /> Saved
           </span>
         )}
       </div>
