@@ -1963,6 +1963,7 @@ async def _process_schedule_backed_account(
         await _persist_recon_proposals(
             db, tenant_id=tenant_id, qid=qid, period_end=period_end, proposed_entries=[],
         )
+        await db.commit()  # persist the clear (see variance branch note)
         result.prepared += 1
         result.accounts.append(AccountResult(
             qbo_account_id=qid, account_name=name, account_number=number,
@@ -2040,6 +2041,10 @@ async def _process_schedule_backed_account(
             name=name, sl=sl, gl_balance=gl_balance, gap=gap,
         )],
     )
+    # _save_analyzed_row already committed above, so the proposed entry was
+    # added to a fresh, uncommitted transaction — commit it now or it's lost
+    # when the session closes (notably on the single-account "Run AI" path).
+    await db.commit()
     result.analyzed += 1
     result.accounts.append(AccountResult(
         qbo_account_id=qid, account_name=name, account_number=number,
