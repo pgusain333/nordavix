@@ -51,11 +51,13 @@ import {
   RefreshCw,
   ClipboardList,
   ArrowLeftRight,
+  Sparkles,
 } from "lucide-react"
 import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
 import { icApi } from "@/modules/intercompany/api"
+import { adjustmentsApi } from "@/modules/adjustments/api"
 import { tasksApi } from "@/modules/tasks/api"
 import { OnboardingChecklist } from "@/modules/onboarding/OnboardingChecklist"
 import { useBooksStatus } from "@/modules/recons/hooks"
@@ -458,6 +460,17 @@ export function DashboardHome() {
     staleTime: 5 * 60_000,
   })
 
+  // Open AI-proposed adjusting entries for the focused month — feeds a
+  // "Needs attention" nudge to the Adjustments queue. Shares the
+  // ["adjustments", ...] cache, so accepting/dismissing anywhere refreshes it.
+  const { data: openAdjustments } = useQuery({
+    queryKey: ["adjustments", "dashboard-open", period],
+    queryFn:  () => adjustmentsApi.list({ periodEnd: period, status: "open" }),
+    enabled:  !!qbo && books?.seeded === true,
+    staleTime: 60_000,
+  })
+  const openAdjustmentsCount = openAdjustments?.open_count ?? 0
+
   // Days until the close target (period end + the workspace's close-target
   // days, default 15). Negative = overdue. Drives the "Days to close" KPI.
   const daysToClose = useMemo(() => {
@@ -788,6 +801,9 @@ export function DashboardHome() {
           if (icOverview && icOverview.detected_pending > 0) items.push({ icon: ArrowLeftRight, tone: AMBER,
             text: `${icOverview.detected_pending} intercompany account${icOverview.detected_pending === 1 ? "" : "s"} to classify`,
             onClick: () => navigate("/app/intercompany") })
+          if (openAdjustmentsCount > 0) items.push({ icon: Sparkles, tone: AMBER,
+            text: `${openAdjustmentsCount} proposed adjustment${openAdjustmentsCount === 1 ? "" : "s"} to review`,
+            onClick: () => navigate("/app/adjustments") })
 
           return (
             <div className="rounded-xl overflow-hidden"

@@ -15,7 +15,7 @@ import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
   MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList, Search,
-  PanelLeft, PanelLeftClose,
+  PanelLeft, PanelLeftClose, Sparkles,
   type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
@@ -60,6 +60,7 @@ function prefetchRoute(path: string): void {
     case "intercompany":   void import("@/modules/intercompany/pages/IntercompanyPage");    return
     case "financials":     void import("@/modules/financials/pages/FinancialsPage");        return
     case "insights":       void import("@/modules/insights/pages/InsightsPage");            return
+    case "adjustments":    void import("@/modules/adjustments/pages/AdjustmentsPage");       return
     case "team":           void import("@/modules/workspace/pages/TeamPage");               return
     case "settings":       void import("@/modules/settings/pages/SettingsPage");            return
     case "help":           void import("@/modules/help/pages/HelpPage");                    return
@@ -84,6 +85,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Flux Analysis",      path: "/app/flux",            icon: BarChart3,       available: true  },
   { label: "Intercompany",       path: "/app/intercompany",    icon: ArrowLeftRight,  available: true  },
   { label: "Reconciliations",    path: "/app/reconciliations", icon: Scale,           available: true  },
+  { label: "Adjustments",        path: "/app/adjustments",     icon: Sparkles,        available: true  },
   { label: "Insights",           path: "/app/insights",        icon: Lightbulb,       available: true  },
   { label: "Financial Package",  path: "/app/financials",      icon: BookOpen,        available: true  },
   { label: "Team",               path: "/app/team",            icon: Users,           available: true  },
