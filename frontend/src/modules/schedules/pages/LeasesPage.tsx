@@ -294,6 +294,8 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
   const [paymentTiming, setPaymentTiming] = useState<"arrears" | "advance">("arrears")
   const [discountRate, setDiscountRate] = useState(existing?.discount_rate_pct ?? "")
   const [notes, setNotes] = useState(existing?.notes ?? "")
+  // Offset (lease/interest expense) account for the proposed JE.
+  const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error, setError] = useState<string | null>(null)
 
   // Live PV preview — recomputed whenever any input changes so the user
@@ -367,6 +369,7 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
       discount_rate_pct:  useAsc842 ? discountRate : null,
       initial_rou_asset:  initialRouAsset,
       initial_liability:  initialLiability,
+      offset_qbo_account_id: offsetAccount || null,
       notes:              notes.trim() || null,
       is_active:          true,
     })
@@ -391,6 +394,7 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
         </div>
         <div className="px-6 py-5 space-y-4">
           <AccountPicker mode="form" label="Lease liability GL account" value={account} onChange={setAccount} />
+          <AccountPicker mode="form" kind="expense" label="Lease / interest expense account" value={offsetAccount} onChange={setOffsetAccount} />
           <Field label="Description *">
             <input value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Office HQ — 5 year operating lease" className={inputCls} style={inputStyle} />

@@ -134,7 +134,7 @@ export function AccrualReversalDrawer({ item, onClose }: Props) {
                 </thead>
                 <tbody>
                   <tr style={{ borderTop: "1px solid var(--border)" }}>
-                    <Td>Expense (P&amp;L)</Td>
+                    <Td>{item.offset_account_name || "Expense (P&L)"}</Td>
                     <Td right tabular bold>{fmt(amount)}</Td>
                     <Td muted right>—</Td>
                   </tr>
@@ -177,7 +177,7 @@ export function AccrualReversalDrawer({ item, onClose }: Props) {
                       <Td muted right>—</Td>
                     </tr>
                     <tr style={{ borderTop: "1px solid var(--border)" }}>
-                      <Td indent>Expense (P&amp;L) or Cash</Td>
+                      <Td indent>{item.offset_account_name || "Expense (P&L) or Cash"}</Td>
                       <Td muted right>—</Td>
                       <Td right tabular bold>{fmt(amount)}</Td>
                     </tr>

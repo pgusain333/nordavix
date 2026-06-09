@@ -327,7 +327,7 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
                   </thead>
                   <tbody>
                     <tr style={{ borderTop: "1px solid var(--border)" }}>
-                      <td className="px-3 py-2 text-theme">Amortization Expense (P&amp;L)</td>
+                      <td className="px-3 py-2 text-theme">{item.offset_account_name || "Amortization Expense (P&L)"}</td>
                       <td className="px-3 py-2 text-right tabular-nums font-semibold text-theme">
                         {fmt(currentRow.amount)}
                       </td>

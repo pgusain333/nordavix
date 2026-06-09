@@ -308,6 +308,8 @@ function LoanDialog({ existing, onClose, initialAccount }: {
   const [paymentType, setPaymentType] = useState(existing?.payment_type ?? "amortizing")
   const [monthly, setMonthly] = useState(existing?.monthly_payment ?? "")
   const [notes, setNotes] = useState(existing?.notes ?? "")
+  // Offset (interest expense) account for the proposed JE.
+  const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error, setError] = useState<string | null>(null)
 
   const computedPmt = useMemo(
@@ -349,6 +351,7 @@ function LoanDialog({ existing, onClose, initialAccount }: {
       interest_rate_pct: ratePct, term_months: parseInt(term, 10),
       payment_type: paymentType,
       monthly_payment: (monthly || computedPmt) || null,
+      offset_qbo_account_id: offsetAccount || null,
       notes: notes.trim() || null, is_active: true,
     })
   }
@@ -372,6 +375,7 @@ function LoanDialog({ existing, onClose, initialAccount }: {
         </div>
         <div className="px-6 py-5 space-y-4">
           <AccountPicker mode="form" label="Loan liability GL account" value={account} onChange={setAccount} />
+          <AccountPicker mode="form" kind="expense" label="Interest expense account" value={offsetAccount} onChange={setOffsetAccount} />
           <Field label="Description *">
             <input value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="SBA Term Loan #12345" className={inputCls} style={inputStyle} />

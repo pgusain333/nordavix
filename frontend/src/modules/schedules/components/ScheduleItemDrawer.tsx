@@ -256,7 +256,7 @@ function FaBody({ item, monthly, rows }: { item: FixedAssetItem; monthly: number
 
       <Section title="Monthly journal entry">
         <JeTable rows={[
-          { account: "Depreciation Expense (P&L)", debit: monthly,  credit: null },
+          { account: item.offset_account_name || "Depreciation Expense (P&L)", debit: monthly,  credit: null },
           { account: "Accumulated Depreciation (BS)", debit: null,    credit: monthly, indent: true },
         ]} memo={`Record ${fmt(monthly)} SL depreciation for ${item.description}.`} />
       </Section>
@@ -309,7 +309,7 @@ function LoanBody({ item, payment, rows }: { item: LoanItem; payment: number; ro
         <Section title={`Month 1 journal entry (${first.period_end})`}>
           <JeTable rows={[
             { account: "Loan Liability (BS)", debit: first.principal, credit: null },
-            { account: "Interest Expense (P&L)", debit: first.interest, credit: null, indent: true },
+            { account: item.offset_account_name || "Interest Expense (P&L)", debit: first.interest, credit: null, indent: true },
             { account: "Cash (BS)", debit: null, credit: first.payment, indent: true },
           ]} memo={`Pay ${fmt(first.payment)} on ${item.description} — ${fmt(first.principal)} principal + ${fmt(first.interest)} interest.`} />
         </Section>
@@ -367,7 +367,7 @@ function LeaseBody({ item, rows, isAsc842 }: { item: LeaseItem; rows: Array<{ pe
         <Section title={`Month 1 journal entry (${rows[0].period_end})`}>
           <JeTable rows={[
             { account: "Lease Liability (BS)", debit: rows[0].principal, credit: null },
-            { account: "Interest Expense (P&L)", debit: rows[0].interest, credit: null, indent: true },
+            { account: item.offset_account_name || "Interest Expense (P&L)", debit: rows[0].interest, credit: null, indent: true },
             { account: "Cash (BS)", debit: null, credit: rows[0].payment, indent: true },
           ]} memo={`Pay ${fmt(rows[0].payment)} lease for ${item.description} — interest + principal split.`} />
         </Section>

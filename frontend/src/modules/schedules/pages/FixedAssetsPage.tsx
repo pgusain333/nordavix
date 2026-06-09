@@ -396,6 +396,8 @@ function FADialog({ existing, prefill, onClose, initialAccount }: {
   const [disposedOn, setDisposedOn] = useState(existing?.disposed_on ?? "")
   const [disposalProceeds, setDisposalProceeds] = useState(existing?.disposal_proceeds ?? "")
   const [notes, setNotes] = useState(existing?.notes ?? prefill?.notes ?? "")
+  // Offset (depreciation expense) account — drives the proposed depreciation JE.
+  const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error, setError] = useState<string | null>(null)
 
   const optimistic = useScheduleOptimistic("fixed_asset")
@@ -453,6 +455,7 @@ function FADialog({ existing, prefill, onClose, initialAccount }: {
       depreciation_method: "straight_line",
       disposed_on: disposedOn || null,
       disposal_proceeds: disposalProceeds || null,
+      offset_qbo_account_id: offsetAccount || null,
       notes: notes.trim() || null, is_active: true,
     })
   }
@@ -497,6 +500,7 @@ function FADialog({ existing, prefill, onClose, initialAccount }: {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <AccountPicker mode="form" label="Cost (asset) GL account" value={account} onChange={setAccount} />
             <AccountPicker mode="form" label="Accumulated depreciation GL account" value={accumAccount} onChange={setAccumAccount} />
+            <AccountPicker mode="form" kind="expense" label="Depreciation expense account" value={offsetAccount} onChange={setOffsetAccount} />
           </div>
           <Field label="Description *">
             <input value={description} onChange={(e) => setDescription(e.target.value)}
