@@ -1025,6 +1025,42 @@ function ConsolidatedView({ periodEnd, qboReady }: { periodEnd: string; qboReady
         </Button>
       </div>
 
+      {/* Integrity (Phase 3 trust sweep): out-of-balance consolidation +
+          intercompany balances that couldn't be eliminated. */}
+      {data && data.balanced === false && (
+        <div className="rounded-md px-3 py-2 text-xs flex items-start gap-2"
+          style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+          <AlertTriangle size={14} strokeWidth={2} className="shrink-0 mt-px" />
+          <span>
+            <span className="font-semibold">
+              Consolidated trial balance is out of balance
+              {data.imbalance
+                ? ` by $${Math.abs(parseFloat(data.imbalance)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : ""}.
+            </span>{" "}
+            Each entity must sync to a balanced trial balance and intercompany pairs must net —
+            do not distribute until resolved.
+          </span>
+        </div>
+      )}
+      {data && (data.unmatched?.length ?? 0) > 0 && (
+        <div className="rounded-md px-3 py-2 text-xs"
+          style={{ background: "rgba(245, 158, 11, 0.10)", color: "#92400e", border: "1px solid rgba(245, 158, 11, 0.40)" }}>
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertTriangle size={14} strokeWidth={2} className="shrink-0" />
+            {data.unmatched!.length} intercompany balance{data.unmatched!.length === 1 ? "" : "s"} not eliminated — still inflating the consolidation
+          </div>
+          <ul className="mt-1.5 space-y-1 list-disc pl-6" style={{ color: "var(--text-2)" }}>
+            {data.unmatched!.map((u, i) => (
+              <li key={i}>
+                <span className="font-medium">{u.company_name} · {u.account_label}</span>
+                {" — "}{u.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="py-16 flex items-center justify-center"><Spinner /></div>
       ) : !data || data.rows.length === 0 ? (

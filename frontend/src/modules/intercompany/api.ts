@@ -174,11 +174,24 @@ export interface ConsolidatedRow {
   is_eliminated_row:  boolean
 }
 
+export interface ConsolidatedUnmatched {
+  account_label:        string
+  company_name:         string
+  my_balance:           string
+  counterparty_balance: string | null
+  reason:               string
+}
+
 export interface ConsolidatedTbResponse {
   period_end: string
   companies:  { tenant_id: string; name: string }[]
   rows:       ConsolidatedRow[]
   totals: Record<string, { raw: string; elimination: string; consolidated: string }>
+  // Integrity (Phase 3): does the consolidation balance, and which IC balances
+  // couldn't be eliminated (still inflating the totals)?
+  balanced?:   boolean
+  imbalance?:  string
+  unmatched?:  ConsolidatedUnmatched[]
 }
 
 async function listAccessibleCompanies(): Promise<{ companies: AccessibleCompany[] }> {

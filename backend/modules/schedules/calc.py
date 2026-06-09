@@ -600,10 +600,14 @@ def roll_loans(items: Iterable[ScheduleLoan], period_end: date) -> SnapshotMath:
         period_principal = (beg + booked_this_period) - end
         if period_principal > ZERO:
             payments += period_principal
-        # Interest accrual on opening balance at monthly rate
+        # Interest accrual at the monthly rate on the principal outstanding
+        # this period. When the loan originated this period (beg == 0), accrue
+        # on the newly-booked principal so a mid-period loan still books a
+        # month of interest instead of $0.
         if beg > ZERO or booked_this_period > ZERO:
             monthly_rate = Decimal(it.interest_rate_pct) / Decimal("100") / Decimal("12")
-            interest += beg * monthly_rate
+            base = beg if beg > ZERO else booked_this_period
+            interest += base * monthly_rate
         if beg > ZERO or end > ZERO or booked_this_period > ZERO:
             item_count += 1
     return SnapshotMath(

@@ -841,6 +841,14 @@ class ConsolidatedTbResponse(BaseModel):
     companies:         list[dict]   # [{ tenant_id, name }]
     rows:              list[ConsolidatedRow]
     totals: dict   # raw_total, elim_total, consolidated_total per category
+    # Integrity (Phase 3 trust sweep): a balanced consolidation nets to ~0
+    # (debit-positive). balanced=False → out of balance by `imbalance`.
+    balanced:          bool = True
+    imbalance:         str = "0.00"
+    # IC balances that couldn't be eliminated (one side missing or a mismatch),
+    # so they still inflate the consolidation. Each: {account_label,
+    # company_name, my_balance, counterparty_balance, reason}.
+    unmatched:         list[dict] = []
 
 
 # ── Helpers — cross-tenant access ───────────────────────────────────────────
@@ -1318,16 +1326,36 @@ async def get_consolidated_tb(
     # Convention: eliminate the absolute balance from BOTH sides (so
     # the IC AR on A nets to 0 and the IC AP on B nets to 0).
     elim_by_acct: dict[tuple[uuid.UUID, str], Decimal] = {}
+    unmatched: list[dict] = []
     for p in pairs:
         if p.counterparty_tenant_id not in accessible:
             continue
         my_bal = await _balance_at_period_end(db, tenant_id, p.my_qbo_account_id, pe)
         cp_bal = await _balance_at_period_end(db, p.counterparty_tenant_id, p.counterparty_qbo_account_id, pe)
         if my_bal is None or cp_bal is None:
+            # One side has no synced balance → can't eliminate; the side we DO
+            # have still sits in the consolidation. Flag it.
+            unmatched.append({
+                "account_label": await _account_label_from_snapshot(db, tenant_id, p.my_qbo_account_id),
+                "company_name": company_name(tenant_id),
+                "my_balance": str((my_bal or Decimal("0")).quantize(Decimal("0.01"))),
+                "counterparty_balance": (
+                    str(cp_bal.quantize(Decimal("0.01"))) if cp_bal is not None else None
+                ),
+                "reason": "Counterparty balance not synced for this period",
+            })
             continue
         diff = (my_bal + cp_bal).quantize(Decimal("0.01"))
         if abs(diff) > Decimal("1.00"):
-            continue  # mismatch — don't eliminate
+            # Sides don't net → don't eliminate (would leave a residual); flag it.
+            unmatched.append({
+                "account_label": await _account_label_from_snapshot(db, tenant_id, p.my_qbo_account_id),
+                "company_name": company_name(tenant_id),
+                "my_balance": str(my_bal.quantize(Decimal("0.01"))),
+                "counterparty_balance": str(cp_bal.quantize(Decimal("0.01"))),
+                "reason": f"Sides don't net — off by ${abs(diff)}",
+            })
+            continue
         # eliminate full signed balance on each side so it nets to 0
         elim_by_acct[(tenant_id, p.my_qbo_account_id)] = -my_bal
         elim_by_acct[(p.counterparty_tenant_id, p.counterparty_qbo_account_id)] = -cp_bal
@@ -1409,11 +1437,23 @@ async def get_consolidated_tb(
             "consolidated": str((raw + elim).quantize(Decimal("0.01"))),
         }
 
+    # Integrity check: a balanced consolidation nets to ~0 in debit-positive
+    # terms (each entity's TB balances, and matched eliminations net to 0).
+    consol_sum = sum(
+        (Decimal(totals[c]["consolidated"])
+         for c in ("Assets", "Liabilities", "Equity", "Revenue", "Expenses")),
+        Decimal("0"),
+    ).quantize(Decimal("0.01"))
+    balanced = abs(consol_sum) <= Decimal("1.00")
+
     return ConsolidatedTbResponse(
         period_end=pe.isoformat(),
         companies=companies_out,
         rows=rows_out,
         totals=totals,
+        balanced=balanced,
+        imbalance=str(consol_sum),
+        unmatched=unmatched,
     )
 
 
