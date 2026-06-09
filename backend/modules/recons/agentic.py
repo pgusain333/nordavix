@@ -1833,6 +1833,64 @@ async def _schedule_backed_subledger(
     return None
 
 
+# Type-aware offset (expense/cash) placeholder for a schedule correcting entry.
+# The asset/liability side is the real GL account; this is the other side the
+# user confirms before posting (the schedule doesn't store the offset account).
+_SCHEDULE_OFFSET_LABELS = {
+    "prepaid":            "Amortization expense",
+    "accrual":            "Accrued expense",
+    "fixed_asset_cost":   "Cash / original expense",
+    "fixed_asset_accdep": "Depreciation expense",
+    "lease_liability":    "Lease expense / cash",
+    "lease_rou":          "ROU asset amortization expense",
+    "loan":               "Interest expense / cash",
+}
+
+
+def _schedule_correcting_entry(
+    *,
+    schedule_type: str,
+    qid: str,
+    number: str,
+    name: str,
+    sl: Decimal,
+    gl_balance: Decimal,
+    gap: Decimal,
+) -> dict[str, Any]:
+    """Build a balanced correcting JE that brings a schedule-backed account's
+    GL into line with its Nordavix schedule. The asset/liability side is the
+    real GL account; the offset (expense/cash) is a type-aware placeholder the
+    user confirms before posting. Direction follows the sign of the gap."""
+    pretty = schedule_type.replace("_", " ")
+    offset_label = _SCHEDULE_OFFSET_LABELS.get(schedule_type, "Offset account")
+    mag = abs(gap).quantize(Decimal("0.01"))
+    this_line = {"account_qbo_id": qid, "account_number": number or None, "account_name": name}
+    offset_line = {"account_qbo_id": None, "account_number": None, "account_name": offset_label}
+    # delta = sl - gl_balance (debit-positive). delta > 0 → this account needs a debit.
+    if (sl - gl_balance) > Decimal("0"):
+        lines = [
+            {**this_line, "debit": str(mag), "credit": "0.00"},
+            {**offset_line, "debit": "0.00", "credit": str(mag)},
+        ]
+    else:
+        lines = [
+            {**offset_line, "debit": str(mag), "credit": "0.00"},
+            {**this_line, "debit": "0.00", "credit": str(mag)},
+        ]
+    return {
+        "description": f"Adjust {name} to the Nordavix {pretty} schedule",
+        "lines": lines,
+        "memo": f"Per Nordavix {pretty} schedule",
+        "rationale": (
+            f"The {pretty} schedule (your subledger of record) shows {_money(sl)} but the GL "
+            f"shows {_money(gl_balance)} — a {_money(gap)} gap. Post this entry in QuickBooks to "
+            f"bring the GL in line with the schedule, then re-sync. Confirm the offset account "
+            f"({offset_label}) before posting."
+        ),
+        "confidence": "medium",
+    }
+
+
 async def _process_schedule_backed_account(
     *,
     db: AsyncSession,
@@ -1900,6 +1958,11 @@ async def _process_schedule_backed_account(
             ),
             commentary=commentary,
         )
+        # Ties to the schedule → no correcting entry needed. Clear any stale
+        # OPEN proposal from a prior run when it didn't tie.
+        await _persist_recon_proposals(
+            db, tenant_id=tenant_id, qid=qid, period_end=period_end, proposed_entries=[],
+        )
         result.prepared += 1
         result.accounts.append(AccountResult(
             qbo_account_id=qid, account_name=name, account_number=number,
@@ -1966,6 +2029,16 @@ async def _process_schedule_backed_account(
         opening=Decimal("0"),  # n/a for schedule-backed
         variance=gap, candidate_count=len(je_items),
         prior_period_end=None,
+    )
+    # Draft a balanced correcting JE to bring the GL in line with the schedule
+    # (the schedule is the subledger of record). Asset/liability side is the
+    # real account; offset is a type-aware placeholder the user confirms.
+    await _persist_recon_proposals(
+        db, tenant_id=tenant_id, qid=qid, period_end=period_end,
+        proposed_entries=[_schedule_correcting_entry(
+            schedule_type=sched["schedule_type"], qid=qid, number=number,
+            name=name, sl=sl, gl_balance=gl_balance, gap=gap,
+        )],
     )
     result.analyzed += 1
     result.accounts.append(AccountResult(

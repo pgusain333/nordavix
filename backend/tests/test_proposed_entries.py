@@ -16,6 +16,7 @@ from modules.adjustments.service import (
     lines_balanced,
     normalize_lines,
 )
+from modules.recons.agentic import _schedule_correcting_entry
 
 
 def test_normalize_lines_drops_empty_and_coerces():
@@ -112,6 +113,36 @@ def test_bank_skips_zero_amount():
     assert entries == []
 
 
+def test_schedule_correcting_entry_credits_asset_when_gl_too_high():
+    # Prepaid: schedule says 1,000 but GL shows 1,240 (amortization not booked).
+    # Correcting JE reduces the asset: Dr Amortization expense / Cr Prepaid.
+    e = _schedule_correcting_entry(
+        schedule_type="prepaid", qid="ACCT1", number="1300",
+        name="Prepaid Insurance", sl=Decimal("1000"), gl_balance=Decimal("1240"),
+        gap=Decimal("240"),
+    )
+    lines = normalize_lines(e["lines"])
+    assert lines_balanced(lines)
+    cr = next(ln for ln in lines if Decimal(ln["credit"]) > 0)
+    dr = next(ln for ln in lines if Decimal(ln["debit"]) > 0)
+    assert cr["account_qbo_id"] == "ACCT1" and cr["credit"] == "240.00"
+    assert dr["account_name"] == "Amortization expense"
+    assert e["confidence"] == "medium"   # offset is a placeholder to confirm
+
+
+def test_schedule_correcting_entry_debits_asset_when_gl_too_low():
+    # Schedule says 1,000 but GL shows 760 — asset understated, needs a debit.
+    e = _schedule_correcting_entry(
+        schedule_type="prepaid", qid="ACCT1", number="1300",
+        name="Prepaid Insurance", sl=Decimal("1000"), gl_balance=Decimal("760"),
+        gap=Decimal("-240"),
+    )
+    lines = normalize_lines(e["lines"])
+    assert lines_balanced(lines)
+    dr = next(ln for ln in lines if Decimal(ln["debit"]) > 0)
+    assert dr["account_qbo_id"] == "ACCT1" and dr["debit"] == "240.00"
+
+
 if __name__ == "__main__":
     test_normalize_lines_drops_empty_and_coerces()
     test_lines_balanced()
@@ -119,4 +150,6 @@ if __name__ == "__main__":
     test_bank_deposit_is_income_credit_balanced()
     test_bank_uses_real_offset_account_when_present()
     test_bank_skips_zero_amount()
+    test_schedule_correcting_entry_credits_asset_when_gl_too_high()
+    test_schedule_correcting_entry_debits_asset_when_gl_too_low()
     print("PROPOSED_ENTRIES_OK")
