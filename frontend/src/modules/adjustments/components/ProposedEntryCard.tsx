@@ -14,10 +14,16 @@
  * queue) updates together.
  */
 import { useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, Copy, Sparkles, ThumbsDown } from "lucide-react"
 
-import { adjustmentsApi, formatJeForClipboard, type ProposedEntry } from "../api"
+import {
+  adjustmentsApi,
+  formatJeForClipboard,
+  type AdjustmentAccount,
+  type ProposedEntry,
+  type ProposedEntryLine,
+} from "../api"
 
 function money(s: string): string {
   const n = parseFloat(s) || 0
@@ -51,7 +57,42 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
   const acceptMut  = useMutation({ mutationFn: () => adjustmentsApi.accept(entry.id),     onSuccess: invalidate })
   const dismissMut = useMutation({ mutationFn: () => adjustmentsApi.dismiss(entry.id),    onSuccess: invalidate })
   const postedMut  = useMutation({ mutationFn: () => adjustmentsApi.markPosted(entry.id), onSuccess: invalidate })
+  const editMut    = useMutation({
+    mutationFn: (lines: ProposedEntryLine[]) => adjustmentsApi.edit(entry.id, { lines }),
+    onSuccess: invalidate,
+  })
   const busy = acceptMut.isPending || dismissMut.isPending || postedMut.isPending
+
+  // Open drafts let the user re-point any line to a different GL account — the
+  // chart for the entry's period feeds the per-line dropdown. Re-pointing keeps
+  // the amounts (so the entry still balances); the backend re-validates anyway.
+  const editable = entry.status === "open" && !readOnly
+  const { data: accounts } = useQuery({
+    queryKey: ["adjustments", "accounts", entry.period_end],
+    queryFn:  () => adjustmentsApi.accounts(entry.period_end),
+    enabled:  editable,
+    staleTime: 5 * 60_000,
+  })
+
+  function acctLabel(a: AdjustmentAccount): string {
+    const num = a.account_number ? `${a.account_number} · ` : ""
+    return `${num}${a.account_name}${a.account_type ? ` · ${a.account_type}` : ""}`
+  }
+  function changeAccount(lineIndex: number, qboId: string) {
+    const acct = (accounts ?? []).find((a) => a.qbo_account_id === qboId)
+    if (!acct) return
+    const newLines = entry.lines.map((ln, i) =>
+      i === lineIndex
+        ? {
+            ...ln,
+            account_qbo_id: acct.qbo_account_id,
+            account_number: acct.account_number,
+            account_name:   acct.account_name,
+          }
+        : ln,
+    )
+    editMut.mutate(newLines)
+  }
 
   const totalDr = entry.lines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0)
   const totalCr = entry.lines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0)
@@ -123,12 +164,38 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
             return (
               <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
                 <td className="px-3 py-1 text-theme" style={{ paddingLeft: isCredit ? 24 : 12 }}>
-                  {l.account_number ? (
-                    <span className="font-mono text-[10px] mr-1" style={{ color: "var(--text-muted)" }}>
-                      {l.account_number}
-                    </span>
-                  ) : null}
-                  {l.account_name}
+                  {editable && accounts ? (
+                    <select
+                      value={l.account_qbo_id ?? ""}
+                      onChange={(e) => changeAccount(i, e.target.value)}
+                      disabled={editMut.isPending}
+                      title="Change account"
+                      className="w-full max-w-full rounded-md px-1.5 py-1 text-[11px] outline-none transition-colors disabled:opacity-50"
+                      style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+                    >
+                      {/* Keep the current line visible even if it's an unset
+                          placeholder, or an account not in this period's chart. */}
+                      {(!l.account_qbo_id || !accounts.some((a) => a.qbo_account_id === l.account_qbo_id)) && (
+                        <option value={l.account_qbo_id ?? ""}>
+                          {l.account_name || "— Select account —"}
+                        </option>
+                      )}
+                      {accounts.map((a) => (
+                        <option key={a.qbo_account_id} value={a.qbo_account_id}>
+                          {acctLabel(a)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <>
+                      {l.account_number ? (
+                        <span className="font-mono text-[10px] mr-1" style={{ color: "var(--text-muted)" }}>
+                          {l.account_number}
+                        </span>
+                      ) : null}
+                      {l.account_name}
+                    </>
+                  )}
                 </td>
                 <td className="px-3 py-1 text-right tabular-nums font-semibold"
                   style={{ color: l.debit && parseFloat(l.debit) ? "var(--text)" : "var(--text-muted)" }}>
@@ -154,6 +221,13 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
           </tr>
         </tbody>
       </table>
+
+      {/* Editing hint */}
+      {editable && (
+        <p className="px-3 pt-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+          Pick a different account from any dropdown to re-point a line before approving.
+        </p>
+      )}
 
       {/* Rationale + memo */}
       {(entry.rationale || entry.memo) && (
