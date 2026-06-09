@@ -461,6 +461,59 @@ async def _invalidate_committed_snapshots(
     return n
 
 
+async def _reflag_approved_recons(
+    db: AsyncSession,
+    tenant_id,
+    qbo_account_ids: set[str],
+    *,
+    user_id,
+    reason: str,
+) -> int:
+    """A schedule change invalidates any ALREADY-APPROVED reconciliation for
+    the affected account(s) — the numbers it was approved on just moved. Revert
+    each approved (non-closed) recon to 'reviewed', clear the approval stamps,
+    and audit it, so it's re-reviewed before close. Skips closed (locked)
+    periods. Mutates rows WITHOUT committing — the caller owns the transaction.
+    Returns the count re-flagged."""
+    from core.audit.log import write_audit_event
+    from models.account_review_status import AccountReviewStatus
+
+    ids = {a for a in qbo_account_ids if a}
+    if not ids:
+        return 0
+    closed = set((await db.execute(
+        select(ClosedPeriod.period_end).where(ClosedPeriod.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all())
+    rows = (await db.execute(
+        select(AccountReviewStatus).where(
+            AccountReviewStatus.tenant_id == tenant_id,
+            AccountReviewStatus.qbo_account_id.in_(ids),
+            AccountReviewStatus.status == "approved",
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    n = 0
+    for r in rows:
+        if r.period_end in closed:
+            continue   # books locked — can't touch the approval
+        r.status = "reviewed"
+        r.approved_by = None
+        r.approved_at = None
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user_id,
+            action="recon.reflag_schedule_change",
+            entity_type="account_review_status", entity_id=r.id,
+            metadata={
+                "qbo_account_id": r.qbo_account_id,
+                "period_end": r.period_end.isoformat(),
+                "reason": reason,
+            },
+        )
+        n += 1
+    return n
+
+
 @router.post("/{schedule_type}", dependencies=[Depends(require_role("preparer"))])
 async def create_item(
     schedule_type: str,
@@ -483,9 +536,11 @@ async def create_item(
     db.add(row)
     # Adding a line invalidates any committed snapshot for this account —
     # the roll-forward changed, so the period needs a re-commit.
-    await _invalidate_committed_snapshots(
-        db, tenant_id, schedule_type, _item_account_ids(schedule_type, row),
-    )
+    accts = _item_account_ids(schedule_type, row)
+    await _invalidate_committed_snapshots(db, tenant_id, schedule_type, accts)
+    # …and un-approves any already-approved recon on those accounts: it was
+    # signed off on numbers that just changed.
+    await _reflag_approved_recons(db, tenant_id, accts, user_id=user.id, reason="schedule item added")
     await db.commit()
     await db.refresh(row)
     return _serialize(schedule_type, row)
@@ -496,6 +551,7 @@ async def update_item(
     schedule_type: str,
     item_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     body: dict = Body(...),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -512,6 +568,9 @@ async def update_item(
     _apply_body(schedule_type, row, body)
     affected |= _item_account_ids(schedule_type, row)
     await _invalidate_committed_snapshots(db, tenant_id, schedule_type, affected)
+    # Editing a line moves the subledger → un-approve any approved recon on the
+    # old or new account so it's re-reviewed before close.
+    await _reflag_approved_recons(db, tenant_id, affected, user_id=user.id, reason="schedule item edited")
     await db.commit()
     await db.refresh(row)
     return _serialize(schedule_type, row)
@@ -522,6 +581,7 @@ async def delete_item(
     schedule_type: str,
     item_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     Model = _model_for(schedule_type)
@@ -531,10 +591,10 @@ async def delete_item(
     if row is None:
         raise HTTPException(status_code=404, detail=f"{schedule_type} item not found.")
     # Removing a line changes the roll-forward → invalidate this account's
-    # committed snapshots before deleting the row.
-    await _invalidate_committed_snapshots(
-        db, tenant_id, schedule_type, _item_account_ids(schedule_type, row),
-    )
+    # committed snapshots and re-flag any approved recon before deleting.
+    accts = _item_account_ids(schedule_type, row)
+    await _invalidate_committed_snapshots(db, tenant_id, schedule_type, accts)
+    await _reflag_approved_recons(db, tenant_id, accts, user_id=user.id, reason="schedule item deleted")
     await db.delete(row)
     await db.commit()
     return {"id": str(item_id), "deleted": True}
@@ -613,6 +673,18 @@ async def commit_snapshot(
     pe = _parse_date(body.get("period_end"), "period_end")
     if pe is None:
         raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
+    # Books locked for this period → can't commit a schedule into it.
+    is_closed = (await db.execute(
+        select(ClosedPeriod).where(
+            ClosedPeriod.tenant_id == tenant_id, ClosedPeriod.period_end == pe,
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none() is not None
+    if is_closed:
+        raise HTTPException(
+            status_code=423,
+            detail=f"Books are closed for {pe.isoformat()}. Reopen the period before committing a schedule.",
+        )
     items = (await db.execute(
         select(Model).where(
             Model.tenant_id == tenant_id,
@@ -653,6 +725,12 @@ async def commit_snapshot(
     existing.committed_at      = _datetime.utcnow()
     if body.get("notes"):
         existing.notes = body.get("notes")
+
+    # Committing a schedule moves the account's subledger — un-approve any
+    # already-approved recon on this account so it's re-reviewed before close.
+    await _reflag_approved_recons(
+        db, tenant_id, {qbo_account_id}, user_id=user.id, reason="schedule committed",
+    )
 
     await db.commit()
     await db.refresh(existing)

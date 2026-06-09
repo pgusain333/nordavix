@@ -738,6 +738,26 @@ def loan_principal_paid_in_period(item: ScheduleLoan, p_start: date, p_end: date
     return max(ZERO, paid)
 
 
+def loan_interest_in_period(item: ScheduleLoan, p_start: date, p_end: date) -> Decimal:
+    """Interest accrued this period on the loan's outstanding principal.
+
+    Mirrors roll_loans' per-item accrual: charge the monthly rate on the
+    opening balance, or — when the loan originated this period (no opening) —
+    on the newly-booked principal, so a mid-period loan still books a month of
+    interest instead of $0."""
+    if not item.is_active:
+        return ZERO
+    beg = _loan_principal_as_of(item, _prior_period_end(p_end))
+    booked_this_period = (
+        Decimal(item.original_principal) if (p_start <= item.loan_date <= p_end) else ZERO
+    )
+    if beg <= ZERO and booked_this_period <= ZERO:
+        return ZERO
+    monthly_rate = Decimal(item.interest_rate_pct) / Decimal("100") / Decimal("12")
+    base = beg if beg > ZERO else booked_this_period
+    return max(ZERO, base * monthly_rate)
+
+
 def loan_lines_for_account(items, qbo_account_id: str, p_start: date, p_end: date) -> list[dict]:
     out: list[dict] = []
     for it in items:
@@ -783,6 +803,19 @@ def lease_principal_paid_in_period(item: ScheduleLease, p_start: date, p_end: da
     bal_at_now   = _lease_liability_as_of(item, p_end)
     paid = bal_at_prior - bal_at_now
     return max(ZERO, paid)
+
+
+def lease_interest_in_period(item: ScheduleLease, p_start: date, p_end: date) -> Decimal:
+    """Interest (accretion) portion of this period's lease payment — the
+    monthly discount rate applied to the opening liability. Mirrors
+    roll_leases. Cash-basis leases (no liability) accrue no interest."""
+    if item.initial_liability is None or item.discount_rate_pct is None:
+        return ZERO
+    if not _is_active_in_period(item.lease_start, item.lease_end, p_start, p_end):
+        return ZERO
+    beg = _lease_liability_as_of(item, _prior_period_end(p_end))
+    monthly_rate = Decimal(item.discount_rate_pct) / Decimal("100") / Decimal("12")
+    return max(ZERO, beg * monthly_rate)
 
 
 def lease_lines_for_account(items, qbo_account_id: str, p_start: date, p_end: date) -> list[dict]:

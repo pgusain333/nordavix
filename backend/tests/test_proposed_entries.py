@@ -197,6 +197,77 @@ def test_schedule_proposed_entries_placeholder_offset_medium():
     assert dr["account_qbo_id"] is None and dr["account_name"] == "Amortization expense"
 
 
+def test_loan_monthly_payment_is_three_line_with_interest():
+    # A loan period with origination + a principal+interest payment should yield
+    # TWO proposed entries: the 2-line origination AND a 3-line monthly payment
+    # (Dr loan principal / Dr interest expense / Cr cash). The bare principal
+    # je_item must NOT also surface as its own 2-line entry (no double count).
+    snap = _FakeSnap("LOAN1", "2700", "Term Loan Payable")
+    sched = {
+        "schedule_type": "loan",
+        "je_items": [
+            {"txn_type": "Schedule (Loan Origination)", "amount": "-100000.00",
+             "memo": "Loan origination"},
+            {"txn_type": "Schedule (Loan Payment)", "amount": "1200.00",
+             "memo": "principal payment"},
+        ],
+        "payment_entries": [
+            {"item_id": "x", "date": "2026-03-31", "description": "Term Loan",
+             "principal": "1200.00", "interest": "500.00",
+             "offset_qbo_account_id": "6500", "offset_account_name": "Interest expense"},
+        ],
+    }
+    entries = _schedule_proposed_entries(sched=sched, snap=snap)
+    assert len(entries) == 2, [e["description"] for e in entries]
+
+    # The origination 2-line (Dr cash / Cr loan).
+    orig = next(e for e in entries if "Origination" in e["description"])
+    olines = normalize_lines(orig["lines"])
+    assert lines_balanced(olines)
+    assert len(olines) == 2
+
+    # The 3-line monthly payment.
+    pay = next(e for e in entries if "payment" in e["description"].lower())
+    plines = normalize_lines(pay["lines"])
+    assert lines_balanced(plines)
+    assert len(plines) == 3, plines
+    # Loan liability debited by principal.
+    liab = next(ln for ln in plines if ln["account_qbo_id"] == "LOAN1")
+    assert liab["debit"] == "1200.00"
+    # Interest expense debited to the offset account.
+    interest = next(ln for ln in plines if ln["account_qbo_id"] == "6500")
+    assert interest["debit"] == "500.00"
+    # Cash credited the full payment.
+    cash = next(ln for ln in plines if Decimal(ln["credit"]) > 0)
+    assert cash["credit"] == "1700.00"
+    assert pay["confidence"] == "high"
+
+
+def test_loan_interest_only_payment_is_two_line():
+    # Interest-only period: no principal movement, but the monthly interest
+    # must still be proposed as a 2-line Dr interest / Cr cash entry.
+    snap = _FakeSnap("LOAN1", "2700", "Term Loan Payable")
+    sched = {
+        "schedule_type": "loan",
+        "je_items": [],
+        "payment_entries": [
+            {"item_id": "x", "date": "2026-03-31", "description": "IO Loan",
+             "principal": "0.00", "interest": "750.00",
+             "offset_qbo_account_id": None, "offset_account_name": None},
+        ],
+    }
+    entries = _schedule_proposed_entries(sched=sched, snap=snap)
+    assert len(entries) == 1
+    plines = normalize_lines(entries[0]["lines"])
+    assert lines_balanced(plines)
+    assert len(plines) == 2, plines
+    dr = next(ln for ln in plines if Decimal(ln["debit"]) > 0)
+    assert dr["account_name"] == "Interest expense" and dr["debit"] == "750.00"
+    cr = next(ln for ln in plines if Decimal(ln["credit"]) > 0)
+    assert cr["credit"] == "750.00"
+    assert entries[0]["confidence"] == "medium"   # no real offset account set
+
+
 if __name__ == "__main__":
     test_normalize_lines_drops_empty_and_coerces()
     test_lines_balanced()
@@ -208,4 +279,6 @@ if __name__ == "__main__":
     test_schedule_correcting_entry_debits_asset_when_gl_too_low()
     test_schedule_proposed_entries_itemized_prepaid()
     test_schedule_proposed_entries_placeholder_offset_medium()
+    test_loan_monthly_payment_is_three_line_with_interest()
+    test_loan_interest_only_payment_is_two_line()
     print("PROPOSED_ENTRIES_OK")

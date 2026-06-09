@@ -1576,7 +1576,9 @@ async def _schedule_backed_subledger(
         _prepaid_unamortized_as_of,
         _q,
         fa_period_depreciation,
+        lease_interest_in_period,
         lease_principal_paid_in_period,
+        loan_interest_in_period,
         loan_principal_paid_in_period,
     )
 
@@ -1724,6 +1726,7 @@ async def _schedule_backed_subledger(
     if leases_liab:
         sl_pos = ZERO
         je = []
+        pay_entries = []
         active_count = 0
         for it in leases_liab:
             if it.initial_liability is None or it.discount_rate_pct is None:
@@ -1740,6 +1743,7 @@ async def _schedule_backed_subledger(
                     "memo":       f"{it.description} — initial lease liability per Nordavix Schedule",
                 })
             principal = lease_principal_paid_in_period(it, p_start, period_end)
+            interest = lease_interest_in_period(it, p_start, period_end)
             if principal > ZERO:
                 je.append({
                     "txn_id":     f"lease-pay-{it.id}-{period_end.isoformat()}",
@@ -1749,8 +1753,21 @@ async def _schedule_backed_subledger(
                     "amount":     str(_q(principal)),
                     "memo":       f"{it.description} — principal portion of lease payment per Nordavix Schedule",
                 })
+            # Full monthly payment JE (Dr liability principal / Dr interest / Cr cash).
+            # Emitted whenever there's a payment this period — incl. interest-only
+            # accretion where principal is $0 — so the P&L interest is never lost.
+            if principal > ZERO or interest > ZERO:
+                pay_entries.append({
+                    "item_id":               str(it.id),
+                    "date":                  period_end.isoformat(),
+                    "description":           it.description,
+                    "principal":             str(_q(principal)),
+                    "interest":              str(_q(interest)),
+                    "offset_qbo_account_id": it.offset_qbo_account_id,
+                    "offset_account_name":   it.offset_account_name,
+                })
         if active_count > 0:
-            return {"schedule_type": "lease_liability", "sl_signed": _q(-sl_pos), "item_count": active_count, "je_items": je}
+            return {"schedule_type": "lease_liability", "sl_signed": _q(-sl_pos), "item_count": active_count, "je_items": je, "payment_entries": pay_entries}
 
     # ── Lease ROU asset (debit-natural) ──────────────────────────────
     leases_rou = list((await db.execute(
@@ -1815,6 +1832,7 @@ async def _schedule_backed_subledger(
     if loans:
         sl_pos = ZERO
         je = []
+        pay_entries = []
         for it in loans:
             sl_pos += _loan_principal_as_of(it, period_end)
             if p_start <= it.loan_date <= period_end:
@@ -1827,6 +1845,7 @@ async def _schedule_backed_subledger(
                     "memo":       f"{it.description} — loan origination per Nordavix Schedule",
                 })
             principal = loan_principal_paid_in_period(it, p_start, period_end)
+            interest = loan_interest_in_period(it, p_start, period_end)
             if principal > ZERO:
                 je.append({
                     "txn_id":     f"loan-pay-{it.id}-{period_end.isoformat()}",
@@ -1836,7 +1855,21 @@ async def _schedule_backed_subledger(
                     "amount":     str(_q(principal)),
                     "memo":       f"{it.description} — principal payment per Nordavix Schedule",
                 })
-        return {"schedule_type": "loan", "sl_signed": _q(-sl_pos), "item_count": len(loans), "je_items": je}
+            # Full monthly payment JE (Dr loan principal / Dr interest expense /
+            # Cr cash). Emitted whenever there's a payment — including
+            # interest-only loans where principal is $0 — so the monthly
+            # interest expense the user asked for is always proposed.
+            if principal > ZERO or interest > ZERO:
+                pay_entries.append({
+                    "item_id":               str(it.id),
+                    "date":                  period_end.isoformat(),
+                    "description":           it.description,
+                    "principal":             str(_q(principal)),
+                    "interest":              str(_q(interest)),
+                    "offset_qbo_account_id": it.offset_qbo_account_id,
+                    "offset_account_name":   it.offset_account_name,
+                })
+        return {"schedule_type": "loan", "sl_signed": _q(-sl_pos), "item_count": len(loans), "je_items": je, "payment_entries": pay_entries}
 
     return None
 
@@ -1903,6 +1936,7 @@ def _schedule_je_offset_label(txn_type: str, schedule_type: str) -> str:
     """Placeholder for the offset (expense/cash) side when the schedule item
     has no offset account set. Keyed off the JE kind so it reads sensibly."""
     t = (txn_type or "").lower()
+    if "origination" in t:  return "Cash / bank"
     if "amort" in t:        return "Amortization expense"
     if "initial" in t or "prepay" in t:  return "Original expense / Cash"
     if "reversal" in t:     return "Accrued expense (reverse)"
@@ -1942,6 +1976,11 @@ def _schedule_proposed_entries(
     name = snap.account_name
     out: list[dict[str, Any]] = []
     for je in sched.get("je_items") or []:
+        # Loan/lease principal payments are folded into the full monthly
+        # payment JE built from payment_entries below (Dr principal / Dr
+        # interest / Cr cash) — don't also emit a bare 2-line principal entry.
+        if schedule_type in ("loan", "lease_liability") and "Payment" in (je.get("txn_type") or ""):
+            continue
         try:
             amt = Decimal(str(je.get("amount") or "0")).quantize(Decimal("0.01"))
         except Exception:
@@ -1978,6 +2017,57 @@ def _schedule_proposed_entries(
                 f"Per the Nordavix schedule for {name}. Post this entry in QuickBooks if it "
                 "isn't already booked, then re-sync."
                 + ("" if offset_qid else " Confirm the offset account before posting.")
+            ),
+            "confidence": "high" if offset_qid else "medium",
+        })
+
+    # Loan/lease monthly payment JE: Dr liability (principal) / Dr interest
+    # expense (the item's offset account) / Cr cash (the full payment). One per
+    # active item with a payment this period — interest-only periods still get a
+    # 2-line Dr interest / Cr cash entry so the P&L charge is never dropped.
+    pretty = schedule_type.replace("_liability", "").replace("_", " ")
+    for pe in sched.get("payment_entries") or []:
+        try:
+            principal = Decimal(str(pe.get("principal") or "0")).quantize(Decimal("0.01"))
+            interest = Decimal(str(pe.get("interest") or "0")).quantize(Decimal("0.01"))
+        except Exception:
+            continue
+        payment = principal + interest
+        if payment <= Decimal("0"):
+            continue
+        offset_qid = pe.get("offset_qbo_account_id")
+        chart_acct = chart_by_id.get(offset_qid) if offset_qid else None
+        int_name = (
+            (chart_acct.get("account_name") if chart_acct else None)
+            or pe.get("offset_account_name")
+            or "Interest expense"
+        )
+        int_number = chart_acct.get("account_number") if chart_acct else None
+        lines = []
+        if principal > Decimal("0"):
+            lines.append({
+                "account_qbo_id": qid, "account_number": number, "account_name": name,
+                "debit": str(principal), "credit": "0.00",
+            })
+        if interest > Decimal("0"):
+            lines.append({
+                "account_qbo_id": offset_qid, "account_number": int_number, "account_name": int_name,
+                "debit": str(interest), "credit": "0.00",
+            })
+        lines.append({
+            "account_qbo_id": None, "account_number": None, "account_name": "Cash / bank",
+            "debit": "0.00", "credit": str(payment),
+        })
+        desc = str(pe.get("description") or name)
+        out.append({
+            "description": f"Monthly {pretty} payment — {desc}",
+            "lines": lines,
+            "memo": f"{desc} — {pretty} payment ({_money(principal)} principal + {_money(interest)} interest) per Nordavix Schedule"[:500],
+            "rationale": (
+                f"The Nordavix {pretty} schedule expects a {_money(payment)} payment this period "
+                f"— {_money(principal)} principal reducing {name} and {_money(interest)} interest "
+                f"expense. Post this entry in QuickBooks if it isn't already booked, then re-sync."
+                + ("" if offset_qid else " Confirm the interest expense account before posting.")
             ),
             "confidence": "high" if offset_qid else "medium",
         })
