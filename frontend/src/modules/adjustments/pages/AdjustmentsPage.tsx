@@ -10,12 +10,12 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Sparkles, CheckCheck, FileText, Save, Download, Lock } from "lucide-react"
+import { Sparkles, CheckCheck, FileText, Save, Download, Lock, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react"
 
 import { Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
-import { adjustmentsApi, type AdjustmentStatus, type ProposedEntry } from "../api"
+import { adjustmentsApi, type AdjustmentStatus, type CheckPostedResult, type ProposedEntry } from "../api"
 import { ProposedEntryCard } from "../components/ProposedEntryCard"
 
 const SOURCE_META: Record<string, { label: string; hint: string }> = {
@@ -102,6 +102,24 @@ export function AdjustmentsPage() {
   const downloadMut = useMutation({
     mutationFn: () => adjustmentsApi.downloadCsv(period),
   })
+
+  const [checkResult, setCheckResult] = useState<CheckPostedResult | null>(null)
+  const checkMut = useMutation({
+    mutationFn: () => adjustmentsApi.checkPosted(period),
+    onSuccess: (res) => {
+      setCheckResult(res)
+      // Refresh adjustments + any recon/dashboard views (recons may have reopened).
+      qc.invalidateQueries({
+        predicate: (q) => {
+          const k = q.queryKey
+          const head = Array.isArray(k) && typeof k[0] === "string" ? k[0] : ""
+          return head === "adjustments" || head.includes("recon") || head.includes("dashboard")
+        },
+      })
+    },
+  })
+  // Clear a stale result when the selected period changes.
+  useEffect(() => { setCheckResult(null) }, [period])
 
   const batchApprove = useMutation({
     mutationFn: async () => {
@@ -194,9 +212,61 @@ export function AdjustmentsPage() {
                     <Download size={13} strokeWidth={2.2} />
                     {downloadMut.isPending ? "Preparing…" : "Download QBO CSV"}
                   </button>
+                  {canReview && (
+                    <button
+                      onClick={() => checkMut.mutate()}
+                      disabled={savedCount === 0 || checkMut.isPending}
+                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40"
+                      style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border-strong)" }}
+                      title={savedCount === 0 ? "Save the batch first" : "Read QuickBooks and check whether these entries are posted"}
+                    >
+                      <RefreshCw size={13} strokeWidth={2.2} className={checkMut.isPending ? "animate-spin" : ""} />
+                      {checkMut.isPending ? "Checking…" : "Check posted in QBO"}
+                    </button>
+                  )}
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* Posting-check result */}
+        {period && checkResult && checkResult.period_end === period && (
+          <div className="rounded-xl p-3"
+            style={{
+              background: checkResult.all_posted ? "var(--green-subtle)" : "rgba(245, 158, 11, 0.08)",
+              border: `1px solid ${checkResult.all_posted ? "var(--green)" : "rgba(245, 158, 11, 0.40)"}`,
+            }}>
+            <div className="flex items-start gap-2">
+              {checkResult.all_posted
+                ? <CheckCircle2 size={15} strokeWidth={2.2} style={{ color: "var(--green)" }} className="mt-0.5 shrink-0" />
+                : <AlertCircle size={15} strokeWidth={2.2} style={{ color: "#b45309" }} className="mt-0.5 shrink-0" />}
+              <div className="min-w-0">
+                <p className="text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>
+                  {checkResult.posted_count} of {checkResult.total} found in QuickBooks
+                  {checkResult.all_posted
+                    ? checkResult.reopened_accounts.length > 0
+                      ? ` · all posted — ${checkResult.reopened_accounts.length} reconciliation${checkResult.reopened_accounts.length === 1 ? "" : "s"} reopened to reconcile`
+                      : " · all posted"
+                    : ""}
+                </p>
+                {!checkResult.all_posted && (
+                  <>
+                    <p className="text-[11px] mt-0.5" style={{ color: "var(--text-2)" }}>
+                      Not yet found in QBO (dated within {formatDate(period)}):
+                    </p>
+                    <ul className="mt-1 space-y-0.5">
+                      {checkResult.entries.filter((e) => !e.posted).slice(0, 8).map((e) => (
+                        <li key={e.id} className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--text-2)" }}>
+                          <span className="inline-block h-1 w-1 rounded-full shrink-0" style={{ background: "#b45309" }} />
+                          {e.description}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

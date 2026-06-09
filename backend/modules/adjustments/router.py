@@ -23,14 +23,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
+from models.account_review_status import AccountReviewStatus
 from models.closed_period import ClosedPeriod
 from models.proposed_entry import ProposedEntry
+from models.qbo_connection import QboConnection
 from models.user import User
 from modules.adjustments.service import (
     VALID_SOURCES,
     VALID_STATUSES,
     build_qbo_je_csv,
     lines_balanced,
+    match_entry_to_qbo,
     normalize_lines,
     period_accounts,
     serialize,
@@ -342,3 +345,153 @@ async def export_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Posting check (read QBO) + reopen affected recons ─────────────────────
+
+
+async def _reopen_recons(
+    db: AsyncSession,
+    tenant_id,
+    qbo_account_ids: set[str],
+    period_end: date,
+    *,
+    user_id,
+) -> list[str]:
+    """Reset the recons for the given accounts at this period back to pending so
+    they're re-reconciled against the post-adjustment GL. Mirrors the recon
+    'Reset to pending' action (clears subledger override, reconciling items, AI
+    commentary, and all actor stamps). Caller commits. Returns the account ids
+    reopened."""
+    ids = {a for a in qbo_account_ids if a}
+    if not ids:
+        return []
+    rows = (await db.execute(
+        select(AccountReviewStatus).where(
+            AccountReviewStatus.tenant_id == tenant_id,
+            AccountReviewStatus.period_end == period_end,
+            AccountReviewStatus.qbo_account_id.in_(ids),
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    reopened: list[str] = []
+    for r in rows:
+        if r.status == "pending":
+            continue
+        r.status = "pending"
+        r.subledger_total = None
+        r.subledger_source = None
+        r.subledger_entered_by = None
+        r.subledger_entered_at = None
+        r.reconciling_items = []
+        r.ai_commentary = None
+        r.reviewed_by = None
+        r.reviewed_at = None
+        r.prepared_by = None
+        r.prepared_at = None
+        r.approved_by = None
+        r.approved_at = None
+        await write_audit_event(
+            db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="recon.reopen_after_adjustment",
+            entity_type="account_review_status",
+            entity_id=r.id,
+            metadata={"qbo_account_id": r.qbo_account_id, "period_end": period_end.isoformat()},
+        )
+        reopened.append(r.qbo_account_id)
+    return reopened
+
+
+@router.post("/check-posted")
+async def check_posted(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    user: User = Depends(require_role("reviewer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Read QuickBooks (read-only) and check whether each saved adjustment has
+    been posted, matching by account + amount + posting type within the period.
+    When every saved entry is found, reopen the reconciliations for the accounts
+    those entries hit so they can be reconciled against the new GL. Reviewer+."""
+    pe = _parse_period(period_end)
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
+    if await _is_closed(db, tenant_id, pe):
+        raise HTTPException(status_code=423, detail="Books are closed for this period.")
+
+    saved = (await db.execute(
+        select(ProposedEntry)
+        .where(ProposedEntry.period_end == pe, ProposedEntry.saved_at.isnot(None))
+        .order_by(ProposedEntry.created_at.asc())
+    )).scalars().all()
+    if not saved:
+        raise HTTPException(
+            status_code=400,
+            detail="No saved entries to check. Approve the entries and click Save first.",
+        )
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=400, detail="Connect QuickBooks to check posting status.")
+
+    from modules.recons.service import fetch_posted_journal_entries
+    from modules.schedules.calc import _period_bounds
+    start, end = _period_bounds(pe)
+    try:
+        qbo_jes = await fetch_posted_journal_entries(conn, db, start=start, end=end)
+    except Exception as exc:
+        logger.exception("QBO journal-entry fetch failed (tenant=%s, period=%s)", tenant_id, pe)
+        raise HTTPException(
+            status_code=502,
+            detail="Couldn't read journal entries from QuickBooks. Try again, or reconnect QuickBooks.",
+        ) from exc
+
+    now = datetime.now(UTC)
+    results: list[dict] = []
+    for e in saved:
+        doc = match_entry_to_qbo(e, qbo_jes)
+        found = doc is not None
+        if found and e.status != "posted":
+            e.status = "posted"
+            e.status_changed_at = now
+            e.status_changed_by = user.id
+            await write_audit_event(
+                db,
+                tenant_id=tenant_id,
+                user_id=user.id,
+                action="adjustment.detected_posted",
+                entity_type="proposed_entry",
+                entity_id=e.id,
+                metadata={"qbo_doc": doc},
+            )
+        results.append({
+            "id": str(e.id),
+            "description": e.description,
+            "posted": found or e.status == "posted",
+            "qbo_doc": doc,
+        })
+
+    all_posted = bool(results) and all(r["posted"] for r in results)
+    reopened: list[str] = []
+    if all_posted:
+        affected = {
+            str(ln.get("account_qbo_id"))
+            for e in saved for ln in (e.lines or [])
+            if ln.get("account_qbo_id")
+        }
+        reopened = await _reopen_recons(db, tenant_id, affected, pe, user_id=user.id)
+
+    await db.commit()
+    return {
+        "period_end": pe.isoformat(),
+        "entries": results,
+        "total": len(results),
+        "posted_count": sum(1 for r in results if r["posted"]),
+        "all_posted": all_posted,
+        "reopened_accounts": reopened,
+    }

@@ -409,6 +409,54 @@ def _csv_amount(value) -> str:
     return "" if d == ZERO else f"{d:.2f}"
 
 
+def _entry_target_lines(entry: ProposedEntry) -> list[tuple[str | None, str, Decimal]]:
+    """(account_qbo_id, 'Debit'|'Credit', amount) for each line of a proposed
+    entry — the signature we look for in a real QBO journal entry."""
+    out: list[tuple[str | None, str, Decimal]] = []
+    for ln in (entry.lines or []):
+        debit = _q(ln.get("debit"))
+        credit = _q(ln.get("credit"))
+        qid = ln.get("account_qbo_id")
+        qid = str(qid) if qid else None
+        if debit > ZERO:
+            out.append((qid, "Debit", debit))
+        elif credit > ZERO:
+            out.append((qid, "Credit", credit))
+    return out
+
+
+def match_entry_to_qbo(entry: ProposedEntry, qbo_jes: list[dict]) -> str | None:
+    """Best-effort: return the QBO doc number of a journal entry that contains
+    ALL of this proposed entry's lines (same account + posting type + amount,
+    each consumed once), else None. Lines with no account_qbo_id (placeholders)
+    match on posting type + amount only. Used by the posting check to confirm
+    the user booked the adjustment in QuickBooks."""
+    targets = _entry_target_lines(entry)
+    if not targets:
+        return None
+    for je in qbo_jes:
+        avail = list(je.get("lines") or [])
+        matched_all = True
+        for (acct, ptype, amt) in targets:
+            hit = None
+            for i, jl in enumerate(avail):
+                if jl.get("posting_type") != ptype:
+                    continue
+                if abs(_q(jl.get("amount")) - amt) > BALANCE_TOLERANCE:
+                    continue
+                if acct and str(jl.get("account_id")) != acct:
+                    continue
+                hit = i
+                break
+            if hit is None:
+                matched_all = False
+                break
+            avail.pop(hit)  # each QBO line satisfies at most one target line
+        if matched_all:
+            return je.get("doc") or je.get("id") or "matched"
+    return None
+
+
 def build_qbo_je_csv(entries: list[ProposedEntry]) -> str:
     """Render saved adjusting entries as a QuickBooks Online Accountant
     'Import journal entries' CSV. Each JE line is a row; the lines of one entry

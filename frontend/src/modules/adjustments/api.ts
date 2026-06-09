@@ -133,7 +133,34 @@ async function downloadCsv(periodEnd: string): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
-export const adjustmentsApi = { list, accounts, accept, dismiss, markPosted, edit, save, downloadCsv }
+export interface CheckPostedEntry {
+  id:          string
+  description: string
+  posted:      boolean
+  qbo_doc:     string | null
+}
+
+export interface CheckPostedResult {
+  period_end:        string
+  entries:           CheckPostedEntry[]
+  total:             number
+  posted_count:      number
+  all_posted:        boolean
+  reopened_accounts: string[]
+}
+
+/** Read QuickBooks (read-only) and check whether each saved adjustment was
+ *  posted. When all are found, the affected recons reopen server-side. */
+async function checkPosted(periodEnd: string): Promise<CheckPostedResult> {
+  const { data } = await apiClient.post<CheckPostedResult>(
+    "/api/adjustments/check-posted", null, { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
+export const adjustmentsApi = {
+  list, accounts, accept, dismiss, markPosted, edit, save, downloadCsv, checkPosted,
+}
 
 /** Plain-text rendering of a proposed entry for the clipboard, so the user can
  *  paste a clean two-column JE into QuickBooks (or a working paper). */

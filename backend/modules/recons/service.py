@@ -98,6 +98,48 @@ async def _qbo_get(conn: QboConnection, db: AsyncSession, path: str, params: dic
     return resp.json()
 
 
+async def fetch_posted_journal_entries(
+    conn: QboConnection, session: AsyncSession, *, start: date, end: date,
+) -> list[dict]:
+    """Read QBO JournalEntry transactions dated in [start, end] and return them
+    as simplified dicts for matching against proposed adjustments:
+
+        {"doc": str, "id": str, "txn_date": str,
+         "lines": [{"account_id": str, "posting_type": "Debit"|"Credit",
+                    "amount": Decimal}]}
+
+    Read-only — Nordavix never writes to QBO. Used by the adjustments posting
+    check to confirm the user booked the entries."""
+    q = (
+        f"SELECT Id, DocNumber, TxnDate, PrivateNote, Line "
+        f"FROM JournalEntry WHERE TxnDate >= '{start.isoformat()}' "
+        f"AND TxnDate <= '{end.isoformat()}' MAXRESULTS 500"
+    )
+    data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
+    jes = data.get("QueryResponse", {}).get("JournalEntry", []) or []
+    out: list[dict] = []
+    for je in jes:
+        lines: list[dict] = []
+        for line in je.get("Line", []) or []:
+            detail = line.get("JournalEntryLineDetail") or {}
+            acct = (detail.get("AccountRef") or {}).get("value")
+            ptype = detail.get("PostingType")
+            if not acct or ptype not in ("Debit", "Credit"):
+                continue
+            lines.append({
+                "account_id": str(acct),
+                "posting_type": ptype,
+                "amount": _dec(line.get("Amount")),
+            })
+        out.append({
+            "doc": str(je.get("DocNumber") or je.get("Id") or ""),
+            "id": str(je.get("Id") or ""),
+            "txn_date": je.get("TxnDate"),
+            "lines": lines,
+        })
+    return out
+
+
 # ── Report parsing ─────────────────────────────────────────────────────────────
 
 def _flatten_report_rows(report: dict) -> list[dict]:

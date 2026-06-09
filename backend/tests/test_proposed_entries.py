@@ -14,6 +14,7 @@ from decimal import Decimal
 from modules.adjustments.service import (
     build_bank_entries,
     lines_balanced,
+    match_entry_to_qbo,
     normalize_lines,
 )
 from modules.recons.agentic import _schedule_correcting_entry, _schedule_proposed_entries
@@ -24,6 +25,11 @@ class _FakeSnap:
         self.qbo_account_id = qid
         self.account_number = num
         self.account_name = name
+
+
+class _FakeEntry:
+    def __init__(self, lines):
+        self.lines = lines
 
 
 def test_normalize_lines_drops_empty_and_coerces():
@@ -297,6 +303,48 @@ def test_loan_interest_only_payment_is_two_line():
     assert entries[0]["confidence"] == "medium"   # no real offset account set
 
 
+def test_match_entry_to_qbo_found():
+    # A saved loan-origination reclass matches a real QBO JE with the same lines.
+    entry = _FakeEntry([
+        {"account_qbo_id": "LOAN1", "debit": "0.00", "credit": "100000.00"},
+        {"account_qbo_id": "CASH1", "debit": "100000.00", "credit": "0.00"},
+    ])
+    jes = [{
+        "doc": "JE-7", "id": "55",
+        "lines": [
+            {"account_id": "CASH1", "posting_type": "Debit", "amount": Decimal("100000.00")},
+            {"account_id": "LOAN1", "posting_type": "Credit", "amount": Decimal("100000.00")},
+        ],
+    }]
+    assert match_entry_to_qbo(entry, jes) == "JE-7"
+
+
+def test_match_entry_to_qbo_not_found_wrong_account():
+    # Same amounts, but the debit landed in a different account → no match.
+    entry = _FakeEntry([
+        {"account_qbo_id": "LOAN1", "debit": "0.00", "credit": "100000.00"},
+        {"account_qbo_id": "CASH1", "debit": "100000.00", "credit": "0.00"},
+    ])
+    jes = [{"doc": "JE-9", "lines": [
+        {"account_id": "LOAN1", "posting_type": "Credit", "amount": Decimal("100000.00")},
+        {"account_id": "OTHER", "posting_type": "Debit", "amount": Decimal("100000.00")},
+    ]}]
+    assert match_entry_to_qbo(entry, jes) is None
+
+
+def test_match_entry_to_qbo_placeholder_matches_on_amount():
+    # A placeholder line (no account id) matches any account at that amount+type.
+    entry = _FakeEntry([
+        {"account_qbo_id": "LOAN1", "debit": "0.00", "credit": "100000.00"},
+        {"account_qbo_id": None, "debit": "100000.00", "credit": "0.00"},
+    ])
+    jes = [{"doc": "JE-3", "lines": [
+        {"account_id": "LOAN1", "posting_type": "Credit", "amount": Decimal("100000.00")},
+        {"account_id": "CASH1", "posting_type": "Debit", "amount": Decimal("100000.00")},
+    ]}]
+    assert match_entry_to_qbo(entry, jes) == "JE-3"
+
+
 if __name__ == "__main__":
     test_normalize_lines_drops_empty_and_coerces()
     test_lines_balanced()
@@ -311,4 +359,7 @@ if __name__ == "__main__":
     test_loan_monthly_payment_is_three_line_with_interest()
     test_loan_origination_reclass_not_cash()
     test_loan_interest_only_payment_is_two_line()
+    test_match_entry_to_qbo_found()
+    test_match_entry_to_qbo_not_found_wrong_account()
+    test_match_entry_to_qbo_placeholder_matches_on_amount()
     print("PROPOSED_ENTRIES_OK")
