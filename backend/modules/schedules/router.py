@@ -269,12 +269,15 @@ def _apply_body(schedule_type: str, row, body: dict) -> None:
 @router.get("/accounts")
 async def list_accounts(
     tenant_id: CurrentTenantId,
+    kind: str = Query("balance_sheet", description="balance_sheet (default) | expense (P&L accounts)"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Active balance-sheet accounts available to map schedule items to.
-    Pulled live from QBO with the same query the books-setup wizard
-    uses so the picker always reflects the current chart of accounts.
+    Active accounts available to map schedule items to. The default returns
+    balance-sheet accounts (the prepaid asset / accrued liability side);
+    kind="expense" returns P&L / income-statement accounts (the account a
+    prepaid amortizes into, an accrual books to, etc.). Pulled live from QBO
+    so the picker always reflects the current chart of accounts.
 
     Returns: { accounts: [{ qbo_account_id, name, number, account_type }] }
     """
@@ -289,7 +292,19 @@ async def list_accounts(
     # filter stays consistent across the app.
     from modules.recons.overview import ACCOUNT_TYPE_GROUPS
     from modules.recons.service import _qbo_get
-    types = list(ACCOUNT_TYPE_GROUPS.keys())
+    # Default = balance-sheet accounts (the schedule's asset/liability side).
+    # "expense" = P&L / income-statement accounts (the offset side).
+    if kind in ("expense", "pl", "income_statement"):
+        type_groups = {
+            "Expense":            "Expense",
+            "Other Expense":      "Other Expense",
+            "Cost of Goods Sold": "Cost of Goods Sold",
+            "Income":             "Income",
+            "Other Income":       "Other Income",
+        }
+    else:
+        type_groups = ACCOUNT_TYPE_GROUPS
+    types = list(type_groups.keys())
     quoted = ", ".join(f"'{t}'" for t in types)
     q = (
         f"SELECT Id, Name, AcctNum, AccountType FROM Account "
@@ -307,14 +322,14 @@ async def list_accounts(
     out = []
     for a in accounts_meta:
         atype = a.get("AccountType", "")
-        if atype not in ACCOUNT_TYPE_GROUPS:
+        if atype not in type_groups:
             continue
         out.append({
             "qbo_account_id": str(a.get("Id") or ""),
             "name":           str(a.get("Name") or ""),
             "number":         str(a.get("AcctNum") or ""),
             "account_type":   atype,
-            "group_label":    ACCOUNT_TYPE_GROUPS[atype],
+            "group_label":    type_groups[atype],
         })
     out.sort(key=lambda r: (r["group_label"], r["number"] or r["name"]))
     return {"accounts": out}

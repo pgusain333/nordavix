@@ -41,9 +41,10 @@ export interface ScheduleAccount {
   group_label:    string
 }
 
-async function listAccounts(): Promise<ScheduleAccount[]> {
+async function listAccounts(kind: "balance_sheet" | "expense" = "balance_sheet"): Promise<ScheduleAccount[]> {
   const { data } = await apiClient.get<{ accounts: ScheduleAccount[] }>(
     "/api/schedules/accounts",
+    { params: { kind } },
   )
   return data.accounts
 }

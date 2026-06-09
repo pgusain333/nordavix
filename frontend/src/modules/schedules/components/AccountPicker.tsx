@@ -19,12 +19,15 @@ interface Props {
   mode:     "filter" | "form"
   label?:   string
   disabled?: boolean
+  /** "balance_sheet" (default) lists asset/liability accounts; "expense"
+   *  lists P&L / income-statement accounts (for the offset/expense side). */
+  kind?:    "balance_sheet" | "expense"
 }
 
-export function AccountPicker({ value, onChange, mode, label, disabled }: Props) {
+export function AccountPicker({ value, onChange, mode, label, disabled, kind = "balance_sheet" }: Props) {
   const { data: accounts, isLoading } = useQuery({
-    queryKey: ["schedules", "accounts"],
-    queryFn:  schedulesApi.listAccounts,
+    queryKey: ["schedules", "accounts", kind],
+    queryFn:  () => schedulesApi.listAccounts(kind),
     staleTime: 5 * 60_000,
   })
 

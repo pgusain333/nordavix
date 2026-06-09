@@ -34,8 +34,8 @@ const GROUP_TINTS: Record<string, { bg: string; fg: string }> = {
 
 export function GlAccountCell({ qboAccountId }: Props) {
   const { data: accounts } = useQuery({
-    queryKey: ["schedules", "accounts"],
-    queryFn:  schedulesApi.listAccounts,
+    queryKey: ["schedules", "accounts", "balance_sheet"],
+    queryFn:  () => schedulesApi.listAccounts(),
     staleTime: 5 * 60_000,
   })
 

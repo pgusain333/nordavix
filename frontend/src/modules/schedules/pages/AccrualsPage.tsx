@@ -489,7 +489,7 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
           )}
           <AccountPicker mode="form" label="GL account (accrued liability)" value={account} onChange={setAccount} />
           <div>
-            <AccountPicker mode="form" label="Expense account (accrues to)" value={offsetAccount} onChange={setOffsetAccount} />
+            <AccountPicker mode="form" kind="expense" label="Expense account (accrues to)" value={offsetAccount} onChange={setOffsetAccount} />
             <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
               The P&amp;L account this accrual books to. Used to draft the proposed adjusting entries
               (Dr Expense / Cr Accrued liability). Optional.

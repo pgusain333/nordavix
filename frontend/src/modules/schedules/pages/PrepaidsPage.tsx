@@ -615,7 +615,7 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
           )}
           <AccountPicker mode="form" label="GL account (prepaid asset)" value={account} onChange={setAccount} />
           <div>
-            <AccountPicker mode="form" label="Expense account (amortizes into)" value={offsetAccount} onChange={setOffsetAccount} />
+            <AccountPicker mode="form" kind="expense" label="Expense account (amortizes into)" value={offsetAccount} onChange={setOffsetAccount} />
             <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
               The P&amp;L account this prepaid expenses to. Used to draft the proposed adjusting entries
               (Dr Expense / Cr Prepaid). Optional — leave blank to confirm it later.
