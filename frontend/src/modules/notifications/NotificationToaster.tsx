@@ -61,9 +61,15 @@ export function NotificationToaster() {
   })
 
   useEffect(() => {
-    const items: NotificationItem[] = data?.items ?? []
+    // Wait for the first SUCCESSFUL fetch. On the initial render `data` is
+    // undefined (items === []) — seeding then would record an EMPTY set, and the
+    // moment the real data arrives the whole backlog looks "new" and toasts on
+    // every load / hard refresh. Seeding only from real data means a
+    // notification toasts once, when it actually arrives, never again on refresh.
+    if (!data) return
+    const items: NotificationItem[] = data.items
     if (seenRef.current === null) {
-      // First load for this workspace — remember what's here, toast nothing.
+      // First real load for this workspace — remember what's here, toast nothing.
       seenRef.current = new Set(items.map((i) => i.id))
       return
     }
@@ -94,7 +100,7 @@ export function NotificationToaster() {
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-[90] flex flex-col gap-2 pointer-events-none"
+      className="fixed bottom-5 right-5 z-[90] flex flex-col gap-2.5 pointer-events-none"
       role="status"
       aria-live="polite"
     >
@@ -145,17 +151,23 @@ function ToastCard({
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, x: 80 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 40 }}
-      transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
+      initial={{ opacity: 0, x: 48, scale: 0.96 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      exit={{ opacity: 0, x: 28, scale: 0.96 }}
+      transition={{
+        // Soft, slightly-floaty spring for the slide + scale; a separate eased
+        // fade so the appear/disappear reads as smooth and airy rather than snappy.
+        type: "spring", stiffness: 200, damping: 26, mass: 1,
+        opacity: { duration: 0.4, ease: "easeOut" },
+        layout: { type: "spring", stiffness: 320, damping: 34 },
+      }}
       onMouseEnter={stop}
       onMouseLeave={start}
-      className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] rounded-xl p-3 flex gap-3"
+      className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] rounded-2xl p-3.5 flex gap-3"
       style={{
         background: "var(--surface)",
-        border: "1px solid var(--border-strong)",
-        boxShadow: "0 12px 32px -8px rgba(0,0,0,0.35), 0 4px 10px -4px rgba(0,0,0,0.20)",
+        border: "1px solid var(--border)",
+        boxShadow: "0 16px 40px -12px rgba(0,0,0,0.28), 0 6px 14px -6px rgba(0,0,0,0.14)",
       }}
     >
       <span
