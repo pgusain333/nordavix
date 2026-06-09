@@ -499,6 +499,9 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
       prefill?.amortization_method ??
       "daily_rate",
   )
+  // Offset (expense) account — the P&L account this prepaid amortizes into.
+  // Lets Nordavix draft complete two-sided proposed adjusting entries.
+  const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error,       setError]       = useState<string | null>(null)
 
   const optimistic = useScheduleOptimistic("prepaid")
@@ -559,6 +562,7 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
       start_date:          startDate,
       end_date:            endDate,
       amortization_method: amortMethod,
+      offset_qbo_account_id: offsetAccount || null,
       notes:               notes.trim() || null,
       is_active:           true,
     })
@@ -609,7 +613,14 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
               </span>
             </div>
           )}
-          <AccountPicker mode="form" label="GL account" value={account} onChange={setAccount} />
+          <AccountPicker mode="form" label="GL account (prepaid asset)" value={account} onChange={setAccount} />
+          <div>
+            <AccountPicker mode="form" label="Expense account (amortizes into)" value={offsetAccount} onChange={setOffsetAccount} />
+            <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
+              The P&amp;L account this prepaid expenses to. Used to draft the proposed adjusting entries
+              (Dr Expense / Cr Prepaid). Optional — leave blank to confirm it later.
+            </p>
+          </div>
           <Field label="Description *">
             <input value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="GL Insurance — Annual" className={inputCls} style={inputStyle} />

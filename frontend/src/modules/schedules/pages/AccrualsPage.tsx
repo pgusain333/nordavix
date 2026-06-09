@@ -395,6 +395,8 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
   const [reversesOn, setReversesOn] = useState(existing?.reverses_on ?? prefill?.reverses_on ?? "")
   const [isReversed, setIsReversed] = useState(existing?.is_reversed ?? false)
   const [notes, setNotes] = useState(existing?.notes ?? prefill?.notes ?? "")
+  // Offset (expense) account — the P&L account this accrual books to.
+  const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error, setError] = useState<string | null>(null)
 
   const optimistic = useScheduleOptimistic("accrual")
@@ -443,6 +445,7 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
       vendor: vendor.trim() || null, reference: reference.trim() || null,
       accrual_date: accrualDate, amount,
       reverses_on: reversesOn || null, is_reversed: isReversed,
+      offset_qbo_account_id: offsetAccount || null,
       notes: notes.trim() || null, is_active: true,
     })
   }
@@ -484,7 +487,14 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
               </span>
             </div>
           )}
-          <AccountPicker mode="form" label="GL account" value={account} onChange={setAccount} />
+          <AccountPicker mode="form" label="GL account (accrued liability)" value={account} onChange={setAccount} />
+          <div>
+            <AccountPicker mode="form" label="Expense account (accrues to)" value={offsetAccount} onChange={setOffsetAccount} />
+            <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
+              The P&amp;L account this accrual books to. Used to draft the proposed adjusting entries
+              (Dr Expense / Cr Accrued liability). Optional.
+            </p>
+          </div>
           <Field label="Description *">
             <input value={description} onChange={(e) => setDescription(e.target.value)}
               placeholder="Q4 bonus accrual" className={inputCls} style={inputStyle} />

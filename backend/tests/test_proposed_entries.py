@@ -16,7 +16,14 @@ from modules.adjustments.service import (
     lines_balanced,
     normalize_lines,
 )
-from modules.recons.agentic import _schedule_correcting_entry
+from modules.recons.agentic import _schedule_correcting_entry, _schedule_proposed_entries
+
+
+class _FakeSnap:
+    def __init__(self, qid, num, name):
+        self.qbo_account_id = qid
+        self.account_number = num
+        self.account_name = name
 
 
 def test_normalize_lines_drops_empty_and_coerces():
@@ -143,6 +150,53 @@ def test_schedule_correcting_entry_debits_asset_when_gl_too_low():
     assert dr["account_qbo_id"] == "ACCT1" and dr["debit"] == "240.00"
 
 
+def test_schedule_proposed_entries_itemized_prepaid():
+    # Two prepaid JE lines this period (initial + amortization) → two balanced
+    # entries, each using the real offset (expense) account. With two items
+    # both new this period this yields four total — what a CPA expects.
+    snap = _FakeSnap("PREPAID1", "1300", "Prepaid Insurance")
+    sched = {
+        "schedule_type": "prepaid",
+        "je_items": [
+            {"txn_type": "Schedule (Initial)", "amount": "12000.00", "memo": "Annual policy",
+             "offset_qbo_account_id": "6000", "offset_account_name": "Insurance expense"},
+            {"txn_type": "Schedule (Amortization)", "amount": "-1000.00", "memo": "Annual policy",
+             "offset_qbo_account_id": "6000", "offset_account_name": "Insurance expense"},
+        ],
+    }
+    entries = _schedule_proposed_entries(sched=sched, snap=snap)
+    assert len(entries) == 2
+
+    # Initial: Dr Prepaid asset / Cr expense (parking).
+    init = normalize_lines(entries[0]["lines"])
+    assert lines_balanced(init)
+    dr = next(ln for ln in init if Decimal(ln["debit"]) > 0)
+    assert dr["account_qbo_id"] == "PREPAID1" and dr["debit"] == "12000.00"
+
+    # Amortization: Dr expense / Cr Prepaid asset.
+    amort = normalize_lines(entries[1]["lines"])
+    assert lines_balanced(amort)
+    cr = next(ln for ln in amort if Decimal(ln["credit"]) > 0)
+    assert cr["account_qbo_id"] == "PREPAID1" and cr["credit"] == "1000.00"
+    dr2 = next(ln for ln in amort if Decimal(ln["debit"]) > 0)
+    assert dr2["account_qbo_id"] == "6000"          # real expense offset
+    assert entries[1]["confidence"] == "high"       # offset is a real account
+
+
+def test_schedule_proposed_entries_placeholder_offset_medium():
+    # No offset account set → placeholder + medium confidence.
+    snap = _FakeSnap("PREPAID1", "1300", "Prepaid Rent")
+    sched = {"schedule_type": "prepaid", "je_items": [
+        {"txn_type": "Schedule (Amortization)", "amount": "-500.00", "memo": "Rent",
+         "offset_qbo_account_id": None, "offset_account_name": None},
+    ]}
+    entries = _schedule_proposed_entries(sched=sched, snap=snap)
+    assert len(entries) == 1
+    assert entries[0]["confidence"] == "medium"
+    dr = next(ln for ln in normalize_lines(entries[0]["lines"]) if Decimal(ln["debit"]) > 0)
+    assert dr["account_qbo_id"] is None and dr["account_name"] == "Amortization expense"
+
+
 if __name__ == "__main__":
     test_normalize_lines_drops_empty_and_coerces()
     test_lines_balanced()
@@ -152,4 +206,6 @@ if __name__ == "__main__":
     test_bank_skips_zero_amount()
     test_schedule_correcting_entry_credits_asset_when_gl_too_high()
     test_schedule_correcting_entry_debits_asset_when_gl_too_low()
+    test_schedule_proposed_entries_itemized_prepaid()
+    test_schedule_proposed_entries_placeholder_offset_medium()
     print("PROPOSED_ENTRIES_OK")

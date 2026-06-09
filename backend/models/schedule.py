@@ -35,6 +35,12 @@ class _ScheduleItemBase(TenantBase):
     vendor: Mapped[str | None] = mapped_column(String(255))
     reference: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
+    # The expense / cash account on the OTHER side of this schedule's journal
+    # entries (e.g. the insurance expense a prepaid amortizes into). qbo_account_id
+    # above is the balance-sheet side; this is the P&L / cash side. Used to draft
+    # complete, two-sided proposed adjusting entries — see modules/recons/agentic.py.
+    offset_qbo_account_id: Mapped[str | None] = mapped_column(String(50))
+    offset_account_name: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(

@@ -124,6 +124,8 @@ def _serialize_common(row) -> dict:
         "vendor":         row.vendor,
         "reference":      row.reference,
         "notes":          row.notes,
+        "offset_qbo_account_id": getattr(row, "offset_qbo_account_id", None),
+        "offset_account_name":   getattr(row, "offset_account_name", None),
         "is_active":      row.is_active,
         "created_at":     row.created_at.isoformat() if row.created_at else None,
         "updated_at":     row.updated_at.isoformat() if row.updated_at else None,
@@ -201,6 +203,8 @@ def _apply_body(schedule_type: str, row, body: dict) -> None:
     if "vendor" in body:        row.vendor = body.get("vendor") or None
     if "reference" in body:     row.reference = body.get("reference") or None
     if "notes" in body:         row.notes = body.get("notes") or None
+    if "offset_qbo_account_id" in body: row.offset_qbo_account_id = body.get("offset_qbo_account_id") or None
+    if "offset_account_name" in body:   row.offset_account_name = body.get("offset_account_name") or None
     if "is_active" in body:     row.is_active = bool(body.get("is_active"))
 
     if schedule_type == "prepaid":

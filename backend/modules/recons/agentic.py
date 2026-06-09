@@ -1602,6 +1602,8 @@ async def _schedule_backed_subledger(
                     "txn_date":   it.invoice_date.isoformat(),
                     "amount":     str(_q(Decimal(it.total_amount))),
                     "memo":       f"{it.description} — initial prepayment per Nordavix Schedule",
+                    "offset_qbo_account_id": it.offset_qbo_account_id,
+                    "offset_account_name":   it.offset_account_name,
                 })
             amort = _prepaid_period_expense(it, p_start, period_end)
             if amort > ZERO:
@@ -1612,6 +1614,8 @@ async def _schedule_backed_subledger(
                     "txn_date":   period_end.isoformat(),
                     "amount":     str(_q(-amort)),
                     "memo":       f"{it.description} — period amortization per Nordavix Schedule",
+                    "offset_qbo_account_id": it.offset_qbo_account_id,
+                    "offset_account_name":   it.offset_account_name,
                 })
         return {"schedule_type": "prepaid", "sl_signed": _q(sl), "item_count": len(prepaids), "je_items": je}
 
@@ -1635,6 +1639,8 @@ async def _schedule_backed_subledger(
                     "txn_date":   it.accrual_date.isoformat(),
                     "amount":     str(_q(-Decimal(it.amount))),
                     "memo":       f"{it.description} — accrual booked per Nordavix Schedule",
+                    "offset_qbo_account_id": it.offset_qbo_account_id,
+                    "offset_account_name":   it.offset_account_name,
                 })
             if it.reverses_on is not None and p_start <= it.reverses_on <= period_end:
                 je.append({
@@ -1644,6 +1650,8 @@ async def _schedule_backed_subledger(
                     "txn_date":   it.reverses_on.isoformat(),
                     "amount":     str(_q(Decimal(it.amount))),
                     "memo":       f"{it.description} — accrual reversed per Nordavix Schedule",
+                    "offset_qbo_account_id": it.offset_qbo_account_id,
+                    "offset_account_name":   it.offset_account_name,
                 })
         return {"schedule_type": "accrual", "sl_signed": _q(-sl_pos), "item_count": len(accruals), "je_items": je}
 
@@ -1891,6 +1899,91 @@ def _schedule_correcting_entry(
     }
 
 
+def _schedule_je_offset_label(txn_type: str, schedule_type: str) -> str:
+    """Placeholder for the offset (expense/cash) side when the schedule item
+    has no offset account set. Keyed off the JE kind so it reads sensibly."""
+    t = (txn_type or "").lower()
+    if "amort" in t:        return "Amortization expense"
+    if "initial" in t or "prepay" in t:  return "Original expense / Cash"
+    if "reversal" in t:     return "Accrued expense (reverse)"
+    if "accrual" in t:      return "Accrued expense"
+    if "depreciation" in t: return "Depreciation expense"
+    if "disposal" in t:     return "Cash / gain or loss on disposal"
+    if "addition" in t:     return "Cash / Accounts Payable"
+    if "interest" in t:     return "Interest expense"
+    return {
+        "prepaid":            "Amortization expense",
+        "accrual":            "Accrued expense",
+        "fixed_asset_cost":   "Cash / original expense",
+        "fixed_asset_accdep": "Depreciation expense",
+        "lease_liability":    "Lease expense / cash",
+        "lease_rou":          "ROU amortization expense",
+        "loan":               "Interest expense / cash",
+    }.get(schedule_type, "Offset account")
+
+
+def _schedule_proposed_entries(
+    *, sched: dict, snap: GlBalanceSnapshot, chart_by_id: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Draft one balanced proposed JE per schedule line item (the schedule's
+    own je_items) — e.g. a prepaid yields an initial parking entry AND a period
+    amortization entry, so two prepaid items produce four JEs.
+
+    The schedule's GL account (snap) is one side (exact); the offset
+    (expense/cash) is the item's offset account. Its name + number are resolved
+    from the live chart (chart_by_id) when available, else fall back to the
+    item's stored name, else a type-aware placeholder the user confirms.
+    Direction follows the je_item's signed amount (positive = debit to the
+    schedule account)."""
+    schedule_type = sched.get("schedule_type", "")
+    chart_by_id = chart_by_id or {}
+    qid = snap.qbo_account_id
+    number = snap.account_number or None
+    name = snap.account_name
+    out: list[dict[str, Any]] = []
+    for je in sched.get("je_items") or []:
+        try:
+            amt = Decimal(str(je.get("amount") or "0")).quantize(Decimal("0.01"))
+        except Exception:
+            continue
+        if amt == Decimal("0"):
+            continue
+        mag = abs(amt)
+        offset_qid = je.get("offset_qbo_account_id")
+        chart_acct = chart_by_id.get(offset_qid) if offset_qid else None
+        offset_name = (
+            (chart_acct.get("account_name") if chart_acct else None)
+            or je.get("offset_account_name")
+            or _schedule_je_offset_label(je.get("txn_type", ""), schedule_type)
+        )
+        offset_number = chart_acct.get("account_number") if chart_acct else None
+        this_line = {"account_qbo_id": qid, "account_number": number, "account_name": name}
+        offset_line = {"account_qbo_id": offset_qid, "account_number": offset_number, "account_name": offset_name}
+        if amt > Decimal("0"):   # debit the schedule's account, credit the offset
+            lines = [
+                {**this_line, "debit": str(mag), "credit": "0.00"},
+                {**offset_line, "debit": "0.00", "credit": str(mag)},
+            ]
+        else:            # credit the schedule's account, debit the offset
+            lines = [
+                {**offset_line, "debit": str(mag), "credit": "0.00"},
+                {**this_line, "debit": "0.00", "credit": str(mag)},
+            ]
+        memo = str(je.get("memo") or "").strip()
+        out.append({
+            "description": f"{je.get('txn_type', 'Schedule entry')} — {name}",
+            "lines": lines,
+            "memo": memo[:500] or None,
+            "rationale": (
+                f"Per the Nordavix schedule for {name}. Post this entry in QuickBooks if it "
+                "isn't already booked, then re-sync."
+                + ("" if offset_qid else " Confirm the offset account before posting.")
+            ),
+            "confidence": "high" if offset_qid else "medium",
+        })
+    return out
+
+
 async def _process_schedule_backed_account(
     *,
     db: AsyncSession,
@@ -2031,15 +2124,26 @@ async def _process_schedule_backed_account(
         variance=gap, candidate_count=len(je_items),
         prior_period_end=None,
     )
-    # Draft a balanced correcting JE to bring the GL in line with the schedule
-    # (the schedule is the subledger of record). Asset/liability side is the
-    # real account; offset is a type-aware placeholder the user confirms.
-    await _persist_recon_proposals(
-        db, tenant_id=tenant_id, qid=qid, period_end=period_end,
-        proposed_entries=[_schedule_correcting_entry(
+    # Draft the actual schedule JEs the period expects (one per line item —
+    # e.g. a prepaid's initial parking + its amortization), each balanced and
+    # two-sided. Fall back to a single net correcting entry only when the
+    # schedule has no line items this period but the account still doesn't tie.
+    chart_by_id: dict = {}
+    try:
+        from modules.adjustments.service import period_accounts
+        for a in await period_accounts(db, tenant_id, period_end):
+            chart_by_id[a["qbo_account_id"]] = a
+    except Exception:
+        logger.exception("Loading chart for schedule offset names failed (acct=%s)", qid)
+    entries = _schedule_proposed_entries(sched=sched, snap=snap, chart_by_id=chart_by_id)
+    if not entries:
+        entries = [_schedule_correcting_entry(
             schedule_type=sched["schedule_type"], qid=qid, number=number,
             name=name, sl=sl, gl_balance=gl_balance, gap=gap,
-        )],
+        )]
+    await _persist_recon_proposals(
+        db, tenant_id=tenant_id, qid=qid, period_end=period_end,
+        proposed_entries=entries,
     )
     # _save_analyzed_row already committed above, so the proposed entry was
     # added to a fresh, uncommitted transaction — commit it now or it's lost

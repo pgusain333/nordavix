@@ -49,6 +49,11 @@ interface CommonItem {
   vendor:         string | null
   reference:      string | null
   notes:          string | null
+  // The expense / cash account on the OTHER side of this schedule's JEs
+  // (e.g. the insurance expense a prepaid amortizes into). Lets Nordavix draft
+  // complete two-sided proposed adjusting entries.
+  offset_qbo_account_id?: string | null
+  offset_account_name?:   string | null
   is_active:      boolean
   created_at:     string | null
   updated_at:     string | null
