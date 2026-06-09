@@ -107,6 +107,16 @@ Deliver SEVEN things:
 7. KEY ENTITIES — up to 5 customers/vendors that materially drove the
    change (appear in transactions summing to >10% of the absolute change).
 
+8. PROPOSED ADJUSTING ENTRIES — when the variance reveals a clear correcting
+   entry to post (e.g. an expense booked to the wrong account that should be
+   reclassed, a missing accrual the change implies, a misclassification), draft
+   a balanced journal entry the reviewer can copy into QuickBooks. Use accounts
+   FROM THE PROVIDED CHART (copy account_number + name exactly). Each entry MUST
+   balance (total debits == total credits). Propose an entry ONLY when there is
+   a genuine, correct adjustment — most variances are ordinary activity needing
+   no entry. Return an empty array when none is warranted. Never invent an
+   account that isn't in the chart.
+
 Return ONE JSON object with this exact shape and nothing else:
 
 {
@@ -123,6 +133,14 @@ Return ONE JSON object with this exact shape and nothing else:
     ...
   ],
   "recommendations": ["specific action 1", "specific action 2", ...],
+  "proposed_entries": [
+    {"description": "what this entry fixes", "confidence": "high" | "medium" | "low",
+     "memo": "reference for the JE", "rationale": "one sentence why",
+     "lines": [
+       {"account_number": "1234", "account_name": "Account", "debit": "100.00", "credit": "0.00"},
+       {"account_number": "5678", "account_name": "Account", "debit": "0.00", "credit": "100.00"}
+     ]}
+  ],
   "confidence":      "high" | "medium" | "low"
 }
 
@@ -138,6 +156,8 @@ Strict rules:
     "direction" field carries the sign. Not numbers, not negative.
   - "narrative" and "headline" are prose only. No headers, no bullets.
   - If you cannot identify drivers or entities, return empty arrays.
+  - proposed_entries MUST balance (debits == credits) and use only accounts
+    from the provided chart. Return [] unless there is a clear adjusting entry.
 """
 
 
@@ -169,6 +189,7 @@ def _build_user_prompt(
     *,
     acct: Account, tb: TrialBalance, var: Variance,
     txns: list[VarianceTransaction],
+    chart: list[dict[str, Any]] | None = None,
 ) -> str:
     """Concatenate the variance + transaction evidence into one prompt."""
     pct_str = (
@@ -213,6 +234,19 @@ def _build_user_prompt(
     else:
         txn_block = "\n\nNo transaction detail available for the change window."
 
+    # Chart of accounts (for any proposed_entries lines) — capped to keep the
+    # prompt small. Empty when no GL snapshot exists for the period.
+    chart_block = ""
+    if chart:
+        chart_lines = "\n".join(
+            f"  - {a.get('account_number') or '—'} {a.get('account_name', '')} ({a.get('account_type', '')})"
+            for a in chart[:80]
+        )
+        chart_block = (
+            "\n\nChart of accounts (use these exactly for any proposed_entries lines):\n"
+            + chart_lines
+        )
+
     return (
         f"Analyze this variance.\n\n"
         f"Account:            {acct.account_number} - {acct.account_name}\n"
@@ -222,6 +256,7 @@ def _build_user_prompt(
         f"Dollar change:      {_money(var.dollar_variance)}\n"
         f"Percent change:     {pct_str}{anomaly_desc}"
         f"{txn_block}"
+        f"{chart_block}"
     )
 
 
@@ -344,12 +379,22 @@ async def run_deep_agentic_for_variance(
         force_refresh=force_refresh_txns,
     )
 
-    user_prompt = _build_user_prompt(acct=acct, tb=tb, var=var, txns=txns)
-    # v2 = structured bridge schema (headline + drivers + explained/
-    # unexplained). The version tag busts any cached v1 responses that
-    # lack the new fields.
+    # Chart of accounts for the period — lets the AI draft adjusting entries
+    # that reference real GL accounts. Best-effort; empty if no GL snapshot
+    # exists for the period (e.g. flux run without a recons sync).
+    chart: list[dict[str, Any]] = []
+    try:
+        from modules.adjustments.service import parse_ai_entries, period_accounts
+        if tb.period_current is not None:
+            chart = await period_accounts(db, tenant_id, tb.period_current)
+    except Exception:
+        logger.exception("Loading chart for flux proposed entries failed (variance %s)", variance_id)
+
+    user_prompt = _build_user_prompt(acct=acct, tb=tb, var=var, txns=txns, chart=chart)
+    # v3 = output now also includes proposed_entries (balanced adjusting JEs).
+    # The version tag busts any cached v2 responses that lack the new field.
     cache_key = hashlib.sha256(
-        f"deep|v2|{var.id}|{len(txns)}|{var.dollar_variance}".encode()
+        f"deep|v3|{var.id}|{len(txns)}|{var.dollar_variance}".encode()
     ).hexdigest()
 
     try:
@@ -400,6 +445,8 @@ async def run_deep_agentic_for_variance(
             commentary["justified"] = "needs_review"
         if commentary["confidence"] not in ("low", "medium", "high"):
             commentary["confidence"] = "medium"
+        # Balanced adjusting entries the user can review + copy into QBO.
+        commentary["proposed_entries"] = parse_ai_entries(parsed.get("proposed_entries"), chart)
     except Exception as e:
         logger.exception("deep_agentic: claude/parse failed for variance %s", variance_id)
         commentary = _fallback_commentary(acct=acct, var=var, txns=txns, err=str(e))
@@ -428,6 +475,24 @@ async def run_deep_agentic_for_variance(
     else:
         narr.content = commentary["narrative"]
         narr.cache_key = cache_key
+
+    # Persist the flux proposed entries (best-effort, idempotent). Only when the
+    # AI call succeeded — the fallback commentary has no proposed_entries key —
+    # so a transient AI failure never wipes existing drafts. Replaces only OPEN
+    # flux proposals for this variance; caller commits.
+    if "proposed_entries" in commentary and tb.period_current is not None:
+        try:
+            from modules.adjustments.service import replace_open_proposals
+            await replace_open_proposals(
+                db,
+                tenant_id=tenant_id,
+                source="flux",
+                source_ref=str(variance_id),
+                period_end=tb.period_current,
+                entries=commentary.get("proposed_entries") or [],
+            )
+        except Exception:
+            logger.exception("Flux proposed-entry persistence failed for variance %s", variance_id)
 
     return commentary
 

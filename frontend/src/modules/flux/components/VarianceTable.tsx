@@ -47,6 +47,7 @@ import {
 import { Button, Badge, StatusBadge, Spinner } from "@/core/ui/components"
 import { cn, formatAccounting, formatPct } from "@/core/ui/utils"
 import { workspaceApi } from "@/modules/workspace/api"
+import { ProposedEntriesInline } from "@/modules/adjustments/components/ProposedEntriesInline"
 import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
 
 interface Props {
@@ -982,17 +983,33 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         onNavigate={(r) => setDrawerRowId(r.id)}
         onClose={() => setDrawerRowId(null)}
         renderCommentary={(r) => (
-          <NarrativePanel
-            row={r}
-            tbId={tbId}
-            isEditing={editingRow === r.id}
-            editContent={editContent}
-            onEditContent={setEditContent}
-            onEdit={() => { setEditing(r.id); setEditContent(r.narrative ?? "") }}
-            onSave={() => editNarrative.mutate({ varId: r.id, content: editContent })}
-            onCancel={() => setEditing(null)}
-            isSaving={editNarrative.isPending}
-          />
+          <>
+            <NarrativePanel
+              row={r}
+              tbId={tbId}
+              isEditing={editingRow === r.id}
+              editContent={editContent}
+              onEditContent={setEditContent}
+              onEdit={() => { setEditing(r.id); setEditContent(r.narrative ?? "") }}
+              onSave={() => editNarrative.mutate({ varId: r.id, content: editContent })}
+              onCancel={() => setEditing(null)}
+              isSaving={editNarrative.isPending}
+            />
+            {/* Proposed adjusting entries — AI-drafted JEs to review + copy
+                into QBO. Renders nothing until the deep agentic run proposes
+                one and a GL snapshot exists for the period. */}
+            {periodCurrent && (
+              <div className="mt-4">
+                <ProposedEntriesInline
+                  source="flux"
+                  sourceRef={r.id}
+                  periodEnd={periodCurrent}
+                  readOnly={readOnly}
+                  title="Proposed adjusting entries"
+                />
+              </div>
+            )}
+          </>
         )}
         renderTransactions={(r) => (
           <VarianceTxnsSection

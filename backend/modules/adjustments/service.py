@@ -114,6 +114,48 @@ def lines_balanced(lines: list[dict]) -> bool:
     return dr > ZERO and abs(dr - cr) <= BALANCE_TOLERANCE
 
 
+def parse_ai_entries(raw_entries, accounts: list[dict] | None = None) -> list[dict]:
+    """Normalize + validate a list of AI-proposed JE entries into the shape
+    ``replace_open_proposals`` expects. Maps each line onto a real chart
+    account (by number, then name) so proposals reference live GL accounts,
+    drops anything that doesn't balance, and clamps confidence. Shared by the
+    recon and flux AI producers so they parse identically. Caps at 5 entries."""
+    by_number: dict[str, dict] = {}
+    by_name: dict[str, dict] = {}
+    for a in accounts or []:
+        if a.get("account_number"):
+            by_number[str(a["account_number"]).strip()] = a
+        if a.get("account_name"):
+            by_name[str(a["account_name"]).strip().lower()] = a
+
+    out: list[dict] = []
+    for pe in (raw_entries or [])[:5]:
+        if not isinstance(pe, dict):
+            continue
+        lines = normalize_lines(pe.get("lines"))
+        for ln in lines:
+            match = None
+            if ln.get("account_number") and ln["account_number"] in by_number:
+                match = by_number[ln["account_number"]]
+            elif ln.get("account_name", "").lower() in by_name:
+                match = by_name[ln["account_name"].lower()]
+            if match is not None:
+                ln["account_qbo_id"] = match.get("qbo_account_id")
+                ln["account_number"] = match.get("account_number") or ln.get("account_number")
+                ln["account_name"] = match.get("account_name") or ln["account_name"]
+        if not lines_balanced(lines):
+            continue
+        conf = str(pe.get("confidence") or "").lower().strip()
+        out.append({
+            "description": str(pe.get("description") or "").strip()[:500] or "Proposed adjusting entry",
+            "memo":        (str(pe.get("memo")).strip()[:500] if pe.get("memo") else None),
+            "rationale":   (str(pe.get("rationale") or pe.get("reason") or "").strip() or None),
+            "confidence":  conf if conf in VALID_CONFIDENCE else "medium",
+            "lines":       lines,
+        })
+    return out
+
+
 # ── Chart of accounts (for AI account-mapping + offset suggestions) ───────
 
 
