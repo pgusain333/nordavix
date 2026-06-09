@@ -839,11 +839,22 @@ async def build_variance_commentary(
         confidence=confidence,
     )
 
+    accounts: list[dict[str, Any]] = []
+    try:
+        from modules.adjustments.service import period_accounts
+        accounts = await period_accounts(db, conn.tenant_id, period_end)
+    except Exception:
+        logger.exception("Loading chart for proposed entries failed (acct=%s)", qid)
+
     actions = _generate_recon_actions(
         account_name=account_name, account_number=account_number,
         account_type=account_type, period_end=period_end,
         opening=opening, gl_balance=gl_balance, target=gl_balance,
-        items=candidate_items, tied_out=False,
+        items=candidate_items, tied_out=False, accounts=accounts, variance=variance,
+    )
+    await _persist_recon_proposals(
+        db, tenant_id=conn.tenant_id, qid=qid, period_end=period_end,
+        proposed_entries=actions.get("proposed_entries") or [],
     )
     return {
         "generated_at":   datetime.now(UTC).isoformat(),
@@ -1132,11 +1143,22 @@ async def build_ai_commentary(
         items=items, checks=checks, confidence=confidence,
     )
 
+    accounts: list[dict[str, Any]] = []
+    try:
+        from modules.adjustments.service import period_accounts
+        accounts = await period_accounts(db, conn.tenant_id, period_end)
+    except Exception:
+        logger.exception("Loading chart for proposed entries failed (acct=%s)", qid)
+
     actions = _generate_recon_actions(
         account_name=account_name, account_number=account_number,
         account_type=account_type, period_end=period_end,
         opening=opening, gl_balance=gl_balance, target=computed,
-        items=items, tied_out=True,
+        items=items, tied_out=True, accounts=accounts,
+    )
+    await _persist_recon_proposals(
+        db, tenant_id=conn.tenant_id, qid=qid, period_end=period_end,
+        proposed_entries=actions.get("proposed_entries") or [],
     )
     return {
         "generated_at":   datetime.now(UTC).isoformat(),
@@ -1161,6 +1183,8 @@ def _generate_recon_actions(
     target: Decimal,
     items: list[dict[str, Any]],
     tied_out: bool,
+    accounts: list[dict[str, Any]] | None = None,
+    variance: Decimal | None = None,
 ) -> dict[str, Any]:
     """The ACTIONABLE layer of recon commentary. One Claude call, grounded
     in the actual reconciling items, that thinks like a reviewing
@@ -1170,13 +1194,19 @@ def _generate_recon_actions(
       - item_flags:      reconciling items that look UNRELATED, out of
                          period, or otherwise doubtful — each with the
                          reason and what to do about it
+      - proposed_entries: balanced adjusting JEs the user can review + copy
+                         into QBO (e.g. reclass a flagged item, book a
+                         correcting entry for an unexplained variance). Only
+                         when there's a clear, correct entry; [] otherwise.
+                         Accounts come from `accounts` (the period chart) so
+                         the lines reference real GL accounts.
 
     This is the "if a transaction in the ledger seems not related or there
     is any doubt, tell me what to do" layer. Falls back to empty lists on
     any failure so it never blocks the rest of the commentary."""
     import json as _json
 
-    empty = {"headline": "", "recommendations": [], "item_flags": []}
+    empty = {"headline": "", "recommendations": [], "item_flags": [], "proposed_entries": []}
     try:
         from core.ai.client import compute_cache_key, generate_narrative
 
@@ -1191,6 +1221,14 @@ def _generate_recon_actions(
             for i in sorted_items
         ) or "  (no reconciling items selected)"
 
+        # Chart of accounts for this period — so proposed JE lines reference
+        # real GL accounts (number + name). Capped to keep the prompt small.
+        acct_list = accounts or []
+        chart_block = "\n".join(
+            f"  - {a.get('account_number') or '—'} {a.get('account_name', '')} ({a.get('account_type', '')})"
+            for a in acct_list[:80]
+        ) or "  (chart unavailable)"
+
         system_prompt = (
             "You are a senior reconciliation reviewer at a CPA firm signing off on a "
             "balance-sheet reconciliation. You are given the account, its opening "
@@ -1203,6 +1241,12 @@ def _generate_recon_actions(
             '  "item_flags": [\n'
             '     {"label":"txn description","amount":"123.45","reason":"why it is '
             'questionable","action":"what the preparer should do","severity":"low|medium|high"}\n'
+            "  ],\n"
+            '  "proposed_entries": [\n'
+            '     {"description":"what this entry fixes","confidence":"high|medium|low",\n'
+            '      "memo":"reference for the JE","rationale":"one sentence why",\n'
+            '      "lines":[{"account_number":"1234","account_name":"Account","debit":"100.00","credit":"0.00"},\n'
+            '               {"account_number":"5678","account_name":"Account","debit":"0.00","credit":"100.00"}]}\n'
             "  ]\n"
             "}\n\n"
             "Flag a reconciling item ONLY when a reviewer would genuinely question it:\n"
@@ -1213,9 +1257,22 @@ def _generate_recon_actions(
             "- a single item concentrates an unusual share of the balance\n"
             "- the memo / entity is unrelated to what this account should hold\n"
             "Do NOT flag ordinary, well-described activity. If everything looks clean, "
-            "return an empty item_flags array and recommend approval.\n"
+            "return an empty item_flags array and recommend approval.\n\n"
+            "Propose an adjusting entry (proposed_entries) ONLY when there is a clear, "
+            "correct journal entry to post — e.g. reclassifying a flagged misclassified "
+            "item to the right account, or booking a correcting entry for an unexplained "
+            "variance. Each entry MUST balance (total debits == total credits) and use "
+            "accounts FROM THE PROVIDED CHART (copy the account_number + name exactly). "
+            "Do not propose an entry for an account that already ties out cleanly. Return "
+            "an empty proposed_entries array when no adjustment is warranted. Never invent "
+            "an account that isn't in the chart.\n"
             "Rules: JSON only, no markdown. Never invent amounts. 'amount' is a positive "
             "decimal string. Keep reasons and actions concrete and short."
+        )
+        variance_line = (
+            f"Unexplained variance (GL − subledger): {_money(variance)}\n"
+            if variance is not None and abs(variance) >= _TIE_TOLERANCE
+            else ""
         )
         user_prompt = (
             f"Account: {account_number + ' · ' if account_number else ''}{account_name} ({account_type})\n"
@@ -1223,16 +1280,21 @@ def _generate_recon_actions(
             f"Opening balance: {_money(opening)}\n"
             f"GL balance: {_money(gl_balance)}\n"
             f"Subledger built from opening + items: {_money(target)}\n"
-            f"Ties out to GL: {'yes' if tied_out else 'no'}\n\n"
+            f"Ties out to GL: {'yes' if tied_out else 'no'}\n"
+            f"{variance_line}\n"
             f"Reconciling items ({len(items)} total; top {len(sorted_items)} by |amount|):\n"
             f"{items_block}\n\n"
+            f"Chart of accounts (use these for any proposed_entries lines):\n"
+            f"{chart_block}\n\n"
             "Review and return the JSON."
         )
         key = compute_cache_key(
             account_number or account_name, str(gl_balance), str(target),
-            f"recon-actions-{period_end.isoformat()}-{len(items)}",
+            # v2 = output now includes proposed_entries; bump so we don't serve
+            # a pre-feature cached response that lacks them.
+            f"recon-actions-v2-{period_end.isoformat()}-{len(items)}",
         )
-        resp = generate_narrative(system_prompt, user_prompt, key, max_tokens=800)
+        resp = generate_narrative(system_prompt, user_prompt, key, max_tokens=1100)
         raw = resp.content.strip()
         first, last = raw.find("{"), raw.rfind("}")
         if first == -1 or last == -1:
@@ -1269,14 +1331,80 @@ def _generate_recon_actions(
                 "severity": sev,
             })
 
+        # Proposed adjusting entries — balanced JEs the user can review + copy
+        # into QBO. Validate each maps to real chart accounts and balances.
+        from modules.adjustments.service import lines_balanced, normalize_lines
+
+        by_number: dict[str, dict] = {}
+        by_name: dict[str, dict] = {}
+        for a in acct_list:
+            if a.get("account_number"):
+                by_number[str(a["account_number"]).strip()] = a
+            if a.get("account_name"):
+                by_name[str(a["account_name"]).strip().lower()] = a
+
+        proposed: list[dict[str, Any]] = []
+        for pe in (parsed.get("proposed_entries") or [])[:5]:
+            if not isinstance(pe, dict):
+                continue
+            lines = normalize_lines(pe.get("lines"))
+            for ln in lines:
+                match = None
+                if ln.get("account_number") and ln["account_number"] in by_number:
+                    match = by_number[ln["account_number"]]
+                elif ln.get("account_name", "").lower() in by_name:
+                    match = by_name[ln["account_name"].lower()]
+                if match is not None:
+                    ln["account_qbo_id"] = match.get("qbo_account_id")
+                    ln["account_number"] = match.get("account_number") or ln.get("account_number")
+                    ln["account_name"] = match.get("account_name") or ln["account_name"]
+            if not lines_balanced(lines):
+                continue
+            conf = str(pe.get("confidence") or "").lower().strip()
+            proposed.append({
+                "description": str(pe.get("description") or "").strip()[:500] or "Proposed adjusting entry",
+                "memo":        (str(pe.get("memo")).strip()[:500] if pe.get("memo") else None),
+                "rationale":   (str(pe.get("rationale") or pe.get("reason") or "").strip() or None),
+                "confidence":  conf if conf in ("high", "medium", "low") else "medium",
+                "lines":       lines,
+            })
+
         return {
-            "headline":        str(parsed.get("headline") or "").strip()[:200],
-            "recommendations": recs,
-            "item_flags":      flags,
+            "headline":         str(parsed.get("headline") or "").strip()[:200],
+            "recommendations":  recs,
+            "item_flags":       flags,
+            "proposed_entries": proposed,
         }
     except Exception:
         logger.exception("recon actions AI call failed — returning empty actions")
         return empty
+
+
+async def _persist_recon_proposals(
+    db: AsyncSession,
+    *,
+    tenant_id,
+    qid: str,
+    period_end: date,
+    proposed_entries: list[dict[str, Any]],
+) -> None:
+    """Persist AI-proposed recon adjusting entries (best-effort, idempotent).
+
+    Replaces only the OPEN recon proposals for this account+period so a
+    re-run refreshes drafts without touching the user's accept/dismiss
+    decisions. Added to the caller's session; committed with the recon save."""
+    try:
+        from modules.adjustments.service import replace_open_proposals
+        await replace_open_proposals(
+            db,
+            tenant_id=tenant_id,
+            source="recon",
+            source_ref=qid,
+            period_end=period_end,
+            entries=proposed_entries or [],
+        )
+    except Exception:
+        logger.exception("Recon proposed-entry persistence failed for acct=%s", qid)
 
 
 async def _secondary_qbo_check(

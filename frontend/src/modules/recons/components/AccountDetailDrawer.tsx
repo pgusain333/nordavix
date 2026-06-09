@@ -45,6 +45,7 @@ import type { OverviewAccount } from "@/modules/recons/api"
 import { formatDateTime } from "@/core/lib/dates"
 import { schedulesApi } from "@/modules/schedules/api"
 import { CommentThread } from "@/modules/comments/CommentThread"
+import { ProposedEntriesInline } from "@/modules/adjustments/components/ProposedEntriesInline"
 
 const TABS = [
   { id: "summary",     label: "Summary",     icon: Sparkles },
@@ -409,7 +410,7 @@ export function AccountDetailDrawer({
             <div className="flex-1 overflow-y-auto">
               <div style={{ display: tab === "summary" ? "block" : "none" }}>
                 <div className="px-5 py-5">
-                  <SummaryTab account={account} />
+                  <SummaryTab account={account} periodEnd={periodEnd} readOnly={readOnly} />
                 </div>
               </div>
               {/* Bank-rec worksheet — only mounts when the tab is
@@ -755,7 +756,7 @@ function useHasSuggestionsForAccount(
 
 // ── Summary tab (real content) ────────────────────────────────────────
 
-function SummaryTab({ account }: { account: OverviewAccount }) {
+function SummaryTab({ account, periodEnd, readOnly }: { account: OverviewAccount; periodEnd: string; readOnly?: boolean }) {
   const variance = parseFloat(account.variance) || 0
   const hasVariance = Math.abs(variance) >= 0.5
 
@@ -854,6 +855,16 @@ function SummaryTab({ account }: { account: OverviewAccount }) {
           </p>
         </Card>
       )}
+
+      {/* Proposed adjusting entries — AI-drafted JEs to review + copy into
+          QBO. Renders nothing until an agentic run proposes one. */}
+      <ProposedEntriesInline
+        source="recon"
+        sourceRef={account.qbo_id}
+        periodEnd={periodEnd}
+        readOnly={readOnly}
+        title="Proposed adjusting entries"
+      />
 
       {/* Variance status */}
       <Card title="Variance status" icon={<FileText size={13} strokeWidth={1.8} />}>

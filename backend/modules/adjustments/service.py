@@ -123,6 +123,9 @@ async def period_accounts(
     """Distinct chart of accounts captured for this period, from the GL
     snapshot. Used to (a) suggest deterministic bank offsets and (b) let the
     AI producers map proposed lines onto real accounts."""
+    # Explicit tenant filter + skip the auto-filter so this works identically
+    # from a request (tenant ContextVar set) and a background agentic run
+    # (ContextVar may be unset) — tenant scope is enforced by the WHERE here.
     rows = (await db.execute(
         select(
             GlBalanceSnapshot.qbo_account_id,
@@ -132,7 +135,8 @@ async def period_accounts(
         ).where(
             GlBalanceSnapshot.tenant_id == tenant_id,
             GlBalanceSnapshot.period_end == period_end,
-        )
+        ),
+        execution_options={"skip_tenant_filter": True},
     )).all()
     seen: set[str] = set()
     out: list[dict] = []
