@@ -6,6 +6,7 @@ import { TopBar } from "./TopBar"
 import { ClerkApiWirer } from "@/core/auth/ClerkProvider"
 import { CommandPalette, CMDK_EVENT } from "@/core/ui/CommandPalette"
 import { NotificationsPanel } from "@/modules/notifications/NotificationsPanel"
+import { NotificationToaster } from "@/modules/notifications/NotificationToaster"
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
 import { DemoModeProvider, DemoBanner } from "@/core/demo/DemoModeProvider"
 
@@ -31,6 +32,7 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
       <ClerkApiWirer />
       <CommandPalette />
       <NotificationsPanel />
+      <NotificationToaster />
 
       {/* ── Desktop sidebar ── */}
       <div className="hidden lg:flex">
