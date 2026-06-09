@@ -1,0 +1,345 @@
+"""
+Proposed adjusting entries — shared service layer.
+
+Turns close-difference findings into reviewable journal entries
+(``ProposedEntry`` rows). Three producers feed this:
+
+  * bank reconciliation (deterministic — ``generate_bank_proposals`` here)
+  * recon agentic commentary (``modules/recons/agentic.py`` calls
+    ``replace_open_proposals`` with AI-drafted lines)
+  * flux deep-agentic (``modules/flux/deep_agentic.py`` likewise)
+
+The router (``modules/adjustments/router.py``) reads/serializes them and
+drives the open → accepted → posted / dismissed lifecycle.
+
+Two invariants live here, in one place, so every producer obeys them:
+
+  1. **Balanced or not persisted.** A draft is only stored as ``open`` when
+     its lines balance (Σ debit == Σ credit, within $0.01). A malformed AI
+     suggestion is silently dropped rather than shown as a broken JE.
+  2. **Human decisions are sticky.** Regenerating a source replaces only the
+     ``open`` proposals for its ``(tenant, source, source_ref, period_end)``
+     key — accepted / posted / dismissed rows are never clobbered.
+"""
+import logging
+import uuid
+from datetime import date
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.gl_balance_snapshot import GlBalanceSnapshot
+from models.proposed_entry import ProposedEntry
+
+logger = logging.getLogger(__name__)
+
+ZERO = Decimal("0.00")
+# A JE balances if debits and credits agree to the cent. Rounding two
+# decimal places can leave a sub-cent gap; one cent of slack absorbs it.
+BALANCE_TOLERANCE = Decimal("0.01")
+
+VALID_SOURCES = {"bank", "recon", "flux"}
+VALID_STATUSES = {"open", "accepted", "posted", "dismissed"}
+VALID_CONFIDENCE = {"high", "medium", "low"}
+
+# Keyword → suggested offset account for deterministic bank entries.
+_FEE_KEYWORDS = ("fee", "service charge", "service chg", "charge", "nsf", "overdraft", "maintenance")
+_INTEREST_KEYWORDS = ("interest", "int earned", "int credit")
+
+
+def _q(value) -> Decimal:
+    """Quantize anything number-ish to 2dp; non-numeric → 0.00."""
+    try:
+        return Decimal(str(value if value is not None else 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    except (InvalidOperation, ValueError, TypeError):
+        return ZERO
+
+
+# ── JE line normalization + balance ──────────────────────────────────────
+
+
+def _clean_line(raw: dict) -> dict | None:
+    """Normalize one JE line to the canonical shape, or None if unusable.
+
+    Accepts ``account`` or ``account_name`` for the label and tolerates
+    string amounts (AI output). A line carries either a debit OR a credit,
+    never both — if both arrive, keep the larger and zero the other.
+    """
+    if not isinstance(raw, dict):
+        return None
+    name = str(raw.get("account_name") or raw.get("account") or "").strip()
+    if not name:
+        return None
+    debit = _q(raw.get("debit"))
+    credit = _q(raw.get("credit"))
+    if debit <= ZERO and credit <= ZERO:
+        return None
+    if debit > ZERO and credit > ZERO:
+        if debit >= credit:
+            credit = ZERO
+        else:
+            debit = ZERO
+    qid = raw.get("account_qbo_id") or raw.get("qbo_account_id")
+    num = raw.get("account_number")
+    return {
+        "account_qbo_id": str(qid).strip() if qid else None,
+        "account_number": str(num).strip() if num else None,
+        "account_name": name[:255],
+        "debit": str(debit if debit > ZERO else ZERO),
+        "credit": str(credit if credit > ZERO else ZERO),
+    }
+
+
+def normalize_lines(raw_lines) -> list[dict]:
+    """Clean a list of raw JE lines, dropping unusable ones."""
+    if not isinstance(raw_lines, list):
+        return []
+    out = []
+    for r in raw_lines:
+        cl = _clean_line(r)
+        if cl is not None:
+            out.append(cl)
+    return out
+
+
+def lines_balanced(lines: list[dict]) -> bool:
+    """True if 2+ lines with positive debits == credits (within tolerance)."""
+    if len(lines) < 2:
+        return False
+    dr = sum((Decimal(line["debit"]) for line in lines), ZERO)
+    cr = sum((Decimal(line["credit"]) for line in lines), ZERO)
+    return dr > ZERO and abs(dr - cr) <= BALANCE_TOLERANCE
+
+
+# ── Chart of accounts (for AI account-mapping + offset suggestions) ───────
+
+
+async def period_accounts(
+    db: AsyncSession, tenant_id: uuid.UUID, period_end: date
+) -> list[dict]:
+    """Distinct chart of accounts captured for this period, from the GL
+    snapshot. Used to (a) suggest deterministic bank offsets and (b) let the
+    AI producers map proposed lines onto real accounts."""
+    rows = (await db.execute(
+        select(
+            GlBalanceSnapshot.qbo_account_id,
+            GlBalanceSnapshot.account_number,
+            GlBalanceSnapshot.account_name,
+            GlBalanceSnapshot.account_type,
+        ).where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.period_end == period_end,
+        )
+    )).all()
+    seen: set[str] = set()
+    out: list[dict] = []
+    for qid, num, name, atype in rows:
+        if qid in seen:
+            continue
+        seen.add(qid)
+        out.append({
+            "qbo_account_id": qid,
+            "account_number": num,
+            "account_name": name,
+            "account_type": atype,
+        })
+    return out
+
+
+def _find_account(accounts: list[dict], *, types: tuple, keywords: tuple) -> dict | None:
+    for a in accounts:
+        atype = (a.get("account_type") or "").lower()
+        name = (a.get("account_name") or "").lower()
+        if any(t in atype for t in types) and any(k in name for k in keywords):
+            return a
+    return None
+
+
+# ── Idempotent persistence ────────────────────────────────────────────────
+
+
+async def replace_open_proposals(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    source: str,
+    source_ref: str,
+    period_end: date,
+    entries: list[dict],
+    created_by: uuid.UUID | None = None,
+) -> int:
+    """Replace the OPEN proposals for one origin with a fresh set.
+
+    Deletes existing ``open`` rows for ``(tenant, source, source_ref,
+    period_end)`` then inserts the new balanced ones. Accepted / posted /
+    dismissed rows are left untouched — the human's decisions persist across
+    regeneration. Unbalanced drafts are skipped. The caller commits.
+
+    Returns the number of proposals inserted.
+    """
+    if source not in VALID_SOURCES:
+        raise ValueError(f"invalid proposed-entry source: {source!r}")
+
+    # Tenant scope is explicit in the WHERE (the auto-filter only rewrites
+    # SELECTs, not DELETEs).
+    await db.execute(
+        delete(ProposedEntry).where(
+            ProposedEntry.tenant_id == tenant_id,
+            ProposedEntry.source == source,
+            ProposedEntry.source_ref == str(source_ref),
+            ProposedEntry.period_end == period_end,
+            ProposedEntry.status == "open",
+        )
+    )
+
+    inserted = 0
+    for e in entries or []:
+        lines = normalize_lines(e.get("lines"))
+        if not lines_balanced(lines):
+            continue
+        confidence = e.get("confidence")
+        db.add(ProposedEntry(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            source=source,
+            source_ref=str(source_ref),
+            period_end=period_end,
+            description=(str(e.get("description") or "").strip()[:500] or "Proposed adjusting entry"),
+            lines=lines,
+            memo=(str(e["memo"]).strip()[:500] if e.get("memo") else None),
+            rationale=(str(e["rationale"]).strip() if e.get("rationale") else None),
+            confidence=confidence if confidence in VALID_CONFIDENCE else "medium",
+            status="open",
+            created_by=created_by,
+        ))
+        inserted += 1
+    return inserted
+
+
+# ── Bank: deterministic generation ────────────────────────────────────────
+
+
+def build_bank_entries(
+    *, bank_account: dict | None, bank_only: list[dict], accounts: list[dict]
+) -> list[dict]:
+    """Draft one balanced JE per bank-only item.
+
+    A bank-only item is money on the statement but not in the GL. By sign:
+      * deposit  (amount > 0): Dr [bank/cash], Cr Interest / Other Income
+      * withdrawal (amount < 0): Dr Bank Fees / Service Charges, Cr [bank/cash]
+    When the chart already has a matching offset account, we propose the real
+    one (with its qbo_account_id); otherwise a free-text label the user edits.
+    """
+    bank_name = (bank_account or {}).get("account_name") or "Cash / Bank"
+    bank_qid = (bank_account or {}).get("qbo_account_id")
+    bank_num = (bank_account or {}).get("account_number")
+
+    entries: list[dict] = []
+    for b in bank_only or []:
+        amt = _q(b.get("amount"))
+        if amt == ZERO:
+            continue
+        is_deposit = amt > ZERO
+        mag = abs(amt)
+        desc = str(b.get("description") or "").strip()
+        ref = str(b.get("bank_ref") or "").strip()
+        bank_line = {
+            "account_qbo_id": bank_qid,
+            "account_number": bank_num,
+            "account_name": bank_name,
+        }
+
+        if is_deposit:
+            offset = _find_account(accounts, types=("income", "revenue"), keywords=_INTEREST_KEYWORDS)
+            offset_name = offset["account_name"] if offset else "Interest / Other Income"
+            lines = [
+                {**bank_line, "debit": str(mag), "credit": "0.00"},
+                {
+                    "account_qbo_id": offset["qbo_account_id"] if offset else None,
+                    "account_number": offset["account_number"] if offset else None,
+                    "account_name": offset_name,
+                    "debit": "0.00",
+                    "credit": str(mag),
+                },
+            ]
+            kind = "interest / deposit"
+            direction = "deposit"
+        else:
+            offset = _find_account(accounts, types=("expense",), keywords=_FEE_KEYWORDS)
+            offset_name = offset["account_name"] if offset else "Bank Fees / Service Charges"
+            lines = [
+                {
+                    "account_qbo_id": offset["qbo_account_id"] if offset else None,
+                    "account_number": offset["account_number"] if offset else None,
+                    "account_name": offset_name,
+                    "debit": str(mag),
+                    "credit": "0.00",
+                },
+                {**bank_line, "debit": "0.00", "credit": str(mag)},
+            ]
+            kind = "bank fee / charge"
+            direction = "withdrawal"
+
+        label = desc or ref or ("Bank deposit" if is_deposit else "Bank charge")
+        memo_bits = [x for x in (desc, f"Ref {ref}" if ref else "") if x]
+        entries.append({
+            "description": f"{label} — record {kind}",
+            "lines": lines,
+            "memo": " · ".join(memo_bits) or None,
+            "rationale": (
+                f"This {direction} of {mag} is on the bank statement but not in the GL — "
+                f"it looks like {kind}. Post this entry in QuickBooks to record it, then re-sync."
+            ),
+            # Direction is unambiguous; confidence reflects whether we matched
+            # a real offset account or left a placeholder for the user.
+            "confidence": "high" if offset else "medium",
+        })
+    return entries
+
+
+async def generate_bank_proposals(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+    period_end: date,
+    bank_only: list[dict],
+) -> int:
+    """Deterministically (re)generate the bank proposed entries for one
+    account+period from its bank-only items. Idempotent; caller commits."""
+    accounts = await period_accounts(db, tenant_id, period_end)
+    bank_account = next((a for a in accounts if a["qbo_account_id"] == qbo_account_id), None)
+    entries = build_bank_entries(
+        bank_account=bank_account, bank_only=bank_only, accounts=accounts
+    )
+    return await replace_open_proposals(
+        db,
+        tenant_id=tenant_id,
+        source="bank",
+        source_ref=qbo_account_id,
+        period_end=period_end,
+        entries=entries,
+    )
+
+
+# ── Serialization (shared by router + producers that echo a preview) ──────
+
+
+def serialize(entry: ProposedEntry) -> dict:
+    return {
+        "id": str(entry.id),
+        "source": entry.source,
+        "source_ref": entry.source_ref,
+        "period_end": entry.period_end.isoformat(),
+        "description": entry.description,
+        "lines": entry.lines or [],
+        "memo": entry.memo,
+        "rationale": entry.rationale,
+        "confidence": entry.confidence,
+        "status": entry.status,
+        "status_changed_at": entry.status_changed_at.isoformat() if entry.status_changed_at else None,
+        "created_at": entry.created_at.isoformat() if entry.created_at else None,
+    }

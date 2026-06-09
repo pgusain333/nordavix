@@ -31,6 +31,7 @@ import {
 
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
+import { ProposedEntriesInline } from "@/modules/adjustments/components/ProposedEntriesInline"
 import { reconsApi } from "@/modules/recons/api"
 import type {
   BankReconWorksheet as Worksheet,
@@ -302,6 +303,18 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
               </table>
             </BucketCard>
           )}
+
+          {/* Proposed adjusting entries — Nordavix drafts a balanced JE for
+              each bank-only item so the user can review + copy it into QBO
+              instead of re-deriving it. Renders nothing until a statement is
+              matched and bank-only items exist. */}
+          <ProposedEntriesInline
+            source="bank"
+            sourceRef={qboAccountId}
+            periodEnd={periodEnd}
+            readOnly={readOnly}
+            title="Proposed adjusting entries"
+          />
 
           {/* GL-only items (outstanding) */}
           {w.gl_only.length > 0 && (

@@ -16,6 +16,7 @@ from models.narrative import Narrative
 from models.notification import Notification
 from models.period_sync import PeriodSync
 from models.prepaid_candidate import PrepaidCandidate
+from models.proposed_entry import ProposedEntry
 from models.qbo_connection import QboConnection
 from models.reengagement_enrollment import ReengagementEnrollment
 from models.schedule import (
@@ -49,6 +50,7 @@ __all__ = [
     "Notification",
     "PeriodSync",
     "PrepaidCandidate",
+    "ProposedEntry",
     "QboConnection",
     "ReengagementEnrollment",
     "ScheduleAccrual",

@@ -3945,6 +3945,22 @@ async def _run_bank_match(
                 row.match_status      = "bank_only"
                 row.matched_gl_txn_id = None
                 row.match_confidence  = None
+        # Draft adjusting entries for the bank-only items (fees, interest,
+        # NSF) so the user can review + copy a JE into QBO instead of
+        # re-deriving it. Best-effort + idempotent (replaces only OPEN bank
+        # proposals for this account+period); part of the same fresh-pull
+        # transaction so a cached read stays side-effect-free.
+        try:
+            from modules.adjustments.service import generate_bank_proposals
+            await generate_bank_proposals(
+                db,
+                tenant_id=tenant_id,
+                qbo_account_id=qbo_account_id,
+                period_end=period_end,
+                bank_only=bank_only,
+            )
+        except Exception:
+            logger.exception("Bank proposed-entry generation failed for acct=%s", qbo_account_id)
         await db.commit()
 
     def _ser_bank(bd: dict, status: str, matched: str | None = None, conf=None) -> dict:
