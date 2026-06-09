@@ -243,6 +243,35 @@ def test_loan_monthly_payment_is_three_line_with_interest():
     assert pay["confidence"] == "high"
 
 
+def test_loan_origination_reclass_not_cash():
+    # The loan-origination draft must NOT debit cash — the proceeds are usually
+    # already booked and the bank reconciled, so re-debiting cash double-counts.
+    # It credits the loan and flags the debit as a reclass to confirm (low conf).
+    snap = _FakeSnap("LOAN1", "2700", "Term Loan Payable")
+    sched = {
+        "schedule_type": "loan",
+        "je_items": [
+            {"txn_type": "Schedule (Loan Origination)", "amount": "-100000.00",
+             "memo": "Loan origination"},
+        ],
+        "payment_entries": [],
+    }
+    entries = _schedule_proposed_entries(sched=sched, snap=snap)
+    assert len(entries) == 1
+    e = entries[0]
+    assert e["confidence"] == "low"
+    lines = normalize_lines(e["lines"])
+    assert lines_balanced(lines)
+    # Loan liability credited for the full amount.
+    cr = next(ln for ln in lines if Decimal(ln["credit"]) > 0)
+    assert cr["account_qbo_id"] == "LOAN1" and cr["credit"] == "100000.00"
+    # Debit side is a confirm-placeholder, NOT a posted (real) cash account.
+    dr = next(ln for ln in lines if Decimal(ln["debit"]) > 0)
+    assert dr["account_qbo_id"] is None
+    assert "reclass" in e["rationale"].lower()
+    assert "double-count" in e["rationale"].lower()
+
+
 def test_loan_interest_only_payment_is_two_line():
     # Interest-only period: no principal movement, but the monthly interest
     # must still be proposed as a 2-line Dr interest / Cr cash entry.
@@ -280,5 +309,6 @@ if __name__ == "__main__":
     test_schedule_proposed_entries_itemized_prepaid()
     test_schedule_proposed_entries_placeholder_offset_medium()
     test_loan_monthly_payment_is_three_line_with_interest()
+    test_loan_origination_reclass_not_cash()
     test_loan_interest_only_payment_is_two_line()
     print("PROPOSED_ENTRIES_OK")

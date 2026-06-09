@@ -1936,7 +1936,6 @@ def _schedule_je_offset_label(txn_type: str, schedule_type: str) -> str:
     """Placeholder for the offset (expense/cash) side when the schedule item
     has no offset account set. Keyed off the JE kind so it reads sensibly."""
     t = (txn_type or "").lower()
-    if "origination" in t:  return "Cash / bank"
     if "amort" in t:        return "Amortization expense"
     if "initial" in t or "prepay" in t:  return "Original expense / Cash"
     if "reversal" in t:     return "Accrued expense (reverse)"
@@ -1988,14 +1987,60 @@ def _schedule_proposed_entries(
         if amt == Decimal("0"):
             continue
         mag = abs(amt)
+        txn_type = je.get("txn_type", "")
         offset_qid = je.get("offset_qbo_account_id")
         chart_acct = chart_by_id.get(offset_qid) if offset_qid else None
         offset_name = (
             (chart_acct.get("account_name") if chart_acct else None)
             or je.get("offset_account_name")
-            or _schedule_je_offset_label(je.get("txn_type", ""), schedule_type)
+            or _schedule_je_offset_label(txn_type, schedule_type)
         )
         offset_number = chart_acct.get("account_number") if chart_acct else None
+
+        rationale = (
+            f"Per the Nordavix schedule for {name}. Post this entry in QuickBooks if it "
+            "isn't already booked, then re-sync."
+            + ("" if offset_qid else " Confirm the offset account before posting.")
+        )
+        confidence = "high" if offset_qid else "medium"
+
+        # Funding-recognition entries (loan origination, lease initial) are NOT
+        # cash-funded from this account's perspective. Defaulting their offset to
+        # cash is dangerous: the cash/asset side is usually already booked (and
+        # the bank reconciled), so re-posting cash double-counts. Reframe them.
+        if schedule_type == "loan" and "Origination" in txn_type:
+            if not offset_qid:
+                offset_name = "Confirm — account holding the loan proceeds (NOT cash if the bank is reconciled)"
+                offset_number = None
+            rationale = (
+                f"Your schedule shows a {_money(mag)} loan that isn't in {name}. The credit to "
+                f"{name} is what's missing. Confirm the debit before posting: if the proceeds are "
+                f"already recorded — e.g. the bank is reconciled — RECLASSIFY the {_money(mag)} from "
+                f"wherever it landed (a clearing/suspense or miscategorised account) into {name}. Do "
+                f"NOT debit cash again — that double-counts an already-reconciled deposit. Debit cash "
+                f"only if the loan proceeds were never recorded at all."
+            )
+            confidence = "low"
+        elif schedule_type == "lease_liability" and "Initial" in txn_type:
+            if not offset_qid:
+                offset_name = "Right-of-use (ROU) asset — confirm"
+                offset_number = None
+            rationale = (
+                f"Lease initial recognition (ASC 842): credit {name} for the lease liability and "
+                f"debit the right-of-use asset for the same amount. Non-cash entry — it must not "
+                f"touch cash."
+            )
+            confidence = "low" if not offset_qid else "medium"
+        elif schedule_type == "lease_rou" and "Initial" in txn_type:
+            if not offset_qid:
+                offset_name = "Lease liability — confirm"
+                offset_number = None
+            rationale = (
+                f"Lease initial recognition (ASC 842): debit {name} (right-of-use asset) and credit "
+                f"the lease liability for the same amount. Non-cash entry — it must not touch cash."
+            )
+            confidence = "low" if not offset_qid else "medium"
+
         this_line = {"account_qbo_id": qid, "account_number": number, "account_name": name}
         offset_line = {"account_qbo_id": offset_qid, "account_number": offset_number, "account_name": offset_name}
         if amt > Decimal("0"):   # debit the schedule's account, credit the offset
@@ -2010,15 +2055,11 @@ def _schedule_proposed_entries(
             ]
         memo = str(je.get("memo") or "").strip()
         out.append({
-            "description": f"{je.get('txn_type', 'Schedule entry')} — {name}",
+            "description": f"{txn_type or 'Schedule entry'} — {name}",
             "lines": lines,
             "memo": memo[:500] or None,
-            "rationale": (
-                f"Per the Nordavix schedule for {name}. Post this entry in QuickBooks if it "
-                "isn't already booked, then re-sync."
-                + ("" if offset_qid else " Confirm the offset account before posting.")
-            ),
-            "confidence": "high" if offset_qid else "medium",
+            "rationale": rationale,
+            "confidence": confidence,
         })
 
     # Loan/lease monthly payment JE: Dr liability (principal) / Dr interest
@@ -2055,7 +2096,7 @@ def _schedule_proposed_entries(
                 "debit": str(interest), "credit": "0.00",
             })
         lines.append({
-            "account_qbo_id": None, "account_number": None, "account_name": "Cash / bank",
+            "account_qbo_id": None, "account_number": None, "account_name": "Cash / bank — confirm",
             "debit": "0.00", "credit": str(payment),
         })
         desc = str(pe.get("description") or name)
@@ -2066,7 +2107,9 @@ def _schedule_proposed_entries(
             "rationale": (
                 f"The Nordavix {pretty} schedule expects a {_money(payment)} payment this period "
                 f"— {_money(principal)} principal reducing {name} and {_money(interest)} interest "
-                f"expense. Post this entry in QuickBooks if it isn't already booked, then re-sync."
+                f"expense. Post this only if the payment isn't already booked, then re-sync. If the "
+                f"payment already cleared your (reconciled) bank, RECLASSIFY the existing transaction "
+                f"to split principal vs. interest instead of re-crediting cash — don't double-count it."
                 + ("" if offset_qid else " Confirm the interest expense account before posting.")
             ),
             "confidence": "high" if offset_qid else "medium",
