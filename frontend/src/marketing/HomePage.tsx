@@ -53,6 +53,14 @@ const AMBER    = "#B07F3C"   // muted ochre
 const CREAM    = "#EFEBE3"
 const ON_CREAM   = "#15181A"
 const ON_CREAM_2 = "#4C5052"
+// Soft tonal bands for section rhythm (Notion-style) + diffuse glows (Linear-style).
+// Calm, low-chroma — they give the page depth without shouting.
+const TINT_SAGE  = "#E9F2EC"   // soft green band
+const TINT_SLATE = "#ECF1F5"   // soft blue-gray band
+const TINT_SAND  = "#F5EFE4"   // soft warm band
+const GLOW_SAGE  = "#6FB793"   // diffuse sage glow
+const GLOW_WARM  = "#E6C79C"   // diffuse warm glow
+const GLOW_SKY   = "#9DBED8"   // diffuse cool glow
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -195,9 +203,9 @@ function Hero() {
   return (
     <header className="relative overflow-hidden" style={{ background: INK }}>
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <motion.div className="absolute -top-40 -left-32 h-[560px] w-[560px] rounded-full" style={{ background: `radial-gradient(closest-side, ${BURGUNDY}, transparent)`, opacity: 0.07, filter: "blur(40px)" }} animate={{ scale: [1, 1.12, 1], opacity: [0.05, 0.08, 0.05] }} transition={{ duration: 11, repeat: Infinity, ease: "easeInOut" }} />
-        <motion.div className="absolute top-10 right-[-10%] h-[620px] w-[620px] rounded-full" style={{ background: `radial-gradient(closest-side, ${ROSE}, transparent)`, opacity: 0.06, filter: "blur(50px)" }} animate={{ scale: [1, 1.08, 1], opacity: [0.04, 0.07, 0.04] }} transition={{ duration: 13, repeat: Infinity, ease: "easeInOut", delay: 1 }} />
-        <motion.div className="absolute bottom-[-30%] left-1/3 h-[560px] w-[560px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GREEN_D}, transparent)`, opacity: 0.07, filter: "blur(50px)" }} animate={{ scale: [1, 1.15, 1], opacity: [0.05, 0.08, 0.05] }} transition={{ duration: 15, repeat: Infinity, ease: "easeInOut", delay: 2 }} />
+        <motion.div className="absolute -top-44 -left-32 h-[600px] w-[600px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SAGE}, transparent)`, opacity: 0.20, filter: "blur(50px)" }} animate={{ scale: [1, 1.1, 1], opacity: [0.16, 0.22, 0.16] }} transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }} />
+        <motion.div className="absolute top-0 right-[-12%] h-[640px] w-[640px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_WARM}, transparent)`, opacity: 0.16, filter: "blur(60px)" }} animate={{ scale: [1, 1.07, 1], opacity: [0.12, 0.18, 0.12] }} transition={{ duration: 14, repeat: Infinity, ease: "easeInOut", delay: 1 }} />
+        <motion.div className="absolute bottom-[-34%] left-1/3 h-[600px] w-[600px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SKY}, transparent)`, opacity: 0.14, filter: "blur(60px)" }} animate={{ scale: [1, 1.12, 1], opacity: [0.10, 0.16, 0.10] }} transition={{ duration: 16, repeat: Infinity, ease: "easeInOut", delay: 2 }} />
         <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(${LINE} 1px, transparent 1px), linear-gradient(90deg, ${LINE} 1px, transparent 1px)`, backgroundSize: "56px 56px", maskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", WebkitMaskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", opacity: 0.5 }} />
       </div>
 
@@ -486,7 +494,7 @@ function ProductExplorer() {
   const [i, setI] = useState(0)
   const m = MODULES[i]
   return (
-    <section id="explore" style={{ background: CREAM }}>
+    <section id="explore" style={{ background: TINT_SAGE }}>
       <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
         <Reveal className="max-w-2xl mb-10">
           <Eyebrow color={GREEN_D}>The product</Eyebrow>
@@ -564,7 +572,7 @@ function AgenticSpotlight() {
 function ControlGrid() {
   const items = [{ Icon: UserCheck, t: "Maker-checker enforced", d: "The person who enters a value can never approve it. Enforced server-side." }, { Icon: Workflow, t: "Sequential close gate", d: "You can't close March until February is locked. No skipping, no back-dating." }, { Icon: ScrollText, t: "Every action audited", d: "A complete, attributed trail of who did what, when — replayable for review." }, { Icon: Lock, t: "QuickBooks read-only", d: "Read-only OAuth scope. Nordavix never writes back to your books." }]
   return (
-    <section style={{ background: INK_2 }}>
+    <section style={{ background: TINT_SLATE }}>
       <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
         <Reveal className="max-w-2xl mx-auto text-center mb-14"><Eyebrow>Trust &amp; control</Eyebrow><h2 className="mt-4 text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Control you can prove.</h2><p className="mt-4 text-lg" style={{ color: TXT_2 }}>The governance auditors ask for — built in, not bolted on.</p></Reveal>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -601,7 +609,7 @@ function Personas() {
 // ─── Founder note ────────────────────────────────────────────────────────────
 function FounderNote() {
   return (
-    <section style={{ background: INK_2 }}>
+    <section style={{ background: TINT_SAND }}>
       <div className="max-w-4xl mx-auto px-6 py-24 md:py-28">
         <Reveal>
           <figure className="rounded-3xl p-8 md:p-12" style={{ background: SURFACE, border: `1px solid ${LINE}`, borderLeft: `4px solid ${ROSE}` }}>
@@ -679,10 +687,10 @@ function FinalCTA() {
     <section style={{ background: INK }}>
       <div className="max-w-5xl mx-auto px-6 pb-28">
         <Reveal>
-          <div className="relative overflow-hidden rounded-[2rem] px-8 py-16 md:py-20 text-center" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
+          <div className="relative overflow-hidden rounded-[2rem] px-8 py-16 md:py-20 text-center" style={{ background: `linear-gradient(160deg, ${TINT_SAGE} 0%, ${SURFACE} 62%)`, border: `1px solid ${LINE}`, boxShadow: "0 24px 60px -44px rgba(14,17,18,0.20)" }}>
             <div aria-hidden className="pointer-events-none absolute inset-0">
-              <div className="absolute -top-24 left-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GREEN_D}, transparent)`, opacity: 0.07, filter: "blur(40px)" }} />
-              <div className="absolute -bottom-24 right-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${ROSE}, transparent)`, opacity: 0.06, filter: "blur(50px)" }} />
+              <div className="absolute -top-24 left-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SAGE}, transparent)`, opacity: 0.20, filter: "blur(46px)" }} />
+              <div className="absolute -bottom-24 right-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_WARM}, transparent)`, opacity: 0.15, filter: "blur(56px)" }} />
             </div>
             <div className="relative">
               <h2 className="text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Your next close, but <GradWord>calm</GradWord>.</h2>
