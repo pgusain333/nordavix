@@ -203,9 +203,10 @@ function Hero() {
   return (
     <header className="relative overflow-hidden" style={{ background: INK }}>
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <motion.div className="absolute -top-44 -left-32 h-[600px] w-[600px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SAGE}, transparent)`, opacity: 0.20, filter: "blur(50px)" }} animate={{ scale: [1, 1.1, 1], opacity: [0.16, 0.22, 0.16] }} transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }} />
-        <motion.div className="absolute top-0 right-[-12%] h-[640px] w-[640px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_WARM}, transparent)`, opacity: 0.16, filter: "blur(60px)" }} animate={{ scale: [1, 1.07, 1], opacity: [0.12, 0.18, 0.12] }} transition={{ duration: 14, repeat: Infinity, ease: "easeInOut", delay: 1 }} />
-        <motion.div className="absolute bottom-[-34%] left-1/3 h-[600px] w-[600px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SKY}, transparent)`, opacity: 0.14, filter: "blur(60px)" }} animate={{ scale: [1, 1.12, 1], opacity: [0.10, 0.16, 0.10] }} transition={{ duration: 16, repeat: Infinity, ease: "easeInOut", delay: 2 }} />
+        {/* Static soft glows — calm (no pulsing) and cheap to paint. */}
+        <div className="absolute -top-44 -left-32 h-[600px] w-[600px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SAGE}, transparent)`, opacity: 0.20, filter: "blur(50px)" }} />
+        <div className="absolute top-0 right-[-12%] h-[640px] w-[640px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_WARM}, transparent)`, opacity: 0.16, filter: "blur(60px)" }} />
+        <div className="absolute bottom-[-34%] left-1/3 h-[600px] w-[600px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SKY}, transparent)`, opacity: 0.14, filter: "blur(60px)" }} />
         <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(${LINE} 1px, transparent 1px), linear-gradient(90deg, ${LINE} 1px, transparent 1px)`, backgroundSize: "56px 56px", maskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", WebkitMaskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", opacity: 0.5 }} />
       </div>
 
@@ -481,6 +482,83 @@ function MiniPanel({ title, rows }: { title: string; rows: [string, string][] })
   )
 }
 
+// ─── Notion-style framed product showcase + a calm announcement banner ──────
+function WindowFrame({ children, label }: { children: ReactNode; label?: string }) {
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ background: SURFACE, border: `1px solid ${LINE}`, boxShadow: "0 30px 60px -28px rgba(14,17,18,0.24), 0 8px 22px -14px rgba(14,17,18,0.12)" }}>
+      <div className="flex items-center gap-1.5 px-4 py-2.5" style={{ borderBottom: `1px solid ${LINE}`, background: SURFACE2 }}>
+        <span className="h-2.5 w-2.5 rounded-full" style={{ background: "#D49089" }} />
+        <span className="h-2.5 w-2.5 rounded-full" style={{ background: "#D8BE7A" }} />
+        <span className="h-2.5 w-2.5 rounded-full" style={{ background: "#8FBFA6" }} />
+        {label && <span className="ml-3 text-[11px] font-medium tracking-wide" style={{ color: TXT_3 }}>{label}</span>}
+      </div>
+      <div className="p-5">{children}</div>
+    </div>
+  )
+}
+
+const SHOWCASE: { tag: string; title: string; body: string; bullets: string[]; frameLabel: string; visual: ReactNode }[] = [
+  { tag: "Reconciliations", title: "Tie out every account — on paper.", body: "AI prepares the full set: GL ⇄ subledger build-up, roll-forward openings, and evidence matched to your statement. You review and approve, then export an audit-ready working paper in one click.", bullets: ["One-click AI auto-prepare", "Maker-checker enforced", "Audit-ready PDF export"], frameLabel: "Operating cash · 1100", visual: <ReconPaper /> },
+  { tag: "Flux analysis", title: "Every variance, explained.", body: "Compare any period to the prior and let AI write the narrative — grounded in the real transactions that moved the number, with a confidence score and a sign-off gate before review.", bullets: ["Commentary cites the driving transactions", "Confidence score on each explanation", "Review gate before approval"], frameLabel: "Flux · March 2026", visual: <AICard /> },
+  { tag: "Financial package", title: "A board-ready package, written by AI.", body: "Income statement, balance sheet, and cash flow on screen and as a PDF — plus a multi-page executive report your AI drafts in seconds, built straight from your synced ledger.", bullets: ["IS / BS / CF live and exportable", "AI-narrated executive report", "Hand it to a board as-is"], frameLabel: "Executive report", visual: <ExecReport /> },
+]
+
+function FeatureShowcase() {
+  return (
+    <section style={{ background: INK }}>
+      <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
+        <Reveal>
+          <div className="text-center max-w-2xl mx-auto mb-16 md:mb-20">
+            <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: GREEN_D }}>See it in action</span>
+            <h2 className="mt-3 text-3xl md:text-[40px] font-bold tracking-tight leading-[1.08]" style={{ color: TXT }}>Real output, not slideware.</h2>
+            <p className="mt-4 text-base md:text-lg leading-relaxed" style={{ color: TXT_2 }}>Every module shows the actual artifact it produces from your live QuickBooks data — reconciled, explained, and signed off.</p>
+          </div>
+        </Reveal>
+        <div className="space-y-24 md:space-y-32">
+          {SHOWCASE.map((s, i) => {
+            const flip = i % 2 === 1
+            const pad = [TINT_SAGE, TINT_SLATE, TINT_SAND][i % 3]
+            return (
+              <Reveal key={s.tag}>
+                <div className="grid md:grid-cols-2 gap-10 md:gap-16 items-center">
+                  <div className={flip ? "md:order-2" : ""}>
+                    <span className="inline-block text-[11px] font-bold uppercase tracking-[0.16em] px-2.5 py-1 rounded-full" style={{ background: pad, color: GREEN_D }}>{s.tag}</span>
+                    <h3 className="mt-4 text-2xl md:text-[28px] font-bold tracking-tight leading-tight" style={{ color: TXT }}>{s.title}</h3>
+                    <p className="mt-3.5 text-[15px] leading-relaxed" style={{ color: TXT_2 }}>{s.body}</p>
+                    <div className="mt-6 space-y-3">{s.bullets.map((b) => <div key={b} className="flex items-center gap-2.5 text-[14.5px] font-medium" style={{ color: TXT }}><CheckCircle2 size={17} strokeWidth={2} style={{ color: GREEN }} /> {b}</div>)}</div>
+                  </div>
+                  <div className={`relative ${flip ? "md:order-1" : ""}`}>
+                    <div aria-hidden className="absolute -inset-5 md:-inset-7 rounded-[2.2rem]" style={{ background: pad }} />
+                    <div className="relative"><WindowFrame label={s.frameLabel}>{s.visual}</WindowFrame></div>
+                  </div>
+                </div>
+              </Reveal>
+            )
+          })}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function CalmBanner() {
+  return (
+    <div style={{ background: INK }}>
+      <div className="max-w-5xl mx-auto px-6 pt-8 md:pt-10">
+        <Reveal>
+          <div className="rounded-2xl px-5 py-4 md:px-7 md:py-5 flex flex-col sm:flex-row items-center justify-center gap-2.5 sm:gap-5 text-center"
+            style={{ background: `linear-gradient(120deg, ${TINT_SAGE}, ${TINT_SLATE})`, border: `1px solid ${LINE}` }}>
+            <span className="inline-flex items-center gap-2 text-sm md:text-[15px] font-semibold" style={{ color: TXT }}>
+              <Sparkles size={16} strokeWidth={2} style={{ color: GREEN_D }} /> Nordavix is in private beta — built by a CPA, for CPAs.
+            </span>
+            <Link to="/sign-up" className="inline-flex items-center gap-1.5 text-sm font-bold whitespace-nowrap" style={{ color: GREEN_D }}>Request early access <ArrowRight size={15} /></Link>
+          </div>
+        </Reveal>
+      </div>
+    </div>
+  )
+}
+
 // ─── Product explorer (cream section · dark card · interactive tabs) ─────────
 const MODULES = [
   { key: "recon", name: "Reconciliations", tagline: "Tie out every account — on paper.", desc: "Reconcile each balance-sheet account to its subledger, then export an audit-ready working paper. Agentic Mode prepares the whole set in one click.", bullets: ["GL ⇄ subledger build-up with roll-forward openings", "One-click AI auto-prepare", "Evidence OCR matches your statement", "Maker-checker approval"], visual: <ReconPaper /> },
@@ -727,6 +805,8 @@ export function HomePage() {
         path="/" bareTitle jsonLd={[faqSchemaObj, crumbs]} />
       <Navbar />
       <Hero />
+      <CalmBanner />
+      <FeatureShowcase />
       <TrustStrip />
       <Bento />
       <ProductExplorer />
