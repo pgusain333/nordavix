@@ -34,23 +34,23 @@ import {
   Layers, ChevronRight,
 } from "lucide-react"
 
-// ─── Palette (soft-dark base + warm/colored accents) ────────────────────────
-const INK      = "#0E1316"
-const INK_2    = "#121A1D"
-const SURFACE  = "#161D20"
-const SURFACE2 = "#1C2427"
-const LINE     = "rgba(255,255,255,0.08)"
-const LINE_2   = "rgba(255,255,255,0.15)"
-const TXT      = "#F3F1EC"
-const TXT_2    = "#AEB4B3"
-const TXT_3    = "#737978"
-const GREEN    = "#54B98A"
-const GREEN_D  = "#3E8F66"
+// ─── Palette (calm light base + restrained accents) ─────────────────────────
+const INK      = "#F7F5F0"   // page background — warm cream (matches the app)
+const INK_2    = "#FFFFFF"
+const SURFACE  = "#FFFFFF"   // cards / panels
+const SURFACE2 = "#F2F0EA"
+const LINE     = "rgba(14,17,18,0.08)"   // hairline on light
+const LINE_2   = "rgba(14,17,18,0.14)"
+const TXT      = "#14181A"   // primary text — near-black
+const TXT_2    = "#4A4946"
+const TXT_3    = "#8C8B88"
+const GREEN    = "#3E8F66"   // brand sage (reads on light)
+const GREEN_D  = "#2E7A55"
 const BURGUNDY = "#8B1538"
-const ROSE     = "#E76B93"
-const AMBER    = "#E0A45C"
-// warm cream context
-const CREAM    = "#EEEBE4"
+const ROSE     = "#A8546F"   // muted rose
+const AMBER    = "#B07F3C"   // muted ochre
+// deeper warm panel for banded "context" sections
+const CREAM    = "#EFEBE3"
 const ON_CREAM   = "#15181A"
 const ON_CREAM_2 = "#4C5052"
 
@@ -102,7 +102,7 @@ function Navbar() {
     <>
       <nav className="fixed top-0 inset-x-0 z-50 transition-all duration-300"
         style={{ paddingTop: scrolled ? 12 : 18, paddingBottom: scrolled ? 12 : 18,
-          background: scrolled ? "rgba(14,19,22,0.72)" : "transparent",
+          background: scrolled ? "rgba(247,245,240,0.82)" : "transparent",
           backdropFilter: scrolled ? "saturate(160%) blur(14px)" : "none", WebkitBackdropFilter: scrolled ? "saturate(160%) blur(14px)" : "none",
           borderBottom: `1px solid ${scrolled ? LINE : "transparent"}` }}>
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between gap-4">
@@ -195,9 +195,9 @@ function Hero() {
   return (
     <header className="relative overflow-hidden" style={{ background: INK }}>
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <motion.div className="absolute -top-40 -left-32 h-[560px] w-[560px] rounded-full" style={{ background: `radial-gradient(closest-side, ${BURGUNDY}, transparent)`, opacity: 0.55, filter: "blur(40px)" }} animate={{ scale: [1, 1.12, 1], opacity: [0.45, 0.6, 0.45] }} transition={{ duration: 11, repeat: Infinity, ease: "easeInOut" }} />
-        <motion.div className="absolute top-10 right-[-10%] h-[620px] w-[620px] rounded-full" style={{ background: `radial-gradient(closest-side, ${ROSE}, transparent)`, opacity: 0.32, filter: "blur(50px)" }} animate={{ scale: [1, 1.08, 1], opacity: [0.28, 0.42, 0.28] }} transition={{ duration: 13, repeat: Infinity, ease: "easeInOut", delay: 1 }} />
-        <motion.div className="absolute bottom-[-30%] left-1/3 h-[560px] w-[560px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GREEN_D}, transparent)`, opacity: 0.3, filter: "blur(50px)" }} animate={{ scale: [1, 1.15, 1], opacity: [0.22, 0.4, 0.22] }} transition={{ duration: 15, repeat: Infinity, ease: "easeInOut", delay: 2 }} />
+        <motion.div className="absolute -top-40 -left-32 h-[560px] w-[560px] rounded-full" style={{ background: `radial-gradient(closest-side, ${BURGUNDY}, transparent)`, opacity: 0.07, filter: "blur(40px)" }} animate={{ scale: [1, 1.12, 1], opacity: [0.05, 0.08, 0.05] }} transition={{ duration: 11, repeat: Infinity, ease: "easeInOut" }} />
+        <motion.div className="absolute top-10 right-[-10%] h-[620px] w-[620px] rounded-full" style={{ background: `radial-gradient(closest-side, ${ROSE}, transparent)`, opacity: 0.06, filter: "blur(50px)" }} animate={{ scale: [1, 1.08, 1], opacity: [0.04, 0.07, 0.04] }} transition={{ duration: 13, repeat: Infinity, ease: "easeInOut", delay: 1 }} />
+        <motion.div className="absolute bottom-[-30%] left-1/3 h-[560px] w-[560px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GREEN_D}, transparent)`, opacity: 0.07, filter: "blur(50px)" }} animate={{ scale: [1, 1.15, 1], opacity: [0.05, 0.08, 0.05] }} transition={{ duration: 15, repeat: Infinity, ease: "easeInOut", delay: 2 }} />
         <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(${LINE} 1px, transparent 1px), linear-gradient(90deg, ${LINE} 1px, transparent 1px)`, backgroundSize: "56px 56px", maskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", WebkitMaskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", opacity: 0.5 }} />
       </div>
 
@@ -206,7 +206,7 @@ function Hero() {
           {/* left — copy */}
           <div>
             <Reveal>
-              <span className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-semibold" style={{ background: "rgba(255,255,255,0.06)", color: TXT, border: `1px solid ${LINE_2}` }}>
+              <span className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-semibold" style={{ background: "rgba(14,17,18,0.04)", color: TXT, border: `1px solid ${LINE_2}` }}>
                 <Sparkles size={13} strokeWidth={2} style={{ color: ROSE }} /> Built by a CPA · Agentic month-end close
               </span>
             </Reveal>
@@ -225,7 +225,7 @@ function Hero() {
                 {isSignedIn ? <div className="max-w-md"><LoggedInLaunchpad /></div> : (
                   <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                     <Link to="/sign-up" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Start free <ArrowRight size={16} /></Link>
-                    <a href="#explore" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE_2}` }}>See it work</a>
+                    <a href="#explore" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>See it work</a>
                   </div>
                 )}
               </div>
@@ -289,7 +289,7 @@ function Bento() {
           {/* big dark tile */}
           <Reveal className="md:col-span-2 md:row-span-2" y={28}>
             <div className="h-full rounded-2xl p-7 relative overflow-hidden" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
-              <div aria-hidden className="absolute -top-16 -right-10 h-60 w-60 rounded-full" style={{ background: `radial-gradient(closest-side, ${GREEN_D}, transparent)`, opacity: 0.25, filter: "blur(30px)" }} />
+              <div aria-hidden className="absolute -top-16 -right-10 h-60 w-60 rounded-full" style={{ background: `radial-gradient(closest-side, ${GREEN_D}, transparent)`, opacity: 0.08, filter: "blur(30px)" }} />
               <div className="relative">
                 <h3 className="text-2xl font-bold" style={{ color: TXT }}>The entire close on one canvas</h3>
                 <p className="mt-2 max-w-md text-[15px] leading-relaxed" style={{ color: TXT_2 }}>Connect QuickBooks, sync the period, and every tool works off one source of truth — reconcile, explain, report, and close without leaving.</p>
@@ -329,25 +329,25 @@ function Bento() {
           </Reveal>
           {/* green tile */}
           <Reveal delay={0.12} className="md:col-span-1">
-            <div className="h-full rounded-2xl p-7 relative overflow-hidden" style={{ background: "linear-gradient(155deg, #143026, #0C1A14)", border: `1px solid rgba(84,185,138,0.25)` }}>
+            <div className="h-full rounded-2xl p-7 relative overflow-hidden" style={{ background: "linear-gradient(155deg, #EEF7F2, #FFFFFF)", border: `1px solid rgba(62,143,102,0.30)` }}>
               <h3 className="text-xl font-bold" style={{ color: TXT }}>Your close in one click</h3>
-              <p className="mt-2 text-sm leading-relaxed" style={{ color: "rgba(243,241,236,0.78)" }}>Agentic Mode prepares every open account, then hands it to you.</p>
+              <p className="mt-2 text-sm leading-relaxed" style={{ color: TXT_2 }}>Agentic Mode prepares every open account, then hands it to you.</p>
               <div className="mt-5 inline-flex items-center gap-2 text-sm font-semibold px-3.5 py-2 rounded-full" style={{ color: "#06140D", background: GREEN }}><Sparkles size={14} strokeWidth={2} /> Run AI</div>
-              <div className="mt-3 text-xs" style={{ color: "rgba(243,241,236,0.6)" }}>12 of 14 prepared · you approve</div>
+              <div className="mt-3 text-xs" style={{ color: TXT_3 }}>12 of 14 prepared · you approve</div>
             </div>
           </Reveal>
           {/* burgundy wide tile */}
           <Reveal delay={0.1} className="md:col-span-3">
-            <div className="rounded-2xl p-7 relative overflow-hidden" style={{ background: "linear-gradient(120deg, #34101E, #1A0810)", border: `1px solid rgba(231,107,147,0.22)` }}>
+            <div className="rounded-2xl p-7 relative overflow-hidden" style={{ background: "linear-gradient(120deg, #F7EEF1, #FFFFFF)", border: `1px solid rgba(168,84,111,0.28)` }}>
               <div className="grid md:grid-cols-2 gap-6 items-center">
                 <div>
                   <h3 className="text-xl font-bold" style={{ color: TXT }}>One place, your whole team</h3>
-                  <p className="mt-2 text-[15px] leading-relaxed" style={{ color: "rgba(243,241,236,0.78)" }}>Maker-checker is enforced — preparers prepare, reviewers approve, nobody signs off their own work. Every action is logged.</p>
+                  <p className="mt-2 text-[15px] leading-relaxed" style={{ color: TXT_2 }}>Maker-checker is enforced — preparers prepare, reviewers approve, nobody signs off their own work. Every action is logged.</p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap md:justify-end">
                   {[["Preparer", "enters"], ["Reviewer", "approves"], ["Admin", "closes"]].map(([r, a], i, arr) => (
                     <div key={r} className="flex items-center gap-2">
-                      <div className="rounded-xl px-4 py-3 text-center" style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${LINE}` }}><div className="text-sm font-bold" style={{ color: TXT }}>{r}</div><div className="text-[11px]" style={{ color: "rgba(243,241,236,0.6)" }}>{a}</div></div>
+                      <div className="rounded-xl px-4 py-3 text-center" style={{ background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE}` }}><div className="text-sm font-bold" style={{ color: TXT }}>{r}</div><div className="text-[11px]" style={{ color: TXT_3 }}>{a}</div></div>
                       {i < arr.length - 1 && <ChevronRight size={14} style={{ color: ROSE }} />}
                     </div>
                   ))}
@@ -364,7 +364,7 @@ function Bento() {
 // ─── Mockups (used inside the explorer) ─────────────────────────────────────
 function ReconPaper() {
   return (
-    <div className="rounded-2xl p-4 sm:p-6" style={{ background: "#FAFAF8", boxShadow: "0 30px 70px -34px rgba(0,0,0,0.8)" }}>
+    <div className="rounded-2xl p-4 sm:p-6" style={{ background: "#FAFAF8", boxShadow: "0 20px 50px -30px rgba(14,17,18,0.22)" }}>
       <div className="flex items-center justify-between text-[10px] font-semibold tracking-wide" style={{ color: "#8A8F98" }}>
         <span>HELIO LOGISTICS, INC.</span><span className="text-right">RECONCILIATION PACKET<br /><span style={{ color: "#B6BAC0" }}>REC-202603-1100</span></span>
       </div>
@@ -494,7 +494,7 @@ function ProductExplorer() {
           <p className="mt-4 text-lg" style={{ color: ON_CREAM_2 }}>Pick a module — see the real output it generates from your live QuickBooks data.</p>
         </Reveal>
         <Reveal y={28}>
-          <div className="rounded-3xl overflow-hidden" style={{ background: SURFACE, border: `1px solid ${LINE}`, boxShadow: "0 40px 90px -50px rgba(0,0,0,0.6)" }}>
+          <div className="rounded-3xl overflow-hidden" style={{ background: SURFACE, border: `1px solid ${LINE}`, boxShadow: "0 24px 60px -40px rgba(14,17,18,0.18)" }}>
             <div className="grid md:grid-cols-[230px_1fr]">
               {/* left tabs (horizontal on mobile) */}
               <div className="flex md:flex-col gap-1 p-3 overflow-x-auto md:overflow-visible" style={{ borderBottom: `1px solid ${LINE}`, borderRight: "none" }}>
@@ -539,8 +539,8 @@ function AgenticSpotlight() {
   return (
     <section className="relative overflow-hidden" style={{ background: INK }}>
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-20 right-0 h-[420px] w-[520px] rounded-full" style={{ background: `radial-gradient(closest-side, ${BURGUNDY}, transparent)`, opacity: 0.4, filter: "blur(50px)" }} />
-        <div className="absolute bottom-[-30%] left-[-10%] h-[420px] w-[520px] rounded-full" style={{ background: `radial-gradient(closest-side, ${ROSE}, transparent)`, opacity: 0.22, filter: "blur(60px)" }} />
+        <div className="absolute -top-20 right-0 h-[420px] w-[520px] rounded-full" style={{ background: `radial-gradient(closest-side, ${BURGUNDY}, transparent)`, opacity: 0.07, filter: "blur(50px)" }} />
+        <div className="absolute bottom-[-30%] left-[-10%] h-[420px] w-[520px] rounded-full" style={{ background: `radial-gradient(closest-side, ${ROSE}, transparent)`, opacity: 0.06, filter: "blur(60px)" }} />
       </div>
       <div className="relative max-w-6xl mx-auto px-6 py-24 md:py-32">
         <Reveal className="max-w-2xl">
@@ -626,7 +626,7 @@ function EarlyAccess() {
           <div className="mt-7 flex flex-wrap items-center justify-center gap-3">{["Full feature set", "No credit card", "Direct line to the founders"].map((p) => <span key={p} className="inline-flex items-center gap-1.5 text-sm font-medium px-3.5 py-1.5 rounded-full" style={{ background: SURFACE, border: `1px solid ${LINE}`, color: TXT_2 }}><CheckCircle2 size={14} strokeWidth={2} style={{ color: GREEN }} /> {p}</span>)}</div>
           <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link to="/sign-up" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Request beta access <ArrowRight size={16} /></Link>
-            <Link to="/solutions" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold" style={{ color: TXT, background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE_2}` }}>Explore the product</Link>
+            <Link to="/solutions" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>Explore the product</Link>
           </div>
         </Reveal>
       </div>
@@ -681,15 +681,15 @@ function FinalCTA() {
         <Reveal>
           <div className="relative overflow-hidden rounded-[2rem] px-8 py-16 md:py-20 text-center" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
             <div aria-hidden className="pointer-events-none absolute inset-0">
-              <div className="absolute -top-24 left-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GREEN_D}, transparent)`, opacity: 0.4, filter: "blur(40px)" }} />
-              <div className="absolute -bottom-24 right-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${ROSE}, transparent)`, opacity: 0.3, filter: "blur(50px)" }} />
+              <div className="absolute -top-24 left-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GREEN_D}, transparent)`, opacity: 0.07, filter: "blur(40px)" }} />
+              <div className="absolute -bottom-24 right-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${ROSE}, transparent)`, opacity: 0.06, filter: "blur(50px)" }} />
             </div>
             <div className="relative">
               <h2 className="text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Your next close, but <GradWord>calm</GradWord>.</h2>
               <p className="mt-4 mx-auto max-w-xl text-lg" style={{ color: TXT_2 }}>Connect QuickBooks in a minute. Run your first AI reconciliation in five.</p>
               <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
                 <Link to={isSignedIn ? "/app" : "/sign-up"} className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>{isSignedIn ? "Open dashboard" : "Start free"} <ArrowRight size={16} /></Link>
-                <Link to="/solutions" className="inline-flex items-center justify-center gap-1.5 px-7 py-3.5 rounded-full text-sm font-semibold" style={{ color: TXT, background: "rgba(255,255,255,0.06)", border: `1px solid ${LINE_2}` }}>See the product <ChevronRight size={16} /></Link>
+                <Link to="/solutions" className="inline-flex items-center justify-center gap-1.5 px-7 py-3.5 rounded-full text-sm font-semibold" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>See the product <ChevronRight size={16} /></Link>
               </div>
             </div>
           </div>
@@ -704,10 +704,12 @@ export function HomePage() {
   const faqSchemaObj = faqSchema(FAQ_QUESTIONS.map((q) => ({ question: q.q, answer: q.a })))
   const crumbs = breadcrumbSchema([{ name: "Home", path: "/" }])
   useEffect(() => {
+    // Marketing homepage is a light brand page — force the shared Navbar/Footer
+    // (which follow the theme tokens) to render light to match, then restore.
     const html = document.documentElement
     const had = html.classList.contains("dark")
-    html.classList.add("dark")
-    return () => { if (!had) html.classList.remove("dark") }
+    html.classList.remove("dark")
+    return () => { if (had) html.classList.add("dark") }
   }, [])
   return (
     <div className="min-h-screen" style={{ background: INK, color: TXT }}>
