@@ -58,7 +58,6 @@ const TINT_SLATE = "#ECF1F5"   // soft blue-gray band
 const TINT_SAND  = "#F5EFE4"   // soft warm band
 const GLOW_SAGE  = "#6FB793"   // diffuse sage glow
 const GLOW_WARM  = "#E6C79C"   // diffuse warm glow
-const GLOW_SKY   = "#9DBED8"   // diffuse cool glow
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -198,13 +197,27 @@ function Hero() {
   const y = -((active - ARROW_SLOT) * LH)
 
   return (
-    <header className="relative overflow-hidden" style={{ background: INK }}>
+    <header
+      className="relative overflow-hidden"
+      style={{
+        // Full-bleed abstract colour mesh — bold sage / amber / sky / rose blobs
+        // over a tinted base, with a faint violet bloom at the core. Pure
+        // gradients (no blur filter) so it fills the whole hero and paints cheaply.
+        background: `
+          radial-gradient(125% 100% at 4% 6%, rgba(74,164,121,0.55), transparent 56%),
+          radial-gradient(120% 95% at 96% 2%, rgba(232,176,98,0.60), transparent 56%),
+          radial-gradient(125% 105% at 84% 96%, rgba(108,164,208,0.56), transparent 58%),
+          radial-gradient(115% 95% at 10% 100%, rgba(168,84,111,0.34), transparent 56%),
+          radial-gradient(95% 80% at 52% 46%, rgba(124,116,196,0.20), transparent 62%),
+          linear-gradient(135deg, #E4F0E8 0%, #F2ECE0 46%, #DFEAF3 100%)
+        `,
+      }}
+    >
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        {/* Static soft glows — calm (no pulsing) and cheap to paint. */}
-        <div className="absolute -top-44 -left-32 h-[600px] w-[600px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SAGE}, transparent)`, opacity: 0.20, filter: "blur(50px)" }} />
-        <div className="absolute top-0 right-[-12%] h-[640px] w-[640px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_WARM}, transparent)`, opacity: 0.16, filter: "blur(60px)" }} />
-        <div className="absolute bottom-[-34%] left-1/3 h-[600px] w-[600px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SKY}, transparent)`, opacity: 0.14, filter: "blur(60px)" }} />
-        <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(${LINE} 1px, transparent 1px), linear-gradient(90deg, ${LINE} 1px, transparent 1px)`, backgroundSize: "56px 56px", maskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", WebkitMaskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 75%)", opacity: 0.5 }} />
+        {/* faint grid texture over the colour wash */}
+        <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(${LINE} 1px, transparent 1px), linear-gradient(90deg, ${LINE} 1px, transparent 1px)`, backgroundSize: "56px 56px", maskImage: "radial-gradient(140% 90% at 50% 0%, black, transparent 80%)", WebkitMaskImage: "radial-gradient(140% 90% at 50% 0%, black, transparent 80%)", opacity: 0.45 }} />
+        {/* soft fade into the calm sections below so the band blends out */}
+        <div className="absolute inset-x-0 bottom-0 h-32" style={{ background: `linear-gradient(to bottom, transparent, ${INK})` }} />
       </div>
 
       <div className="relative max-w-6xl mx-auto px-6 pt-36 md:pt-44 pb-20 md:pb-28">
@@ -217,12 +230,12 @@ function Hero() {
               </span>
             </Reveal>
             <Reveal delay={0.05}>
-              <h1 className="mt-6 text-[2.7rem] leading-[1.04] sm:text-6xl md:text-[4rem] font-bold tracking-tight" style={{ color: TXT }}>
+              <h1 className="mt-6 text-[2.1rem] leading-[1.07] sm:text-[2.6rem] md:text-[3.15rem] font-bold tracking-tight" style={{ color: TXT }}>
                 Close the books in <GradWord>days</GradWord>, not weeks.
               </h1>
             </Reveal>
             <Reveal delay={0.1}>
-              <p className="mt-6 max-w-xl text-lg leading-relaxed" style={{ color: TXT_2 }}>
+              <p className="mt-5 max-w-xl text-[15px] md:text-base leading-relaxed" style={{ color: TXT_2 }}>
                 Every account reconciled, every variance explained, every report written — AI-prepared, you approve. Right on top of QuickBooks Online.
               </p>
             </Reveal>
