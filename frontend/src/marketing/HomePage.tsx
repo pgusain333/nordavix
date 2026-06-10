@@ -25,7 +25,6 @@ import { Link } from "react-router-dom"
 import { useUser } from "@clerk/clerk-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { MarketingFooter } from "@/marketing/MarketingFooter"
-import { LoggedInLaunchpad } from "@/marketing/LoggedInLaunchpad"
 import { SEO, faqSchema, breadcrumbSchema } from "@/marketing/seo/SEO"
 import {
   Sparkles, ArrowRight, CheckCircle2, Menu, X, ShieldCheck,
@@ -231,7 +230,14 @@ function Hero() {
             </Reveal>
             <Reveal delay={0.15}>
               <div className="mt-9">
-                {isSignedIn ? <div className="max-w-md"><LoggedInLaunchpad /></div> : (
+                {isSignedIn ? (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Link to="/app" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Open dashboard <ArrowRight size={16} /></Link>
+                    {[["Reconciliations", "/app/reconciliations"], ["Flux analysis", "/app/flux"], ["Financials", "/app/financials"]].map(([label, to]) => (
+                      <Link key={to} to={to} className="inline-flex items-center justify-center px-5 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>{label}</Link>
+                    ))}
+                  </div>
+                ) : (
                   <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                     <Link to="/sign-up" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Start free <ArrowRight size={16} /></Link>
                     <a href="#explore" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>See it work</a>
@@ -545,12 +551,20 @@ function CalmBanner() {
     <div style={{ background: INK }}>
       <div className="max-w-5xl mx-auto px-6 pt-8 md:pt-10">
         <Reveal>
-          <div className="rounded-2xl px-5 py-4 md:px-7 md:py-5 flex flex-col sm:flex-row items-center justify-center gap-2.5 sm:gap-5 text-center"
-            style={{ background: `linear-gradient(120deg, ${TINT_SAGE}, ${TINT_SLATE})`, border: `1px solid ${LINE}` }}>
-            <span className="inline-flex items-center gap-2 text-sm md:text-[15px] font-semibold" style={{ color: TXT }}>
-              <Sparkles size={16} strokeWidth={2} style={{ color: GREEN_D }} /> Nordavix is in private beta — built by a CPA, for CPAs.
-            </span>
-            <Link to="/sign-up" className="inline-flex items-center gap-1.5 text-sm font-bold whitespace-nowrap" style={{ color: GREEN_D }}>Request early access <ArrowRight size={15} /></Link>
+          <div className="rounded-2xl px-6 py-5 md:px-8 md:py-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left"
+            style={{ background: "linear-gradient(120deg, #1E4736 0%, #2F7B57 100%)", boxShadow: "0 16px 40px -22px rgba(31,70,54,0.55)" }}>
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="shrink-0 inline-flex items-center justify-center h-9 w-9 rounded-xl" style={{ background: "rgba(255,255,255,0.14)" }}>
+                <Sparkles size={17} strokeWidth={2} className="text-white" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[15px] md:text-base font-semibold text-white leading-snug">Nordavix is in private beta — built by a CPA, for CPAs.</p>
+                <p className="text-[12.5px] mt-0.5" style={{ color: "rgba(255,255,255,0.72)" }}>Limited spots, with a direct line to the founders.</p>
+              </div>
+            </div>
+            <Link to="/sign-up" className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-5 py-2.5 text-sm font-bold whitespace-nowrap transition-transform hover:scale-[1.03]" style={{ background: "#FFFFFF", color: "#1E4736" }}>
+              Request early access <ArrowRight size={15} strokeWidth={2.3} />
+            </Link>
           </div>
         </Reveal>
       </div>
