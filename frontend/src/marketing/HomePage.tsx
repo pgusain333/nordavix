@@ -482,60 +482,59 @@ function MiniPanel({ title, rows }: { title: string; rows: [string, string][] })
   )
 }
 
-// ─── Notion-style framed product showcase + a calm announcement banner ──────
-function WindowFrame({ children, label }: { children: ReactNode; label?: string }) {
+// ─── Notion-style colored feature cards (product mockup anchored at bottom) ──
+// Solid, calm-but-present color blocks (dusty honey / clay / sage / slate /
+// lavender / sand) with a white product mockup peeking up from the bottom edge.
+const CARDS: { tag: string; title: string; color: string; wide?: boolean; visual: ReactNode }[] = [
+  { tag: "Reconciliations", title: "Tie out every account — AI prepares the whole set.", color: "#E9C97C", wide: true, visual: <ReconPaper /> },
+  { tag: "Flux analysis", title: "Every variance, explained.", color: "#DD9E86", visual: <AICard /> },
+  { tag: "Insights", title: "Cash runway & break-even, watched.", color: "#95C0A4", visual: <CashRunwayChart /> },
+  { tag: "Financial package", title: "A board-ready package, written by AI.", color: "#9EBAD3", visual: <ExecReport /> },
+  { tag: "Intercompany", title: "Consolidate across entities.", color: "#B5ABCE", visual: <MiniPanel title="Intercompany pairs · matched" rows={[["Due from Sub A ↔ Due to Parent", "$120,000"], ["Mgmt fee receivable ↔ payable", "$45,000"], ["IC loan ↔ IC borrowing", "$300,000"]]} /> },
+  { tag: "Schedules", title: "Amortize on autopilot.", color: "#E2CCA6", visual: <MiniPanel title="Amortization · this period" rows={[["Prepaid insurance — 12 mo", "$2,000"], ["Software prepaid — 24 mo", "$1,250"], ["Office lease — ROU amort.", "$8,400"]]} /> },
+]
+
+function FeatureCard({ tag, title, color, wide, visual }: (typeof CARDS)[number]) {
   return (
-    <div className="rounded-2xl overflow-hidden" style={{ background: SURFACE, border: `1px solid ${LINE}`, boxShadow: "0 30px 60px -28px rgba(14,17,18,0.24), 0 8px 22px -14px rgba(14,17,18,0.12)" }}>
-      <div className="flex items-center gap-1.5 px-4 py-2.5" style={{ borderBottom: `1px solid ${LINE}`, background: SURFACE2 }}>
-        <span className="h-2.5 w-2.5 rounded-full" style={{ background: "#D49089" }} />
-        <span className="h-2.5 w-2.5 rounded-full" style={{ background: "#D8BE7A" }} />
-        <span className="h-2.5 w-2.5 rounded-full" style={{ background: "#8FBFA6" }} />
-        {label && <span className="ml-3 text-[11px] font-medium tracking-wide" style={{ color: TXT_3 }}>{label}</span>}
+    <div className={`relative overflow-hidden rounded-3xl flex flex-col ${wide ? "md:col-span-2" : ""}`}
+      style={{ background: color, height: 452, boxShadow: "0 1px 2px rgba(14,17,18,0.05)" }}>
+      <div className="p-7 md:p-9 pb-3 shrink-0">
+        <div className="text-[11.5px] font-bold uppercase tracking-[0.14em]" style={{ color: "rgba(20,24,26,0.52)" }}>{tag}</div>
+        <div className="mt-2 flex items-start justify-between gap-4">
+          <h3 className="text-[21px] md:text-[25px] font-bold tracking-tight leading-[1.14]" style={{ color: "#14181A", maxWidth: wide ? 360 : 300 }}>{title}</h3>
+          <span className="shrink-0 h-9 w-9 rounded-full inline-flex items-center justify-center transition-transform hover:scale-105" style={{ background: "#14181A", color: "#fff" }}><ArrowRight size={16} strokeWidth={2.2} /></span>
+        </div>
       </div>
-      <div className="p-5">{children}</div>
+      {wide ? (
+        <div className="mt-auto px-7 md:px-10 grid md:grid-cols-5 gap-6 items-end">
+          <div className="hidden md:block md:col-span-2" />
+          <div className="md:col-span-3 translate-y-5 rounded-2xl" style={{ boxShadow: "0 18px 44px -22px rgba(14,17,18,0.32)" }}>{visual}</div>
+        </div>
+      ) : (
+        <div className="mt-auto px-6 md:px-7">
+          <div className="translate-y-5 rounded-2xl" style={{ boxShadow: "0 18px 44px -22px rgba(14,17,18,0.32)" }}>{visual}</div>
+        </div>
+      )}
     </div>
   )
 }
-
-const SHOWCASE: { tag: string; title: string; body: string; bullets: string[]; frameLabel: string; visual: ReactNode }[] = [
-  { tag: "Reconciliations", title: "Tie out every account — on paper.", body: "AI prepares the full set: GL ⇄ subledger build-up, roll-forward openings, and evidence matched to your statement. You review and approve, then export an audit-ready working paper in one click.", bullets: ["One-click AI auto-prepare", "Maker-checker enforced", "Audit-ready PDF export"], frameLabel: "Operating cash · 1100", visual: <ReconPaper /> },
-  { tag: "Flux analysis", title: "Every variance, explained.", body: "Compare any period to the prior and let AI write the narrative — grounded in the real transactions that moved the number, with a confidence score and a sign-off gate before review.", bullets: ["Commentary cites the driving transactions", "Confidence score on each explanation", "Review gate before approval"], frameLabel: "Flux · March 2026", visual: <AICard /> },
-  { tag: "Financial package", title: "A board-ready package, written by AI.", body: "Income statement, balance sheet, and cash flow on screen and as a PDF — plus a multi-page executive report your AI drafts in seconds, built straight from your synced ledger.", bullets: ["IS / BS / CF live and exportable", "AI-narrated executive report", "Hand it to a board as-is"], frameLabel: "Executive report", visual: <ExecReport /> },
-]
 
 function FeatureShowcase() {
   return (
     <section style={{ background: INK }}>
       <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
         <Reveal>
-          <div className="text-center max-w-2xl mx-auto mb-16 md:mb-20">
+          <div className="max-w-2xl mb-12 md:mb-16">
             <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: GREEN_D }}>See it in action</span>
             <h2 className="mt-3 text-3xl md:text-[40px] font-bold tracking-tight leading-[1.08]" style={{ color: TXT }}>Real output, not slideware.</h2>
-            <p className="mt-4 text-base md:text-lg leading-relaxed" style={{ color: TXT_2 }}>Every module shows the actual artifact it produces from your live QuickBooks data — reconciled, explained, and signed off.</p>
+            <p className="mt-4 text-base md:text-lg leading-relaxed" style={{ color: TXT_2 }}>Each card is the actual artifact a module produces from your live QuickBooks data.</p>
           </div>
         </Reveal>
-        <div className="space-y-24 md:space-y-32">
-          {SHOWCASE.map((s, i) => {
-            const flip = i % 2 === 1
-            const pad = [TINT_SAGE, TINT_SLATE, TINT_SAND][i % 3]
-            return (
-              <Reveal key={s.tag}>
-                <div className="grid md:grid-cols-2 gap-10 md:gap-16 items-center">
-                  <div className={flip ? "md:order-2" : ""}>
-                    <span className="inline-block text-[11px] font-bold uppercase tracking-[0.16em] px-2.5 py-1 rounded-full" style={{ background: pad, color: GREEN_D }}>{s.tag}</span>
-                    <h3 className="mt-4 text-2xl md:text-[28px] font-bold tracking-tight leading-tight" style={{ color: TXT }}>{s.title}</h3>
-                    <p className="mt-3.5 text-[15px] leading-relaxed" style={{ color: TXT_2 }}>{s.body}</p>
-                    <div className="mt-6 space-y-3">{s.bullets.map((b) => <div key={b} className="flex items-center gap-2.5 text-[14.5px] font-medium" style={{ color: TXT }}><CheckCircle2 size={17} strokeWidth={2} style={{ color: GREEN }} /> {b}</div>)}</div>
-                  </div>
-                  <div className={`relative ${flip ? "md:order-1" : ""}`}>
-                    <div aria-hidden className="absolute -inset-5 md:-inset-7 rounded-[2.2rem]" style={{ background: pad }} />
-                    <div className="relative"><WindowFrame label={s.frameLabel}>{s.visual}</WindowFrame></div>
-                  </div>
-                </div>
-              </Reveal>
-            )
-          })}
-        </div>
+        <Reveal>
+          <div className="grid md:grid-cols-2 gap-5 md:gap-6">
+            {CARDS.map((c) => <FeatureCard key={c.tag} {...c} />)}
+          </div>
+        </Reveal>
       </div>
     </section>
   )
