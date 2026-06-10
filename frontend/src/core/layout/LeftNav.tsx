@@ -156,8 +156,8 @@ export function LeftNav({ onClose }: Props) {
     enabled:  !!organization,
   })
   const roleMeta = me ? ({
-    admin:    { label: "Admin",    bg: "rgba(245, 158, 11, 0.15)", fg: "#f59e0b" },
-    reviewer: { label: "Reviewer", bg: "#dbeafe",                  fg: "#1d4ed8" },
+    admin:    { label: "Admin",    bg: "rgba(199, 154, 82, 0.15)", fg: "#c79a52" },
+    reviewer: { label: "Reviewer", bg: "#e9eef3",                  fg: "#3c5a76" },
     preparer: { label: "Preparer", bg: "var(--surface-2)",         fg: "var(--text-muted)" },
   } as const)[me.role as "admin" | "reviewer" | "preparer"] : null
 
@@ -346,7 +346,7 @@ export function LeftNav({ onClose }: Props) {
                 const isTasksItem = item.path === "/app/tasks"
                 const taskBadge = isTasksItem && tasksCount
                   ? (tasksCount.critical > 0
-                      ? { count: tasksCount.open, bg: "#fee2e2", fg: "#b91c1c" }
+                      ? { count: tasksCount.open, bg: "#f4e9e7", fg: "#9b3d37" }
                       : tasksCount.open > 0
                         ? { count: tasksCount.open, bg: "var(--green-subtle)", fg: "var(--green)" }
                         : null)
@@ -645,7 +645,7 @@ function OrgNameInline({ organizationName, onRename }: OrgNameInlineProps) {
         </>
       )}
       {error && (
-        <p className="text-[10px] mt-1" style={{ color: "#dc2626" }}>{error}</p>
+        <p className="text-[10px] mt-1" style={{ color: "#9b3d37" }}>{error}</p>
       )}
     </div>
   )

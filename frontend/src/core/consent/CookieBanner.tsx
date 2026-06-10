@@ -138,7 +138,7 @@ export function CookieBanner() {
                       style={{
                         background: "var(--green)",
                         color: "white",
-                        boxShadow: "0 2px 8px rgba(16, 185, 129, 0.25)",
+                        boxShadow: "0 2px 8px rgba(79, 160, 122, 0.25)",
                       }}>
                       Accept all
                     </button>
@@ -341,7 +341,7 @@ function CookiePreferencesDialog({ open, onClose }: DialogProps) {
                 style={{
                   background: "var(--green)",
                   color: "white",
-                  boxShadow: "0 2px 8px rgba(16, 185, 129, 0.25)",
+                  boxShadow: "0 2px 8px rgba(79, 160, 122, 0.25)",
                 }}>
                 <Check size={13} strokeWidth={2.2} /> Save preferences
               </button>

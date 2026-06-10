@@ -87,7 +87,7 @@ export function AuthPage({ mode }: Props) {
       footerAction:            "hidden",
       identityPreviewText:     "text-[var(--text)]",
       identityPreviewEditButtonIcon: "text-[var(--text-muted)]",
-      formFieldErrorText:      "text-[#dc2626] text-xs",
+      formFieldErrorText:      "text-[#9b3d37] text-xs",
       otpCodeFieldInput:
         "bg-[var(--surface-2)] border border-[var(--border-strong)] text-[var(--text)]",
       alertText:               "text-[var(--text)] text-sm",

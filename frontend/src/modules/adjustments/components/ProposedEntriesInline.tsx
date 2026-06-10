@@ -53,7 +53,7 @@ export function ProposedEntriesInline({
   return (
     <div className="space-y-2">
       {title && (
-        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#7c3aed" }}>
+        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#54588a" }}>
           {title}
         </p>
       )}

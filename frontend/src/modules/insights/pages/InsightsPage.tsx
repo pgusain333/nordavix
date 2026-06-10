@@ -215,11 +215,11 @@ export function InsightsPage() {
 
         {pending && error && !isFetching && (
           <div className="rounded-lg p-4 flex items-start gap-3"
-            style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
-            <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: "#dc2626" }} />
+            style={{ background: "#f7eeec", border: "1px solid #ecd7d3" }}>
+            <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: "#9b3d37" }} />
             <div>
-              <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>Could not load insights</p>
-              <p className="text-xs mt-1" style={{ color: "#991b1b" }}>{error.message}</p>
+              <p className="text-sm font-semibold" style={{ color: "#86332e" }}>Could not load insights</p>
+              <p className="text-xs mt-1" style={{ color: "#86332e" }}>{error.message}</p>
             </div>
           </div>
         )}
@@ -235,9 +235,9 @@ export function InsightsPage() {
             >
               {data.custom_range && data.custom_pl_error && (
                 <div className="rounded-lg p-3 flex items-start gap-2"
-                  style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}>
-                  <Info size={14} className="shrink-0 mt-0.5" style={{ color: "#92400e" }} />
-                  <p className="text-[12px]" style={{ color: "#92400e" }}>
+                  style={{ background: "#f4eddf", border: "1px solid #c79a52" }}>
+                  <Info size={14} className="shrink-0 mt-0.5" style={{ color: "#7a5622" }} />
+                  <p className="text-[12px]" style={{ color: "#7a5622" }}>
                     Custom-range P&L call failed: <em>{data.custom_pl_error}</em> — showing
                     snapshot-based monthly figures instead.
                   </p>
@@ -444,7 +444,7 @@ function Header({
                 {isSyncing ? "Syncing…" : "Sync"}
               </button>
               {syncError ? (
-                <span className="text-[10px] font-medium" style={{ color: "#dc2626" }}>Sync failed — retry</span>
+                <span className="text-[10px] font-medium" style={{ color: "#9b3d37" }}>Sync failed — retry</span>
               ) : (
                 <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Synced {fmtSyncedAt(savedAt)}</span>
               )}
@@ -750,7 +750,7 @@ function HeroKpis({ data }: { data: InsightsOverview }) {
             <p className="text-2xl font-bold leading-tight" style={{ color: "var(--text)" }}>{t.value}</p>
             {t.change && (
               <span className="text-[11px] font-semibold inline-flex items-center gap-0.5"
-                style={{ color: t.changeUp ? "var(--green)" : "#dc2626" }}>
+                style={{ color: t.changeUp ? "var(--green)" : "#9b3d37" }}>
                 {t.changeUp ? <TrendingUp size={10} strokeWidth={2.4} /> : <TrendingDown size={10} strokeWidth={2.4} />}
                 {t.change}
               </span>
@@ -799,9 +799,9 @@ function ManagementSummary({ data }: { data: InsightsOverview }) {
   const ms = data.management_summary
   if (!ms) return null
   const tone =
-    ms.health === "strong" ? { bg: "#dcfce7", fg: "#16a34a", label: "Strong",  Icon: ShieldCheck }
-    : ms.health === "watch" ? { bg: "#fef3c7", fg: "#b45309", label: "Watch",   Icon: Eye }
-    :                          { bg: "#fef2f2", fg: "#dc2626", label: "At risk", Icon: AlertTriangle }
+    ms.health === "strong" ? { bg: "#eaf4ee", fg: "#3e8f66", label: "Strong",  Icon: ShieldCheck }
+    : ms.health === "watch" ? { bg: "#f4eddf", fg: "#8a6326", label: "Watch",   Icon: Eye }
+    :                          { bg: "#f7eeec", fg: "#9b3d37", label: "At risk", Icon: AlertTriangle }
   const Icon = tone.Icon
   return (
     <div className="rounded-2xl overflow-hidden"
@@ -824,9 +824,9 @@ function ManagementSummary({ data }: { data: InsightsOverview }) {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x"
         style={{ borderColor: "var(--border)" }}>
-        <SummaryCol title="Do this first" Icon={Target}      items={ms.priorities}  fg="#dc2626" />
-        <SummaryCol title="Strengths"     Icon={CheckCircle2} items={ms.strengths}   fg="#16a34a" />
-        <SummaryCol title="Keep watching" Icon={Eye}         items={ms.watch_items} fg="#b45309" />
+        <SummaryCol title="Do this first" Icon={Target}      items={ms.priorities}  fg="#9b3d37" />
+        <SummaryCol title="Strengths"     Icon={CheckCircle2} items={ms.strengths}   fg="#3e8f66" />
+        <SummaryCol title="Keep watching" Icon={Eye}         items={ms.watch_items} fg="#8a6326" />
       </div>
     </div>
   )
@@ -862,8 +862,8 @@ function AdvisoryBlock({ advisory }: { advisory?: Advisory }) {
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <AdvisoryList title="What to do"  Icon={Target}        items={advisory.actions} fg="var(--green)" />
-        <AdvisoryList title="Watch"       Icon={Eye}           items={advisory.watch}   fg="#6366f1" />
-        <AdvisoryList title="Risk areas"  Icon={AlertTriangle} items={advisory.risks}   fg="#dc2626" />
+        <AdvisoryList title="Watch"       Icon={Eye}           items={advisory.watch}   fg="#5b5e8c" />
+        <AdvisoryList title="Risk areas"  Icon={AlertTriangle} items={advisory.risks}   fg="#9b3d37" />
       </div>
     </div>
   )
@@ -939,7 +939,7 @@ function DualSparkline({ history, leftKey, rightKey, leftLabel, rightLabel, onPo
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <SparklineCard label={leftLabel}  points={history.map((h) => ({ x: h.label, y: Number(h[leftKey] ?? 0),  period: h.period }))} color="var(--green)" onPointClick={onPointClick} />
-      <SparklineCard label={rightLabel} points={history.map((h) => ({ x: h.label, y: Number(h[rightKey] ?? 0), period: h.period }))} color="#6366f1"       onPointClick={onPointClick} />
+      <SparklineCard label={rightLabel} points={history.map((h) => ({ x: h.label, y: Number(h[rightKey] ?? 0), period: h.period }))} color="#5b5e8c"       onPointClick={onPointClick} />
     </div>
   )
 }
@@ -948,7 +948,7 @@ function TripleSparkline({ history, keys, labels, onPointClick }: {
   history: HistoryPoint[]; keys: (keyof HistoryPoint)[]; labels: string[];
   onPointClick: (periodEnd: string) => void;
 }) {
-  const colors = ["var(--green)", "#6366f1", "#f59e0b"]
+  const colors = ["var(--green)", "#5b5e8c", "#c79a52"]
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
       {keys.map((k, i) => (
@@ -1007,7 +1007,7 @@ function SparklineCard({ label, points, color, onPointClick }: {
         </p>
         {change !== null && hoverIdx === null && (
           <span className="text-[10px] font-bold"
-            style={{ color: change >= 0 ? "var(--green)" : "#dc2626" }}>
+            style={{ color: change >= 0 ? "var(--green)" : "#9b3d37" }}>
             {change >= 0 ? "+" : ""}{change.toFixed(1)}%
           </span>
         )}
@@ -1096,23 +1096,23 @@ function ForecastChart({ points, outOfCashDate }: {
   return (
     <div className="rounded-lg p-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="overflow-visible">
-        <line x1={PAD} y1={zeroY} x2={W - PAD} y2={zeroY} stroke="#dc2626" strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
+        <line x1={PAD} y1={zeroY} x2={W - PAD} y2={zeroY} stroke="#9b3d37" strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
         <path d={path} fill="none" stroke="var(--green)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         {points.map((p, i) => (
           <circle key={i} cx={PAD + i * dx} cy={toY(p.projected_cash)} r={2.6}
-            fill={p.projected_cash <= 0 ? "#dc2626" : "var(--green)"} stroke="var(--surface)" strokeWidth="0.5" />
+            fill={p.projected_cash <= 0 ? "#9b3d37" : "var(--green)"} stroke="var(--surface)" strokeWidth="0.5" />
         ))}
       </svg>
       <div className="flex justify-between mt-1">
         {points.map((p, i) => (
           <span key={i} className="text-[9px] tabular-nums"
-            style={{ color: p.projected_cash <= 0 ? "#dc2626" : "var(--text-muted)" }}>
+            style={{ color: p.projected_cash <= 0 ? "#9b3d37" : "var(--text-muted)" }}>
             {p.month.split(" ")[0]}
           </span>
         ))}
       </div>
       {outOfCashDate && (
-        <p className="text-[11px] mt-2 flex items-center gap-1.5" style={{ color: "#b45309" }}>
+        <p className="text-[11px] mt-2 flex items-center gap-1.5" style={{ color: "#8a6326" }}>
           <AlertTriangle size={11} strokeWidth={2} />
           Projected to reach $0 around <strong>{outOfCashDate}</strong> at the current operating burn.
         </p>
@@ -1131,10 +1131,10 @@ function BreakevenBar({ current, breakEven }: { current: number; breakEven: numb
   return (
     <div className="space-y-2">
       <div className="relative h-9 rounded-md overflow-hidden" style={{ background: "var(--surface-2)" }}>
-        <div className="h-full transition-all" style={{ width: `${curPct}%`, background: above ? "var(--green)" : "#f59e0b" }} />
-        <div className="absolute top-0 bottom-0" style={{ left: `${bePct}%`, width: 2, background: "#dc2626" }} />
+        <div className="h-full transition-all" style={{ width: `${curPct}%`, background: above ? "var(--green)" : "#c79a52" }} />
+        <div className="absolute top-0 bottom-0" style={{ left: `${bePct}%`, width: 2, background: "#9b3d37" }} />
         <span className="absolute text-[9px] font-bold uppercase tracking-wider"
-          style={{ left: `calc(${bePct}% + 4px)`, top: 3, color: "#dc2626" }}>
+          style={{ left: `calc(${bePct}% + 4px)`, top: 3, color: "#9b3d37" }}>
           Break-even
         </span>
       </div>
@@ -1149,7 +1149,7 @@ function BreakevenBar({ current, breakEven }: { current: number; breakEven: numb
 // ── Aging bars (interactive on hover) ────────────────────────────────────────
 
 function AgingBars({ buckets }: { buckets: { bucket: string; amount: number; pct: number }[] }) {
-  const colors = ["#10b981", "#84cc16", "#f59e0b", "#f97316", "#ef4444"]
+  const colors = ["#4fa07a", "#93a05c", "#c79a52", "#c68a4e", "#b0564e"]
   const total = buckets.reduce((s, b) => s + b.amount, 0)
   return (
     <div className="space-y-2">
@@ -1205,7 +1205,7 @@ function CategoryBars({ rows }: { rows: { category: string; amount: number; chan
           </span>
           {r.change_pct !== null && (
             <span className="text-[10px] font-semibold w-12 text-right shrink-0"
-              style={{ color: r.change_pct >= 0 ? (r.change_pct > 25 ? "#dc2626" : "var(--text-2)") : "var(--green)" }}>
+              style={{ color: r.change_pct >= 0 ? (r.change_pct > 25 ? "#9b3d37" : "var(--text-2)") : "var(--green)" }}>
               {r.change_pct >= 0 ? "+" : ""}{r.change_pct.toFixed(0)}%
             </span>
           )}
@@ -1234,7 +1234,7 @@ function MoversTable({ rows }: { rows: { category: string; amount: number; prior
               <td className="py-2.5 pr-3 text-[12px] text-right tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtMoney(r.prior_amount)}</td>
               <td className="py-2.5 pr-3 text-[12px] text-right tabular-nums" style={{ color: "var(--text)" }}>{fmtMoney(r.amount)}</td>
               <td className="py-2.5 text-[12px] text-right font-bold tabular-nums"
-                style={{ color: r.change_pct !== null && r.change_pct > 25 ? "#dc2626" : r.change_pct !== null && r.change_pct < -10 ? "var(--green)" : "var(--text-2)" }}>
+                style={{ color: r.change_pct !== null && r.change_pct > 25 ? "#9b3d37" : r.change_pct !== null && r.change_pct < -10 ? "var(--green)" : "var(--text-2)" }}>
                 {r.change_pct !== null ? `${r.change_pct >= 0 ? "+" : ""}${r.change_pct.toFixed(0)}%` : "—"}
               </td>
             </tr>
@@ -1256,7 +1256,7 @@ function EntityTable({ rows, entityLabel }: { rows: { name: string; total: numbe
             <th className="text-right text-[10px] font-bold uppercase tracking-wider pb-2 pr-2" style={{ color: "var(--text-muted)" }}>1–30</th>
             <th className="text-right text-[10px] font-bold uppercase tracking-wider pb-2 pr-2" style={{ color: "var(--text-muted)" }}>31–60</th>
             <th className="text-right text-[10px] font-bold uppercase tracking-wider pb-2 pr-2" style={{ color: "var(--text-muted)" }}>61–90</th>
-            <th className="text-right text-[10px] font-bold uppercase tracking-wider pb-2 pr-2" style={{ color: "#dc2626" }}>&gt;90</th>
+            <th className="text-right text-[10px] font-bold uppercase tracking-wider pb-2 pr-2" style={{ color: "#9b3d37" }}>&gt;90</th>
             <th className="text-right text-[10px] font-bold uppercase tracking-wider pb-2"      style={{ color: "var(--text-muted)" }}>Total</th>
           </tr>
         </thead>
@@ -1268,7 +1268,7 @@ function EntityTable({ rows, entityLabel }: { rows: { name: string; total: numbe
               <td className="py-2.5 pr-2 text-[12px] text-right tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtMoney(r["1_30"])}</td>
               <td className="py-2.5 pr-2 text-[12px] text-right tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtMoney(r["31_60"])}</td>
               <td className="py-2.5 pr-2 text-[12px] text-right tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtMoney(r["61_90"])}</td>
-              <td className="py-2.5 pr-2 text-[12px] text-right tabular-nums font-semibold" style={{ color: r.over_90 > 0 ? "#dc2626" : "var(--text-muted)" }}>{fmtMoney(r.over_90)}</td>
+              <td className="py-2.5 pr-2 text-[12px] text-right tabular-nums font-semibold" style={{ color: r.over_90 > 0 ? "#9b3d37" : "var(--text-muted)" }}>{fmtMoney(r.over_90)}</td>
               <td className="py-2.5 text-[12px] text-right tabular-nums font-bold" style={{ color: "var(--text)" }}>{fmtMoney(r.total)}</td>
             </tr>
           ))}
@@ -1308,16 +1308,16 @@ function fmtMoney(n: number): string {
 }
 
 function riskStyle(level: RiskLevel): { bg: string; fg: string; label: string } {
-  if (level === "red")   return { bg: "#fef2f2", fg: "#dc2626", label: "High"  }
-  if (level === "amber") return { bg: "#fef3c7", fg: "#b45309", label: "Watch" }
-  if (level === "green") return { bg: "#dcfce7", fg: "#16a34a", label: "Good"  }
+  if (level === "red")   return { bg: "#f7eeec", fg: "#9b3d37", label: "High"  }
+  if (level === "amber") return { bg: "#f4eddf", fg: "#8a6326", label: "Watch" }
+  if (level === "green") return { bg: "#eaf4ee", fg: "#3e8f66", label: "Good"  }
   return { bg: "var(--surface-2)", fg: "var(--text-muted)", label: "—" }
 }
 
 function riskColor(level: RiskLevel | undefined): string {
   if (!level || level === "neutral") return "var(--text-muted)"
-  if (level === "red")   return "#dc2626"
-  if (level === "amber") return "#f59e0b"
+  if (level === "red")   return "#9b3d37"
+  if (level === "amber") return "#c79a52"
   return "var(--green)"
 }
 
@@ -1329,13 +1329,13 @@ function runwayRisk(months: number | null): RiskLevel {
 }
 
 function priorityBg(p: "high" | "medium" | "low"): string {
-  if (p === "high")   return "#fef2f2"
-  if (p === "medium") return "#fef3c7"
-  return "#dcfce7"
+  if (p === "high")   return "#f7eeec"
+  if (p === "medium") return "#f4eddf"
+  return "#eaf4ee"
 }
 function priorityFg(p: "high" | "medium" | "low"): string {
-  if (p === "high")   return "#dc2626"
-  if (p === "medium") return "#b45309"
-  return "#16a34a"
+  if (p === "high")   return "#9b3d37"
+  if (p === "medium") return "#8a6326"
+  return "#3e8f66"
 }
 

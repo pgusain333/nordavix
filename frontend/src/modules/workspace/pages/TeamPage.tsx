@@ -21,13 +21,13 @@ const ROLE_LABELS: Record<NordavixRole, { label: string; icon: React.ReactNode; 
   admin:    {
     label: "Admin",
     icon: <Crown size={11} strokeWidth={1.8} />,
-    bg: "rgba(245, 158, 11, 0.15)", fg: "#b45309",
+    bg: "rgba(199, 154, 82, 0.15)", fg: "#8a6326",
     help: "Full access — can invite, manage roles, set books, approve.",
   },
   reviewer: {
     label: "Reviewer",
     icon: <Eye size={11} strokeWidth={1.8} />,
-    bg: "#dbeafe", fg: "#1d4ed8",
+    bg: "#e9eef3", fg: "#3c5a76",
     help: "Can approve / flag / mark reviewed. Cannot manage team.",
   },
   preparer: {
@@ -192,7 +192,7 @@ export function TeamPage() {
             </p>
             {inviteError && (
               <div className="mt-2 rounded-md p-2 text-xs flex items-start gap-1.5"
-                style={{ background: "rgba(220, 38, 38, 0.10)", color: "#b91c1c", border: "1px solid rgba(220, 38, 38, 0.30)" }}>
+                style={{ background: "rgba(155, 61, 55, 0.10)", color: "#9b3d37", border: "1px solid rgba(155, 61, 55, 0.30)" }}>
                 <AlertTriangle size={12} strokeWidth={1.8} className="shrink-0 mt-0.5" />
                 <span>{inviteError}</span>
               </div>
@@ -215,7 +215,7 @@ export function TeamPage() {
           </div>
         ) : meError ? (
           <div className="rounded-xl p-3 text-xs flex items-center gap-2 flex-wrap"
-            style={{ background: "rgba(220, 38, 38, 0.10)", border: "1px solid rgba(220, 38, 38, 0.40)", color: "#b91c1c" }}>
+            style={{ background: "rgba(155, 61, 55, 0.10)", border: "1px solid rgba(155, 61, 55, 0.40)", color: "#9b3d37" }}>
             <AlertTriangle size={14} strokeWidth={1.8} />
             <span className="flex-1 min-w-0">
               Couldn't load your role: {extractErrorMessage(meError)}
@@ -229,7 +229,7 @@ export function TeamPage() {
           </div>
         ) : (
           <div className="rounded-xl p-3 text-xs flex items-center gap-2 flex-wrap"
-            style={{ background: "rgba(245, 158, 11, 0.10)", border: "1px solid #f59e0b", color: "#b45309" }}>
+            style={{ background: "rgba(199, 154, 82, 0.10)", border: "1px solid #c79a52", color: "#8a6326" }}>
             <AlertTriangle size={14} strokeWidth={1.8} />
             <span className="flex-1">
               /api/workspace/me returned nothing. Backend may be deploying — wait a minute and retry.
@@ -253,7 +253,7 @@ export function TeamPage() {
             <div className="py-8 flex items-center justify-center"><Spinner className="h-5 w-5" /></div>
           ) : membersError ? (
             <div className="py-6 px-4 text-xs text-center flex flex-col items-center gap-2"
-              style={{ color: "#b91c1c" }}>
+              style={{ color: "#9b3d37" }}>
               <AlertTriangle size={16} strokeWidth={1.8} />
               <span>Couldn't load members: {extractErrorMessage(membersError)}</span>
               <Button size="sm" variant="outline" onClick={() => refetchMembers()}>Retry</Button>
@@ -350,7 +350,7 @@ export function TeamPage() {
                         disabled={revokeMut.isPending}
                         className="h-6 w-6 inline-flex items-center justify-center rounded"
                         title="Revoke invitation"
-                        style={{ color: "#b91c1c" }}>
+                        style={{ color: "#9b3d37" }}>
                         <X size={12} strokeWidth={1.8} />
                       </button>
                     )}

@@ -39,8 +39,8 @@ const fmtMoney = (s: string | number) => {
 
 const RISK_TONE: Record<RiskLevel, { bg: string; fg: string }> = {
   low:    { bg: "var(--green-subtle)", fg: "var(--green)" },
-  medium: { bg: "#fef3c7",             fg: "#92400e" },
-  high:   { bg: "#fee2e2",             fg: "#b91c1c" },
+  medium: { bg: "#f4eddf",             fg: "#7a5622" },
+  high:   { bg: "#f4e9e7",             fg: "#9b3d37" },
 }
 
 export function ReconciliationsList({ title, subtitle, type }: Props) {
@@ -115,11 +115,11 @@ export function ReconciliationsList({ title, subtitle, type }: Props) {
       <div className="flex-1 px-4 sm:px-8 py-6 max-w-7xl w-full mx-auto space-y-4">
         {!qbo && (
           <div className="rounded-xl p-4 flex items-start gap-3"
-            style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}>
-            <AlertCircle size={18} style={{ color: "#92400e" }} className="shrink-0 mt-0.5" />
+            style={{ background: "#f4eddf", border: "1px solid #c79a52" }}>
+            <AlertCircle size={18} style={{ color: "#7a5622" }} className="shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-semibold" style={{ color: "#92400e" }}>QuickBooks isn't connected</p>
-              <p className="text-xs mt-0.5" style={{ color: "#92400e" }}>
+              <p className="text-sm font-semibold" style={{ color: "#7a5622" }}>QuickBooks isn't connected</p>
+              <p className="text-xs mt-0.5" style={{ color: "#7a5622" }}>
                 Connect QuickBooks to start a {type} reconciliation. Customer/vendor balances, aging, and transactions all flow from QBO.
               </p>
             </div>
@@ -224,9 +224,9 @@ function ReconCard({ recon, expanded, onToggle, onSync, riskFilter, navigate }: 
         <span className="h-2 w-2 rounded-full shrink-0"
           style={{ background:
             recon.status === "approved"  ? "var(--green)" :
-            recon.status === "error"     ? "#dc2626" :
-            recon.status === "in_review" ? "#3b82f6" :
-            "#f59e0b"
+            recon.status === "error"     ? "#9b3d37" :
+            recon.status === "in_review" ? "#4e6e8e" :
+            "#c79a52"
           }}
         />
         <div className="flex-1 min-w-0">
@@ -238,7 +238,7 @@ function ReconCard({ recon, expanded, onToggle, onSync, riskFilter, navigate }: 
         <div className="hidden sm:flex items-center gap-4 text-right">
           <Stat label="GL"        v={recon.gl_total} />
           <Stat label="Subledger" v={recon.subledger_total} />
-          <Stat label="Diff" v={recon.difference} tone={Math.abs(parseFloat(recon.difference)) > 100 ? "#dc2626" : undefined} />
+          <Stat label="Diff" v={recon.difference} tone={Math.abs(parseFloat(recon.difference)) > 100 ? "#9b3d37" : undefined} />
         </div>
         {expanded ? <ChevronUp size={14} strokeWidth={1.8} /> : <ChevronDown size={14} strokeWidth={1.8} />}
       </button>
@@ -330,11 +330,11 @@ function ReconCard({ recon, expanded, onToggle, onSync, riskFilter, navigate }: 
                           <td className="px-3 py-2.5 text-right tabular-nums">{fmtMoney(it.gl_balance)}</td>
                           <td className="px-3 py-2.5 text-right tabular-nums">{fmtMoney(it.subledger_balance)}</td>
                           <td className="px-3 py-2.5 text-right tabular-nums font-medium"
-                            style={{ color: Math.abs(parseFloat(it.difference)) > 100 ? "#dc2626" : "var(--text-2)" }}>
+                            style={{ color: Math.abs(parseFloat(it.difference)) > 100 ? "#9b3d37" : "var(--text-2)" }}>
                             {fmtMoney(it.difference)}
                           </td>
                           <td className="px-3 py-2.5 text-right tabular-nums text-xs"
-                            style={{ color: totalAging > 0 ? "#dc2626" : "var(--text-muted)" }}>
+                            style={{ color: totalAging > 0 ? "#9b3d37" : "var(--text-muted)" }}>
                             {totalAging > 0 ? fmtMoney(totalAging) : "—"}
                           </td>
                           <td className="px-3 py-2.5">

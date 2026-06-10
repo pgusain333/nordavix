@@ -371,8 +371,8 @@ function BlockView({ block }: { block: Block }) {
 
 // Callout palette — info (blue), tip (green), warning (amber), important (red)
 const CALLOUT_META = {
-  info:      { icon: Info,        fg: "#1d4ed8",         bg: "#dbeafe",                 border: "#bfdbfe" },
+  info:      { icon: Info,        fg: "#3c5a76",         bg: "#e9eef3",                 border: "#d7e2ec" },
   tip:       { icon: Lightbulb,   fg: "var(--green)",    bg: "var(--green-subtle)",     border: "var(--green)" },
-  warning:   { icon: AlertTriangle,fg: "#b45309",         bg: "#fef3c7",                 border: "#fcd34d" },
-  important: { icon: ShieldAlert, fg: "#b91c1c",         bg: "#fef2f2",                 border: "#fecaca" },
+  warning:   { icon: AlertTriangle,fg: "#8a6326",         bg: "#f4eddf",                 border: "#fcd34d" },
+  important: { icon: ShieldAlert, fg: "#9b3d37",         bg: "#f7eeec",                 border: "#ecd7d3" },
 } as const

@@ -291,7 +291,7 @@ function ComingSoonBadge() {
 function LocalOnlyBadge() {
   return (
     <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
-      style={{ background: "#fef3c7", color: "#92400e" }}>
+      style={{ background: "#f4eddf", color: "#7a5622" }}>
       Saved locally
     </span>
   )
@@ -784,7 +784,7 @@ function AiUsageCard() {
   const pct = hasCap ? Math.min(100, Math.round((spent / cap) * 100)) : 0
   const near = hasCap && pct >= 80 && !data?.exceeded
   const over = !!data?.exceeded
-  const barColor = over ? "#dc2626" : near ? "#d97706" : "var(--green)"
+  const barColor = over ? "#9b3d37" : near ? "#9a6b2e" : "var(--green)"
   const resetLabel = data?.resets_at ? formatDate(data.resets_at) : "—"
 
   return (
@@ -798,8 +798,8 @@ function AiUsageCard() {
         {hasCap && (
           <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
             style={{
-              background: over ? "#fef2f2" : near ? "#fffbeb" : "var(--green-subtle)",
-              color:      over ? "#b91c1c" : near ? "#92400e" : "var(--green)",
+              background: over ? "#f7eeec" : near ? "#f8f4e9" : "var(--green-subtle)",
+              color:      over ? "#9b3d37" : near ? "#7a5622" : "var(--green)",
             }}>
             {over ? "Limit reached" : `${pct}% used`}
           </span>
@@ -824,7 +824,7 @@ function AiUsageCard() {
             </p>
           </div>
           {over && data?.enforced && (
-            <p className="text-[11px] mt-2 inline-flex items-start gap-1" style={{ color: "#b91c1c" }}>
+            <p className="text-[11px] mt-2 inline-flex items-start gap-1" style={{ color: "#9b3d37" }}>
               <AlertTriangle size={11} strokeWidth={2} className="mt-0.5 shrink-0" />
               AI features are paused until {resetLabel}. Contact support@nordavix.com if you need a higher limit.
             </p>
@@ -1169,17 +1169,17 @@ function DataExportSection() {
         />
       </div>
 
-      {error && <p className="text-xs mt-4" style={{ color: "#dc2626" }}>{error}</p>}
+      {error && <p className="text-xs mt-4" style={{ color: "#9b3d37" }}>{error}</p>}
 
       {/* Danger zone — delete workspace (admin only) */}
       <div className="mt-7 pt-5" style={{ borderTop: "1px solid var(--border)" }}>
         <div className="rounded-lg p-4"
-          style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
+          style={{ background: "#f7eeec", border: "1px solid #ecd7d3" }}>
           <div className="flex items-start gap-3">
-            <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0 mt-0.5" style={{ color: "#dc2626" }} />
+            <AlertTriangle size={16} strokeWidth={1.8} className="shrink-0 mt-0.5" style={{ color: "#9b3d37" }} />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>Danger zone</p>
-              <p className="text-[12px] mt-0.5" style={{ color: "#991b1b" }}>
+              <p className="text-sm font-semibold" style={{ color: "#86332e" }}>Danger zone</p>
+              <p className="text-[12px] mt-0.5" style={{ color: "#86332e" }}>
                 Deleting this workspace removes <span className="font-semibold">{organization?.name ?? "the company"}</span>{" "}
                 from your account and revokes access for every member. The QuickBooks connection
                 is disconnected and revoked at the source, and all data (reconciliations,
@@ -1188,7 +1188,7 @@ function DataExportSection() {
               </p>
               {!isAdmin && organization && (
                 <p className="text-[11px] mt-2 inline-flex items-center gap-1"
-                  style={{ color: "#991b1b" }}>
+                  style={{ color: "#86332e" }}>
                   <ShieldCheck size={11} strokeWidth={2} />
                   Only workspace admins can delete a company.
                 </p>
@@ -1200,10 +1200,10 @@ function DataExportSection() {
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
                 style={{
                   background: "white",
-                  color: "#b91c1c",
-                  border: "1px solid #fecaca",
+                  color: "#9b3d37",
+                  border: "1px solid #ecd7d3",
                 }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#fee2e2" }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f4e9e7" }}
                 onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "white" }}
               >
                 Delete company
@@ -1327,7 +1327,7 @@ function DeleteCompanyModal({
         <div className="px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
           <div className="flex items-center gap-2.5">
             <span className="h-8 w-8 rounded-lg inline-flex items-center justify-center shrink-0"
-              style={{ background: "#fef2f2", color: "#dc2626" }}>
+              style={{ background: "#f7eeec", color: "#9b3d37" }}>
               <AlertTriangle size={15} strokeWidth={2} />
             </span>
             <div>
@@ -1362,14 +1362,14 @@ function DeleteCompanyModal({
               className="w-full rounded-lg px-3 py-2 text-sm outline-none"
               style={{
                 background: "var(--surface-2)",
-                border: `1px solid ${canDelete ? "#dc2626" : "var(--border-strong)"}`,
+                border: `1px solid ${canDelete ? "#9b3d37" : "var(--border-strong)"}`,
                 color: "var(--text)",
               }}
             />
           </div>
           {err && (
             <div className="rounded-md px-3 py-2 text-[11px]"
-              style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+              style={{ background: "#f7eeec", color: "#86332e", border: "1px solid #ecd7d3" }}>
               {err}
             </div>
           )}
@@ -1390,7 +1390,7 @@ function DeleteCompanyModal({
             onClick={handleDelete}
             disabled={!canDelete}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{ background: "#dc2626", color: "white" }}
+            style={{ background: "#9b3d37", color: "white" }}
           >
             {working ? <Spinner className="h-3 w-3" /> : <AlertTriangle size={12} strokeWidth={2} />}
             {working ? "Deleting…" : "Delete forever"}

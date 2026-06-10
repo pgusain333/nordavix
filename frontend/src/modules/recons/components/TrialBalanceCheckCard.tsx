@@ -54,7 +54,7 @@ export function TrialBalanceCheckCard({ check, breakdown }: Props) {
     ? { bg: "var(--surface)",            border: "var(--border)",           fg: "var(--text-muted)", icon: "?" }
     : balanced
       ? { bg: "var(--green-subtle)",     border: "var(--green)",            fg: "var(--green)",      icon: "✓" }
-      : { bg: "rgba(220, 38, 38, 0.06)", border: "rgba(220, 38, 38, 0.40)", fg: "#b91c1c",           icon: "!" }
+      : { bg: "rgba(155, 61, 55, 0.06)", border: "rgba(155, 61, 55, 0.40)", fg: "#9b3d37",           icon: "!" }
 
   let ytdStartLabel = check.ytd_start
   let periodEndLabel = check.period_end
@@ -141,7 +141,7 @@ export function TrialBalanceCheckCard({ check, breakdown }: Props) {
               <MiniKpi
                 label="Implied net income"
                 value={fmtMoney(impliedNi)}
-                valueColor={impliedNi < 0 ? "#dc2626" : "var(--text)"}
+                valueColor={impliedNi < 0 ? "#9b3d37" : "var(--text)"}
                 sub="Assets − Liab − Equity"
                 highlight
               />
@@ -172,7 +172,7 @@ export function TrialBalanceCheckCard({ check, breakdown }: Props) {
               <EquationRow
                 label="Implied Net Income (from sync)"
                 value={fmtMoney(impliedNi)}
-                valueColor={impliedNi < 0 ? "#dc2626" : "var(--text)"}
+                valueColor={impliedNi < 0 ? "#9b3d37" : "var(--text)"}
                 bold
               />
 
@@ -184,7 +184,7 @@ export function TrialBalanceCheckCard({ check, breakdown }: Props) {
                     label="Actual Net Income (from QuickBooks P&L)"
                     sub={`YTD ${ytdStartLabel} → ${periodEndLabel}`}
                     value={fmtMoney(actualNi!)}
-                    valueColor={actualNi! < 0 ? "#dc2626" : "var(--text)"}
+                    valueColor={actualNi! < 0 ? "#9b3d37" : "var(--text)"}
                     bold
                   />
                   <EquationRow

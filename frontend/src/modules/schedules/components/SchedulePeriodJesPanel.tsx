@@ -300,7 +300,7 @@ export function SchedulePeriodJesPanel({ qboAccountId, periodEnd }: Props) {
       </div>
 
       <div className="px-3 py-2 text-[10.5px]"
-        style={{ background: "rgba(16, 185, 129, 0.04)", color: "var(--text-2)" }}>
+        style={{ background: "rgba(79, 160, 122, 0.04)", color: "var(--text-2)" }}>
         The Schedules module is the subledger for this account, so these JEs
         replace the old "tick GL items" workflow. Each entry below should be
         posted in QuickBooks for {formatDate(periodEnd)}. After posting, click

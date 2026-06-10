@@ -392,13 +392,13 @@ function DrawerHeader({
             )}
             {row.is_material && (
               <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                style={{ background: "rgba(245, 158, 11, 0.12)", color: "#b45309" }}>
+                style={{ background: "rgba(199, 154, 82, 0.12)", color: "#8a6326" }}>
                 Material
               </span>
             )}
             {readOnly && (
               <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                style={{ background: "rgba(245, 158, 11, 0.12)", color: "#b45309" }}>
+                style={{ background: "rgba(199, 154, 82, 0.12)", color: "#8a6326" }}>
                 Read-only
               </span>
             )}
@@ -432,11 +432,11 @@ function DrawerHeader({
 
 function StatusPill({ status }: { status: string }) {
   const tone: Record<string, { bg: string; fg: string; icon: typeof CheckCircle2; label: string }> = {
-    approved:   { bg: "rgba(16, 185, 129, 0.12)", fg: "#047857", icon: ShieldCheck,   label: "Approved" },
-    generated:  { bg: "rgba(59, 130, 246, 0.12)", fg: "#1d4ed8", icon: Sparkles,      label: "Generated" },
-    edited:     { bg: "rgba(59, 130, 246, 0.12)", fg: "#1d4ed8", icon: Sparkles,      label: "Edited" },
-    generating: { bg: "rgba(124, 58, 237, 0.12)", fg: "#7c3aed", icon: Layers,        label: "Generating" },
-    flagged:    { bg: "rgba(239, 68, 68, 0.12)",  fg: "#b91c1c", icon: AlertTriangle, label: "Flagged" },
+    approved:   { bg: "rgba(79, 160, 122, 0.12)", fg: "#2e7a55", icon: ShieldCheck,   label: "Approved" },
+    generated:  { bg: "rgba(78, 110, 142, 0.12)", fg: "#3c5a76", icon: Sparkles,      label: "Generated" },
+    edited:     { bg: "rgba(78, 110, 142, 0.12)", fg: "#3c5a76", icon: Sparkles,      label: "Edited" },
+    generating: { bg: "rgba(84, 88, 138, 0.12)", fg: "#54588a", icon: Layers,        label: "Generating" },
+    flagged:    { bg: "rgba(176, 86, 78, 0.12)",  fg: "#9b3d37", icon: AlertTriangle, label: "Flagged" },
     pending:    { bg: "var(--surface-2)",         fg: "var(--text-muted)", icon: Clock, label: "Pending" },
   }
   const t = tone[status] ?? { bg: "var(--surface-2)", fg: "var(--text-muted)", icon: Clock, label: status }
@@ -467,11 +467,11 @@ function BalanceCell({ label, value, accent, percent }: {
   const n = parseFloat(value) || 0
   return (
     <div className="rounded-lg px-2.5 py-2"
-      style={{ background: accent ? "rgba(239, 68, 68, 0.06)" : "var(--surface-2)" }}>
+      style={{ background: accent ? "rgba(176, 86, 78, 0.06)" : "var(--surface-2)" }}>
       <div className="text-[9px] font-semibold uppercase tracking-wider"
         style={{ color: "var(--text-muted)" }}>{label}</div>
       <div className="text-sm font-semibold tabular-nums mt-0.5"
-        style={{ color: accent ? "#b91c1c" : "var(--text)" }}>
+        style={{ color: accent ? "#9b3d37" : "var(--text)" }}>
         {fmtMoneyAcct(n)}
       </div>
       {percent && (
@@ -649,10 +649,10 @@ function AiCommentaryView({ c }: { c: AICommentary }) {
               return (
                 <div key={i} className="flex items-start gap-2">
                   {up
-                    ? <TrendingUp size={13} strokeWidth={2} style={{ color: "#047857", marginTop: 1, flexShrink: 0 }} />
-                    : <TrendingDown size={13} strokeWidth={2} style={{ color: "#b91c1c", marginTop: 1, flexShrink: 0 }} />}
+                    ? <TrendingUp size={13} strokeWidth={2} style={{ color: "#2e7a55", marginTop: 1, flexShrink: 0 }} />
+                    : <TrendingDown size={13} strokeWidth={2} style={{ color: "#9b3d37", marginTop: 1, flexShrink: 0 }} />}
                   <span className="text-[12px] leading-snug flex-1" style={{ color: "var(--text)" }}>{d.label}</span>
-                  <span className="text-[12px] font-semibold tabular-nums" style={{ color: up ? "#047857" : "#b91c1c" }}>
+                  <span className="text-[12px] font-semibold tabular-nums" style={{ color: up ? "#2e7a55" : "#9b3d37" }}>
                     {up ? "+" : "−"}{fmtMoneyAcct(amt)}
                   </span>
                 </div>
@@ -666,7 +666,7 @@ function AiCommentaryView({ c }: { c: AICommentary }) {
               Explained <span className="font-semibold tabular-nums" style={{ color: "var(--text)" }}>{fmtMoneyAcct(explained)}</span>
             </span>
             {Math.abs(unexplained) >= 1 && (
-              <span className="inline-flex items-center gap-1 font-semibold" style={{ color: "#b45309" }}>
+              <span className="inline-flex items-center gap-1 font-semibold" style={{ color: "#8a6326" }}>
                 <AlertTriangle size={11} strokeWidth={2} />
                 {fmtMoneyAcct(unexplained)} unexplained
               </span>
@@ -698,8 +698,8 @@ function AiCommentaryView({ c }: { c: AICommentary }) {
               <div key={i} className="flex items-center gap-2 text-[12px]">
                 <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider shrink-0"
                   style={{
-                    background: e.type === "customer" ? "rgba(59,130,246,0.12)" : e.type === "vendor" ? "rgba(245,158,11,0.12)" : "var(--surface-2)",
-                    color: e.type === "customer" ? "#1d4ed8" : e.type === "vendor" ? "#b45309" : "var(--text-muted)",
+                    background: e.type === "customer" ? "rgba(78, 110, 142,0.12)" : e.type === "vendor" ? "rgba(199, 154, 82,0.12)" : "var(--surface-2)",
+                    color: e.type === "customer" ? "#3c5a76" : e.type === "vendor" ? "#8a6326" : "var(--text-muted)",
                   }}>
                   {e.type}
                 </span>
@@ -741,10 +741,10 @@ function Pill({ children, tone }: {
   tone:     "success" | "danger" | "warn" | "info"
 }) {
   const map = {
-    success: { bg: "rgba(16, 185, 129, 0.12)", fg: "#047857" },
-    danger:  { bg: "rgba(239, 68, 68, 0.12)",  fg: "#b91c1c" },
-    warn:    { bg: "rgba(245, 158, 11, 0.12)", fg: "#b45309" },
-    info:    { bg: "rgba(59, 130, 246, 0.12)", fg: "#1d4ed8" },
+    success: { bg: "rgba(79, 160, 122, 0.12)", fg: "#2e7a55" },
+    danger:  { bg: "rgba(176, 86, 78, 0.12)",  fg: "#9b3d37" },
+    warn:    { bg: "rgba(199, 154, 82, 0.12)", fg: "#8a6326" },
+    info:    { bg: "rgba(78, 110, 142, 0.12)", fg: "#3c5a76" },
   }[tone]
   return (
     <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider"

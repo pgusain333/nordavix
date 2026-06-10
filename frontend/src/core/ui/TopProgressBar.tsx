@@ -48,7 +48,7 @@ export function TopProgressBar() {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           className="fixed top-0 left-0 right-0 z-[100] h-[2px] overflow-hidden pointer-events-none"
-          style={{ background: "rgba(16, 185, 129, 0.15)" }}
+          style={{ background: "rgba(79, 160, 122, 0.15)" }}
         >
           {/* Shimmer: a small bright segment sweeping left→right on loop */}
           <motion.div

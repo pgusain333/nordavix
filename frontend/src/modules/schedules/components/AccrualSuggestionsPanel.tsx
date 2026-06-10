@@ -87,9 +87,9 @@ export function AccrualSuggestionsPanel({
     return (
       <div className="rounded-lg mb-3 px-3 py-2 flex items-center gap-2 text-[11px]"
         style={{
-          background: "rgba(245, 158, 11, 0.10)",
-          border: "1px solid rgba(245, 158, 11, 0.40)",
-          color: "#92400e",
+          background: "rgba(199, 154, 82, 0.10)",
+          border: "1px solid rgba(199, 154, 82, 0.40)",
+          color: "#7a5622",
         }}>
         <AlertCircle size={12} strokeWidth={2} />
         <span>
@@ -130,12 +130,12 @@ export function AccrualSuggestionsPanel({
               title="Select / clear all accrual + reversal lines in this period"
             />
           )}
-          <ClipboardList size={13} strokeWidth={1.8} style={{ color: "#b45309" }} />
+          <ClipboardList size={13} strokeWidth={1.8} style={{ color: "#8a6326" }} />
           <p className="text-[11px] font-semibold text-theme">
             {lockTicks ? "From Accruals schedule (auto-included)" : "Suggested from Accruals schedule"}
           </p>
           <span className="text-[10px] px-1.5 py-0.5 rounded"
-            style={{ background: "rgba(245, 158, 11, 0.15)", color: "#b45309" }}>
+            style={{ background: "rgba(199, 154, 82, 0.15)", color: "#8a6326" }}>
             {items.length} line{items.length === 1 ? "" : "s"} · delta-based
           </span>
           {lockTicks && (
@@ -208,13 +208,13 @@ export function AccrualSuggestionsPanel({
                   <td className="py-2 pr-3">
                     {isAccrual ? (
                       <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                        style={{ background: "rgba(245, 158, 11, 0.15)", color: "#b45309" }}>
+                        style={{ background: "rgba(199, 154, 82, 0.15)", color: "#8a6326" }}>
                         <Plus size={10} strokeWidth={2.4} />
                         Accrual
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                        style={{ background: "rgba(29, 78, 216, 0.15)", color: "#1d4ed8" }}>
+                        style={{ background: "rgba(60, 90, 118, 0.15)", color: "#3c5a76" }}>
                         <Minus size={10} strokeWidth={2.4} />
                         Reversal
                       </span>
@@ -224,7 +224,7 @@ export function AccrualSuggestionsPanel({
                     {it.line_date}
                   </td>
                   <td className="py-2 text-right tabular-nums font-semibold"
-                    style={{ color: isAccrual ? "#b45309" : "#1d4ed8" }}>
+                    style={{ color: isAccrual ? "#8a6326" : "#3c5a76" }}>
                     {fmt(it.amount)}
                   </td>
                 </tr>

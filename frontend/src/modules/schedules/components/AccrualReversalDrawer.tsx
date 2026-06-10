@@ -67,9 +67,9 @@ export function AccrualReversalDrawer({ item, onClose }: Props) {
           style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <FileText size={15} strokeWidth={1.8} style={{ color: "#b45309" }} />
+              <FileText size={15} strokeWidth={1.8} style={{ color: "#8a6326" }} />
               <p className="text-[10px] font-semibold uppercase tracking-wider"
-                style={{ color: "#b45309" }}>
+                style={{ color: "#8a6326" }}>
                 Accrual lifecycle
               </p>
               {isReversed ? (
@@ -80,7 +80,7 @@ export function AccrualReversalDrawer({ item, onClose }: Props) {
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold"
-                  style={{ color: "#b45309" }}>
+                  style={{ color: "#8a6326" }}>
                   <AlertCircle size={10} strokeWidth={2.4} />
                   Active
                 </span>
@@ -192,9 +192,9 @@ export function AccrualReversalDrawer({ item, onClose }: Props) {
             ) : (
               <div className="rounded-lg px-3 py-3 text-[11px]"
                 style={{
-                  background: "rgba(245, 158, 11, 0.08)",
-                  border: "1px dashed rgba(245, 158, 11, 0.40)",
-                  color: "#92400e",
+                  background: "rgba(199, 154, 82, 0.08)",
+                  border: "1px dashed rgba(199, 154, 82, 0.40)",
+                  color: "#7a5622",
                 }}>
                 No reversal date set. The accrual will stay on the books until you
                 fill in <span className="font-semibold">Reverses on</span> (usually
@@ -221,7 +221,7 @@ export function AccrualReversalDrawer({ item, onClose }: Props) {
                   reversal — clears the liability
                   {!isReversed && (
                     <span className="ml-1 text-[10px] font-semibold"
-                      style={{ color: "#b45309" }}>(upcoming)</span>
+                      style={{ color: "#8a6326" }}>(upcoming)</span>
                   )}
                 </li>
               ) : (

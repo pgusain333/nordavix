@@ -90,17 +90,17 @@ export function AiDetectBanner({ periodEnd, onAccept }: Props) {
       className="rounded-xl overflow-hidden"
       style={{
         background: "var(--surface)",
-        border: `1px solid ${hasResults ? "rgba(124, 58, 237, 0.30)" : "var(--border)"}`,
+        border: `1px solid ${hasResults ? "rgba(84, 88, 138, 0.30)" : "var(--border)"}`,
         boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
       }}
     >
       {/* Header */}
       <div className="px-4 py-3 flex items-center gap-3"
-        style={{ background: hasResults ? "rgba(124, 58, 237, 0.06)" : "var(--surface)" }}>
+        style={{ background: hasResults ? "rgba(84, 88, 138, 0.06)" : "var(--surface)" }}>
         <span className="h-7 w-7 rounded-lg inline-flex items-center justify-center shrink-0"
           style={{
-            background: "rgba(124, 58, 237, 0.12)",
-            color: "#7c3aed",
+            background: "rgba(84, 88, 138, 0.12)",
+            color: "#54588a",
           }}>
           <Sparkles size={13} strokeWidth={2} />
         </span>
@@ -113,7 +113,7 @@ export function AiDetectBanner({ periodEnd, onAccept }: Props) {
               <>Scanning expense GL for likely prepaids…</>
             ) : hasResults ? (
               <>
-                <span className="font-semibold" style={{ color: "#7c3aed" }}>
+                <span className="font-semibold" style={{ color: "#54588a" }}>
                   {candidates.length} {candidates.length === 1 ? "candidate" : "candidates"} found
                 </span>
                 {" — review each and accept or dismiss"}
@@ -133,7 +133,7 @@ export function AiDetectBanner({ periodEnd, onAccept }: Props) {
             type="button"
             onClick={() => setCollapsed((v) => !v)}
             className="text-[11px] font-medium uppercase tracking-wider px-2 transition-colors hover:opacity-80"
-            style={{ color: "#7c3aed" }}
+            style={{ color: "#54588a" }}
           >
             {collapsed ? "Show" : "Hide"}
           </button>
@@ -155,7 +155,7 @@ export function AiDetectBanner({ periodEnd, onAccept }: Props) {
       {/* Error band */}
       {error && (
         <div className="px-4 py-2 text-[11px]"
-          style={{ background: "#fef2f2", color: "#991b1b", borderTop: "1px solid #fecaca" }}>
+          style={{ background: "#f7eeec", color: "#86332e", borderTop: "1px solid #ecd7d3" }}>
           {error}
         </div>
       )}
@@ -164,7 +164,7 @@ export function AiDetectBanner({ periodEnd, onAccept }: Props) {
       {!hasResults && !isScanning && !scanned && !error && (
         <div className="px-4 pb-4 pt-1">
           <div className="rounded-lg p-3 text-[12px]"
-            style={{ background: "rgba(124, 58, 237, 0.04)", color: "var(--text-2)" }}>
+            style={{ background: "rgba(84, 88, 138, 0.04)", color: "var(--text-2)" }}>
             <p className="leading-relaxed">
               When you scan, the AI looks at every journal entry above{" "}
               <span className="font-mono font-semibold">$500</span> hitting expense
@@ -237,18 +237,18 @@ function CandidateRow({
 
   const confTone =
     conf >= 0.8 ? { bg: "var(--green-subtle)", fg: "var(--green)", label: "High" }
-    : conf >= 0.5 ? { bg: "#fef3c7", fg: "#92400e", label: "Med" }
+    : conf >= 0.5 ? { bg: "#f4eddf", fg: "#7a5622", label: "Med" }
     : { bg: "var(--surface-2)", fg: "var(--text-muted)", label: "Low" }
 
   return (
     <div className="rounded-lg p-3 transition-colors"
       style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(124, 58, 237, 0.40)" }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(84, 88, 138, 0.40)" }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)" }}
     >
       <div className="flex items-start gap-3 flex-wrap sm:flex-nowrap">
         <span className="h-7 w-7 rounded-md inline-flex items-center justify-center shrink-0 mt-0.5"
-          style={{ background: "white", color: "#7c3aed", border: "1px solid var(--border)" }}>
+          style={{ background: "white", color: "#54588a", border: "1px solid var(--border)" }}>
           <Sparkles size={12} strokeWidth={2} />
         </span>
         <div className="flex-1 min-w-0">
@@ -279,7 +279,7 @@ function CandidateRow({
             type="button"
             onClick={() => setShowJe((v) => !v)}
             className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider transition-colors hover:opacity-80"
-            style={{ color: "#7c3aed" }}
+            style={{ color: "#54588a" }}
           >
             {showJe
               ? <><ChevronDown size={11} strokeWidth={2} /> Hide suggested entries</>

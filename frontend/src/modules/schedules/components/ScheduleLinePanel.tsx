@@ -51,24 +51,24 @@ const CHROME: Record<ScheduleKind, {
 }> = {
   fixed_asset: {
     human:       "Suggested from Fixed Assets schedule",
-    icon:        <Building2 size={13} strokeWidth={1.8} style={{ color: "#15803d" }} />,
-    accent:      "rgba(21, 128, 61, 0.12)",
+    icon:        <Building2 size={13} strokeWidth={1.8} style={{ color: "#2e7a55" }} />,
+    accent:      "rgba(46, 122, 85, 0.12)",
     fetcher:     schedulesApi.getFixedAssetSuggestions,
     detailRoute: "/app/schedules/fixed-assets",
     uncommitted_blurb: "fixed asset",
   },
   lease: {
     human:       "Suggested from Leases schedule",
-    icon:        <Home size={13} strokeWidth={1.8} style={{ color: "#7c3aed" }} />,
-    accent:      "rgba(124, 58, 237, 0.10)",
+    icon:        <Home size={13} strokeWidth={1.8} style={{ color: "#54588a" }} />,
+    accent:      "rgba(84, 88, 138, 0.10)",
     fetcher:     schedulesApi.getLeaseSuggestions,
     detailRoute: "/app/schedules/leases",
     uncommitted_blurb: "lease",
   },
   loan: {
     human:       "Suggested from Loans schedule",
-    icon:        <Banknote size={13} strokeWidth={1.8} style={{ color: "#be123c" }} />,
-    accent:      "rgba(190, 18, 60, 0.10)",
+    icon:        <Banknote size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />,
+    accent:      "rgba(155, 61, 55, 0.10)",
     fetcher:     schedulesApi.getLoanSuggestions,
     detailRoute: "/app/schedules/loans",
     uncommitted_blurb: "loan",
@@ -88,12 +88,12 @@ function fmt(s: string): string {
 
 function kindBadge(kind: string): { label: string; bg: string; fg: string; icon: React.ReactNode } {
   switch (kind) {
-    case "addition":          return { label: "Addition",          bg: "rgba(21,128,61,0.12)",  fg: "#15803d", icon: <Plus  size={10} strokeWidth={2.4} /> }
-    case "disposal":          return { label: "Disposal",          bg: "rgba(190,18,60,0.12)",  fg: "#be123c", icon: <Minus size={10} strokeWidth={2.4} /> }
-    case "depreciation":      return { label: "Depreciation",      bg: "rgba(245,158,11,0.12)", fg: "#b45309", icon: <Minus size={10} strokeWidth={2.4} /> }
-    case "initial":           return { label: "Initial recognition", bg: "rgba(124,58,237,0.12)", fg: "#7c3aed", icon: <Plus  size={10} strokeWidth={2.4} /> }
-    case "origination":       return { label: "Origination",       bg: "rgba(190,18,60,0.12)",  fg: "#be123c", icon: <Plus  size={10} strokeWidth={2.4} /> }
-    case "principal_payment": return { label: "Principal payment", bg: "rgba(29,78,216,0.12)",  fg: "#1d4ed8", icon: <Minus size={10} strokeWidth={2.4} /> }
+    case "addition":          return { label: "Addition",          bg: "rgba(46, 122, 85,0.12)",  fg: "#2e7a55", icon: <Plus  size={10} strokeWidth={2.4} /> }
+    case "disposal":          return { label: "Disposal",          bg: "rgba(155, 61, 55,0.12)",  fg: "#9b3d37", icon: <Minus size={10} strokeWidth={2.4} /> }
+    case "depreciation":      return { label: "Depreciation",      bg: "rgba(199, 154, 82,0.12)", fg: "#8a6326", icon: <Minus size={10} strokeWidth={2.4} /> }
+    case "initial":           return { label: "Initial recognition", bg: "rgba(84, 88, 138,0.12)", fg: "#54588a", icon: <Plus  size={10} strokeWidth={2.4} /> }
+    case "origination":       return { label: "Origination",       bg: "rgba(155, 61, 55,0.12)",  fg: "#9b3d37", icon: <Plus  size={10} strokeWidth={2.4} /> }
+    case "principal_payment": return { label: "Principal payment", bg: "rgba(60, 90, 118,0.12)",  fg: "#3c5a76", icon: <Minus size={10} strokeWidth={2.4} /> }
     default: return { label: kind, bg: "var(--surface-2)", fg: "var(--text-muted)", icon: null }
   }
 }
@@ -127,9 +127,9 @@ export function ScheduleLinePanel({
     return (
       <div className="rounded-lg mb-3 px-3 py-2 flex items-center gap-2 text-[11px]"
         style={{
-          background: "rgba(245, 158, 11, 0.10)",
-          border: "1px solid rgba(245, 158, 11, 0.40)",
-          color: "#92400e",
+          background: "rgba(199, 154, 82, 0.10)",
+          border: "1px solid rgba(199, 154, 82, 0.40)",
+          color: "#7a5622",
         }}>
         <AlertCircle size={12} strokeWidth={2} />
         <span>
@@ -255,7 +255,7 @@ export function ScheduleLinePanel({
                     {it.line_date}
                   </td>
                   <td className="py-2 text-right tabular-nums font-semibold"
-                    style={{ color: v >= 0 ? "var(--green)" : "#b91c1c" }}>
+                    style={{ color: v >= 0 ? "var(--green)" : "#9b3d37" }}>
                     {fmt(it.amount)}
                   </td>
                 </tr>

@@ -114,16 +114,16 @@ function defaultPeriodEnd(): string {
 }
 
 const GROUP_COLORS: Record<string, string> = {
-  Bank:                       "#3b82f6",
-  "Credit Card":              "#8b5cf6",
-  AR:                         "#10b981",
-  AP:                         "#f59e0b",
+  Bank:                       "#4e6e8e",
+  "Credit Card":              "#6e70a6",
+  AR:                         "#4fa07a",
+  AP:                         "#c79a52",
   "Fixed Assets":             "#0ea5e9",
   "Other Current Assets":     "#14b8a6",
   "Other Assets":             "#06b6d4",
   "Other Current Liabilities":"#ec4899",
   "Long Term Liabilities":    "#d946ef",
-  Equity:                     "#a855f7",
+  Equity:                     "#6e70a6",
 }
 
 // Credit-natural account groups. For these, GL balances are stored
@@ -1029,7 +1029,7 @@ export function ReconciliationsDashboard() {
                 onClick={handleAgenticReset}
                 disabled={resetAgenticMut.isPending}
                 title="Clear all AI-prepared subledger values, items, and commentary for this period — switches back to manual reconciliation"
-                style={{ borderColor: "#b45309", color: "#b45309" }}
+                style={{ borderColor: "#8a6326", color: "#8a6326" }}
               >
                 <span className="hidden sm:inline">{resetAgenticMut.isPending ? "Resetting…" : "Reset AI"}</span>
               </Button>
@@ -1053,7 +1053,7 @@ export function ReconciliationsDashboard() {
               icon={<Trash2 size={14} strokeWidth={1.8} />}
               onClick={() => confirmClear ? clearMut.mutate() : setConfirmClear(true)}
               loading={clearMut.isPending}
-              style={confirmClear ? { borderColor: "#dc2626", color: "#dc2626" } : undefined}
+              style={confirmClear ? { borderColor: "#9b3d37", color: "#9b3d37" } : undefined}
               title="Wipe all cached reconciliation data (the QBO connection stays)"
             >
               <span className="hidden sm:inline">
@@ -1074,8 +1074,8 @@ export function ReconciliationsDashboard() {
             transition={{ duration: 0.2 }}
             className="px-4 sm:px-8 py-2 text-xs font-medium flex items-center gap-2"
             style={{
-              background: syncMsg.startsWith("Sync failed") ? "#fee2e2" : "var(--green-subtle)",
-              color:      syncMsg.startsWith("Sync failed") ? "#b91c1c" : "var(--green)",
+              background: syncMsg.startsWith("Sync failed") ? "#f4e9e7" : "var(--green-subtle)",
+              color:      syncMsg.startsWith("Sync failed") ? "#9b3d37" : "var(--green)",
               borderBottom: "1px solid var(--border)",
             }}
           >
@@ -1090,7 +1090,7 @@ export function ReconciliationsDashboard() {
           incomplete. Blocks period close; surfaced here so the user re-syncs. */}
       {overview?.sync_health?.tb_balanced === false && (
         <div className="px-4 sm:px-8 py-2.5 text-xs font-medium flex items-center gap-2"
-          style={{ background: "#fef2f2", color: "#991b1b", borderBottom: "1px solid #fecaca" }}>
+          style={{ background: "#f7eeec", color: "#86332e", borderBottom: "1px solid #ecd7d3" }}>
           <AlertTriangle size={14} strokeWidth={2} className="shrink-0" />
           <span className="flex-1">
             QuickBooks data didn't fully tie out on the last sync
@@ -1128,12 +1128,12 @@ export function ReconciliationsDashboard() {
         {!qbo && (
           <div
             className="rounded-xl p-4 flex items-start gap-3"
-            style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}
+            style={{ background: "#f4eddf", border: "1px solid #c79a52" }}
           >
-            <AlertTriangle size={18} style={{ color: "#92400e" }} className="shrink-0 mt-0.5" />
+            <AlertTriangle size={18} style={{ color: "#7a5622" }} className="shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold" style={{ color: "#92400e" }}>QuickBooks isn't connected</p>
-              <p className="text-xs mt-0.5" style={{ color: "#92400e" }}>
+              <p className="text-sm font-semibold" style={{ color: "#7a5622" }}>QuickBooks isn't connected</p>
+              <p className="text-xs mt-0.5" style={{ color: "#7a5622" }}>
                 The Reconciliations dashboard pulls all your GL accounts and subledger balances live from QuickBooks.
                 Connect to get started.
               </p>
@@ -1183,18 +1183,18 @@ export function ReconciliationsDashboard() {
         {!isClosed && priorBlockers.length > 0 && (
           <div className="rounded-xl overflow-hidden"
             style={{
-              background: "linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, var(--surface) 100%)",
-              border: "1px solid #f59e0b",
+              background: "linear-gradient(135deg, rgba(199, 154, 82, 0.08) 0%, var(--surface) 100%)",
+              border: "1px solid #c79a52",
               boxShadow: "var(--card-shadow)",
             }}>
             <div className="flex items-start gap-4 p-5">
               <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
-                style={{ background: "rgba(245, 158, 11, 0.18)", border: "2px solid #f59e0b" }}>
-                <Lock size={20} strokeWidth={2} style={{ color: "#b45309" }} />
+                style={{ background: "rgba(199, 154, 82, 0.18)", border: "2px solid #c79a52" }}>
+                <Lock size={20} strokeWidth={2} style={{ color: "#8a6326" }} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5"
-                  style={{ color: "#b45309" }}>
+                  style={{ color: "#8a6326" }}>
                   Locked — close earlier months first
                 </p>
                 <h3 className="text-lg sm:text-xl font-bold text-theme leading-tight">
@@ -1210,11 +1210,11 @@ export function ReconciliationsDashboard() {
                     <li key={b.period_end}>
                       <button
                         onClick={() => navigate(`/app/reconciliations/period/${b.period_end}`)}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md font-medium transition-colors hover:bg-[rgba(245,158,11,0.10)]"
-                        style={{ color: "#b45309", border: "1px solid #fcd34d" }}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md font-medium transition-colors hover:bg-[rgba(199, 154, 82,0.10)]"
+                        style={{ color: "#8a6326", border: "1px solid #fcd34d" }}
                       >
                         <span className="font-semibold">{b.label}</span>
-                        <span className="text-xs" style={{ color: "#92400e", opacity: 0.85 }}>
+                        <span className="text-xs" style={{ color: "#7a5622", opacity: 0.85 }}>
                           {b.unapproved > 0
                             ? `${b.unapproved} open account${b.unapproved === 1 ? "" : "s"}`
                             : "no work started"}
@@ -1224,7 +1224,7 @@ export function ReconciliationsDashboard() {
                     </li>
                   ))}
                   {priorBlockers.length > 8 && (
-                    <li className="text-xs px-3" style={{ color: "#92400e", opacity: 0.7 }}>
+                    <li className="text-xs px-3" style={{ color: "#7a5622", opacity: 0.7 }}>
                       + {priorBlockers.length - 8} more
                     </li>
                   )}
@@ -1250,14 +1250,14 @@ export function ReconciliationsDashboard() {
             <div className="flex items-center gap-4 p-5">
               <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
                 style={{
-                  background: "rgba(245, 158, 11, 0.15)",
-                  border: "2px solid #f59e0b",
+                  background: "rgba(199, 154, 82, 0.15)",
+                  border: "2px solid #c79a52",
                 }}>
-                <Lock size={20} strokeWidth={2} style={{ color: "#b45309" }} />
+                <Lock size={20} strokeWidth={2} style={{ color: "#8a6326" }} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5"
-                  style={{ color: "#b45309" }}>
+                  style={{ color: "#8a6326" }}>
                   Books closed
                 </p>
                 <h3 className="text-lg sm:text-xl font-bold text-theme leading-tight">
@@ -1284,7 +1284,7 @@ export function ReconciliationsDashboard() {
                   variant="outline"
                   icon={<Unlock size={12} strokeWidth={1.8} />}
                   onClick={() => navigate("/app")}
-                  style={{ borderColor: "#f59e0b", color: "#b45309" }}
+                  style={{ borderColor: "#c79a52", color: "#8a6326" }}
                   title="Go to the dashboard to reopen this period">
                   Reopen on dashboard
                 </Button>
@@ -1324,7 +1324,7 @@ export function ReconciliationsDashboard() {
               const totalCount    = overview?.accounts.length ?? 0
               const progressPct   = totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 0
               const varianceVal   = parseFloat(overview?.totals.variance ?? "0")
-              const varianceTone  = Math.abs(varianceVal) > 0.5 ? "#dc2626" : "var(--green)"
+              const varianceTone  = Math.abs(varianceVal) > 0.5 ? "#9b3d37" : "var(--green)"
               return (
                 <div className="sticky top-0 z-20 -mx-4 sm:-mx-5 px-4 sm:px-5 pt-1 pb-2"
                   style={{ background: "var(--bg)" }}>
@@ -1417,8 +1417,8 @@ export function ReconciliationsDashboard() {
             <div className="flex items-center gap-1 flex-wrap rounded-lg p-1"
               style={{ background: "var(--surface-2)", border: "1px solid var(--border)", width: "fit-content" }}>
               {([
-                { key: "open",     label: "Open",     fg: "#b91c1c", bg: "#fef2f2" },
-                { key: "reviewed", label: "Prepared", fg: "#1d4ed8", bg: "#dbeafe" },
+                { key: "open",     label: "Open",     fg: "#9b3d37", bg: "#f7eeec" },
+                { key: "reviewed", label: "Prepared", fg: "#3c5a76", bg: "#e9eef3" },
                 { key: "approved", label: "Approved", fg: "var(--green)", bg: "var(--green-subtle)" },
                 { key: "all",      label: "All",      fg: "var(--text)", bg: "var(--surface)" },
               ] as const).map((b) => {
@@ -1516,11 +1516,11 @@ export function ReconciliationsDashboard() {
                     <>
                     <div className="px-4 py-2 flex items-center gap-2 flex-wrap"
                       style={{
-                        background: blockedByVariance ? "#fef2f2" : "var(--green-subtle)",
+                        background: blockedByVariance ? "#f7eeec" : "var(--green-subtle)",
                         borderBottom: "1px solid var(--border)",
                       }}>
                       <span className="text-[11px] font-semibold"
-                        style={{ color: blockedByVariance ? "#991b1b" : "var(--green)" }}>
+                        style={{ color: blockedByVariance ? "#86332e" : "var(--green)" }}>
                         {selected.size} selected
                       </span>
                       {/* Mark prepared — open to all roles. Preparers'
@@ -1557,7 +1557,7 @@ export function ReconciliationsDashboard() {
                           <Button size="sm" variant="outline" icon={<AlertTriangle size={11} strokeWidth={1.8} />}
                             loading={bulkStatusMut.isPending}
                             onClick={() => bulkStatusMut.mutate("flagged")}
-                            style={{ borderColor: "#fecaca", color: "#b91c1c" }}
+                            style={{ borderColor: "#ecd7d3", color: "#9b3d37" }}
                           >
                             Flag
                           </Button>
@@ -1584,7 +1584,7 @@ export function ReconciliationsDashboard() {
                     </div>
                     {blockedByVariance && (
                       <div className="px-4 py-2 text-[11px] flex items-start gap-2"
-                        style={{ background: "#fef2f2", color: "#991b1b", borderBottom: "1px solid #fecaca" }}>
+                        style={{ background: "#f7eeec", color: "#86332e", borderBottom: "1px solid #ecd7d3" }}>
                         <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
                         <span>
                           <span className="font-semibold">Variance must be zero before approval.</span>{" "}
@@ -1679,7 +1679,7 @@ export function ReconciliationsDashboard() {
                                 : isDrawerOpen
                                   ? "var(--surface-2)"
                                   : status === "approved"
-                                    ? "rgba(16, 185, 129, 0.04)"
+                                    ? "rgba(79, 160, 122, 0.04)"
                                     : "transparent",
                             }}
                             className="transition-colors"
@@ -1687,7 +1687,7 @@ export function ReconciliationsDashboard() {
                             onMouseLeave={(e) => {
                               if (!isSelected && !isDrawerOpen) {
                                 (e.currentTarget as HTMLElement).style.background =
-                                  status === "approved" ? "rgba(16, 185, 129, 0.04)" : ""
+                                  status === "approved" ? "rgba(79, 160, 122, 0.04)" : ""
                               }
                             }}
                           >
@@ -1734,8 +1734,8 @@ export function ReconciliationsDashboard() {
                                 {!a.subledger_is_manual && a.subledger_is_rollforward && (
                                   <span className="inline-flex items-center text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded"
                                     style={{
-                                      background: "rgba(59, 130, 246, 0.15)",
-                                      color: "#1d4ed8",
+                                      background: "rgba(78, 110, 142, 0.15)",
+                                      color: "#3c5a76",
                                     }}
                                     title={`Rolled forward from prior close subledger (${a.rollforward_from}). Open the row to tick reconciling items.`}>
                                     Roll fwd
@@ -1744,7 +1744,7 @@ export function ReconciliationsDashboard() {
                               </span>
                             </td>
                             <td className="px-3 py-1.5 text-right tabular-nums text-sm font-medium"
-                              style={{ color: hasVariance ? "#dc2626" : "var(--green)" }}>
+                              style={{ color: hasVariance ? "#9b3d37" : "var(--green)" }}>
                               {hasVariance ? fmtMoney(a.variance) : "—"}
                             </td>
                             <td className="px-3 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
@@ -2027,14 +2027,14 @@ export function ReconciliationsDashboard() {
               <span className="px-1.5 py-0.5 rounded font-bold uppercase tracking-wider"
                 style={{
                   background:
-                    a.review_status === "approved" ? "rgba(16, 185, 129, 0.12)" :
-                    a.review_status === "reviewed" ? "rgba(59, 130, 246, 0.12)" :
-                    a.review_status === "flagged"  ? "rgba(239, 68, 68, 0.12)"  :
+                    a.review_status === "approved" ? "rgba(79, 160, 122, 0.12)" :
+                    a.review_status === "reviewed" ? "rgba(78, 110, 142, 0.12)" :
+                    a.review_status === "flagged"  ? "rgba(176, 86, 78, 0.12)"  :
                                                      "var(--surface-2)",
                   color:
-                    a.review_status === "approved" ? "#047857" :
-                    a.review_status === "reviewed" ? "#1d4ed8" :
-                    a.review_status === "flagged"  ? "#b91c1c" :
+                    a.review_status === "approved" ? "#2e7a55" :
+                    a.review_status === "reviewed" ? "#3c5a76" :
+                    a.review_status === "flagged"  ? "#9b3d37" :
                                                      "var(--text-muted)",
                 }}>
                 {a.review_status}
@@ -2138,9 +2138,9 @@ export function ReconciliationsDashboard() {
 //   maker/checker workflow reads in finance teams.
 const STATUS_META: Record<AccountReviewStatus, { label: string; bg: string; fg: string }> = {
   pending:  { label: "Pending",  bg: "var(--surface-2)",     fg: "var(--text-muted)" },
-  reviewed: { label: "Prepared", bg: "#dbeafe",              fg: "#1d4ed8" },
+  reviewed: { label: "Prepared", bg: "#e9eef3",              fg: "#3c5a76" },
   approved: { label: "Approved", bg: "var(--green-subtle)",  fg: "var(--green)" },
-  flagged:  { label: "Flagged",  bg: "#fee2e2",              fg: "#b91c1c" },
+  flagged:  { label: "Flagged",  bg: "#f4e9e7",              fg: "#9b3d37" },
 }
 const STATUS_CYCLE: AccountReviewStatus[] = ["pending", "reviewed", "approved", "flagged"]
 
@@ -2193,7 +2193,7 @@ function VerificationBadge({
 
   const palette = {
     match:    { bg: "var(--green-subtle)", fg: "var(--green)", border: "var(--green)",        Icon: CheckCircle2 },
-    mismatch: { bg: "#fef2f2",             fg: "#b91c1c",      border: "#fecaca",             Icon: AlertCircle },
+    mismatch: { bg: "#f7eeec",             fg: "#9b3d37",      border: "#ecd7d3",             Icon: AlertCircle },
     unknown:  { bg: "var(--surface)",      fg: "var(--text-muted)", border: "var(--border)",  Icon: AlertTriangle },
   }[liveStatus]
   const Icon = palette.Icon
@@ -2792,12 +2792,12 @@ function InlineSubledgerForm({
 
   return (
     <form onSubmit={submit} className="px-4 sm:px-6 py-4 border-l-4"
-      style={{ borderLeftColor: readOnly ? "#f59e0b" : "var(--green)" }}>
+      style={{ borderLeftColor: readOnly ? "#c79a52" : "var(--green)" }}>
       {!hideHeader && (
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-wide"
-              style={{ color: readOnly ? "#b45309" : "var(--green)" }}>
+              style={{ color: readOnly ? "#8a6326" : "var(--green)" }}>
               {readOnly ? "Locked period · view only" : "Manual subledger"} · {periodEnd}
             </p>
             <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
@@ -2824,7 +2824,7 @@ function InlineSubledgerForm({
                 reopened individually from the drawer footer. */}
       {readOnly && (
         <div className="rounded-md px-3 py-2 mb-3 flex items-center gap-2 text-[11px]"
-          style={{ background: "rgba(245, 158, 11, 0.10)", border: "1px solid rgba(245, 158, 11, 0.40)", color: "#92400e" }}>
+          style={{ background: "rgba(199, 154, 82, 0.10)", border: "1px solid rgba(199, 154, 82, 0.40)", color: "#7a5622" }}>
           <Lock size={11} strokeWidth={2} />
           <span>
             {periodClosed ? (
@@ -3129,8 +3129,8 @@ function InlineSubledgerForm({
           <div className="rounded-lg px-3 py-2 mb-3 flex items-center justify-between gap-x-5 gap-y-1 flex-wrap"
             style={{
               // rgba so the tint shows on both light and dark surfaces.
-              background: tiedOut ? "var(--green-subtle)" : "rgba(220, 38, 38, 0.10)",
-              border: `1px solid ${tiedOut ? "var(--green)" : "rgba(220, 38, 38, 0.40)"}`,
+              background: tiedOut ? "var(--green-subtle)" : "rgba(155, 61, 55, 0.10)",
+              border: `1px solid ${tiedOut ? "var(--green)" : "rgba(155, 61, 55, 0.40)"}`,
             }}>
             <Metric label="GL" value={fmtMoney(account.gl_balance)} />
             <Metric label="Subledger" value={fmtMoney(displaySubledger)} />
@@ -3140,7 +3140,7 @@ function InlineSubledgerForm({
                 {tiedOut ? "Reconciled" : "Variance (GL − Sub)"}
               </span>
               <span className="text-sm font-bold tabular-nums"
-                style={{ color: hasGap ? "#ef4444" : "var(--green)" }}>
+                style={{ color: hasGap ? "#b0564e" : "var(--green)" }}>
                 {fmtMoney(variance)}
               </span>
             </div>
@@ -3398,7 +3398,7 @@ function InlineSubledgerForm({
                 </span>
                 {!hasEvidence && (
                   <span className="text-[10px] font-medium"
-                    style={{ color: "#b91c1c" }}>
+                    style={{ color: "#9b3d37" }}>
                     Required for approval
                   </span>
                 )}
@@ -3431,7 +3431,7 @@ function InlineSubledgerForm({
                             disabled={deleteMut.isPending}
                             className="h-6 w-6 inline-flex items-center justify-center rounded"
                             title="Remove"
-                            style={{ color: "#b91c1c" }}>
+                            style={{ color: "#9b3d37" }}>
                             <X size={12} strokeWidth={1.8} />
                           </button>
                         </div>
@@ -3485,7 +3485,7 @@ function InlineSubledgerForm({
                 </>
               )}
               {uploadError && (
-                <p className="text-[11px]" style={{ color: "#b91c1c" }}>{uploadError}</p>
+                <p className="text-[11px]" style={{ color: "#9b3d37" }}>{uploadError}</p>
               )}
             </div>
           </div>{/* end RIGHT column (evidence + AI verify) */}
@@ -3505,7 +3505,7 @@ function InlineSubledgerForm({
               onClick={onClear}
               disabled={saving}
               className="text-[11px] font-medium underline-offset-2 hover:underline"
-              style={{ color: "#b91c1c" }}
+              style={{ color: "#9b3d37" }}
             >
               Clear override
             </button>
@@ -3516,7 +3516,7 @@ function InlineSubledgerForm({
                 Prepared, the button still re-saves but doesn't downgrade. */}
             {(account.review_status === "pending" || account.review_status === "flagged") && (
               <span className="text-[10px] hidden sm:inline" style={{ color: "var(--text-muted)" }}>
-                Saves + marks <span className="font-semibold" style={{ color: "#1d4ed8" }}>Prepared</span>
+                Saves + marks <span className="font-semibold" style={{ color: "#3c5a76" }}>Prepared</span>
                 {" "}— a reviewer signs off after.
               </span>
             )}
@@ -3624,12 +3624,12 @@ function SubledgerBuildup({
                 <li key={it.txn_id}
                   className="flex items-center gap-2 py-1 px-1 text-xs rounded"
                   style={{ background: "transparent" }}>
-                  <span style={{ color: amt >= 0 ? "var(--green)" : "#ef4444" }}>
+                  <span style={{ color: amt >= 0 ? "var(--green)" : "#b0564e" }}>
                     {amt >= 0 ? "+" : "−"}
                   </span>
                   {isManual && (
                     <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded"
-                      style={{ background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b" }}>
+                      style={{ background: "rgba(199, 154, 82, 0.15)", color: "#c79a52" }}>
                       Manual
                     </span>
                   )}
@@ -3647,7 +3647,7 @@ function SubledgerBuildup({
                     </span>
                   </span>
                   <span className="tabular-nums font-semibold whitespace-nowrap"
-                    style={{ color: amt >= 0 ? "var(--green)" : "#ef4444" }}>
+                    style={{ color: amt >= 0 ? "var(--green)" : "#b0564e" }}>
                     {amt >= 0 ? "+" : ""}{fmtMoney(amt)}
                   </span>
                   {readOnly ? null : isManual ? (
@@ -3663,7 +3663,7 @@ function SubledgerBuildup({
                         onClick={() => onDeleteManual(it.txn_id)}
                         className="h-5 w-5 inline-flex items-center justify-center rounded"
                         title="Delete"
-                        style={{ color: "#ef4444" }}>
+                        style={{ color: "#b0564e" }}>
                         <X size={12} strokeWidth={1.8} />
                       </button>
                     </>
@@ -3697,7 +3697,7 @@ function SubledgerBuildup({
               Items subtotal ({selectedItems.length})
             </span>
             <span className="tabular-nums font-semibold"
-              style={{ color: selectedSum >= 0 ? "var(--green)" : "#ef4444" }}>
+              style={{ color: selectedSum >= 0 ? "var(--green)" : "#b0564e" }}>
               {selectedSum >= 0 ? "+" : ""}{fmtMoney(selectedSum)}
             </span>
           </div>
@@ -3733,10 +3733,10 @@ function AiCommentaryCard({ commentary }: {
 }) {
   const conf = commentary.confidence
   const rec = commentary.recommendation
-  const confColor = conf === "high" ? "var(--green)" : conf === "medium" ? "#b45309" : "#b91c1c"
+  const confColor = conf === "high" ? "var(--green)" : conf === "medium" ? "#8a6326" : "#9b3d37"
   const confBg    = conf === "high" ? "var(--green-subtle)"
-                    : conf === "medium" ? "rgba(245, 158, 11, 0.10)"
-                    : "rgba(220, 38, 38, 0.08)"
+                    : conf === "medium" ? "rgba(199, 154, 82, 0.10)"
+                    : "rgba(155, 61, 55, 0.08)"
   const recLabel = rec === "approve"     ? "Approve as-is"
                  : rec === "review"      ? "Review flagged items before approving"
                  : rec === "investigate" ? "Investigate before approving"
@@ -3744,8 +3744,8 @@ function AiCommentaryCard({ commentary }: {
 
   const statusMeta = {
     pass: { fg: "var(--green)",     bg: "var(--green-subtle)",      label: "✓ Pass" },
-    warn: { fg: "#b45309",          bg: "rgba(245, 158, 11, 0.12)", label: "⚠ Warn" },
-    fail: { fg: "#b91c1c",          bg: "rgba(220, 38, 38, 0.10)",  label: "✕ Fail" },
+    warn: { fg: "#8a6326",          bg: "rgba(199, 154, 82, 0.12)", label: "⚠ Warn" },
+    fail: { fg: "#9b3d37",          bg: "rgba(155, 61, 55, 0.10)",  label: "✕ Fail" },
   } as const
 
   return (
@@ -3794,15 +3794,15 @@ function AiCommentaryCard({ commentary }: {
       {commentary.item_flags && commentary.item_flags.length > 0 && (
         <div className="px-4 pb-3" style={{ borderTop: "1px solid var(--border)" }}>
           <div className="flex items-center gap-1.5 mt-3 mb-2 text-[10px] font-bold uppercase tracking-wider"
-            style={{ color: "#b45309" }}>
+            style={{ color: "#8a6326" }}>
             <AlertTriangle size={12} strokeWidth={2} /> Items to review ({commentary.item_flags.length})
           </div>
           <div className="space-y-2">
             {commentary.item_flags.map((f, i) => {
-              const sevColor = f.severity === "high" ? "#b91c1c" : f.severity === "medium" ? "#b45309" : "var(--text-muted)"
+              const sevColor = f.severity === "high" ? "#9b3d37" : f.severity === "medium" ? "#8a6326" : "var(--text-muted)"
               return (
                 <div key={i} className="rounded-lg p-2.5"
-                  style={{ background: "rgba(245, 158, 11, 0.06)", border: "1px solid rgba(245, 158, 11, 0.30)" }}>
+                  style={{ background: "rgba(199, 154, 82, 0.06)", border: "1px solid rgba(199, 154, 82, 0.30)" }}>
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-[12px] font-semibold leading-snug" style={{ color: "var(--text)" }}>{f.label}</span>
                     {f.amount && (
@@ -3950,38 +3950,38 @@ function AgenticResultBanner({ result, onDismiss }: {
       exit={{ opacity: 0, height: 0 }}
       transition={{ duration: 0.22 }}
       style={{
-        background: isError ? "#fef3c7" : "var(--green-subtle)",
+        background: isError ? "#f4eddf" : "var(--green-subtle)",
         borderBottom: "1px solid var(--border)",
       }}
     >
       <div className="px-4 sm:px-8 py-2.5">
         <div className="flex items-center gap-3 flex-wrap">
           <Sparkles size={14} strokeWidth={1.8}
-            style={{ color: isError ? "#92400e" : "var(--green)" }} />
+            style={{ color: isError ? "#7a5622" : "var(--green)" }} />
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold"
-              style={{ color: isError ? "#92400e" : "var(--green)" }}>
+              style={{ color: isError ? "#7a5622" : "var(--green)" }}>
               Agentic Preparer · {totalTouched} account{totalTouched === 1 ? "" : "s"} reviewed
             </p>
             <p className="text-[11px] mt-0.5" style={{ color: "var(--text-2)" }}>
               <b>{result.prepared}</b> auto-prepared
               {" · "}<b>{result.analyzed}</b> AI-analyzed (needs human review)
               {" · "}<b>{result.skipped}</b> skipped
-              {result.failed > 0 && (<> {" · "}<b style={{ color: "#b91c1c" }}>{result.failed} failed</b></>)}
+              {result.failed > 0 && (<> {" · "}<b style={{ color: "#9b3d37" }}>{result.failed} failed</b></>)}
               {" · "}{(result.duration_ms / 1000).toFixed(1)}s
             </p>
           </div>
           <button
             onClick={() => setExpanded((x) => !x)}
             className="text-[11px] font-semibold underline-offset-2 hover:underline"
-            style={{ color: isError ? "#92400e" : "var(--green)" }}
+            style={{ color: isError ? "#7a5622" : "var(--green)" }}
           >
             {expanded ? "Hide details" : "View details"}
           </button>
           <button
             onClick={onDismiss}
             className="h-5 w-5 inline-flex items-center justify-center rounded transition-opacity hover:opacity-70"
-            style={{ color: isError ? "#92400e" : "var(--green)" }}
+            style={{ color: isError ? "#7a5622" : "var(--green)" }}
             title="Dismiss"
           >
             <X size={13} strokeWidth={2} />
@@ -4010,11 +4010,11 @@ function AgenticResultBanner({ result, onDismiss }: {
                   <tbody>
                     {result.accounts.map((a) => {
                       const tone = a.action === "prepared" ? "var(--green)"
-                                  : a.action === "analyzed" ? "#1d4ed8"
-                                  : "#92400e"
+                                  : a.action === "analyzed" ? "#3c5a76"
+                                  : "#7a5622"
                       const bg = a.action === "prepared" ? "var(--green-subtle)"
-                                : a.action === "analyzed" ? "#dbeafe"
-                                : "#fef3c7"
+                                : a.action === "analyzed" ? "#e9eef3"
+                                : "#f4eddf"
                       return (
                         <tr key={a.qbo_account_id + a.account_name}
                           style={{ borderTop: "1px solid var(--border)" }}>
@@ -4094,9 +4094,9 @@ function DownloadReconButton({ qboAccountId, periodEnd, accountName }: {
       disabled={pending}
       className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors"
       style={{
-        color: error ? "#b91c1c" : "var(--green)",
-        border: `1px solid ${error ? "#fecaca" : "var(--green)"}`,
-        background: error ? "#fef2f2" : "var(--green-subtle)",
+        color: error ? "#9b3d37" : "var(--green)",
+        border: `1px solid ${error ? "#ecd7d3" : "var(--green)"}`,
+        background: error ? "#f7eeec" : "var(--green-subtle)",
         opacity: pending ? 0.6 : 1,
         cursor: pending ? "wait" : "pointer",
       }}
@@ -4217,8 +4217,8 @@ function KpiInline({
       <span className="text-sm font-bold tabular-nums" style={{ color: tone }}>{value}</span>
       {badge && (
         <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-          style={{ background: tone === "#dc2626" ? "#fef2f2" : "var(--green-subtle)",
-                   color: tone === "#dc2626" ? "#dc2626" : "var(--green)" }}>
+          style={{ background: tone === "#9b3d37" ? "#f7eeec" : "var(--green-subtle)",
+                   color: tone === "#9b3d37" ? "#9b3d37" : "var(--green)" }}>
           {badge}
         </span>
       )}
@@ -4298,7 +4298,7 @@ function DetailDrawer({ account, periodEnd, onClose }: DrawerProps) {
               )}
               {account.subledger_is_manual && (
                 <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
-                  style={{ background: "#fef3c7", color: "#92400e" }}
+                  style={{ background: "#f4eddf", color: "#7a5622" }}
                   title="Subledger value was entered manually">
                   Manual subledger
                 </span>
@@ -4308,7 +4308,7 @@ function DetailDrawer({ account, periodEnd, onClose }: DrawerProps) {
             <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
               GL {fmtMoney(account.gl_balance)} · Subledger {fmtMoney(account.subledger_balance)}
               {hasVariance && (
-                <> · <span style={{ color: "#dc2626" }}>Variance {fmtMoney(account.variance)}</span></>
+                <> · <span style={{ color: "#9b3d37" }}>Variance {fmtMoney(account.variance)}</span></>
               )}
             </p>
           </div>
@@ -4383,11 +4383,11 @@ function SubledgerBody({ subledger, loading }: { subledger?: SubledgerDetail; lo
                   <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r["1_30"] ?? "0")}</td>
                   <td className="text-right py-2 px-1 tabular-nums">{fmtMoney(r["31_60"] ?? "0")}</td>
                   <td className="text-right py-2 px-1 tabular-nums"
-                    style={{ color: parseFloat(r["61_90"] ?? "0") > 0 ? "#92400e" : "inherit" }}>
+                    style={{ color: parseFloat(r["61_90"] ?? "0") > 0 ? "#7a5622" : "inherit" }}>
                     {fmtMoney(r["61_90"] ?? "0")}
                   </td>
                   <td className="text-right py-2 px-1 tabular-nums"
-                    style={{ color: parseFloat(r.over_90 ?? "0") > 0 ? "#dc2626" : "inherit" }}>
+                    style={{ color: parseFloat(r.over_90 ?? "0") > 0 ? "#9b3d37" : "inherit" }}>
                     {fmtMoney(r.over_90 ?? "0")}
                   </td>
                   <td className="text-right py-2 px-2 tabular-nums font-semibold text-theme">
@@ -4404,11 +4404,11 @@ function SubledgerBody({ subledger, loading }: { subledger?: SubledgerDetail; lo
                 <td className="text-right py-2 px-1 tabular-nums font-bold text-theme">{fmtMoney(totals.a1_30)}</td>
                 <td className="text-right py-2 px-1 tabular-nums font-bold text-theme">{fmtMoney(totals.a31_60)}</td>
                 <td className="text-right py-2 px-1 tabular-nums font-bold"
-                  style={{ color: totals.a61_90 > 0 ? "#92400e" : "var(--text)" }}>
+                  style={{ color: totals.a61_90 > 0 ? "#7a5622" : "var(--text)" }}>
                   {fmtMoney(totals.a61_90)}
                 </td>
                 <td className="text-right py-2 px-1 tabular-nums font-bold"
-                  style={{ color: totals.over90 > 0 ? "#dc2626" : "var(--text)" }}>
+                  style={{ color: totals.over90 > 0 ? "#9b3d37" : "var(--text)" }}>
                   {fmtMoney(totals.over90)}
                 </td>
                 <td className="text-right py-2 px-2 tabular-nums font-bold text-theme">{fmtMoney(totals.total)}</td>

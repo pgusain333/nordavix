@@ -160,7 +160,7 @@ export function FixedAssetsPage() {
       <SchedulePageHeader
         type="fixed_asset"
         icon={<Building2 size={20} strokeWidth={1.6} />}
-        accent={{ fg: "#15803d", bg: "rgba(21, 128, 61, 0.10)" }}
+        accent={{ fg: "#2e7a55", bg: "rgba(46, 122, 85, 0.10)" }}
         periodEnd={periodEnd} onPeriod={setPeriodEnd}
         onAddItem={() => setDialog({ open: true })} addLabel="Add asset"
         onExport={() => exportMut.mutate()}
@@ -274,7 +274,7 @@ export function FixedAssetsPage() {
                           <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Tag: {it.reference}</div>
                         )}
                         {it.disposed_on && (
-                          <div className="text-[10px] font-semibold" style={{ color: "#b91c1c" }}>
+                          <div className="text-[10px] font-semibold" style={{ color: "#9b3d37" }}>
                             Disposed {it.disposed_on}
                           </div>
                         )}
@@ -292,7 +292,7 @@ export function FixedAssetsPage() {
                             onClick={() => setDrawerItem(it)}
                             className="p-1 rounded hover:bg-[var(--surface-2)]"
                             title="View depreciation schedule + JE">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#15803d" }} />
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#2e7a55" }} />
                           </button>
                           <RowActions
                             onEdit={() => setDialog({ open: true, item: it })}
@@ -362,7 +362,7 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
         <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
       </button>
       <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Delete">
-        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#b91c1c" }} />
+        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
       </button>
     </div>
   )
@@ -476,7 +476,7 @@ function FADialog({ existing, prefill, onClose, initialAccount }: {
             <h3 className="text-base font-semibold text-theme">{existing ? "Edit asset" : "New fixed asset"}</h3>
             {!existing && prefill?.source === "ai-detect" && (
               <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-                style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+                style={{ background: "rgba(84, 88, 138, 0.12)", color: "#54588a" }}>
                 ✨ AI-detected
               </span>
             )}
@@ -556,7 +556,7 @@ function FADialog({ existing, prefill, onClose, initialAccount }: {
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
               className={inputCls} style={inputStyle} />
           </Field>
-          {error && <p className="text-xs" style={{ color: "#b91c1c" }}>{error}</p>}
+          {error && <p className="text-xs" style={{ color: "#9b3d37" }}>{error}</p>}
         </div>
         <div className="px-6 py-3 flex items-center justify-end gap-2"
           style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>

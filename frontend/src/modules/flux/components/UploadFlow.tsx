@@ -431,7 +431,7 @@ export function UploadFlow({ onComplete, qboConnected = false, forceSource }: Pr
                   <button
                     className="text-xs mt-1 transition-colors"
                     style={{ color: "var(--text-muted)" }}
-                    onMouseEnter={e => (e.currentTarget.style.color = "#dc2626")}
+                    onMouseEnter={e => (e.currentTarget.style.color = "#9b3d37")}
                     onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
                     onClick={(e) => { e.stopPropagation(); setFile(null) }}
                   >
@@ -640,10 +640,10 @@ function SourceCard({
 function ErrorMsg({ msg, onClose }: { msg: string; onClose: () => void }) {
   return (
     <div className="flex items-start gap-2 rounded-lg p-3 mb-4"
-      style={{ background: "#fee2e2", border: "1px solid #fca5a5" }}>
-      <AlertTriangle size={16} strokeWidth={1.6} className="shrink-0 mt-0.5" style={{ color: "#dc2626" }} />
-      <p className="text-sm flex-1" style={{ color: "#b91c1c" }}>{msg}</p>
-      <button onClick={onClose} style={{ color: "#dc2626" }} className="hover:opacity-70 transition-opacity">
+      style={{ background: "#f4e9e7", border: "1px solid #ddb5b0" }}>
+      <AlertTriangle size={16} strokeWidth={1.6} className="shrink-0 mt-0.5" style={{ color: "#9b3d37" }} />
+      <p className="text-sm flex-1" style={{ color: "#9b3d37" }}>{msg}</p>
+      <button onClick={onClose} style={{ color: "#9b3d37" }} className="hover:opacity-70 transition-opacity">
         <X size={14} />
       </button>
     </div>

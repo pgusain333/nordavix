@@ -65,8 +65,8 @@ export function TopBar() {
     enabled:  !!organization,
   })
   const roleMeta = me ? ({
-    admin:    { label: "Admin",    bg: "rgba(245, 158, 11, 0.15)", fg: "#f59e0b" },
-    reviewer: { label: "Reviewer", bg: "#dbeafe",                  fg: "#1d4ed8" },
+    admin:    { label: "Admin",    bg: "rgba(199, 154, 82, 0.15)", fg: "#c79a52" },
+    reviewer: { label: "Reviewer", bg: "#e9eef3",                  fg: "#3c5a76" },
     preparer: { label: "Preparer", bg: "var(--surface-2)",         fg: "var(--text-muted)" },
   } as const)[me.role as "admin" | "reviewer" | "preparer"] : null
 

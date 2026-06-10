@@ -53,12 +53,12 @@ import type { VarianceRow } from "@/modules/flux/api"
 
 const STATUS_DOT: Record<string, string> = {
   pending:          "var(--border-strong)",
-  processing:       "#f59e0b",
-  parsed:           "#3b82f6",
-  ready_for_review: "#3b82f6",
-  generating:       "#f59e0b",
+  processing:       "#c79a52",
+  parsed:           "#4e6e8e",
+  ready_for_review: "#4e6e8e",
+  generating:       "#c79a52",
   complete:         "var(--green)",
-  error:            "#dc2626",
+  error:            "#9b3d37",
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -495,11 +495,11 @@ export function FluxDashboard() {
               <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
                 style={{
                   background: selectedTb.status === "complete"  ? "var(--green-subtle)" :
-                    selectedTb.status === "error" ? "#fee2e2" :
-                    ["generating","processing"].includes(selectedTb.status) ? "#fef3c7" : "var(--surface-2)",
+                    selectedTb.status === "error" ? "#f4e9e7" :
+                    ["generating","processing"].includes(selectedTb.status) ? "#f4eddf" : "var(--surface-2)",
                   color: selectedTb.status === "complete"  ? "var(--green)" :
-                    selectedTb.status === "error" ? "#dc2626" :
-                    ["generating","processing"].includes(selectedTb.status) ? "#92400e" : "var(--text-2)",
+                    selectedTb.status === "error" ? "#9b3d37" :
+                    ["generating","processing"].includes(selectedTb.status) ? "#7a5622" : "var(--text-2)",
                 }}>
                 <span className="h-1.5 w-1.5 rounded-full"
                   style={{ background: STATUS_DOT[selectedTb.status] ?? "var(--border-strong)" }} />
@@ -515,7 +515,7 @@ export function FluxDashboard() {
                 onClick={handleReset}
                 title={pendingAction === "reset" ? "Click again to confirm" : "Wipe uploaded data — keeps the analysis, lets you re-upload"}
                 style={pendingAction === "reset"
-                  ? { borderColor: "#f59e0b", color: "#92400e" }
+                  ? { borderColor: "#c79a52", color: "#7a5622" }
                   : undefined}
               >
                 <span className="hidden sm:inline">
@@ -532,7 +532,7 @@ export function FluxDashboard() {
                 onClick={handleDelete}
                 title={pendingAction === "delete" ? "Click again to confirm" : "Delete this analysis permanently"}
                 style={pendingAction === "delete"
-                  ? { borderColor: "#dc2626", color: "#dc2626" }
+                  ? { borderColor: "#9b3d37", color: "#9b3d37" }
                   : undefined}
               >
                 <span className="hidden sm:inline">
@@ -654,7 +654,7 @@ export function FluxDashboard() {
                 icon={<Unlock size={14} strokeWidth={1.8} />}
                 loading={reopenMut.isPending}
                 onClick={() => reopenMut.mutate()}
-                style={{ borderColor: "#f59e0b", color: "#b45309" }}
+                style={{ borderColor: "#c79a52", color: "#8a6326" }}
                 title="Reopen the books for this period — admins can edit again"
               >
                 <span className="hidden sm:inline">Reopen books</span>
@@ -688,11 +688,11 @@ export function FluxDashboard() {
               style={{
                 background:
                   runMsg.kind === "ok"   ? "var(--green-subtle)" :
-                  runMsg.kind === "err"  ? "#fee2e2" :
+                  runMsg.kind === "err"  ? "#f4e9e7" :
                                            "var(--surface-2)",
                 color:
                   runMsg.kind === "ok"   ? "var(--green)" :
-                  runMsg.kind === "err"  ? "#b91c1c" :
+                  runMsg.kind === "err"  ? "#9b3d37" :
                                            "var(--text-2)",
                 borderBottom: "1px solid var(--border)",
               }}
@@ -740,14 +740,14 @@ export function FluxDashboard() {
                   <div className="flex items-center gap-4 p-5">
                     <div className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
                       style={{
-                        background: "rgba(245, 158, 11, 0.15)",
-                        border: "2px solid #f59e0b",
+                        background: "rgba(199, 154, 82, 0.15)",
+                        border: "2px solid #c79a52",
                       }}>
-                      <Lock size={20} strokeWidth={2} style={{ color: "#b45309" }} />
+                      <Lock size={20} strokeWidth={2} style={{ color: "#8a6326" }} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5"
-                        style={{ color: "#b45309" }}>
+                        style={{ color: "#8a6326" }}>
                         Books closed
                       </p>
                       <h3 className="text-lg sm:text-xl font-bold text-theme leading-tight">
@@ -773,7 +773,7 @@ export function FluxDashboard() {
                         icon={<Unlock size={12} strokeWidth={1.8} />}
                         loading={reopenMut.isPending}
                         onClick={() => reopenMut.mutate()}
-                        style={{ borderColor: "#f59e0b", color: "#b45309" }}>
+                        style={{ borderColor: "#c79a52", color: "#8a6326" }}>
                         Reopen
                       </Button>
                     )}
@@ -825,9 +825,9 @@ export function FluxDashboard() {
                 {showProcessing && (
                   <div className="flex flex-col items-center justify-center h-full text-center p-8">
                     <div className="relative h-16 w-16 mb-5">
-                      <div className="absolute inset-0 rounded-full animate-ping opacity-40" style={{ background: "#fef3c7" }} />
-                      <div className="relative h-16 w-16 rounded-full flex items-center justify-center" style={{ background: "#fef3c7" }}>
-                        <Spinner className="h-7 w-7 text-[#92400e]" />
+                      <div className="absolute inset-0 rounded-full animate-ping opacity-40" style={{ background: "#f4eddf" }} />
+                      <div className="relative h-16 w-16 rounded-full flex items-center justify-center" style={{ background: "#f4eddf" }}>
+                        <Spinner className="h-7 w-7 text-[#7a5622]" />
                       </div>
                     </div>
                     <p className="text-base font-semibold text-theme mb-2">Processing your file…</p>
@@ -839,8 +839,8 @@ export function FluxDashboard() {
 
                 {showError && (
                   <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                    <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4" style={{ background: "#fee2e2" }}>
-                      <AlertCircle size={28} strokeWidth={1.6} style={{ color: "#dc2626" }} />
+                    <div className="h-14 w-14 rounded-full flex items-center justify-center mb-4" style={{ background: "#f4e9e7" }}>
+                      <AlertCircle size={28} strokeWidth={1.6} style={{ color: "#9b3d37" }} />
                     </div>
                     <p className="text-base font-semibold text-theme mb-2">Processing failed</p>
                     <p className="text-sm max-w-xs leading-relaxed mb-5" style={{ color: "var(--text-muted)" }}>
@@ -945,10 +945,10 @@ function FluxEmptyState({ qboConnected, qboCompany, onComplete, onConnectQbo }: 
 
       {!qboConnected && mode !== "upload" && (
         <div className="mb-5 rounded-lg p-3 flex items-start gap-2"
-          style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}>
-          <AlertCircle size={14} strokeWidth={1.8} style={{ color: "#92400e" }} className="shrink-0 mt-0.5" />
+          style={{ background: "#f4eddf", border: "1px solid #c79a52" }}>
+          <AlertCircle size={14} strokeWidth={1.8} style={{ color: "#7a5622" }} className="shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <p className="text-xs" style={{ color: "#92400e" }}>
+            <p className="text-xs" style={{ color: "#7a5622" }}>
               QuickBooks isn't connected — pulling a trial balance automatically is disabled. You can upload a file instead, or connect QBO.
             </p>
           </div>
@@ -1275,7 +1275,7 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
       </div>
 
       {error && (
-        <p className="text-xs flex items-start gap-1.5" style={{ color: "#dc2626" }}>
+        <p className="text-xs flex items-start gap-1.5" style={{ color: "#9b3d37" }}>
           <AlertCircle size={11} strokeWidth={1.8} className="mt-0.5 shrink-0" />
           {error}
         </p>

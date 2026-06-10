@@ -422,7 +422,7 @@ export function FinancialsPage() {
             <motion.div
               initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
               className="rounded-lg px-4 py-3 flex items-start gap-2"
-              style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", overflow: "hidden" }}>
+              style={{ background: "#f7eeec", border: "1px solid #ecd7d3", color: "#86332e", overflow: "hidden" }}>
               <AlertCircle size={14} strokeWidth={1.8} className="shrink-0 mt-0.5" />
               <div className="flex-1 text-xs">
                 <p className="font-semibold mb-0.5">Couldn&apos;t export PDF</p>
@@ -437,11 +437,11 @@ export function FinancialsPage() {
         {/* QBO not connected */}
         {!qbo && (
           <div className="rounded-xl p-4 flex items-start gap-3"
-            style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}>
-            <AlertCircle size={18} style={{ color: "#92400e" }} className="shrink-0 mt-0.5" />
+            style={{ background: "#f4eddf", border: "1px solid #c79a52" }}>
+            <AlertCircle size={18} style={{ color: "#7a5622" }} className="shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-semibold" style={{ color: "#92400e" }}>QuickBooks isn&apos;t connected</p>
-              <p className="text-xs mt-0.5" style={{ color: "#92400e" }}>
+              <p className="text-sm font-semibold" style={{ color: "#7a5622" }}>QuickBooks isn&apos;t connected</p>
+              <p className="text-xs mt-0.5" style={{ color: "#7a5622" }}>
                 Financial statements are pulled live from QuickBooks reports.
               </p>
             </div>
@@ -548,7 +548,7 @@ export function FinancialsPage() {
             ) : error ? (
               <div className="rounded-xl p-10 text-center"
                 style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-                <AlertCircle size={28} strokeWidth={1.6} className="mx-auto mb-3" style={{ color: "#dc2626" }} />
+                <AlertCircle size={28} strokeWidth={1.6} className="mx-auto mb-3" style={{ color: "#9b3d37" }} />
                 <p className="text-sm font-semibold text-theme mb-1">Could not pull statement from QuickBooks</p>
                 <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                   {((error as { message?: string })?.message) ?? "Try a different period or re-sync."}
@@ -689,8 +689,8 @@ function ExecutiveReportCard({
             transition={{ duration: 0.2 }}
             className="px-5 sm:px-6 py-3 flex items-start gap-2"
             style={{
-              background: "#fef2f2", borderTop: "1px solid #fecaca",
-              color: "#991b1b", overflow: "hidden",
+              background: "#f7eeec", borderTop: "1px solid #ecd7d3",
+              color: "#86332e", overflow: "hidden",
             }}
           >
             <AlertCircle size={13} strokeWidth={1.8} className="shrink-0 mt-0.5" />
@@ -843,7 +843,7 @@ function StatementView({ stmt }: { stmt: Statement }) {
           do-not-distribute. Exports are watermarked DRAFT until resolved. */}
       {stmt.validation && !stmt.validation.balanced && (
         <div className="px-8 py-3 text-xs"
-          style={{ background: "#fef2f2", color: "#991b1b", borderBottom: "1px solid #fecaca" }}>
+          style={{ background: "#f7eeec", color: "#86332e", borderBottom: "1px solid #ecd7d3" }}>
           <p className="font-bold uppercase tracking-wide text-[11px]">
             Does not balance — do not distribute
           </p>
@@ -1020,8 +1020,8 @@ function ExportButton({ isClosed, onExport, loading }: {
   }, [open])
 
   const stampLabel = isClosed ? "FINAL" : "DRAFT"
-  const stampColor = isClosed ? "var(--green)" : "#b45309"
-  const stampBg    = isClosed ? "var(--green-subtle)" : "rgba(245, 158, 11, 0.12)"
+  const stampColor = isClosed ? "var(--green)" : "#8a6326"
+  const stampBg    = isClosed ? "var(--green-subtle)" : "rgba(199, 154, 82, 0.12)"
 
   return (
     <div ref={ref} className="relative">

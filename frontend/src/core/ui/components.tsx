@@ -26,7 +26,7 @@ const buttonVariants = cva(
         // Outline — visible in both light and dark mode
         outline:     "border border-[var(--border-strong)] text-[var(--text)] bg-transparent hover:bg-[var(--surface-2)] active:bg-[var(--border)]",
         ghost:       "text-[var(--text-2)] bg-transparent hover:bg-[var(--surface-2)] active:bg-[var(--border)]",
-        destructive: "bg-[#dc2626] text-white hover:bg-[#b91c1c] shadow-sm",
+        destructive: "bg-[#9b3d37] text-white hover:bg-[#9b3d37] shadow-sm",
         link:        "text-[var(--green)] underline-offset-4 hover:underline p-0 h-auto font-normal shadow-none",
       },
       size: {
@@ -250,7 +250,7 @@ function Select({ className, label, error, id, children, ...props }: SelectProps
         )}
         style={{
           background: "var(--surface)",
-          border: `1px solid ${error ? "#dc2626" : "var(--border-strong)"}`,
+          border: `1px solid ${error ? "#9b3d37" : "var(--border-strong)"}`,
           color: "var(--text)",
         }}
         {...props}
@@ -289,7 +289,7 @@ function Input({ className, label, hint, error, id, ...props }: InputProps) {
         )}
         style={{
           background: "var(--surface)",
-          border: `1px solid ${error ? "#dc2626" : "var(--border-strong)"}`,
+          border: `1px solid ${error ? "#9b3d37" : "var(--border-strong)"}`,
           color: "var(--text)",
         }}
         {...props}

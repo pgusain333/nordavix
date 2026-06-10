@@ -134,9 +134,9 @@ export function ScheduleItemDrawer({ variant, onClose }: Props) {
     return { type: "loan" as const, ...buildLoanSchedule(variant.item) }
   }, [variant])
 
-  const headerColor = variant.kind === "fixed_asset" ? "#15803d"
-                    : variant.kind === "lease"       ? "#7c3aed"
-                    : "#be123c"
+  const headerColor = variant.kind === "fixed_asset" ? "#2e7a55"
+                    : variant.kind === "lease"       ? "#54588a"
+                    : "#9b3d37"
   const kicker = variant.kind === "fixed_asset" ? "Depreciation schedule"
               : variant.kind === "lease"       ? "Lease amortization schedule"
               : "Loan amortization schedule"
@@ -267,7 +267,7 @@ function FaBody({ item, monthly, rows }: { item: FixedAssetItem; monthly: number
           rows={rows.map((r) => [r.period_end, fmt(r.expense), fmt(r.accum), fmt(r.nbv)])}
         />
         {item.disposed_on && (
-          <p className="text-[10px] mt-2" style={{ color: "#b91c1c" }}>
+          <p className="text-[10px] mt-2" style={{ color: "#9b3d37" }}>
             Asset disposed on {item.disposed_on} — any remaining NBV is written off at disposal.
           </p>
         )}

@@ -209,9 +209,9 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
           style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <FileText size={15} strokeWidth={1.8} style={{ color: "#1d4ed8" }} />
+              <FileText size={15} strokeWidth={1.8} style={{ color: "#3c5a76" }} />
               <p className="text-[10px] font-semibold uppercase tracking-wider"
-                style={{ color: "#1d4ed8" }}>
+                style={{ color: "#3c5a76" }}>
                 {methodKicker}
               </p>
             </div>
@@ -381,13 +381,13 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
                       <tr key={r.period_end}
                         style={{
                           borderTop: "1px solid var(--border)",
-                          background: r.is_current ? "rgba(29, 78, 216, 0.06)" : "transparent",
+                          background: r.is_current ? "rgba(60, 90, 118, 0.06)" : "transparent",
                         }}>
                         <td className="px-3 py-1.5">
                           <span className="text-theme">{r.period_end}</span>
                           {r.is_current && (
                             <span className="ml-2 text-[9px] font-semibold uppercase tracking-wider"
-                              style={{ color: "#1d4ed8" }}>· this month</span>
+                              style={{ color: "#3c5a76" }}>· this month</span>
                           )}
                           {done && !r.is_current && (
                             <span className="ml-2 inline-flex items-center gap-1 text-[9px] font-semibold"

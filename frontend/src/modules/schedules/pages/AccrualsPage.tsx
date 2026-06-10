@@ -159,7 +159,7 @@ export function AccrualsPage() {
       <SchedulePageHeader
         type="accrual"
         icon={<ClipboardList size={20} strokeWidth={1.6} />}
-        accent={{ fg: "#b45309", bg: "rgba(245, 158, 11, 0.12)" }}
+        accent={{ fg: "#8a6326", bg: "rgba(199, 154, 82, 0.12)" }}
         periodEnd={periodEnd}
         onPeriod={setPeriodEnd}
         onAddItem={() => setDialog({ open: true })}
@@ -291,7 +291,7 @@ export function AccrualsPage() {
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] font-semibold"
-                            style={{ color: "#b45309" }}>Active</span>
+                            style={{ color: "#8a6326" }}>Active</span>
                         )}
                       </Td>
                       <Td>
@@ -300,7 +300,7 @@ export function AccrualsPage() {
                             onClick={() => setDrawerItem(it)}
                             className="p-1 rounded hover:bg-[var(--surface-2)]"
                             title="View lifecycle: accrual JE + reversal JE">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#b45309" }} />
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#8a6326" }} />
                           </button>
                           <RowActions onEdit={() => setDialog({ open: true, item: it })}
                             onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} />
@@ -371,7 +371,7 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
         <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
       </button>
       <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Delete">
-        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#b91c1c" }} />
+        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
       </button>
     </div>
   )
@@ -466,7 +466,7 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
             <h3 className="text-base font-semibold text-theme">{existing ? "Edit accrual" : "New accrual"}</h3>
             {!existing && prefill?.source === "ai-missed" && (
               <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-                style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+                style={{ background: "rgba(84, 88, 138, 0.12)", color: "#54588a" }}>
                 ✨ AI-detected
               </span>
             )}
@@ -532,7 +532,7 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
               className={inputCls} style={inputStyle} />
           </Field>
-          {error && <p className="text-xs" style={{ color: "#b91c1c" }}>{error}</p>}
+          {error && <p className="text-xs" style={{ color: "#9b3d37" }}>{error}</p>}
         </div>
         <div className="px-6 py-3 flex items-center justify-end gap-2"
           style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>

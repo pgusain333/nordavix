@@ -37,9 +37,9 @@ function fmtDate(s: string | null): string {
 
 const STATUS_COLORS: Record<AccountReviewStatus, { bg: string; fg: string }> = {
   pending:  { bg: "var(--surface-2)",    fg: "var(--text-muted)" },
-  reviewed: { bg: "#dbeafe",             fg: "#1d4ed8" },
+  reviewed: { bg: "#e9eef3",             fg: "#3c5a76" },
   approved: { bg: "var(--green-subtle)", fg: "var(--green)" },
-  flagged:  { bg: "#fee2e2",             fg: "#b91c1c" },
+  flagged:  { bg: "#f4e9e7",             fg: "#9b3d37" },
 }
 
 export function OverridesDashboard() {
@@ -200,7 +200,7 @@ export function OverridesDashboard() {
                               {fmtMoney(o.subledger_total)}
                             </td>
                             <td className="px-3 py-2.5 text-xs" style={{ color: "var(--text-2)" }}>
-                              {o.subledger_source || <span style={{ color: "#b91c1c", fontStyle: "italic" }}>No source noted</span>}
+                              {o.subledger_source || <span style={{ color: "#9b3d37", fontStyle: "italic" }}>No source noted</span>}
                             </td>
                             <td className="px-3 py-2.5 text-xs">
                               {o.evidence_count > 0 ? (
@@ -209,7 +209,7 @@ export function OverridesDashboard() {
                                   {o.evidence_count} file{o.evidence_count === 1 ? "" : "s"}
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1" style={{ color: "#b91c1c" }}>
+                                <span className="inline-flex items-center gap-1" style={{ color: "#9b3d37" }}>
                                   <AlertTriangle size={11} strokeWidth={1.8} />
                                   Missing
                                 </span>
@@ -222,12 +222,12 @@ export function OverridesDashboard() {
                                 </span>
                               )}
                               {o.verification_state === "mismatch" && (
-                                <span className="inline-flex items-center gap-1" style={{ color: "#b91c1c" }}>
+                                <span className="inline-flex items-center gap-1" style={{ color: "#9b3d37" }}>
                                   <XCircle size={11} strokeWidth={2} /> AI mismatch
                                 </span>
                               )}
                               {o.verification_state === "unknown" && (
-                                <span className="inline-flex items-center gap-1" style={{ color: "#92400e" }}>
+                                <span className="inline-flex items-center gap-1" style={{ color: "#7a5622" }}>
                                   <AlertTriangle size={11} strokeWidth={1.8} /> Low confidence
                                 </span>
                               )}
@@ -260,7 +260,7 @@ export function OverridesDashboard() {
 
               <div className="px-4 py-2.5 text-[11px]" style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)" }}>
                 Showing {filtered.length} of {overrides?.length ?? 0} overrides.
-                Items marked <span style={{ color: "#b91c1c", fontWeight: 600 }}>Missing</span> have no supporting document attached.
+                Items marked <span style={{ color: "#9b3d37", fontWeight: 600 }}>Missing</span> have no supporting document attached.
               </div>
             </div>
           </>

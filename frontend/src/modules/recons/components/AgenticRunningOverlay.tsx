@@ -177,8 +177,8 @@ export function AgenticRunningOverlay({
               }}
               onMouseEnter={(e) => {
                 if (cancelling) return
-                ;(e.currentTarget as HTMLElement).style.borderColor = "#dc2626"
-                ;(e.currentTarget as HTMLElement).style.color = "#dc2626"
+                ;(e.currentTarget as HTMLElement).style.borderColor = "#9b3d37"
+                ;(e.currentTarget as HTMLElement).style.color = "#9b3d37"
               }}
               onMouseLeave={(e) => {
                 if (cancelling) return

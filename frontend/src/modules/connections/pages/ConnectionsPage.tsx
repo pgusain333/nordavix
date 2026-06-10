@@ -164,7 +164,7 @@ export function ConnectionsPage() {
               )}
 
               {qboError && (
-                <p className="text-[11px] mt-2 flex items-start gap-1.5" style={{ color: "#dc2626" }}>
+                <p className="text-[11px] mt-2 flex items-start gap-1.5" style={{ color: "#9b3d37" }}>
                   <AlertCircle size={11} strokeWidth={1.8} className="mt-0.5 shrink-0" />
                   {qboError}
                 </p>
@@ -205,7 +205,7 @@ export function ConnectionsPage() {
             <div className="px-5 py-4 flex items-start gap-3"
               style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
               <ShieldAlert size={16} strokeWidth={1.8}
-                className="mt-0.5 shrink-0" style={{ color: "#b45309" }} />
+                className="mt-0.5 shrink-0" style={{ color: "#8a6326" }} />
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-theme mb-0.5">
                   QuickBooks isn't connected yet

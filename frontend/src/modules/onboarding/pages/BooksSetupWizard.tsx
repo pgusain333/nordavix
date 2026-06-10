@@ -219,11 +219,11 @@ export function BooksSetupWizard() {
       <div className="flex-1 px-4 sm:px-8 py-6 max-w-5xl w-full mx-auto">
         {!qbo && (
           <div className="rounded-xl p-4 mb-4 flex items-start gap-3"
-            style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}>
-            <AlertTriangle size={18} style={{ color: "#92400e" }} className="shrink-0 mt-0.5" />
+            style={{ background: "#f4eddf", border: "1px solid #c79a52" }}>
+            <AlertTriangle size={18} style={{ color: "#7a5622" }} className="shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-semibold" style={{ color: "#92400e" }}>QuickBooks isn't connected</p>
-              <p className="text-xs mt-0.5" style={{ color: "#92400e" }}>
+              <p className="text-sm font-semibold" style={{ color: "#7a5622" }}>QuickBooks isn't connected</p>
+              <p className="text-xs mt-0.5" style={{ color: "#7a5622" }}>
                 The wizard pulls a starting trial balance from QuickBooks to seed your openings. Connect first, then come back.
               </p>
             </div>
@@ -317,9 +317,9 @@ export function BooksSetupWizard() {
               {(preview?.skipped_pl_count ?? 0) > 0 && (
                 <p className="text-[11px] mt-2 px-2 py-1.5 rounded inline-block"
                   style={{
-                    background: "rgba(59, 130, 246, 0.10)",
-                    color: "#1d4ed8",
-                    border: "1px solid rgba(59, 130, 246, 0.30)",
+                    background: "rgba(78, 110, 142, 0.10)",
+                    color: "#3c5a76",
+                    border: "1px solid rgba(78, 110, 142, 0.30)",
                   }}>
                   Showing {preview?.accounts.length ?? 0} balance-sheet accounts
                   {preview?.diagnostics?.raw_qbo_account_count !== undefined && (
@@ -342,7 +342,7 @@ export function BooksSetupWizard() {
               </div>
             ) : previewError ? (
               <div className="py-12 px-6 text-center">
-                <AlertTriangle size={28} strokeWidth={1.6} style={{ color: "#dc2626" }} className="mx-auto mb-3" />
+                <AlertTriangle size={28} strokeWidth={1.6} style={{ color: "#9b3d37" }} className="mx-auto mb-3" />
                 <p className="text-sm font-semibold text-theme mb-1">Couldn't load from QuickBooks</p>
                 <p className="text-xs mb-4 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
                   {extractErrorMessage(previewError)}
@@ -358,7 +358,7 @@ export function BooksSetupWizard() {
               </div>
             ) : (preview?.accounts.length ?? 0) === 0 ? (
               <div className="py-12 px-6 text-center">
-                <AlertTriangle size={28} strokeWidth={1.6} style={{ color: "#f59e0b" }} className="mx-auto mb-3" />
+                <AlertTriangle size={28} strokeWidth={1.6} style={{ color: "#c79a52" }} className="mx-auto mb-3" />
                 <p className="text-sm font-semibold text-theme mb-1">No balance-sheet accounts in QuickBooks</p>
                 <p className="text-xs mb-4 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
                   {preview?.warning
@@ -443,7 +443,7 @@ export function BooksSetupWizard() {
                 )}
                 {preview?.ytd_ni_error && (preview?.re_accounts_adjusted?.length ?? 0) > 0 && (
                   <div className="mx-5 mt-3 rounded-lg px-3 py-2 text-[11px]"
-                    style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>
+                    style={{ background: "#f4eddf", color: "#7a5622", border: "1px solid #e8d9b0" }}>
                     Note: Retained Earnings shown at raw GL balance — {preview.ytd_ni_error}{" "}
                     Edit the RE row manually if you need to combine YTD income.
                   </div>
@@ -502,7 +502,7 @@ export function BooksSetupWizard() {
                               <div className="inline-flex items-center gap-1">
                                 {wasEdited && (
                                   <span className="text-[9px] uppercase font-bold px-1 py-0.5 rounded"
-                                    style={{ background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b" }}>
+                                    style={{ background: "rgba(199, 154, 82, 0.15)", color: "#c79a52" }}>
                                     edited
                                   </span>
                                 )}
@@ -516,7 +516,7 @@ export function BooksSetupWizard() {
                                   className="w-32 rounded-md px-2 py-1 text-sm outline-none tabular-nums text-right"
                                   style={{
                                     background: "var(--surface-2)",
-                                    border: `1px solid ${wasEdited ? "#f59e0b" : "var(--border-strong)"}`,
+                                    border: `1px solid ${wasEdited ? "#c79a52" : "var(--border-strong)"}`,
                                     color: "var(--text)",
                                   }}
                                 />
@@ -589,7 +589,7 @@ export function BooksSetupWizard() {
             </p>
 
             {seedMut.isError && (
-              <p className="text-xs mt-2" style={{ color: "#b91c1c" }}>
+              <p className="text-xs mt-2" style={{ color: "#9b3d37" }}>
                 {(seedMut.error as { response?: { data?: { detail?: string } }; message?: string })
                   .response?.data?.detail ?? "Could not save."}
               </p>

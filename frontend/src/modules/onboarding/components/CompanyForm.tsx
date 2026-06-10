@@ -430,7 +430,7 @@ export function CompanyForm({
         </div>
       </Section>
 
-      {error && <p className="text-xs" style={{ color: "#dc2626" }}>{error}</p>}
+      {error && <p className="text-xs" style={{ color: "#9b3d37" }}>{error}</p>}
 
       {/* Action bar */}
       <div className="flex items-center justify-between gap-3 pt-3"

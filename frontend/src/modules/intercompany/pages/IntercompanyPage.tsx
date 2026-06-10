@@ -73,7 +73,7 @@ function defaultPeriodEnd(): string {
 
 const KIND_META: Record<IcKind, { label: string; fg: string; bg: string }> = {
   receivable: { label: "Receivable", fg: "var(--green)", bg: "var(--green-subtle)" },
-  payable:    { label: "Payable",    fg: "#1d4ed8",      bg: "#dbeafe"             },
+  payable:    { label: "Payable",    fg: "#3c5a76",      bg: "#e9eef3"             },
   unknown:    { label: "Unknown",    fg: "var(--text-muted)", bg: "var(--surface-2)" },
 }
 
@@ -256,7 +256,7 @@ export function IntercompanyPage() {
               style={
                 autoDetectMut.data.added > 0
                   ? { background: "var(--green-subtle)", border: "1px solid var(--green)", color: "var(--green)" }
-                  : { background: "#fef3c7", border: "1px solid #f59e0b", color: "#92400e" }
+                  : { background: "#f4eddf", border: "1px solid #c79a52", color: "#7a5622" }
               }>
               {autoDetectMut.data.added > 0 ? (
                 <>
@@ -290,8 +290,8 @@ export function IntercompanyPage() {
               className="rounded-lg px-4 py-2.5 text-xs"
               style={
                 aiDetectMut.data.added > 0
-                  ? { background: "rgba(168, 85, 247, 0.08)", border: "1px solid #a855f7", color: "#7c3aed" }
-                  : { background: "#fef3c7", border: "1px solid #f59e0b", color: "#92400e" }
+                  ? { background: "rgba(110, 112, 166, 0.08)", border: "1px solid #6e70a6", color: "#54588a" }
+                  : { background: "#f4eddf", border: "1px solid #c79a52", color: "#7a5622" }
               }>
               {aiDetectMut.data.added > 0 ? (
                 <>
@@ -315,11 +315,11 @@ export function IntercompanyPage() {
         {/* QBO not connected */}
         {!qbo && (
           <div className="rounded-xl p-4 flex items-start gap-3"
-            style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}>
-            <AlertCircle size={18} style={{ color: "#92400e" }} className="shrink-0 mt-0.5" />
+            style={{ background: "#f4eddf", border: "1px solid #c79a52" }}>
+            <AlertCircle size={18} style={{ color: "#7a5622" }} className="shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-semibold" style={{ color: "#92400e" }}>QuickBooks isn&apos;t connected</p>
-              <p className="text-xs mt-0.5" style={{ color: "#92400e" }}>
+              <p className="text-sm font-semibold" style={{ color: "#7a5622" }}>QuickBooks isn&apos;t connected</p>
+              <p className="text-xs mt-0.5" style={{ color: "#7a5622" }}>
                 Connect QuickBooks to surface your GL accounts and let Nordavix auto-detect intercompany ones.
               </p>
             </div>
@@ -330,10 +330,10 @@ export function IntercompanyPage() {
         {/* Pending detection banner */}
         {qbo && overview && overview.detected_pending > 0 && (
           <div className="rounded-xl p-4 flex items-start gap-3"
-            style={{ background: "rgba(168, 85, 247, 0.08)", border: "1px solid #a855f7" }}>
-            <Wand2 size={18} style={{ color: "#7c3aed" }} className="shrink-0 mt-0.5" />
+            style={{ background: "rgba(110, 112, 166, 0.08)", border: "1px solid #6e70a6" }}>
+            <Wand2 size={18} style={{ color: "#54588a" }} className="shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="text-sm font-semibold" style={{ color: "#7c3aed" }}>
+              <p className="text-sm font-semibold" style={{ color: "#54588a" }}>
                 {overview.detected_pending} candidate account{overview.detected_pending === 1 ? "" : "s"} look like IC
               </p>
               <p className="text-xs mt-0.5" style={{ color: "var(--text-2)" }}>
@@ -353,9 +353,9 @@ export function IntercompanyPage() {
             <Kpi label="IC receivables" value={fmtMoney(overview.totals.receivables)}
               tone="var(--green)" sub="due FROM related entities" />
             <Kpi label="IC payables" value={fmtMoney(overview.totals.payables)}
-              tone="#1d4ed8" sub="due TO related entities" />
+              tone="#3c5a76" sub="due TO related entities" />
             <Kpi label="Net position" value={fmtMoney(overview.totals.net)}
-              tone={parseFloat(overview.totals.net) >= 0 ? "var(--green)" : "#dc2626"}
+              tone={parseFloat(overview.totals.net) >= 0 ? "var(--green)" : "#9b3d37"}
               sub={parseFloat(overview.totals.net) >= 0 ? "net receivable" : "net payable"} />
             <Kpi label="Accounts tracked" value={String(overview.accounts.length)}
               tone="var(--text)" sub="across all related entities" />
@@ -445,7 +445,7 @@ export function IntercompanyPage() {
                                 {a.account_type}
                                 {a.auto_detected && (
                                   <span className="ml-1.5 text-[9px] font-bold uppercase px-1 py-0.5 rounded"
-                                    style={{ background: "rgba(168, 85, 247, 0.15)", color: "#a855f7" }}>
+                                    style={{ background: "rgba(110, 112, 166, 0.15)", color: "#6e70a6" }}>
                                     Auto
                                   </span>
                                 )}
@@ -469,7 +469,7 @@ export function IntercompanyPage() {
                               {fmtMoney(a.gl_balance)}
                             </td>
                             <td className="px-3 py-3 text-right tabular-nums text-xs"
-                              style={{ color: change > 0 ? "var(--green)" : change < 0 ? "#dc2626" : "var(--text-muted)" }}>
+                              style={{ color: change > 0 ? "var(--green)" : change < 0 ? "#9b3d37" : "var(--text-muted)" }}>
                               {a.change !== null ? (change >= 0 ? "+" : "") + fmtMoney(a.change) : "—"}
                             </td>
                             <td className="px-3 py-3">
@@ -706,7 +706,7 @@ function MarkModal({ existing, onClose, onSaved }:
         </label>
 
         {saveMut.error ? (
-          <p className="text-xs" style={{ color: "#b91c1c" }}>
+          <p className="text-xs" style={{ color: "#9b3d37" }}>
             {((saveMut.error as { message?: string })?.message) ?? "Couldn't save."}
           </p>
         ) : null}
@@ -717,7 +717,7 @@ function MarkModal({ existing, onClose, onSaved }:
               icon={<Trash2 size={11} strokeWidth={1.8} />}
               loading={deleteMut.isPending}
               onClick={() => { if (confirm("Remove this IC mark?")) deleteMut.mutate() }}
-              style={{ color: "#b91c1c" }}>
+              style={{ color: "#9b3d37" }}>
               Remove
             </Button>
           ) : <span />}
@@ -900,7 +900,7 @@ function EliminationsView({ periodEnd, qboReady }: { periodEnd: string; qboReady
         <>
           <div className="grid grid-cols-3 gap-3">
             <Kpi label="Matched"   value={String(data.totals.matched_count)}   tone="var(--green)" sub="eliminate cleanly" />
-            <Kpi label="Mismatch"  value={String(data.totals.mismatch_count)}  tone="#dc2626"      sub="investigate" />
+            <Kpi label="Mismatch"  value={String(data.totals.mismatch_count)}  tone="#9b3d37"      sub="investigate" />
             <Kpi label="To eliminate" value={fmtMoney(data.totals.total_to_eliminate)} tone="var(--text)" sub="matched pairs" />
           </div>
 
@@ -942,7 +942,7 @@ function EliminationRowView({ row }: { row: EliminationRow }) {
   const StatusIcon = row.status === "matched" ? CheckCircle2
                     : row.status === "mismatch" ? AlertTriangle : CircleSlash
   const statusColor = row.status === "matched" ? "var(--green)"
-                    : row.status === "mismatch" ? "#dc2626" : "var(--text-muted)"
+                    : row.status === "mismatch" ? "#9b3d37" : "var(--text-muted)"
   const statusLabel = row.status === "matched" ? "Matched"
                     : row.status === "mismatch" ? "Mismatch" : "Side missing"
   const diff = parseFloat(row.diff)
@@ -963,7 +963,7 @@ function EliminationRowView({ row }: { row: EliminationRow }) {
         {fmtMoney(row.counterparty_balance)}
       </td>
       <td className="px-3 py-3 text-right tabular-nums text-sm"
-        style={{ color: Math.abs(diff) <= 1 ? "var(--green)" : "#dc2626", fontWeight: 600 }}>
+        style={{ color: Math.abs(diff) <= 1 ? "var(--green)" : "#9b3d37", fontWeight: 600 }}>
         {fmtMoney(row.diff)}
       </td>
     </tr>
@@ -1029,7 +1029,7 @@ function ConsolidatedView({ periodEnd, qboReady }: { periodEnd: string; qboReady
           intercompany balances that couldn't be eliminated. */}
       {data && data.balanced === false && (
         <div className="rounded-md px-3 py-2 text-xs flex items-start gap-2"
-          style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+          style={{ background: "#f7eeec", color: "#86332e", border: "1px solid #ecd7d3" }}>
           <AlertTriangle size={14} strokeWidth={2} className="shrink-0 mt-px" />
           <span>
             <span className="font-semibold">
@@ -1045,7 +1045,7 @@ function ConsolidatedView({ periodEnd, qboReady }: { periodEnd: string; qboReady
       )}
       {data && (data.unmatched?.length ?? 0) > 0 && (
         <div className="rounded-md px-3 py-2 text-xs"
-          style={{ background: "rgba(245, 158, 11, 0.10)", color: "#92400e", border: "1px solid rgba(245, 158, 11, 0.40)" }}>
+          style={{ background: "rgba(199, 154, 82, 0.10)", color: "#7a5622", border: "1px solid rgba(199, 154, 82, 0.40)" }}>
           <div className="flex items-center gap-2 font-semibold">
             <AlertTriangle size={14} strokeWidth={2} className="shrink-0" />
             {data.unmatched!.length} intercompany balance{data.unmatched!.length === 1 ? "" : "s"} not eliminated — still inflating the consolidation
@@ -1122,7 +1122,7 @@ function ConsolidatedView({ periodEnd, qboReady }: { periodEnd: string; qboReady
                             <td className="px-3 py-2.5 text-sm text-theme">{r.account_label}</td>
                             <td className="px-3 py-2.5 text-right tabular-nums">{fmtMoney(r.raw_balance)}</td>
                             <td className="px-3 py-2.5 text-right tabular-nums"
-                              style={{ color: elim !== 0 ? "#dc2626" : "var(--text-muted)" }}>
+                              style={{ color: elim !== 0 ? "#9b3d37" : "var(--text-muted)" }}>
                               {elim !== 0 ? fmtMoney(r.elimination) : "—"}
                             </td>
                             <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-theme">
@@ -1138,7 +1138,7 @@ function ConsolidatedView({ periodEnd, qboReady }: { periodEnd: string; qboReady
                           Total {cat}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums font-bold text-theme">{fmtMoney(totals.raw)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-bold" style={{ color: parseFloat(totals.elimination) !== 0 ? "#dc2626" : "var(--text-muted)" }}>
+                        <td className="px-3 py-2 text-right tabular-nums font-bold" style={{ color: parseFloat(totals.elimination) !== 0 ? "#9b3d37" : "var(--text-muted)" }}>
                           {parseFloat(totals.elimination) !== 0 ? fmtMoney(totals.elimination) : "—"}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums font-bold text-theme">{fmtMoney(totals.consolidated)}</td>
@@ -1238,7 +1238,7 @@ function PairPickerModal({ account, existingPair, onClose, onSaved }:
                 icon={<Unlink size={11} strokeWidth={1.8} />}
                 loading={deleteMut.isPending}
                 onClick={() => { if (confirm("Unpair these accounts? This removes both sides.")) deleteMut.mutate() }}
-                style={{ color: "#b91c1c" }}>
+                style={{ color: "#9b3d37" }}>
                 Unpair
               </Button>
             </div>
@@ -1299,7 +1299,7 @@ function PairPickerModal({ account, existingPair, onClose, onSaved }:
             )}
 
             {createMut.error ? (
-              <p className="text-xs" style={{ color: "#b91c1c" }}>
+              <p className="text-xs" style={{ color: "#9b3d37" }}>
                 {((createMut.error as { message?: string })?.message) ?? "Couldn't pair."}
               </p>
             ) : null}

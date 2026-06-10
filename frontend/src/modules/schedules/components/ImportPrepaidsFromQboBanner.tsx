@@ -85,13 +85,13 @@ export function ImportPrepaidsFromQboBanner({ qboAccountId, existingItemCount }:
         transition={{ duration: 0.2 }}
         className="rounded-xl overflow-hidden"
         style={{
-          background: isFirstTime ? "rgba(29, 78, 216, 0.04)" : "var(--surface)",
-          border: `1px solid ${isFirstTime ? "rgba(29, 78, 216, 0.30)" : "var(--border)"}`,
+          background: isFirstTime ? "rgba(60, 90, 118, 0.04)" : "var(--surface)",
+          border: `1px solid ${isFirstTime ? "rgba(60, 90, 118, 0.30)" : "var(--border)"}`,
         }}
       >
         <div className="px-4 py-3 flex items-center gap-3 flex-wrap">
           <span className="h-7 w-7 rounded-lg inline-flex items-center justify-center shrink-0"
-            style={{ background: "rgba(29, 78, 216, 0.12)", color: "#1d4ed8" }}>
+            style={{ background: "rgba(60, 90, 118, 0.12)", color: "#3c5a76" }}>
             <Download size={13} strokeWidth={2} />
           </span>
           <div className="flex-1 min-w-0">
@@ -108,7 +108,7 @@ export function ImportPrepaidsFromQboBanner({ qboAccountId, existingItemCount }:
             </p>
           </div>
           {error && (
-            <span className="text-[11px]" style={{ color: "#b91c1c" }}>
+            <span className="text-[11px]" style={{ color: "#9b3d37" }}>
               {error}
             </span>
           )}
@@ -189,7 +189,7 @@ function PreviewDialog({
               {preview.skipped > 0 && (
                 <>
                   {" · "}
-                  <span style={{ color: "#b45309" }}>{preview.skipped} skipped (already exist)</span>
+                  <span style={{ color: "#8a6326" }}>{preview.skipped} skipped (already exist)</span>
                 </>
               )}
             </p>
@@ -283,7 +283,7 @@ function PreviewDialog({
           style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
           <div className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
             {error ? (
-              <span className="inline-flex items-center gap-1" style={{ color: "#b91c1c" }}>
+              <span className="inline-flex items-center gap-1" style={{ color: "#9b3d37" }}>
                 <AlertCircle size={11} strokeWidth={2} />
                 {error}
               </span>

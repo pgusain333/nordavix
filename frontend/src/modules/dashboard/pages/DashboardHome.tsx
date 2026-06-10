@@ -559,18 +559,18 @@ export function DashboardHome() {
             silently showing empty cards, with a one-click retry. */}
         {(overviewErr || trackerErr || tbErr) && (
           <div className="rounded-xl px-4 py-3 flex items-start gap-2.5"
-            style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
-            <AlertCircle size={15} strokeWidth={2} className="shrink-0 mt-0.5" style={{ color: "#dc2626" }} />
+            style={{ background: "#f7eeec", border: "1px solid #ecd7d3" }}>
+            <AlertCircle size={15} strokeWidth={2} className="shrink-0 mt-0.5" style={{ color: "#9b3d37" }} />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold" style={{ color: "#991b1b" }}>Some dashboard data couldn&apos;t load</p>
-              <p className="text-xs mt-0.5" style={{ color: "#991b1b" }}>
+              <p className="text-sm font-semibold" style={{ color: "#86332e" }}>Some dashboard data couldn&apos;t load</p>
+              <p className="text-xs mt-0.5" style={{ color: "#86332e" }}>
                 Your connection or QuickBooks may have hiccuped. Your data is safe — try again.
               </p>
             </div>
             <button
               onClick={() => { refetchOverview(); refetchTracker(); refetchTb() }}
               className="shrink-0 inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-opacity hover:opacity-90"
-              style={{ background: "#dc2626", color: "#fff" }}>
+              style={{ background: "#9b3d37", color: "#fff" }}>
               <RefreshCw size={12} strokeWidth={2.2} /> Retry
             </button>
           </div>
@@ -596,7 +596,7 @@ export function DashboardHome() {
               <div className="flex items-center gap-3 text-[10px] flex-wrap" style={{ color: "var(--text-muted)" }}>
                 <span className="inline-flex items-center gap-1"><Lock size={9} strokeWidth={2} style={{ color: "var(--green)" }} /> Closed</span>
                 <span className="inline-flex items-center gap-1"><CheckCircle2 size={9} strokeWidth={2} style={{ color: "var(--green)" }} /> Complete</span>
-                <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "#f59e0b" }} /> In progress</span>
+                <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "#c79a52" }} /> In progress</span>
                 <span className="inline-flex items-center gap-1"><Circle size={9} strokeWidth={2} style={{ color: "var(--text-muted)" }} /> Open</span>
               </div>
             )}
@@ -605,8 +605,8 @@ export function DashboardHome() {
           {!books?.seeded ? (
             <div className="px-6 py-10 text-center">
               <div className="h-12 w-12 mx-auto rounded-full flex items-center justify-center mb-3"
-                style={{ background: "rgba(245, 158, 11, 0.15)", border: "2px dashed #f59e0b" }}>
-                <CalendarCheck size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />
+                style={{ background: "rgba(199, 154, 82, 0.15)", border: "2px dashed #c79a52" }}>
+                <CalendarCheck size={20} strokeWidth={1.6} style={{ color: "#8a6326" }} />
               </div>
               <p className="text-sm font-semibold text-theme mb-1">Set up books to enable the tracker</p>
               <p className="text-xs mb-4 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
@@ -637,7 +637,7 @@ export function DashboardHome() {
                   const meta = {
                     closed:      { bg: "var(--green-subtle)",      border: "var(--green)",    fg: "var(--green)",    icon: <Lock size={12} strokeWidth={2} /> },
                     complete:    { bg: "var(--green-subtle)",      border: "var(--green)",    fg: "var(--green)",    icon: <CheckCircle2 size={12} strokeWidth={2} /> },
-                    in_progress: { bg: "rgba(245,158,11,0.12)",   border: "#f59e0b",         fg: "#b45309",         icon: <Circle size={12} strokeWidth={2} /> },
+                    in_progress: { bg: "rgba(199, 154, 82,0.12)",   border: "#c79a52",         fg: "#8a6326",         icon: <Circle size={12} strokeWidth={2} /> },
                     not_started: { bg: "var(--surface-2)",         border: "var(--border)",   fg: "var(--text-muted)", icon: <Circle size={12} strokeWidth={2} /> },
                   }[p.status]
                   const isSelected = p.period_end === period
@@ -667,7 +667,7 @@ export function DashboardHome() {
                         background: meta.bg,
                         border: `${isSelected ? "2px" : "1px"} solid ${isSelected ? "var(--green)" : meta.border}`,
                         minWidth: 150,
-                        boxShadow: isSelected ? "0 0 0 3px rgba(16, 185, 129, 0.15)" : undefined,
+                        boxShadow: isSelected ? "0 0 0 3px rgba(79, 160, 122, 0.15)" : undefined,
                         opacity: blocker ? 0.5 : 1,
                         cursor: blocker ? "not-allowed" : "pointer",
                       }}
@@ -750,12 +750,12 @@ export function DashboardHome() {
                   transition={{ duration: 0.18 }}
                   className="px-4 py-2.5 flex items-start gap-2 text-xs"
                   style={{
-                    background: "rgba(245, 158, 11, 0.10)",
-                    borderTop: "1px solid #f59e0b",
-                    color: "#92400e",
+                    background: "rgba(199, 154, 82, 0.10)",
+                    borderTop: "1px solid #c79a52",
+                    color: "#7a5622",
                     overflow: "hidden",
                   }}>
-                  <Lock size={12} strokeWidth={2} className="shrink-0 mt-0.5" style={{ color: "#b45309" }} />
+                  <Lock size={12} strokeWidth={2} className="shrink-0 mt-0.5" style={{ color: "#8a6326" }} />
                   <span className="flex-1">{blockMsg}</span>
                 </motion.div>
               )}
@@ -776,7 +776,7 @@ export function DashboardHome() {
         {books?.seeded && (() => {
           const items: { icon: typeof Lock; text: string; tone: string; onClick: () => void }[] = []
           const openRecon = () => navigate(`/app/reconciliations/period/${period}`)
-          const RED = "#dc2626", AMBER = "#b45309", INK = "var(--text-2)"
+          const RED = "#9b3d37", AMBER = "#8a6326", INK = "var(--text-2)"
           const sb = blockedBy.get(period)
           if (sb) items.push({ icon: Lock, tone: AMBER,
             text: `Finish ${sb.label} first — ${sb.unapproved} open account${sb.unapproved === 1 ? "" : "s"}`,
@@ -846,7 +846,7 @@ export function DashboardHome() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Kpi label="Days to close"
             value={daysToClose === null ? "—" : daysToClose < 0 ? `${Math.abs(daysToClose)}d over` : `${daysToClose}d`}
-            tone={daysToClose !== null && daysToClose < 0 ? "#dc2626" : "var(--text)"}
+            tone={daysToClose !== null && daysToClose < 0 ? "#9b3d37" : "var(--text)"}
             sub={daysToClose === null ? "—" : daysToClose < 0 ? "past target close" : "to target close"} />
           <Kpi label={`Open in ${monthLabel}`} value={String(buckets.open)} tone="var(--text)"
             sub={buckets.total > 0 ? `${buckets.total} accounts total` : "—"} />
@@ -905,7 +905,7 @@ export function DashboardHome() {
                 className="rounded-xl overflow-hidden text-left transition-all hover:shadow-lg hover:-translate-y-0.5"
                 style={{
                   background: "var(--surface)",
-                  border: `1px solid ${selectedBlocker ? "#f59e0b" : "var(--border)"}`,
+                  border: `1px solid ${selectedBlocker ? "#c79a52" : "var(--border)"}`,
                   boxShadow: "var(--card-shadow)",
                   cursor: selectedBlocker ? "not-allowed" : "pointer",
                   opacity: selectedBlocker ? 0.75 : 1,
@@ -952,7 +952,7 @@ export function DashboardHome() {
             {/* Buckets summary */}
             <div className="grid grid-cols-3 divide-x" style={{ borderBottom: "1px solid var(--border)" }}>
               <BucketTile label="Open" count={buckets.open} fg="var(--text-2)" bg="var(--surface-2)" />
-              <BucketTile label="Prepared" count={buckets.reviewed} fg="#b45309" bg="rgba(245,158,11,0.12)" />
+              <BucketTile label="Prepared" count={buckets.reviewed} fg="#8a6326" bg="rgba(199, 154, 82,0.12)" />
               <BucketTile label="Approved" count={buckets.approved} fg="var(--green)" bg="var(--green-subtle)" />
             </div>
             {/* Top 3 open accounts */}
@@ -993,7 +993,7 @@ export function DashboardHome() {
                 {buckets.total} accounts · {fmtMoney(totalVariance)} variance
               </span>
               {selectedBlocker ? (
-                <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "#b45309" }}>
+                <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "#8a6326" }}>
                   <Lock size={11} strokeWidth={2} />
                   Locked by {selectedBlocker.label}
                 </span>
@@ -1531,7 +1531,7 @@ function CloseProgressCard({
               : `${daysSinceClose} day${daysSinceClose === 1 ? "" : "s"} into close`}
           </span>
           <span style={{
-            color: isOverdue ? "#dc2626" : pct === 100 ? "var(--green)" : "var(--text-2)",
+            color: isOverdue ? "#9b3d37" : pct === 100 ? "var(--green)" : "var(--text-2)",
             fontWeight: 600,
           }}>
             ·
@@ -1558,7 +1558,7 @@ function CloseProgressCard({
         <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2"
           style={{
             borderTop: "1px solid var(--border)",
-            background: fluxStatus.allApproved ? "var(--green-subtle)" : "rgba(245, 158, 11, 0.10)",
+            background: fluxStatus.allApproved ? "var(--green-subtle)" : "rgba(199, 154, 82, 0.10)",
           }}>
           <div className="flex items-center gap-2 min-w-0">
             {fluxStatus.allApproved ? (
@@ -1573,8 +1573,8 @@ function CloseProgressCard({
               </>
             ) : (
               <>
-                <Lock size={14} strokeWidth={2} style={{ color: "#b45309" }} className="shrink-0" />
-                <span className="text-xs font-semibold" style={{ color: "#b45309" }}>
+                <Lock size={14} strokeWidth={2} style={{ color: "#8a6326" }} className="shrink-0" />
+                <span className="text-xs font-semibold" style={{ color: "#8a6326" }}>
                   {fluxStatus.total === 0
                     ? `Flux analysis required for ${monthLabel}.`
                     : `${fluxStatus.unapprovedCount} flux analysis${fluxStatus.unapprovedCount === 1 ? "" : "es"} still need approval.`
@@ -1585,7 +1585,7 @@ function CloseProgressCard({
           </div>
           {isAdmin && (
             blocker ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: "#b45309" }}>
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: "#8a6326" }}>
                 <Lock size={11} strokeWidth={2} />
                 Close {blocker.label} first
               </span>
@@ -1599,7 +1599,7 @@ function CloseProgressCard({
                   ? "Open Flux Analysis to create one for this month"
                   : "Open Flux Analysis to approve the pending analyses"
                 }
-                style={{ borderColor: "#f59e0b", color: "#b45309" }}
+                style={{ borderColor: "#c79a52", color: "#8a6326" }}
               >
                 {fluxStatus.total === 0 ? "Start flux" : "Approve flux"}
               </Button>
@@ -1630,8 +1630,8 @@ function CloseProgressCard({
             transition={{ duration: 0.18 }}
             className="px-5 py-2 flex items-start gap-2 text-xs"
             style={{
-              background: closeMsg.kind === "ok" ? "var(--green-subtle)" : "#fef2f2",
-              color:      closeMsg.kind === "ok" ? "var(--green)" : "#b91c1c",
+              background: closeMsg.kind === "ok" ? "var(--green-subtle)" : "#f7eeec",
+              color:      closeMsg.kind === "ok" ? "var(--green)" : "#9b3d37",
               borderTop:  "1px solid var(--border)",
               overflow:   "hidden",
             }}>
@@ -1719,7 +1719,7 @@ function ClosedStateCard({
               icon={<Unlock size={12} strokeWidth={1.8} />}
               loading={reopening}
               onClick={onReopenBooks}
-              style={{ borderColor: "#f59e0b", color: "#b45309" }}
+              style={{ borderColor: "#c79a52", color: "#8a6326" }}
               title="Reopen this period — everyone can edit again until you re-close"
             >
               {reopening ? "Reopening…" : "Reopen books"}

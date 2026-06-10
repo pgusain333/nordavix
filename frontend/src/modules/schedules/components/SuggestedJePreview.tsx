@@ -187,8 +187,8 @@ export function SuggestedJePreview(v: Variant) {
     <div className="mt-2 rounded-lg overflow-hidden"
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
       <div className="px-3 py-1.5 flex items-center gap-2"
-        style={{ background: "rgba(124, 58, 237, 0.06)", borderBottom: "1px solid var(--border)" }}>
-        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#7c3aed" }}>
+        style={{ background: "rgba(84, 88, 138, 0.06)", borderBottom: "1px solid var(--border)" }}>
+        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#54588a" }}>
           ✨ Suggested journal entries
         </p>
         <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>

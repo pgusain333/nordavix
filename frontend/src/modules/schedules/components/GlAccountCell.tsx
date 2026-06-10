@@ -20,11 +20,11 @@ interface Props {
 /** Distinct background tint per group_label — keeps the recon dashboard
  * + the schedule tables visually consistent on which accounts are which. */
 const GROUP_TINTS: Record<string, { bg: string; fg: string }> = {
-  "Bank":                       { bg: "rgba(29, 78, 216, 0.10)", fg: "#1d4ed8" },
-  "Credit Card":                { bg: "rgba(190, 18, 60, 0.10)", fg: "#be123c" },
-  "AR":                         { bg: "rgba(21, 128, 61, 0.10)", fg: "#15803d" },
-  "AP":                         { bg: "rgba(245, 158, 11, 0.12)", fg: "#b45309" },
-  "Fixed Assets":               { bg: "rgba(124, 58, 237, 0.10)", fg: "#7c3aed" },
+  "Bank":                       { bg: "rgba(60, 90, 118, 0.10)", fg: "#3c5a76" },
+  "Credit Card":                { bg: "rgba(155, 61, 55, 0.10)", fg: "#9b3d37" },
+  "AR":                         { bg: "rgba(46, 122, 85, 0.10)", fg: "#2e7a55" },
+  "AP":                         { bg: "rgba(199, 154, 82, 0.12)", fg: "#8a6326" },
+  "Fixed Assets":               { bg: "rgba(84, 88, 138, 0.10)", fg: "#54588a" },
   "Other Current Assets":       { bg: "var(--surface-2)",         fg: "var(--text-muted)" },
   "Other Assets":               { bg: "var(--surface-2)",         fg: "var(--text-muted)" },
   "Other Current Liabilities":  { bg: "var(--surface-2)",         fg: "var(--text-muted)" },

@@ -15,6 +15,25 @@
   --green:        #3E8F66;
   --green-light:  #5BB089;
   --green-subtle: #EEF7F2;
+  /* ── Semantic palette — deliberately low-saturation so long close sessions
+     don't fatigue the eyes. Each meaning has one muted text color, one subtle
+     tint background, and a soft border. Used for status badges, pills, alerts,
+     charts — color carries meaning, never decoration. */
+  --positive:        #3E8F66;  /* success / approved / favorable (= brand green) */
+  --positive-subtle: #EEF7F2;
+  --positive-border: #CFE6DA;
+  --danger:          #9B3D37;  /* error / overdue / unfavorable — muted brick */
+  --danger-subtle:   #F4E9E7;
+  --danger-border:   #E6CFCB;
+  --warn:            #8A6326;  /* warning / in-progress / needs review — muted ochre */
+  --warn-subtle:     #F4EDDF;
+  --warn-border:     #E8DBC2;
+  --info:            #3C5A76;  /* informational / neutral status — muted slate-blue */
+  --info-subtle:     #E9EEF3;
+  --info-border:     #D3DEE8;
+  --accent:          #54588A;  /* AI moments only — a single restrained indigo */
+  --accent-subtle:   #ECEDF5;
+  --accent-border:   #D8D9EA;
   /* Sidebar — deep charcoal, white text, burgundy active highlight, green dot.
      Identical in light + dark so the rail is a consistent brand anchor. */
   --nav-bg:       #16181B;
@@ -41,6 +60,22 @@
   --green:        #5BB089;
   --green-light:  #7BC9A1;
   --green-subtle: #1A2E24;
+  /* Semantic palette — dark mode (lighter, still low-chroma on the dark bg). */
+  --positive:        #5BB089;
+  --positive-subtle: #1A2E24;
+  --positive-border: #285841;
+  --danger:          #CF8A82;
+  --danger-subtle:   #2C201E;
+  --danger-border:   #43302C;
+  --warn:            #CBA76A;
+  --warn-subtle:     #2A2417;
+  --warn-border:     #3D3522;
+  --info:            #8FA9BF;
+  --info-subtle:     #1A2530;
+  --info-border:     #29333E;
+  --accent:          #9092C2;
+  --accent-subtle:   #1F2030;
+  --accent-border:   #2E2F42;
   /* Sidebar — deep charcoal, white text, burgundy active highlight, green dot
      (same as light mode). */
   --nav-bg:       #16181B;
@@ -191,7 +226,7 @@
 }
 .cl-formFieldInput[data-invalid="true"],
 .cl-formFieldInput[aria-invalid="true"] {
-  border-color: #dc2626 !important;
+  border-color: var(--danger) !important;
   border-style: solid !important;  /* override Clerk's dashed invalid border */
 }
 .cl-formFieldInput:focus,

@@ -92,7 +92,7 @@ export function LoansPage() {
       <SchedulePageHeader
         type="loan"
         icon={<Banknote size={20} strokeWidth={1.6} />}
-        accent={{ fg: "#be123c", bg: "rgba(190, 18, 60, 0.10)" }}
+        accent={{ fg: "#9b3d37", bg: "rgba(155, 61, 55, 0.10)" }}
         periodEnd={periodEnd} onPeriod={setPeriodEnd}
         onAddItem={() => setDialog({ open: true })} addLabel="Add loan"
         onExport={() => exportMut.mutate()}
@@ -144,7 +144,7 @@ export function LoansPage() {
                         <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{it.vendor ?? "—"}</td>
                         <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{formatDate(it.loan_date)}</td>
                         <td className="px-3 py-2 text-right tabular-nums font-semibold text-theme">{importMoneyFmt(it.original_principal)}</td>
-                        <td className="px-3 py-2 text-[11px]" style={{ color: "#b45309" }}>{it.term_months} mo · 0% · edit me</td>
+                        <td className="px-3 py-2 text-[11px]" style={{ color: "#8a6326" }}>{it.term_months} mo · 0% · edit me</td>
                       </tr>
                     ))}
                   </tbody>
@@ -222,7 +222,7 @@ export function LoansPage() {
                             onClick={() => setDrawerItem(it)}
                             className="p-1 rounded hover:bg-[var(--surface-2)]"
                             title="View loan amortization + JE">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#be123c" }} />
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
                           </button>
                           <RowActions
                             onEdit={() => setDialog({ open: true, item: it })}
@@ -288,7 +288,7 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
         <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
       </button>
       <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Delete">
-        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#b91c1c" }} />
+        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
       </button>
     </div>
   )
@@ -427,7 +427,7 @@ function LoanDialog({ existing, onClose, initialAccount }: {
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
               className={inputCls} style={inputStyle} />
           </Field>
-          {error && <p className="text-xs" style={{ color: "#b91c1c" }}>{error}</p>}
+          {error && <p className="text-xs" style={{ color: "#9b3d37" }}>{error}</p>}
         </div>
         <div className="px-6 py-3 flex items-center justify-end gap-2"
           style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>

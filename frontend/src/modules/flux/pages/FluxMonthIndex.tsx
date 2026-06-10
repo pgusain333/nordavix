@@ -69,12 +69,12 @@ function longMonthLabelFromIso(iso: string): string {
 
 const STATUS_DOT: Record<string, string> = {
   pending:          "var(--border-strong)",
-  processing:       "#f59e0b",
-  parsed:           "#3b82f6",
-  ready_for_review: "#3b82f6",
-  generating:       "#f59e0b",
+  processing:       "#c79a52",
+  parsed:           "#4e6e8e",
+  ready_for_review: "#4e6e8e",
+  generating:       "#c79a52",
   complete:         "var(--green)",
-  error:            "#dc2626",
+  error:            "#9b3d37",
 }
 
 // Human-readable labels for the same status keys. The shared `humanize`
@@ -275,7 +275,7 @@ export function FluxMonthIndex() {
         {/* Setup-required CTAs */}
         {!loading && !qbo && (
           <SetupCard
-            icon={<Plug size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />}
+            icon={<Plug size={20} strokeWidth={1.6} style={{ color: "#8a6326" }} />}
             title="Connect QuickBooks first"
             body="Flux analysis pulls TrialBalance reports for the current and prior period live from QuickBooks. Connect once and run analyses for any month with two clicks."
             cta="Connect QuickBooks"
@@ -284,7 +284,7 @@ export function FluxMonthIndex() {
         )}
         {!loading && qbo && books && !books.seeded && (
           <SetupCard
-            icon={<ShieldCheck size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />}
+            icon={<ShieldCheck size={20} strokeWidth={1.6} style={{ color: "#8a6326" }} />}
             title="Set your books start date"
             body="Once books are seeded, every closeable month appears here automatically — you can run flux for any of them and the comparison period defaults to one year prior."
             cta="Set books start date"
@@ -315,8 +315,8 @@ export function FluxMonthIndex() {
             <div className="flex items-center gap-2 text-[11px] flex-wrap" style={{ color: "var(--text-muted)" }}>
               <Chip label={`${totals.months} month${totals.months === 1 ? "" : "s"}`} />
               <Chip label={`${totals.withFlux} with flux`} fg="var(--green)" bg="var(--green-subtle)" />
-              {totals.inflight > 0 && <Chip label={`${totals.inflight} running`} fg="#92400e" bg="#fef3c7" />}
-              {totals.error > 0 && <Chip label={`${totals.error} error`} fg="#b91c1c" bg="#fef2f2" />}
+              {totals.inflight > 0 && <Chip label={`${totals.inflight} running`} fg="#7a5622" bg="#f4eddf" />}
+              {totals.error > 0 && <Chip label={`${totals.error} error`} fg="#9b3d37" bg="#f7eeec" />}
               <Chip label={`${totals.totalTbs} total`} />
             </div>
           </div>
@@ -479,8 +479,8 @@ export function FluxMonthIndex() {
                 {totals.totalTbs} total analyses
               </span>
               <span className="inline-flex items-center gap-1">
-                {totals.error > 0 && <AlertCircle size={10} strokeWidth={2} style={{ color: "#dc2626" }} />}
-                {totals.inflight > 0 && <Circle size={10} strokeWidth={2} style={{ color: "#f59e0b" }} />}
+                {totals.error > 0 && <AlertCircle size={10} strokeWidth={2} style={{ color: "#9b3d37" }} />}
+                {totals.inflight > 0 && <Circle size={10} strokeWidth={2} style={{ color: "#c79a52" }} />}
                 {totals.complete > 0 && <CheckCircle2 size={10} strokeWidth={2} style={{ color: "var(--green)" }} />}
                 {totals.withFlux} of {totals.months} months have flux
               </span>
@@ -509,7 +509,7 @@ function SetupCard({ icon, title, body, cta, onClick }:
     <div className="rounded-xl p-5 flex items-start gap-4"
       style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
       <div className="h-10 w-10 rounded-full flex items-center justify-center shrink-0"
-        style={{ background: "rgba(245, 158, 11, 0.15)", border: "2px dashed #f59e0b" }}>
+        style={{ background: "rgba(199, 154, 82, 0.15)", border: "2px dashed #c79a52" }}>
         {icon}
       </div>
       <div className="flex-1 min-w-0">

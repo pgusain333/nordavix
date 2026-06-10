@@ -162,7 +162,7 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
         }}>
         <span className="h-7 w-7 rounded-md inline-flex items-center justify-center"
           style={{ background: "white", border: "1px solid var(--border)" }}>
-          <Banknote size={13} strokeWidth={1.8} style={{ color: "#1d4ed8" }} />
+          <Banknote size={13} strokeWidth={1.8} style={{ color: "#3c5a76" }} />
         </span>
         <div className="flex-1 min-w-0">
           {w.uploaded ? (
@@ -207,7 +207,7 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
                   if (window.confirm("Clear the uploaded statement and start over?")) clearMut.mutate()
                 }}
                 className="p-1 rounded hover:bg-[var(--surface-2)]"
-                style={{ color: "#b91c1c" }}>
+                style={{ color: "#9b3d37" }}>
                 <Trash2 size={13} strokeWidth={1.8} />
               </button>
             )}
@@ -219,7 +219,7 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
 
       {error && (
         <div className="rounded-md px-3 py-2 text-[11px] flex items-start gap-2"
-          style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+          style={{ background: "#f7eeec", color: "#86332e", border: "1px solid #ecd7d3" }}>
           <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
           {error}
         </div>
@@ -276,7 +276,7 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
                           <CheckCircle2 size={11} strokeWidth={2.2} /> Reconciled
                         </span>
                       : <span className="inline-flex items-center gap-1 text-[10px] font-semibold"
-                          style={{ color: "#b91c1c" }}>
+                          style={{ color: "#9b3d37" }}>
                           <AlertTriangle size={11} strokeWidth={2.2} /> Out of balance
                         </span>}
                   />
@@ -434,7 +434,7 @@ function TieOutBanner({ totals }: { totals: Worksheet["statement_totals"] }) {
 
   return (
     <div className="rounded-md px-3 py-2 text-[11px] flex items-start gap-2"
-      style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+      style={{ background: "#f7eeec", color: "#86332e", border: "1px solid #ecd7d3" }}>
       <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
       <span>
         <span className="font-semibold">Statement doesn't tie out — off by {fmt(tie_out_diff ?? 0)}.</span>{" "}
@@ -463,7 +463,7 @@ function Row({
   return (
     <tr style={border ? { borderTop: "1px solid var(--border-strong)" } : undefined}>
       <td className="px-4 py-2 text-theme" style={{ fontWeight: bold ? 700 : 400 }}>
-        <span style={{ color: positive ? "var(--green)" : negative ? "#b91c1c" : undefined }}>
+        <span style={{ color: positive ? "var(--green)" : negative ? "#9b3d37" : undefined }}>
           {label}
         </span>
         {sub && <span className="ml-2 text-[10px]" style={{ color: "var(--text-muted)" }}>{sub}</span>}
@@ -472,7 +472,7 @@ function Row({
       <td className="px-4 py-2 text-right tabular-nums"
         style={{
           fontWeight: bold ? 700 : 400,
-          color: positive ? "var(--green)" : negative ? "#b91c1c" : "var(--text)",
+          color: positive ? "var(--green)" : negative ? "#9b3d37" : "var(--text)",
         }}>
         {value}
       </td>
@@ -491,8 +491,8 @@ function BucketCard({
   children: React.ReactNode
 }) {
   const palette = tone === "warn"
-    ? { hdr: "rgba(245, 158, 11, 0.08)", border: "rgba(245, 158, 11, 0.40)", text: "#92400e" }
-    : { hdr: "rgba(29, 78, 216, 0.06)",  border: "rgba(29, 78, 216, 0.30)",  text: "#1d4ed8" }
+    ? { hdr: "rgba(199, 154, 82, 0.08)", border: "rgba(199, 154, 82, 0.40)", text: "#7a5622" }
+    : { hdr: "rgba(60, 90, 118, 0.06)",  border: "rgba(60, 90, 118, 0.30)",  text: "#3c5a76" }
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "var(--surface)", border: `1px solid ${palette.border}` }}>
@@ -534,12 +534,12 @@ function BankOnlyRow({ row }: { row: BankStatementRow }) {
       <td className="px-3 py-1.5 text-theme">{row.description ?? "—"}</td>
       <td className="px-3 py-1.5 text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>{row.bank_ref ?? "—"}</td>
       <td className="px-3 py-1.5 text-right tabular-nums font-semibold"
-        style={{ color: isDeposit ? "var(--green)" : "#b91c1c" }}>
+        style={{ color: isDeposit ? "var(--green)" : "#9b3d37" }}>
         {isDeposit ? <ArrowDownLeft size={10} strokeWidth={2} className="inline-block mr-0.5" /> : <ArrowUpRight size={10} strokeWidth={2} className="inline-block mr-0.5" />}
         {fmt(row.amount)}
       </td>
       <td className="px-3 py-1.5 text-[11px]" style={{ color: "var(--text-2)" }}>
-        <FileText size={10} strokeWidth={2} className="inline-block mr-1" style={{ color: "#7c3aed" }} />
+        <FileText size={10} strokeWidth={2} className="inline-block mr-1" style={{ color: "#54588a" }} />
         {suggestion}
       </td>
     </tr>
@@ -556,7 +556,7 @@ function GlOnlyRow({ row }: { row: BankGlRow }) {
       <td className="px-3 py-1.5 text-theme">{row.memo ?? row.entity_name ?? "—"}</td>
       <td className="px-3 py-1.5 text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>{row.txn_number ?? "—"}</td>
       <td className="px-3 py-1.5 text-right tabular-nums font-semibold"
-        style={{ color: amt >= 0 ? "var(--green)" : "#b91c1c" }}>
+        style={{ color: amt >= 0 ? "var(--green)" : "#9b3d37" }}>
         {fmt(row.amount)}
       </td>
     </tr>

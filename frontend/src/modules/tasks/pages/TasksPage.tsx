@@ -45,19 +45,19 @@ type FilterTab    = "open" | "completed" | "all"
 
 function severityMeta(s: TaskSeverity) {
   if (s === "critical")
-    return { fg: "#b91c1c", bg: "#fef2f2", Icon: AlertCircle, label: "Critical" }
+    return { fg: "#9b3d37", bg: "#f7eeec", Icon: AlertCircle, label: "Critical" }
   if (s === "warn")
-    return { fg: "#92400e", bg: "#fef3c7", Icon: AlertTriangle, label: "High" }
+    return { fg: "#7a5622", bg: "#f4eddf", Icon: AlertTriangle, label: "High" }
   return     { fg: "var(--text-2)", bg: "var(--surface-2)", Icon: CheckSquare, label: "Normal" }
 }
 
 function statusMeta(s: Task["status"]) {
   const map = {
     pending:  { label: "Pending",  fg: "var(--text-muted)", bg: "var(--surface-2)" },
-    reviewed: { label: "Prepared", fg: "#1d4ed8",           bg: "#dbeafe"          },
+    reviewed: { label: "Prepared", fg: "#3c5a76",           bg: "#e9eef3"          },
     approved: { label: "Approved", fg: "var(--green)",      bg: "var(--green-subtle)" },
-    flagged:  { label: "Flagged",  fg: "#b91c1c",           bg: "#fee2e2"          },
-    manual:   { label: "Manual",   fg: "#a855f7",           bg: "rgba(168, 85, 247, 0.15)" },
+    flagged:  { label: "Flagged",  fg: "#9b3d37",           bg: "#f4e9e7"          },
+    manual:   { label: "Manual",   fg: "#6e70a6",           bg: "rgba(110, 112, 166, 0.15)" },
   } as const
   return map[s] ?? map.pending
 }
@@ -66,8 +66,8 @@ function sourceMeta(s: TaskSourceType) {
   if (s === "recon_account")
     return { label: "Recon", fg: "var(--green)", bg: "var(--green-subtle)" }
   if (s === "flux")
-    return { label: "Flux", fg: "#1d4ed8",  bg: "#dbeafe" }
-  return     { label: "Manual",fg: "#a855f7", bg: "rgba(168, 85, 247, 0.15)" }
+    return { label: "Flux", fg: "#3c5a76",  bg: "#e9eef3" }
+  return     { label: "Manual",fg: "#6e70a6", bg: "rgba(110, 112, 166, 0.15)" }
 }
 
 function isCompleted(t: Task): boolean {
@@ -737,7 +737,7 @@ function AssignDropdown({ label, members, onPick, current }:
                     <div className="mx-2 my-1 h-px" style={{ background: "var(--border)" }} />
                     <button onClick={() => { onPick(null); setOpen(false) }}
                       className="w-full text-left px-2.5 py-1 text-[11px] transition-colors hover:bg-[var(--surface-2)]"
-                      style={{ color: "#b91c1c" }}>
+                      style={{ color: "#9b3d37" }}>
                       Clear assignment
                     </button>
                   </>
@@ -854,7 +854,7 @@ function TaskRow({ task, userNames, members, isAdmin, checked, onToggleCheck }: 
   const completedAt      = task.completed_at ?? task.approved_at
 
   const rowBg = completed
-    ? "rgba(16, 185, 129, 0.04)"
+    ? "rgba(79, 160, 122, 0.04)"
     : dismissed ? "var(--surface-2)" : undefined
 
   return (
@@ -1039,14 +1039,14 @@ function DueCell({ dueDate, overridden, overdue, isAdmin, onSet }:
   return (
     <div>
       <p className="inline-flex items-center gap-1"
-        style={{ color: overdue ? "#dc2626" : "var(--text-2)" }}>
+        style={{ color: overdue ? "#9b3d37" : "var(--text-2)" }}>
         {fmtDate(dueDate)}
         {overridden && (
           <Pencil size={9} strokeWidth={2} style={{ color: "var(--text-muted)" }}
             aria-label="Custom due date" />
         )}
       </p>
-      {overdue && <p className="text-[10px] font-semibold" style={{ color: "#dc2626" }}>overdue</p>}
+      {overdue && <p className="text-[10px] font-semibold" style={{ color: "#9b3d37" }}>overdue</p>}
       {isAdmin && (
         <DueDatePopover label="Edit" onPick={onSet} current={dueDate} />
       )}
@@ -1090,10 +1090,10 @@ function EmptyState({ tab, statusFilter, onSwitchTab, onClearStatusFilter }:
   if (conflict) {
     return (
       <div className="rounded-xl p-8 text-center"
-        style={{ background: "var(--surface)", border: "1px solid #f59e0b" }}>
+        style={{ background: "var(--surface)", border: "1px solid #c79a52" }}>
         <div className="h-12 w-12 mx-auto rounded-full flex items-center justify-center mb-3"
-          style={{ background: "rgba(245, 158, 11, 0.15)", border: "2px solid #f59e0b" }}>
-          <Filter size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />
+          style={{ background: "rgba(199, 154, 82, 0.15)", border: "2px solid #c79a52" }}>
+          <Filter size={20} strokeWidth={1.6} style={{ color: "#8a6326" }} />
         </div>
         <p className="text-sm font-semibold text-theme mb-1">
           Filter doesn&apos;t match the current tab
@@ -1222,7 +1222,7 @@ function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
         </div>
       )}
       {createMut.error ? (
-        <p className="text-xs" style={{ color: "#b91c1c" }}>
+        <p className="text-xs" style={{ color: "#9b3d37" }}>
           {((createMut.error as { message?: string })?.message) ?? "Couldn't create the task."}
         </p>
       ) : null}

@@ -83,7 +83,7 @@ export function DemoBanner() {
   return (
     <div
       className="flex items-center justify-center gap-3 px-4 py-2 shrink-0 text-xs flex-wrap"
-      style={{ background: "#fffbeb", borderBottom: "1px solid #fde68a", color: "#92400e" }}
+      style={{ background: "#f8f4e9", borderBottom: "1px solid #e8d9b0", color: "#7a5622" }}
     >
       <span className="inline-flex items-center gap-1.5 text-center">
         <Eye size={13} strokeWidth={2} className="shrink-0" />
@@ -92,7 +92,7 @@ export function DemoBanner() {
       <button
         onClick={exitDemo}
         className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-semibold transition-opacity hover:opacity-90"
-        style={{ background: "#92400e", color: "#fff" }}
+        style={{ background: "#7a5622", color: "#fff" }}
       >
         <ArrowLeft size={12} strokeWidth={2.2} /> Exit demo
       </button>

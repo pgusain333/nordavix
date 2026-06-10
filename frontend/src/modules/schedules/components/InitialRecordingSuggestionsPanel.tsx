@@ -216,21 +216,21 @@ export function InitialRecordingSuggestionsPanel({ qboAccountId, periodEnd }: Pr
 
   return (
     <div className="rounded-lg mb-3 overflow-hidden"
-      style={{ background: "var(--surface)", border: "1px solid rgba(124, 58, 237, 0.40)" }}>
+      style={{ background: "var(--surface)", border: "1px solid rgba(84, 88, 138, 0.40)" }}>
       <div className="px-3 py-2 flex items-center gap-2 flex-wrap"
-        style={{ background: "rgba(124, 58, 237, 0.08)", borderBottom: "1px solid var(--border)" }}>
-        <Sparkles size={13} strokeWidth={1.8} style={{ color: "#7c3aed" }} />
+        style={{ background: "rgba(84, 88, 138, 0.08)", borderBottom: "1px solid var(--border)" }}>
+        <Sparkles size={13} strokeWidth={1.8} style={{ color: "#54588a" }} />
         <p className="text-[11px] font-semibold text-theme">
           Initial recording entries · post in QuickBooks for this period
         </p>
         <span className="text-[10px] px-1.5 py-0.5 rounded"
-          style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+          style={{ background: "rgba(84, 88, 138, 0.12)", color: "#54588a" }}>
           {jes.length} item{jes.length === 1 ? "" : "s"} starting in {periodEnd.slice(0, 7)}
         </span>
       </div>
 
       <div className="px-3 py-2 text-[10.5px]"
-        style={{ background: "rgba(124, 58, 237, 0.04)", color: "#5b21b6" }}>
+        style={{ background: "rgba(84, 88, 138, 0.04)", color: "#5b21b6" }}>
         These schedule items start in this period — their inception JEs aren't on the GL
         yet. Post each Dr/Cr below in QuickBooks, then click Re-sync above to refresh the
         GL balance. Once the GL recognizes them, the variance against the subledger
@@ -263,7 +263,7 @@ function InitialJeBlock({ je, index }: { je: InitialJe; index: number }) {
           )}
         </p>
         <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-          style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+          style={{ background: "rgba(84, 88, 138, 0.12)", color: "#54588a" }}>
           {KIND_LABEL[je.kind]} · {je.date}
         </span>
       </div>

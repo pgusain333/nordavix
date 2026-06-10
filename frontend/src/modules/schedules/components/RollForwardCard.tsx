@@ -63,8 +63,8 @@ export function RollForwardCard({
   const cells = [
     { label: "Beginning",  value: snapshot.beginning_balance, color: "var(--text-2)" },
     { label: "+ Additions", value: snapshot.additions,         color: "var(--green)" },
-    { label: `− ${expenseLabel}`, value: snapshot.period_expense, color: "#b45309" },
-    { label: `− ${paymentLabel}`, value: snapshot.payments,    color: "#1d4ed8" },
+    { label: `− ${expenseLabel}`, value: snapshot.period_expense, color: "#8a6326" },
+    { label: `− ${paymentLabel}`, value: snapshot.payments,    color: "#3c5a76" },
   ]
 
   return (
@@ -115,8 +115,8 @@ export function RollForwardCard({
       {stale && (
         <div className="flex items-start gap-2 rounded-lg px-3 py-2 mb-3"
           style={{ background: "rgba(180, 83, 9, 0.08)", border: "1px solid rgba(180, 83, 9, 0.35)" }}>
-          <AlertTriangle size={13} strokeWidth={2} style={{ color: "#b45309", marginTop: 1 }} />
-          <p className="text-[11px] leading-snug" style={{ color: "#b45309" }}>
+          <AlertTriangle size={13} strokeWidth={2} style={{ color: "#8a6326", marginTop: 1 }} />
+          <p className="text-[11px] leading-snug" style={{ color: "#8a6326" }}>
             Schedule items changed since this period was last committed
             {snapshot.committed_at ? <> ({formatDateTime(snapshot.committed_at)})</> : null}.
             The numbers below are live — <span className="font-semibold">re-commit</span> to

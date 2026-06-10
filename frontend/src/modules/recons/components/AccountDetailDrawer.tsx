@@ -380,7 +380,7 @@ export function AccountDetailDrawer({
               <div
                 className="px-4 py-2 text-[11px] flex items-start gap-2"
                 style={{
-                  background: "rgba(124, 58, 237, 0.08)",
+                  background: "rgba(84, 88, 138, 0.08)",
                   borderBottom: "1px solid var(--border)",
                   color: "#5b21b6",
                 }}
@@ -396,7 +396,7 @@ export function AccountDetailDrawer({
                   type="button"
                   onClick={() => setTab("suggestions")}
                   className="ml-auto shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-opacity hover:opacity-90"
-                  style={{ background: "#7c3aed", color: "white" }}
+                  style={{ background: "#54588a", color: "white" }}
                 >
                   Open Suggestions
                 </button>
@@ -524,7 +524,7 @@ function DrawerHeader({
             </span>
             {readOnly && (
               <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                style={{ background: "rgba(245, 158, 11, 0.12)", color: "#b45309" }}>
+                style={{ background: "rgba(199, 154, 82, 0.12)", color: "#8a6326" }}>
                 Read-only
               </span>
             )}
@@ -548,9 +548,9 @@ function DrawerHeader({
 
 function StatusPill({ status }: { status: OverviewAccount["review_status"] }) {
   const tone = {
-    approved: { bg: "rgba(16, 185, 129, 0.12)", fg: "#047857", icon: ShieldCheck, label: "Approved" },
-    reviewed: { bg: "rgba(59, 130, 246, 0.12)", fg: "#1d4ed8", icon: CheckCircle2, label: "Reviewed" },
-    flagged:  { bg: "rgba(239, 68, 68, 0.12)",  fg: "#b91c1c", icon: AlertTriangle, label: "Flagged" },
+    approved: { bg: "rgba(79, 160, 122, 0.12)", fg: "#2e7a55", icon: ShieldCheck, label: "Approved" },
+    reviewed: { bg: "rgba(78, 110, 142, 0.12)", fg: "#3c5a76", icon: CheckCircle2, label: "Reviewed" },
+    flagged:  { bg: "rgba(176, 86, 78, 0.12)",  fg: "#9b3d37", icon: AlertTriangle, label: "Flagged" },
     pending:  { bg: "var(--surface-2)",         fg: "var(--text-muted)", icon: Clock, label: "Pending" },
   }[status] ?? { bg: "var(--surface-2)", fg: "var(--text-muted)", icon: Clock, label: status }
   const Icon = tone.icon
@@ -577,11 +577,11 @@ function BalanceCell({ label, value, accent }: { label: string; value: string; a
   const n = parseFloat(value) || 0
   return (
     <div className="rounded-lg px-2.5 py-2"
-      style={{ background: accent ? "rgba(239, 68, 68, 0.06)" : "var(--surface-2)" }}>
+      style={{ background: accent ? "rgba(176, 86, 78, 0.06)" : "var(--surface-2)" }}>
       <div className="text-[9px] font-semibold uppercase tracking-wider"
         style={{ color: "var(--text-muted)" }}>{label}</div>
       <div className="text-sm font-semibold tabular-nums mt-0.5"
-        style={{ color: accent ? "#b91c1c" : "var(--text)" }}>
+        style={{ color: accent ? "#9b3d37" : "var(--text)" }}>
         {fmtMoneyAcct(n)}
       </div>
     </div>
@@ -684,7 +684,7 @@ function TabBar({ value, onChange, account, suggestionsBadge }: {
                 style={{
                   width: 7,
                   height: 7,
-                  background: "#7c3aed",
+                  background: "#54588a",
                   marginLeft: 2,
                 }}
                 aria-label="Unreviewed suggestions"
@@ -783,15 +783,15 @@ function SummaryTab({ account, periodEnd, readOnly }: { account: OverviewAccount
           {account.ai_commentary.item_flags && account.ai_commentary.item_flags.length > 0 && (
             <div className="mt-3">
               <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-bold uppercase tracking-wider"
-                style={{ color: "#b45309" }}>
+                style={{ color: "#8a6326" }}>
                 <AlertTriangle size={12} strokeWidth={2} /> Items to review ({account.ai_commentary.item_flags.length})
               </div>
               <div className="space-y-2">
                 {account.ai_commentary.item_flags.map((f, i) => {
-                  const sevColor = f.severity === "high" ? "#b91c1c" : f.severity === "medium" ? "#b45309" : "var(--text-muted)"
+                  const sevColor = f.severity === "high" ? "#9b3d37" : f.severity === "medium" ? "#8a6326" : "var(--text-muted)"
                   return (
                     <div key={i} className="rounded-lg p-2.5"
-                      style={{ background: "rgba(245, 158, 11, 0.06)", border: "1px solid rgba(245, 158, 11, 0.30)" }}>
+                      style={{ background: "rgba(199, 154, 82, 0.06)", border: "1px solid rgba(199, 154, 82, 0.30)" }}>
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-[12px] font-semibold leading-snug" style={{ color: "var(--text)" }}>{f.label}</span>
                         {f.amount && (
@@ -870,13 +870,13 @@ function SummaryTab({ account, periodEnd, readOnly }: { account: OverviewAccount
       <Card title="Variance status" icon={<FileText size={13} strokeWidth={1.8} />}>
         {!hasVariance ? (
           <div className="flex items-center gap-2">
-            <CheckCircle2 size={14} strokeWidth={2} style={{ color: "#10b981" }} />
+            <CheckCircle2 size={14} strokeWidth={2} style={{ color: "#4fa07a" }} />
             <span className="text-[12px] text-theme">GL ties to subledger.</span>
           </div>
         ) : (
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <AlertTriangle size={14} strokeWidth={2} style={{ color: "#b45309" }} />
+              <AlertTriangle size={14} strokeWidth={2} style={{ color: "#8a6326" }} />
               <span className="text-[12px] text-theme">
                 {`${fmtMoneyAcct(variance)} unreconciled.`}
               </span>
@@ -952,9 +952,9 @@ function PlaceholderTab({ title, hint }: { title: string; hint: string }) {
 
 function ConfidencePill({ confidence }: { confidence: "high" | "medium" | "low" }) {
   const tone = {
-    high:   { bg: "rgba(16, 185, 129, 0.12)", fg: "#047857" },
-    medium: { bg: "rgba(245, 158, 11, 0.12)", fg: "#b45309" },
-    low:    { bg: "rgba(239, 68, 68, 0.12)",  fg: "#b91c1c" },
+    high:   { bg: "rgba(79, 160, 122, 0.12)", fg: "#2e7a55" },
+    medium: { bg: "rgba(199, 154, 82, 0.12)", fg: "#8a6326" },
+    low:    { bg: "rgba(176, 86, 78, 0.12)",  fg: "#9b3d37" },
   }[confidence]
   return (
     <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider"
@@ -966,9 +966,9 @@ function ConfidencePill({ confidence }: { confidence: "high" | "medium" | "low" 
 
 function RecommendationPill({ recommendation }: { recommendation: "approve" | "review" | "investigate" }) {
   const tone = {
-    approve:     { bg: "rgba(16, 185, 129, 0.12)", fg: "#047857" },
-    review:      { bg: "rgba(59, 130, 246, 0.12)", fg: "#1d4ed8" },
-    investigate: { bg: "rgba(239, 68, 68, 0.12)",  fg: "#b91c1c" },
+    approve:     { bg: "rgba(79, 160, 122, 0.12)", fg: "#2e7a55" },
+    review:      { bg: "rgba(78, 110, 142, 0.12)", fg: "#3c5a76" },
+    investigate: { bg: "rgba(176, 86, 78, 0.12)",  fg: "#9b3d37" },
   }[recommendation]
   return (
     <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider"
@@ -979,7 +979,7 @@ function RecommendationPill({ recommendation }: { recommendation: "approve" | "r
 }
 
 function CheckDot({ status }: { status: "pass" | "warn" | "fail" }) {
-  const color = status === "pass" ? "#10b981" : status === "warn" ? "#f59e0b" : "#ef4444"
+  const color = status === "pass" ? "#4fa07a" : status === "warn" ? "#c79a52" : "#b0564e"
   return (
     <span className="inline-block rounded-full mt-1"
       style={{ width: 7, height: 7, background: color, flexShrink: 0 }} />

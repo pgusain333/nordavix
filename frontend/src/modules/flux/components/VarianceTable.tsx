@@ -554,7 +554,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         return (
           <span
             className="tabular-nums text-sm font-medium text-right block"
-            style={{ color: v > 0 ? "var(--green)" : v < 0 ? "#dc2626" : "var(--text-muted)" }}
+            style={{ color: v > 0 ? "var(--green)" : v < 0 ? "#9b3d37" : "var(--text-muted)" }}
           >
             {formatAccounting(c.getValue(), 0)}
           </span>
@@ -569,7 +569,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         return (
           <span
             className="tabular-nums text-sm text-right block"
-            style={{ color: v && v > 0 ? "var(--green)" : v && v < 0 ? "#dc2626" : "var(--text-muted)" }}
+            style={{ color: v && v > 0 ? "var(--green)" : v && v < 0 ? "#9b3d37" : "var(--text-muted)" }}
           >
             {formatPct(c.getValue())}
           </span>
@@ -711,8 +711,8 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   // Open (red) / Prepared (blue) / Approved (green) / All (neutral).
   // Same labels, same colors, same chrome.
   const FILTER_BUCKETS = [
-    { key: "open",     label: "Open",     fg: "#b91c1c",      bg: "#fef2f2",        count: bucketCounts.open },
-    { key: "prepared", label: "Prepared", fg: "#1d4ed8",      bg: "#dbeafe",        count: bucketCounts.prepared },
+    { key: "open",     label: "Open",     fg: "#9b3d37",      bg: "#f7eeec",        count: bucketCounts.open },
+    { key: "prepared", label: "Prepared", fg: "#3c5a76",      bg: "#e9eef3",        count: bucketCounts.prepared },
     { key: "approved", label: "Approved", fg: "var(--green)", bg: "var(--green-subtle)", count: bucketCounts.approved },
     { key: "all",      label: "All",      fg: "var(--text)",  bg: "var(--surface)", count: bucketCounts.all },
   ] as const
@@ -869,7 +869,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                   onClick={() => bulkSetStatus.mutate({
                     ids: Array.from(selected), status: "flagged",
                   })}
-                  style={{ borderColor: "#fecaca", color: "#b91c1c" }}
+                  style={{ borderColor: "#ecd7d3", color: "#9b3d37" }}
                   title="Flag selected variances for follow-up"
                 >
                   Flag
@@ -1030,14 +1030,14 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
               <span className="px-1.5 py-0.5 rounded font-bold uppercase tracking-wider"
                 style={{
                   background:
-                    r.status === "approved" ? "rgba(16, 185, 129, 0.12)" :
-                    r.status === "generated" || r.status === "edited" ? "rgba(59, 130, 246, 0.12)" :
-                    r.status === "flagged"   ? "rgba(239, 68, 68, 0.12)"  :
+                    r.status === "approved" ? "rgba(79, 160, 122, 0.12)" :
+                    r.status === "generated" || r.status === "edited" ? "rgba(78, 110, 142, 0.12)" :
+                    r.status === "flagged"   ? "rgba(176, 86, 78, 0.12)"  :
                                                "var(--surface-2)",
                   color:
-                    r.status === "approved" ? "#047857" :
-                    r.status === "generated" || r.status === "edited" ? "#1d4ed8" :
-                    r.status === "flagged"   ? "#b91c1c" :
+                    r.status === "approved" ? "#2e7a55" :
+                    r.status === "generated" || r.status === "edited" ? "#3c5a76" :
+                    r.status === "flagged"   ? "#9b3d37" :
                                                "var(--text-muted)",
                 }}>
                 {r.status}
@@ -1154,7 +1154,7 @@ function NarrativePanel({
       {/* Anomaly flags */}
       {row.anomaly_flags.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
-          <AlertTriangle size={14} strokeWidth={1.6} style={{ color: "#92400e" }} className="shrink-0" />
+          <AlertTriangle size={14} strokeWidth={1.6} style={{ color: "#7a5622" }} className="shrink-0" />
           {row.anomaly_flags.map((f) => (
             <Badge key={f} variant="material">
               {anomalyLabels[f] ?? f}
@@ -1303,8 +1303,8 @@ type AiCommentaryShape = NonNullable<VarianceRow["ai_commentary"]>
 function AiCommentaryPanel({ commentary }: { commentary: AiCommentaryShape }) {
   // Risk color: red=high, amber=medium, green=low
   const riskMeta = {
-    high:   { fg: "#dc2626", bg: "#fef2f2", border: "#fecaca", label: "High risk" },
-    medium: { fg: "#b45309", bg: "#fef3c7", border: "#fcd34d", label: "Medium risk" },
+    high:   { fg: "#9b3d37", bg: "#f7eeec", border: "#ecd7d3", label: "High risk" },
+    medium: { fg: "#8a6326", bg: "#f4eddf", border: "#fcd34d", label: "Medium risk" },
     low:    { fg: "var(--green)", bg: "var(--green-subtle)", border: "var(--green)", label: "Low risk" },
   }[commentary.risk_level] ?? {
     fg: "var(--text-muted)", bg: "var(--surface-2)", border: "var(--border)", label: "Risk —",
@@ -1312,8 +1312,8 @@ function AiCommentaryPanel({ commentary }: { commentary: AiCommentaryShape }) {
   // Justified color: green=yes, red=no, amber=needs_review
   const justifiedMeta = {
     yes:           { fg: "var(--green)", bg: "var(--green-subtle)", label: "Justified" },
-    no:            { fg: "#dc2626", bg: "#fef2f2", label: "Not justified" },
-    needs_review:  { fg: "#b45309", bg: "#fef3c7", label: "Needs review" },
+    no:            { fg: "#9b3d37", bg: "#f7eeec", label: "Not justified" },
+    needs_review:  { fg: "#8a6326", bg: "#f4eddf", label: "Needs review" },
   }[commentary.justified] ?? {
     fg: "var(--text-muted)", bg: "var(--surface-2)", label: "Unknown",
   }
@@ -1366,8 +1366,8 @@ function AiCommentaryPanel({ commentary }: { commentary: AiCommentaryShape }) {
                 {e.type !== "other" && (
                   <span className="text-[9px] uppercase tracking-wide px-1 rounded"
                     style={{
-                      background: e.type === "customer" ? "#dbeafe" : "#fef3c7",
-                      color: e.type === "customer" ? "#1d4ed8" : "#b45309",
+                      background: e.type === "customer" ? "#e9eef3" : "#f4eddf",
+                      color: e.type === "customer" ? "#3c5a76" : "#8a6326",
                     }}>
                     {e.type}
                   </span>
@@ -1576,13 +1576,13 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance, fsCategory }:
           Either gives the user a clear "why" instead of a silent fail. */}
       {(refreshError || errMsg) && (
         <div className="px-4 py-2 text-[11px] flex items-start gap-1.5"
-          style={{ color: "#b91c1c", background: "#fef2f2" }}>
+          style={{ color: "#9b3d37", background: "#f7eeec" }}>
           <AlertTriangle size={11} strokeWidth={1.8} className="mt-0.5 shrink-0" />
           <span className="flex-1">{refreshError ?? errMsg}</span>
           {refreshError && (
             <button onClick={() => setRefreshError(null)}
               className="text-[10px] font-medium hover:underline"
-              style={{ color: "#b91c1c" }}>
+              style={{ color: "#9b3d37" }}>
               Dismiss
             </button>
           )}
@@ -1684,7 +1684,7 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance, fsCategory }:
                     <td className="px-3 py-2 font-mono" style={{ color: "var(--text-2)" }}>{t.txn_number || "—"}</td>
                     <td className="px-3 py-2" style={{ color: "var(--text-2)" }}>{t.txn_date || "—"}</td>
                     <td className="px-3 py-2 text-right tabular-nums font-medium"
-                      style={{ color: parseFloat(t.amount) < 0 ? "#dc2626" : "var(--text)" }}>
+                      style={{ color: parseFloat(t.amount) < 0 ? "#9b3d37" : "var(--text)" }}>
                       {formatAccounting(t.amount, 0)}
                     </td>
                     <td className="px-3 py-2 truncate max-w-[140px]" style={{ color: "var(--text-2)" }}>{t.entity_name || "—"}</td>
@@ -1774,21 +1774,21 @@ function VarianceTxnsSection({ tbId, varianceId, expectedVariance, fsCategory }:
                         <td colSpan={2} />
                       </tr>
                       <tr style={{
-                        background: inSync ? "var(--green-subtle)" : "#fef2f2",
+                        background: inSync ? "var(--green-subtle)" : "#f7eeec",
                         borderTop: "1px solid var(--border)",
                       }}>
                         <td className="px-3 py-2 text-center" colSpan={4} />
                         <td className="px-3 py-2 text-right text-xs font-semibold"
-                          style={{ color: inSync ? "var(--green)" : "#b91c1c" }}>
+                          style={{ color: inSync ? "var(--green)" : "#9b3d37" }}>
                           Matched Amount
                           {!inSync && (
-                            <span className="ml-1.5 font-normal" style={{ color: "#b91c1c" }}>
+                            <span className="ml-1.5 font-normal" style={{ color: "#9b3d37" }}>
                               · gap {formatAccounting(diff, 0)}
                             </span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums font-bold"
-                          style={{ color: inSync ? "var(--green)" : "#b91c1c" }}>
+                          style={{ color: inSync ? "var(--green)" : "#9b3d37" }}>
                           {formatAccounting(matchedAmount, 0)}
                           {inSync && (
                             <CheckCircle2 size={14} strokeWidth={2} className="inline ml-1.5" />

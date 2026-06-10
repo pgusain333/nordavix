@@ -114,7 +114,7 @@ export function RenewalAlertsBanner({ periodEnd, onAddRenewal }: Props) {
       className="rounded-xl overflow-hidden"
       style={{
         background: "var(--surface)",
-        border: `1px solid ${visible.past.length > 0 ? "#fecaca" : "#fed7aa"}`,
+        border: `1px solid ${visible.past.length > 0 ? "#ecd7d3" : "#fed7aa"}`,
         boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
       }}
     >
@@ -123,12 +123,12 @@ export function RenewalAlertsBanner({ periodEnd, onAddRenewal }: Props) {
         type="button"
         onClick={() => setCollapsed((v) => !v)}
         className="w-full px-4 py-3 flex items-center gap-3 text-left transition-colors hover:bg-[var(--surface-2)]"
-        style={{ background: visible.past.length > 0 ? "#fef2f2" : "#fff7ed" }}
+        style={{ background: visible.past.length > 0 ? "#f7eeec" : "#f7f1e6" }}
       >
         <span className="h-7 w-7 rounded-lg inline-flex items-center justify-center shrink-0"
           style={{
-            background: visible.past.length > 0 ? "#fee2e2" : "#ffedd5",
-            color: visible.past.length > 0 ? "#b91c1c" : "#c2410c",
+            background: visible.past.length > 0 ? "#f4e9e7" : "#ffedd5",
+            color: visible.past.length > 0 ? "#9b3d37" : "#c2410c",
           }}>
           <Bell size={13} strokeWidth={2} />
         </span>
@@ -136,7 +136,7 @@ export function RenewalAlertsBanner({ periodEnd, onAddRenewal }: Props) {
           <p className="text-sm font-semibold" style={{ color: visible.past.length > 0 ? "#7f1d1d" : "#7c2d12" }}>
             {totalVisible} prepaid {totalVisible === 1 ? "item needs" : "items need"} attention
           </p>
-          <p className="text-[11px]" style={{ color: visible.past.length > 0 ? "#991b1b" : "#9a3412" }}>
+          <p className="text-[11px]" style={{ color: visible.past.length > 0 ? "#86332e" : "#9a3412" }}>
             {visible.past.length > 0 && (
               <>
                 <span className="font-semibold">{visible.past.length} past end-date</span>
@@ -149,7 +149,7 @@ export function RenewalAlertsBanner({ periodEnd, onAddRenewal }: Props) {
           </p>
         </div>
         <span className="text-[11px] font-medium uppercase tracking-wider px-2"
-          style={{ color: visible.past.length > 0 ? "#991b1b" : "#9a3412" }}>
+          style={{ color: visible.past.length > 0 ? "#86332e" : "#9a3412" }}>
           {collapsed ? "Show" : "Hide"}
         </span>
       </button>
@@ -242,8 +242,8 @@ function AlertRow({
   onMarkClosed: () => void
   onSnooze:     () => void
 }) {
-  const accentBg = tone === "danger" ? "#fff1f2" : "#fffbeb"
-  const accentBd = tone === "danger" ? "#fecdd3" : "#fde68a"
+  const accentBg = tone === "danger" ? "#fff1f2" : "#f8f4e9"
+  const accentBd = tone === "danger" ? "#fecdd3" : "#e8d9b0"
   const amount = parseFloat(item.total_amount) || 0
   const amountFmt = `$${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 
@@ -263,7 +263,7 @@ function AlertRow({
       style={{ background: accentBg, border: `1px solid ${accentBd}` }}>
       <div className="flex items-start gap-3 flex-wrap sm:flex-nowrap">
         <span className="h-7 w-7 rounded-md inline-flex items-center justify-center shrink-0 mt-0.5"
-          style={{ background: "white", color: tone === "danger" ? "#b91c1c" : "#c2410c" }}>
+          style={{ background: "white", color: tone === "danger" ? "#9b3d37" : "#c2410c" }}>
           {tone === "danger" ? <AlertTriangle size={12} strokeWidth={2} /> : <Clock size={12} strokeWidth={2} />}
         </span>
         <div className="flex-1 min-w-0">
@@ -280,7 +280,7 @@ function AlertRow({
             {item.vendor ? item.description : ""}{item.vendor ? " · " : ""}
             {item.reference ? `${item.reference} · ` : ""}
             {formatDate(item.start_date)} → {formatDate(item.end_date)}
-            <span className="font-semibold" style={{ color: tone === "danger" ? "#b91c1c" : "#c2410c" }}>
+            <span className="font-semibold" style={{ color: tone === "danger" ? "#9b3d37" : "#c2410c" }}>
               {" · "}{daysLabel}
             </span>
           </p>

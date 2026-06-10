@@ -47,8 +47,8 @@ import { useQboConnection } from "@/modules/flux/hooks"
 const STATUS_META: Record<PeriodStatus, { label: string; fg: string; bg: string; icon: React.ReactNode }> = {
   closed: {
     label: "Closed",
-    fg: "#b45309",
-    bg: "rgba(245, 158, 11, 0.10)",
+    fg: "#8a6326",
+    bg: "rgba(199, 154, 82, 0.10)",
     icon: <Lock size={11} strokeWidth={2} />,
   },
   complete: {
@@ -59,8 +59,8 @@ const STATUS_META: Record<PeriodStatus, { label: string; fg: string; bg: string;
   },
   in_progress: {
     label: "In progress",
-    fg: "#1d4ed8",
-    bg: "#dbeafe",
+    fg: "#3c5a76",
+    bg: "#e9eef3",
     icon: <Circle size={11} strokeWidth={2} />,
   },
   not_started: {
@@ -157,7 +157,7 @@ export function ReconciliationsMonthIndex() {
         {/* Setup-required CTA(s) */}
         {!loading && !qbo && (
           <SetupCard
-            icon={<Plug size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />}
+            icon={<Plug size={20} strokeWidth={1.6} style={{ color: "#8a6326" }} />}
             title="Connect QuickBooks first"
             body="Reconciliations pull live GL balances and subledger detail from QuickBooks. Connect once and every month is reconciled automatically as data lands."
             cta="Connect QuickBooks"
@@ -166,7 +166,7 @@ export function ReconciliationsMonthIndex() {
         )}
         {!loading && qbo && books && !books.seeded && (
           <SetupCard
-            icon={<ShieldCheck size={20} strokeWidth={1.6} style={{ color: "#b45309" }} />}
+            icon={<ShieldCheck size={20} strokeWidth={1.6} style={{ color: "#8a6326" }} />}
             title="Set your books start date"
             body="Tell Nordavix when your books begin and the prior-period closing balances. After that, every month rolls forward automatically and shows up here."
             cta="Set books start date"
@@ -196,9 +196,9 @@ export function ReconciliationsMonthIndex() {
             </div>
             <div className="flex items-center gap-2 text-[11px] flex-wrap" style={{ color: "var(--text-muted)" }}>
               <Chip label={`${totals.months} month${totals.months === 1 ? "" : "s"}`} />
-              <Chip label={`${totals.closed} closed`} fg="#b45309" bg="rgba(245, 158, 11, 0.10)" />
+              <Chip label={`${totals.closed} closed`} fg="#8a6326" bg="rgba(199, 154, 82, 0.10)" />
               <Chip label={`${totals.complete} complete`} fg="var(--green)" bg="var(--green-subtle)" />
-              <Chip label={`${totals.open} open`} fg="#1d4ed8" bg="#dbeafe" />
+              <Chip label={`${totals.open} open`} fg="#3c5a76" bg="#e9eef3" />
             </div>
           </div>
         )}
@@ -348,7 +348,7 @@ function SetupCard({ icon, title, body, cta, onClick }:
     <div className="rounded-xl p-5 flex items-start gap-4"
       style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
       <div className="h-10 w-10 rounded-full flex items-center justify-center shrink-0"
-        style={{ background: "rgba(245, 158, 11, 0.15)", border: "2px dashed #f59e0b" }}>
+        style={{ background: "rgba(199, 154, 82, 0.15)", border: "2px dashed #c79a52" }}>
         {icon}
       </div>
       <div className="flex-1 min-w-0">

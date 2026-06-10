@@ -127,7 +127,7 @@ export function LeasesPage() {
       <SchedulePageHeader
         type="lease"
         icon={<Home size={20} strokeWidth={1.6} />}
-        accent={{ fg: "#7c3aed", bg: "rgba(124, 58, 237, 0.10)" }}
+        accent={{ fg: "#54588a", bg: "rgba(84, 88, 138, 0.10)" }}
         periodEnd={periodEnd} onPeriod={setPeriodEnd}
         onAddItem={() => setDialog({ open: true })} addLabel="Add lease"
         onExport={() => exportMut.mutate()}
@@ -189,7 +189,7 @@ export function LeasesPage() {
                       <Td right tabular>{it.initial_liability ? fmt(it.initial_liability) : "—"}</Td>
                       <Td>
                         <span className="text-[10px] font-semibold uppercase tracking-wider"
-                          style={{ color: it.initial_liability ? "#7c3aed" : "var(--text-muted)" }}>
+                          style={{ color: it.initial_liability ? "#54588a" : "var(--text-muted)" }}>
                           {it.initial_liability ? "ASC 842" : "Cash-basis"}
                         </span>
                       </Td>
@@ -199,7 +199,7 @@ export function LeasesPage() {
                             onClick={() => setDrawerItem(it)}
                             className="p-1 rounded hover:bg-[var(--surface-2)]"
                             title="View lease amortization + JE">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#7c3aed" }} />
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#54588a" }} />
                           </button>
                           <RowActions
                             onEdit={() => setDialog({ open: true, item: it })}
@@ -265,7 +265,7 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
         <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
       </button>
       <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Delete">
-        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#b91c1c" }} />
+        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
       </button>
     </div>
   )
@@ -496,7 +496,7 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
               className={inputCls} style={inputStyle} />
           </Field>
-          {error && <p className="text-xs" style={{ color: "#b91c1c" }}>{error}</p>}
+          {error && <p className="text-xs" style={{ color: "#9b3d37" }}>{error}</p>}
         </div>
         <div className="px-6 py-3 flex items-center justify-end gap-2"
           style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>

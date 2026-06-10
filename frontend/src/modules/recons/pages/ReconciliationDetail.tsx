@@ -214,7 +214,7 @@ export function ReconciliationDetail() {
             )}
             <Button size="sm" variant="outline" icon={<Trash2 size={12} strokeWidth={1.8} />}
               onClick={() => confirmDelete ? del.mutate() : setConfirmDelete(true)}
-              style={confirmDelete ? { borderColor: "#dc2626", color: "#dc2626" } : undefined}
+              style={confirmDelete ? { borderColor: "#9b3d37", color: "#9b3d37" } : undefined}
             >
               {confirmDelete ? "Confirm delete?" : "Delete"}
             </Button>
@@ -228,7 +228,7 @@ export function ReconciliationDetail() {
           <SummaryTile label="GL Total" value={fmtMoney(recon.gl_total)} />
           <SummaryTile label="Subledger Total" value={fmtMoney(recon.subledger_total)} />
           <SummaryTile label="Net Difference" value={fmtMoney(recon.difference)}
-            tone={reconHasVariance ? "#dc2626" : "var(--green)"} />
+            tone={reconHasVariance ? "#9b3d37" : "var(--green)"} />
           <SummaryTile label="Entities" value={String(detail.items.length)} />
         </div>
 
@@ -237,7 +237,7 @@ export function ReconciliationDetail() {
             for the tooltip. */}
         {reconHasVariance && !recon.approved_by && (
           <div className="mt-3 rounded-lg px-3 py-2 text-[11px] flex items-start gap-2"
-            style={{ background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" }}>
+            style={{ background: "#f7eeec", color: "#86332e", border: "1px solid #ecd7d3" }}>
             <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
             <span>
               <span className="font-semibold">Approval blocked — net difference is {fmtMoney(recon.difference)}.</span>{" "}
@@ -255,7 +255,7 @@ export function ReconciliationDetail() {
           </p>
         )}
         {recon.error_detail && (
-          <p className="text-xs mt-2 flex items-start gap-1.5" style={{ color: "#dc2626" }}>
+          <p className="text-xs mt-2 flex items-start gap-1.5" style={{ color: "#9b3d37" }}>
             <AlertTriangle size={12} strokeWidth={2} className="mt-0.5 shrink-0" />
             {recon.error_detail}
           </p>
@@ -318,7 +318,7 @@ export function ReconciliationDetail() {
                       onMouseLeave={(e) => { if (selectedItemId !== it.id) (e.currentTarget as HTMLElement).style.background = "" }}
                     >
                       <span className="h-1.5 w-1.5 rounded-full shrink-0"
-                        style={{ background: it.risk_level === "high" ? "#dc2626" : it.risk_level === "medium" ? "#f59e0b" : "var(--green)" }}
+                        style={{ background: it.risk_level === "high" ? "#9b3d37" : it.risk_level === "medium" ? "#c79a52" : "var(--green)" }}
                       />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-theme truncate">{it.entity_name}</p>
@@ -406,7 +406,7 @@ export function ReconciliationDetail() {
                       <SummaryTile label="GL Balance"        value={fmtMoney(selectedItem.gl_balance)} />
                       <SummaryTile label="Subledger Balance" value={fmtMoney(selectedItem.subledger_balance)} />
                       <SummaryTile label="Variance"          value={fmtMoney(selectedItem.difference)}
-                        tone={Math.abs(parseFloat(selectedItem.difference)) > 100 ? "#dc2626" : "var(--green)"} />
+                        tone={Math.abs(parseFloat(selectedItem.difference)) > 100 ? "#9b3d37" : "var(--green)"} />
                     </div>
 
                     {selectedItem.approved_by && selectedItem.approved_at && (
@@ -445,8 +445,8 @@ export function ReconciliationDetail() {
                       <AgingTile label="Current" v={selectedItem.aging_current} />
                       <AgingTile label="1-30"    v={selectedItem.aging_1_30} />
                       <AgingTile label="31-60"   v={selectedItem.aging_31_60} />
-                      <AgingTile label="61-90"   v={selectedItem.aging_61_90} tone="#92400e" />
-                      <AgingTile label="> 90"    v={selectedItem.aging_over_90} tone="#dc2626" />
+                      <AgingTile label="61-90"   v={selectedItem.aging_61_90} tone="#7a5622" />
+                      <AgingTile label="> 90"    v={selectedItem.aging_over_90} tone="#9b3d37" />
                     </div>
                   </div>
 

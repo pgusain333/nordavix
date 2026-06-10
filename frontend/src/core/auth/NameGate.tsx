@@ -166,7 +166,7 @@ export function NameGate({ children }: Props) {
           </div>
 
           {error && (
-            <p className="text-xs" style={{ color: "#dc2626" }}>
+            <p className="text-xs" style={{ color: "#9b3d37" }}>
               {error}
             </p>
           )}

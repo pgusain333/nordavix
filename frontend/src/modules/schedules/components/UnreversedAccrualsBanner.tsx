@@ -71,7 +71,7 @@ export function UnreversedAccrualsBanner({ periodEnd }: Props) {
       className="rounded-xl overflow-hidden"
       style={{
         background: "var(--surface)",
-        border: "1px solid #fecaca",
+        border: "1px solid #ecd7d3",
         boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
       }}
     >
@@ -79,17 +79,17 @@ export function UnreversedAccrualsBanner({ periodEnd }: Props) {
         type="button"
         onClick={() => setCollapsed((v) => !v)}
         className="w-full px-4 py-3 flex items-center gap-3 text-left transition-colors hover:bg-[var(--surface-2)]"
-        style={{ background: "#fef2f2" }}
+        style={{ background: "#f7eeec" }}
       >
         <span className="h-7 w-7 rounded-lg inline-flex items-center justify-center shrink-0"
-          style={{ background: "#fee2e2", color: "#b91c1c" }}>
+          style={{ background: "#f4e9e7", color: "#9b3d37" }}>
           <Repeat size={13} strokeWidth={2} />
         </span>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold" style={{ color: "#7f1d1d" }}>
             {items.length} unreversed accrual{items.length === 1 ? "" : "s"} need attention
           </p>
-          <p className="text-[11px]" style={{ color: "#991b1b" }}>
+          <p className="text-[11px]" style={{ color: "#86332e" }}>
             {autoCount > 0 && <><span className="font-semibold">{autoCount} ready to auto-reverse</span></>}
             {autoCount > 0 && (trueupCount > 0 || reviewCount > 0) && " · "}
             {trueupCount > 0 && <>{trueupCount} need true-up</>}
@@ -97,7 +97,7 @@ export function UnreversedAccrualsBanner({ periodEnd }: Props) {
             {reviewCount > 0 && <>{reviewCount} need manual review</>}
           </p>
         </div>
-        <span className="text-[11px] font-medium uppercase tracking-wider px-2" style={{ color: "#991b1b" }}>
+        <span className="text-[11px] font-medium uppercase tracking-wider px-2" style={{ color: "#86332e" }}>
           {collapsed ? "Show" : "Hide"}
         </span>
       </button>
@@ -144,7 +144,7 @@ function UnreversedRow({
     action === "auto_reverse"
       ? { bg: "var(--green-subtle)", fg: "var(--green)", label: "Ready to reverse" }
     : action === "reverse_with_trueup"
-      ? { bg: "#fef3c7", fg: "#92400e", label: "Reverse + true-up" }
+      ? { bg: "#f4eddf", fg: "#7a5622", label: "Reverse + true-up" }
     : { bg: "var(--surface-2)", fg: "var(--text-2)", label: "Manual review" }
 
   return (
@@ -152,7 +152,7 @@ function UnreversedRow({
       style={{ background: "#fff1f2", border: "1px solid #fecdd3" }}>
       <div className="flex items-start gap-3 flex-wrap sm:flex-nowrap">
         <span className="h-7 w-7 rounded-md inline-flex items-center justify-center shrink-0 mt-0.5"
-          style={{ background: "white", color: "#b91c1c" }}>
+          style={{ background: "white", color: "#9b3d37" }}>
           <AlertTriangle size={12} strokeWidth={2} />
         </span>
         <div className="flex-1 min-w-0">

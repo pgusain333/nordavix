@@ -54,11 +54,11 @@ interface CategoryMeta {
 }
 
 const CATEGORIES: CategoryMeta[] = [
-  { key: "bug",         label: "Bug",         icon: Bug,         fg: "#b91c1c", bg: "rgba(220, 38, 38, 0.10)",
+  { key: "bug",         label: "Bug",         icon: Bug,         fg: "#9b3d37", bg: "rgba(155, 61, 55, 0.10)",
     helper: "Something's broken — describe what you did, what you expected, what happened." },
-  { key: "feature",     label: "Feature",     icon: Lightbulb,   fg: "#1d4ed8", bg: "rgba(29, 78, 216, 0.10)",
+  { key: "feature",     label: "Feature",     icon: Lightbulb,   fg: "#3c5a76", bg: "rgba(60, 90, 118, 0.10)",
     helper: "An idea for something new — what problem would it solve?" },
-  { key: "improvement", label: "Improvement", icon: Sparkles,    fg: "#b45309", bg: "rgba(180, 83, 9, 0.10)",
+  { key: "improvement", label: "Improvement", icon: Sparkles,    fg: "#8a6326", bg: "rgba(180, 83, 9, 0.10)",
     helper: "A tweak to something that already works — what would make it better?" },
   { key: "praise",      label: "Praise",      icon: Heart,       fg: "#3E8F66", bg: "rgba(62, 143, 102, 0.12)",
     helper: "What's working well? We genuinely read these." },
@@ -274,7 +274,7 @@ export function FeedbackDialog({ open, onClose }: Props) {
                     </span> · auto-attached
                   </span>
                   <span className="text-[10px] tabular-nums"
-                    style={{ color: chars > maxChars * 0.9 ? "#b45309" : "var(--text-muted)" }}>
+                    style={{ color: chars > maxChars * 0.9 ? "#8a6326" : "var(--text-muted)" }}>
                     {chars} / {maxChars}
                   </span>
                 </div>
@@ -285,9 +285,9 @@ export function FeedbackDialog({ open, onClose }: Props) {
                 <div
                   className="mx-5 mb-2 rounded-md px-3 py-2 flex items-start gap-2 text-[12px]"
                   style={{
-                    background: "rgba(220, 38, 38, 0.08)",
-                    border: "1px solid rgba(220, 38, 38, 0.30)",
-                    color: "#b91c1c",
+                    background: "rgba(155, 61, 55, 0.08)",
+                    border: "1px solid rgba(155, 61, 55, 0.30)",
+                    color: "#9b3d37",
                   }}
                 >
                   <AlertCircle size={13} strokeWidth={1.8} className="mt-0.5 shrink-0" />

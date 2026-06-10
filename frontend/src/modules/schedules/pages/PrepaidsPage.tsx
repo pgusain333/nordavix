@@ -267,7 +267,7 @@ export function PrepaidsPage() {
       <SchedulePageHeader
         type="prepaid"
         icon={<Calendar size={20} strokeWidth={1.6} />}
-        accent={{ fg: "#1d4ed8", bg: "rgba(29, 78, 216, 0.10)" }}
+        accent={{ fg: "#3c5a76", bg: "rgba(60, 90, 118, 0.10)" }}
         periodEnd={periodEnd}
         onPeriod={setPeriodEnd}
         onAddItem={() => setDialogState({ open: true })}
@@ -392,7 +392,7 @@ export function PrepaidsPage() {
                             onClick={() => setAmortizationItem(it)}
                             className="p-1 rounded hover:bg-[var(--surface-2)]"
                             title="View amortization schedule + journal entry">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#1d4ed8" }} />
+                            <FileText size={13} strokeWidth={1.8} style={{ color: "#3c5a76" }} />
                           </button>
                           <button
                             onClick={() => setDialogState({ open: true, item: it })}
@@ -404,7 +404,7 @@ export function PrepaidsPage() {
                             onClick={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
                             className="p-1 rounded hover:bg-[var(--surface-2)]"
                             title="Delete">
-                            <Trash2 size={13} strokeWidth={1.8} style={{ color: "#b91c1c" }} />
+                            <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
                           </button>
                         </div>
                       </Td>
@@ -448,7 +448,7 @@ function Kpi({ label, value, amber }: { label: string; value: string; amber?: bo
       <p className="text-[10px] font-semibold uppercase tracking-wider"
         style={{ color: "var(--text-muted)" }}>{label}</p>
       <p className="text-base font-bold tabular-nums mt-0.5"
-        style={{ color: amber ? "#b45309" : "var(--text)" }}>{value}</p>
+        style={{ color: amber ? "#8a6326" : "var(--text)" }}>{value}</p>
     </div>
   )
 }
@@ -593,7 +593,7 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
             )}
             {!existing && prefill?.source === "ai-detect" && (
               <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-                style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+                style={{ background: "rgba(84, 88, 138, 0.12)", color: "#54588a" }}>
                 ✨ AI-detected
               </span>
             )}
@@ -681,7 +681,7 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
           <Field label="Notes">
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={inputCls} style={inputStyle} />
           </Field>
-          {error && <p className="text-xs" style={{ color: "#b91c1c" }}>{error}</p>}
+          {error && <p className="text-xs" style={{ color: "#9b3d37" }}>{error}</p>}
         </div>
         <div className="px-6 py-3 flex items-center justify-end gap-2"
           style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
@@ -761,7 +761,7 @@ function AmortMethodPicker({
           selection — the user can keep or change AI's pick freely. */}
       {aiReasoning && aiSuggestedMethod && (
         <div className="mt-2 rounded-md px-2.5 py-1.5 text-[11px] inline-flex items-start gap-1.5"
-          style={{ background: "rgba(124, 58, 237, 0.08)", color: "#6b21a8" }}>
+          style={{ background: "rgba(84, 88, 138, 0.08)", color: "#494a74" }}>
           <span className="shrink-0 mt-px">✨</span>
           <span><span className="font-semibold">AI suggests {aiSuggestedMethod === "straight_line" ? "Straight-line" : "Daily-rate"}:</span>{" "}{aiReasoning}</span>
         </div>
@@ -804,7 +804,7 @@ function MethodCard({
             </span>
             {aiSuggested && (
               <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                style={{ background: "rgba(124, 58, 237, 0.12)", color: "#7c3aed" }}>
+                style={{ background: "rgba(84, 88, 138, 0.12)", color: "#54588a" }}>
                 ✨ AI pick
               </span>
             )}

@@ -59,12 +59,15 @@ const ICONS: Record<ScheduleType, React.ReactNode> = {
   loan:        <Banknote      size={20} strokeWidth={1.6} />,
 }
 
+// Neutral, uniform chips — the icon (Calendar / ClipboardList / Building2 /
+// Home / Banknote) carries the type, not color. Keeps the overview calm.
+const NEUTRAL_ACCENT = { fg: "var(--text-2)", bg: "var(--surface-2)" }
 const ACCENTS: Record<ScheduleType, { fg: string; bg: string }> = {
-  prepaid:     { fg: "#1d4ed8", bg: "rgba(29, 78, 216, 0.10)" },   // blue
-  accrual:     { fg: "#b45309", bg: "rgba(245, 158, 11, 0.12)" }, // amber
-  fixed_asset: { fg: "#15803d", bg: "rgba(21, 128, 61, 0.10)" },  // green
-  lease:       { fg: "#7c3aed", bg: "rgba(124, 58, 237, 0.10)" }, // violet
-  loan:        { fg: "#be123c", bg: "rgba(190, 18, 60, 0.10)" },  // rose
+  prepaid:     NEUTRAL_ACCENT,
+  accrual:     NEUTRAL_ACCENT,
+  fixed_asset: NEUTRAL_ACCENT,
+  lease:       NEUTRAL_ACCENT,
+  loan:        NEUTRAL_ACCENT,
 }
 
 function fmtMoney(s: string): string {

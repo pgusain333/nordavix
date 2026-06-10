@@ -33,13 +33,13 @@ function money(s: string): string {
 
 const CONFIDENCE: Record<string, { label: string; bg: string; color: string }> = {
   high:   { label: "High confidence",   bg: "var(--green-subtle)",        color: "var(--green)" },
-  medium: { label: "Medium confidence", bg: "rgba(217,119,6,0.10)",       color: "#b45309" },
+  medium: { label: "Medium confidence", bg: "rgba(154, 107, 46,0.10)",       color: "#8a6326" },
   low:    { label: "Low confidence",    bg: "var(--surface-2)",           color: "var(--text-muted)" },
 }
 
 const STATUS_BADGE: Record<string, { label: string; bg: string; color: string }> = {
   accepted:  { label: "Approved", bg: "var(--green-subtle)",  color: "var(--green)" },
-  posted:    { label: "Posted",   bg: "rgba(37,99,235,0.10)", color: "#1d4ed8" },
+  posted:    { label: "Posted",   bg: "rgba(60, 90, 118,0.10)", color: "#3c5a76" },
   dismissed: { label: "Dismissed", bg: "var(--surface-2)",    color: "var(--text-muted)" },
 }
 
@@ -129,9 +129,9 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
       {/* Header — AI marker + confidence + status */}
       <div
         className="px-3 py-2 flex items-center gap-2 flex-wrap"
-        style={{ background: "rgba(124,58,237,0.06)", borderBottom: "1px solid var(--border)" }}
+        style={{ background: "rgba(84, 88, 138,0.06)", borderBottom: "1px solid var(--border)" }}
       >
-        <Sparkles size={13} strokeWidth={2} style={{ color: "#7c3aed" }} />
+        <Sparkles size={13} strokeWidth={2} style={{ color: "#54588a" }} />
         <p className="text-[11px] font-semibold text-theme flex-1 min-w-0 truncate">
           {entry.description}
         </p>
@@ -223,10 +223,10 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
             <td className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
               Total
             </td>
-            <td className="px-3 py-1 text-right tabular-nums font-bold" style={{ color: balanced ? "var(--text)" : "#b91c1c" }}>
+            <td className="px-3 py-1 text-right tabular-nums font-bold" style={{ color: balanced ? "var(--text)" : "#9b3d37" }}>
               {totalDr.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </td>
-            <td className="px-3 py-1 text-right tabular-nums font-bold" style={{ color: balanced ? "var(--text)" : "#b91c1c" }}>
+            <td className="px-3 py-1 text-right tabular-nums font-bold" style={{ color: balanced ? "var(--text)" : "#9b3d37" }}>
               {totalCr.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </td>
           </tr>

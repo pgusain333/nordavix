@@ -234,13 +234,13 @@ export function AdjustmentsPage() {
         {period && checkResult && checkResult.period_end === period && (
           <div className="rounded-xl p-3"
             style={{
-              background: checkResult.all_posted ? "var(--green-subtle)" : "rgba(245, 158, 11, 0.08)",
-              border: `1px solid ${checkResult.all_posted ? "var(--green)" : "rgba(245, 158, 11, 0.40)"}`,
+              background: checkResult.all_posted ? "var(--green-subtle)" : "rgba(199, 154, 82, 0.08)",
+              border: `1px solid ${checkResult.all_posted ? "var(--green)" : "rgba(199, 154, 82, 0.40)"}`,
             }}>
             <div className="flex items-start gap-2">
               {checkResult.all_posted
                 ? <CheckCircle2 size={15} strokeWidth={2.2} style={{ color: "var(--green)" }} className="mt-0.5 shrink-0" />
-                : <AlertCircle size={15} strokeWidth={2.2} style={{ color: "#b45309" }} className="mt-0.5 shrink-0" />}
+                : <AlertCircle size={15} strokeWidth={2.2} style={{ color: "#8a6326" }} className="mt-0.5 shrink-0" />}
               <div className="min-w-0">
                 <p className="text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>
                   {checkResult.posted_count} of {checkResult.total} found in QuickBooks
@@ -258,7 +258,7 @@ export function AdjustmentsPage() {
                     <ul className="mt-1 space-y-0.5">
                       {checkResult.entries.filter((e) => !e.posted).slice(0, 8).map((e) => (
                         <li key={e.id} className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--text-2)" }}>
-                          <span className="inline-block h-1 w-1 rounded-full shrink-0" style={{ background: "#b45309" }} />
+                          <span className="inline-block h-1 w-1 rounded-full shrink-0" style={{ background: "#8a6326" }} />
                           {e.description}
                         </li>
                       ))}

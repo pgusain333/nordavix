@@ -85,9 +85,9 @@ export function PrepaidSuggestionsPanel({
     return (
       <div className="rounded-lg mb-3 px-3 py-2 flex items-center gap-2 text-[11px]"
         style={{
-          background: "rgba(245, 158, 11, 0.10)",
-          border: "1px solid rgba(245, 158, 11, 0.40)",
-          color: "#92400e",
+          background: "rgba(199, 154, 82, 0.10)",
+          border: "1px solid rgba(199, 154, 82, 0.40)",
+          color: "#7a5622",
         }}>
         <AlertCircle size={12} strokeWidth={2} />
         <span>
@@ -129,12 +129,12 @@ export function PrepaidSuggestionsPanel({
               title="Select / clear every active prepaid item in this period"
             />
           )}
-          <Calendar size={13} strokeWidth={1.8} style={{ color: "#1d4ed8" }} />
+          <Calendar size={13} strokeWidth={1.8} style={{ color: "#3c5a76" }} />
           <p className="text-[11px] font-semibold text-theme">
             {lockTicks ? "From Prepaids schedule (auto-included)" : "Suggested from Prepaids schedule"}
           </p>
           <span className="text-[10px] px-1.5 py-0.5 rounded"
-            style={{ background: "rgba(29, 78, 216, 0.12)", color: "#1d4ed8" }}>
+            style={{ background: "rgba(60, 90, 118, 0.12)", color: "#3c5a76" }}>
             {items.length} item{items.length === 1 ? "" : "s"} · days-based
           </span>
           {lockTicks && (
