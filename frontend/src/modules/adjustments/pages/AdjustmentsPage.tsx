@@ -15,8 +15,9 @@ import { Sparkles, CheckCheck, FileText, Save, Download, Lock, RefreshCw, CheckC
 import { Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
-import { adjustmentsApi, type AdjustmentStatus, type CheckPostedResult, type ProposedEntry } from "../api"
+import { adjustmentsApi, type AdjustmentStatus, type CheckPostedResult, type ProposedEntry, type ProposedEntryList } from "../api"
 import { ProposedEntryCard } from "../components/ProposedEntryCard"
+import { patchAdjustments } from "../optimistic"
 
 const SOURCE_META: Record<string, { label: string; hint: string }> = {
   bank:  { label: "Bank reconciliation", hint: "Fees, interest, and other bank-only items" },
@@ -97,7 +98,21 @@ export function AdjustmentsPage() {
 
   const saveMut = useMutation({
     mutationFn: () => adjustmentsApi.save(period),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["adjustments"] }),
+    // Stamp saved_at on the period's active entries instantly — the banner flips
+    // to "Saved" and the CSV / Check buttons unlock without waiting on the server.
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: ["adjustments"] })
+      const prev = qc.getQueriesData<ProposedEntryList>({ queryKey: ["adjustments"] })
+      const stamp = new Date().toISOString()
+      patchAdjustments(
+        qc,
+        (e) => e.period_end === period && e.status !== "dismissed" && !e.saved_at,
+        { saved_at: stamp },
+      )
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => { ctx?.prev?.forEach(([k, d]) => qc.setQueryData(k, d)) },
+    onSettled: () => { qc.invalidateQueries({ queryKey: ["adjustments"] }) },
   })
   const downloadMut = useMutation({
     mutationFn: () => adjustmentsApi.downloadCsv(period),
@@ -128,7 +143,17 @@ export function AdjustmentsPage() {
         try { await adjustmentsApi.accept(e.id) } catch { /* skip closed/locked */ }
       }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["adjustments"] }),
+    // Flip every visible open entry to Approved in one paint, then book them
+    // server-side in the background.
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: ["adjustments"] })
+      const prev = qc.getQueriesData<ProposedEntryList>({ queryKey: ["adjustments"] })
+      const ids = new Set(openVisible.map((e) => e.id))
+      patchAdjustments(qc, (e) => ids.has(e.id), { status: "accepted" })
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => { ctx?.prev?.forEach(([k, d]) => qc.setQueryData(k, d)) },
+    onSettled: () => { qc.invalidateQueries({ queryKey: ["adjustments"] }) },
   })
 
   return (

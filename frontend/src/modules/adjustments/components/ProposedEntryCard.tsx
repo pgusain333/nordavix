@@ -4,14 +4,18 @@
  * Adjustments queue. Shows the drafted JE lines, the rationale, and the
  * actions that move it through review:
  *
- *   Copy JE     → clipboard (paste into QuickBooks)   — always available
- *   Approve     → reviewer marks it the right entry    — reviewer+, open only
- *   Mark posted → human booked it in QBO               — open / accepted
- *   Dismiss     → not applicable                       — open / accepted
+ *   Copy JE  → clipboard (paste into QuickBooks)   — always available
+ *   Approve  → reviewer marks it the right entry   — reviewer+, open only → Approved
+ *   Dismiss  → not applicable                      — open / accepted
  *
- * Nordavix never writes to QBO; these only record review state. Mutations
- * invalidate the shared ["adjustments"] cache so every surface (inline +
- * queue) updates together.
+ * Posting is NOT a per-card action: once approved + saved, the batch
+ * "Check posted in QBO" reads QuickBooks and marks entries posted (and reopens
+ * the affected recons). That keeps the per-card flow to a single confirm —
+ * Approve — and the Posted state verified against QBO, never set by hand.
+ *
+ * Nordavix never writes to QBO; these only record review state. Mutations patch
+ * the shared ["adjustments"] cache optimistically (instant) and reconcile on
+ * settle, so every surface (inline + queue) updates together with no wait.
  */
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -23,7 +27,9 @@ import {
   type AdjustmentAccount,
   type ProposedEntry,
   type ProposedEntryLine,
+  type ProposedEntryList,
 } from "../api"
+import { optimisticAdjust, patchAdjustments } from "../optimistic"
 
 function money(s: string): string {
   const n = parseFloat(s) || 0
@@ -53,15 +59,29 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
   const qc = useQueryClient()
   const [copied, setCopied] = useState(false)
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["adjustments"] })
-  const acceptMut  = useMutation({ mutationFn: () => adjustmentsApi.accept(entry.id),     onSuccess: invalidate })
-  const dismissMut = useMutation({ mutationFn: () => adjustmentsApi.dismiss(entry.id),    onSuccess: invalidate })
-  const postedMut  = useMutation({ mutationFn: () => adjustmentsApi.markPosted(entry.id), onSuccess: invalidate })
+  // Approve → Approved tab; Dismiss → Dismissed. Both patch the shared cache
+  // optimistically so the card moves the instant it's clicked (no round-trip
+  // wait), rolling back if the server rejects.
+  const acceptMut  = useMutation({
+    mutationFn: () => adjustmentsApi.accept(entry.id),
+    ...optimisticAdjust(qc, (e) => e.id === entry.id, { status: "accepted" }),
+  })
+  const dismissMut = useMutation({
+    mutationFn: () => adjustmentsApi.dismiss(entry.id),
+    ...optimisticAdjust(qc, (e) => e.id === entry.id, { status: "dismissed" }),
+  })
   const editMut    = useMutation({
     mutationFn: (lines: ProposedEntryLine[]) => adjustmentsApi.edit(entry.id, { lines }),
-    onSuccess: invalidate,
+    onMutate: async (lines: ProposedEntryLine[]) => {
+      await qc.cancelQueries({ queryKey: ["adjustments"] })
+      const prev = qc.getQueriesData<ProposedEntryList>({ queryKey: ["adjustments"] })
+      patchAdjustments(qc, (e) => e.id === entry.id, { lines })
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => { ctx?.prev?.forEach(([k, d]) => qc.setQueryData(k, d)) },
+    onSettled: () => { qc.invalidateQueries({ queryKey: ["adjustments"] }) },
   })
-  const busy = acceptMut.isPending || dismissMut.isPending || postedMut.isPending
+  const busy = acceptMut.isPending || dismissMut.isPending
 
   // Open drafts let the user re-point any line to a different GL account — the
   // chart for the entry's period feeds the per-line dropdown. Re-pointing keeps
@@ -113,8 +133,7 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
   }
 
   const showApprove = isOpen && canReview && !readOnly
-  const showPosted  = (isOpen || entry.status === "accepted") && !readOnly
-  // Saved entries are locked — they can still be marked posted, but not dismissed.
+  // Saved entries are a locked batch and can't be dismissed.
   const showDismiss = (isOpen || entry.status === "accepted") && !readOnly && !saved
 
   return (
@@ -280,17 +299,6 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
           >
             <ThumbsDown size={12} strokeWidth={2} />
             Dismiss
-          </button>
-        )}
-        {showPosted && (
-          <button
-            type="button"
-            onClick={() => postedMut.mutate()}
-            disabled={busy}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50"
-            style={{ background: "var(--surface-2)", color: "var(--text)" }}
-          >
-            Mark posted
           </button>
         )}
         {showApprove && (
