@@ -170,10 +170,10 @@ export function DashboardHome() {
     queryKey: ["recons-overview", period],
     queryFn:  () => reconsApi.getOverview(period),
     enabled:  !!qbo && books?.seeded === true,
-    // The dashboard is the close command center, so keep it current: refetch
-    // on every visit so approvals made in other modules show up without a hard
-    // refresh. Snapshot-backed read, so this is cheap.
-    staleTime: 0,
+    // Close command center — but it doesn't need to re-fetch on every single
+    // visit. Cross-module approvals already invalidate ["recons-overview"], so a
+    // short 30s cache keeps rapid back-and-forth instant while still refreshing.
+    staleTime: 30_000,
   })
 
   // Month-end close tracker — one entry per month from books_start
@@ -182,19 +182,19 @@ export function DashboardHome() {
     queryKey: ["period-tracker"],
     queryFn:  reconsApi.listPeriodTracker,
     enabled:  books?.seeded === true,
-    // Feeds the close-progress bar — refetch on every dashboard visit and on
-    // tab focus so recon approvals reflect in real time, not after a refresh.
-    staleTime: 0,
-    refetchOnWindowFocus: true,
+    // Feeds the close-progress bar. Recon/flux approvals invalidate this key so
+    // it refreshes on action; a 30s cache and no focus-refetch keep the whole
+    // dashboard from reloading every time you tab back from QuickBooks.
+    staleTime: 30_000,
   })
 
   // Flux trial balances — list of recent analyses
   const { data: trialBalances, isError: tbErr, refetch: refetchTb } = useQuery({
     queryKey: ["flux-trial-balances"],
     queryFn:  fluxApi.listTrialBalances,
-    // Feeds flux approval state in the close-progress bar — keep it live.
-    staleTime: 0,
-    refetchOnWindowFocus: true,
+    // Feeds flux approval state in the close-progress bar. Invalidated on flux
+    // actions; a 30s cache and no focus-refetch keep revisits instant.
+    staleTime: 30_000,
   })
 
   // TBs whose current period falls in the selected month — the "flux for
@@ -229,9 +229,9 @@ export function DashboardHome() {
     queryKey: ["tasks", "all-with-closed"],
     queryFn:  () => tasksApi.list(true),
     enabled:  books?.seeded === true,
-    // Feeds schedule-commit progress in the close-progress bar — keep live.
-    staleTime: 0,
-    refetchOnWindowFocus: true,
+    // Feeds schedule-commit progress. Invalidated when tasks change; a 30s cache
+    // and no focus-refetch so the dashboard doesn't reload on every tab return.
+    staleTime: 30_000,
   })
   // Schedule-task count for the SELECTED period — drives close progress.
   // Empty kinds are skipped server-side so the count auto-scales to

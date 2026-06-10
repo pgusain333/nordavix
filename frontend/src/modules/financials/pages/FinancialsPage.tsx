@@ -816,6 +816,8 @@ function SchedulesExportCard({
 
 function StatementView({ stmt }: { stmt: Statement }) {
   const hasComparative = stmt.comparative_label !== null
+  // One pass up front instead of an O(n²) per-row backward walk (see helper).
+  const firstDataFlags = computeFirstDataFlags(stmt.rows)
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
@@ -878,7 +880,7 @@ function StatementView({ stmt }: { stmt: Statement }) {
           </thead>
           <tbody>
             {stmt.rows.map((r, i) => (
-              <Row key={i} row={r} hasComparative={hasComparative} firstDataInSection={isFirstDataInSection(stmt.rows, i)} />
+              <Row key={i} row={r} hasComparative={hasComparative} firstDataInSection={firstDataFlags[i]} />
             ))}
           </tbody>
         </table>
@@ -896,18 +898,27 @@ function StatementView({ stmt }: { stmt: Statement }) {
 }
 
 /**
- * "First data row after a section header" — used to decide whether to
- * stamp a $ on the value. audit convention: only first row of a section
- * + totals carry the $ symbol.
+ * "First data row after a section header" flags for a whole statement, in a
+ * single O(n) pass. Decides whether to stamp a $ on the value (audit
+ * convention: only the first row of a section + totals carry the $). Computed
+ * once per render instead of walking backwards for every row — the old per-row
+ * lookup was O(n²) and caused a visible hang rendering 300–400-row statements.
  */
-function isFirstDataInSection(rows: FinancialRow[], idx: number): boolean {
-  if (rows[idx].kind !== "data") return false
-  for (let i = idx - 1; i >= 0; i--) {
+const SECTION_BOUNDARY = new Set(["section_header", "total", "subtotal", "computed", "grand_total"])
+function computeFirstDataFlags(rows: FinancialRow[]): boolean[] {
+  const flags = new Array<boolean>(rows.length).fill(false)
+  let sawDataSinceBoundary = false
+  for (let i = 0; i < rows.length; i++) {
     const k = rows[i].kind
-    if (k === "data") return false
-    if (k === "section_header" || k === "total" || k === "subtotal" || k === "computed" || k === "grand_total") return true
+    if (k === "data") {
+      flags[i] = !sawDataSinceBoundary
+      sawDataSinceBoundary = true
+    } else if (SECTION_BOUNDARY.has(k)) {
+      sawDataSinceBoundary = false
+    }
+    // other kinds (spacers/notes) are transparent — they don't reset the flag
   }
-  return true
+  return flags
 }
 
 function Row({ row, hasComparative, firstDataInSection }:
