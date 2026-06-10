@@ -45,7 +45,6 @@ const TXT_2    = "#4A4946"
 const TXT_3    = "#8C8B88"
 const GREEN    = "#3E8F66"   // brand sage (reads on light)
 const GREEN_D  = "#2E7A55"
-const BURGUNDY = "#8B1538"
 const ROSE     = "#A8546F"   // muted rose
 const AMBER    = "#B07F3C"   // muted ochre
 // deeper warm panel for banded "context" sections
@@ -179,7 +178,6 @@ const ARROW_SLOT = 3     // 0-indexed row the fixed arrow points at
 const TRIPLE = [...ROTATION, ...ROTATION, ...ROTATION]
 
 function Hero() {
-  const { isSignedIn } = useUser()
   // Vertical carousel: the list scrolls up one row per tick so each phrase
   // arrives at the FIXED arrow line; then we snap back across the duplicated
   // copies with NO transition so it loops seamlessly. The row at the arrow is
@@ -230,19 +228,10 @@ function Hero() {
             </Reveal>
             <Reveal delay={0.15}>
               <div className="mt-9">
-                {isSignedIn ? (
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Link to="/app" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Open dashboard <ArrowRight size={16} /></Link>
-                    {[["Reconciliations", "/app/reconciliations"], ["Flux analysis", "/app/flux"], ["Financials", "/app/financials"]].map(([label, to]) => (
-                      <Link key={to} to={to} className="inline-flex items-center justify-center px-5 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>{label}</Link>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                    <Link to="/sign-up" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Start free <ArrowRight size={16} /></Link>
-                    <a href="#explore" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>See it work</a>
-                  </div>
-                )}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                  <Link to="/sign-up" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Start free <ArrowRight size={16} /></Link>
+                  <a href="#explore" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>See it work</a>
+                </div>
               </div>
             </Reveal>
             <Reveal delay={0.2}><p className="mt-7 text-[13px]" style={{ color: TXT_3 }}>QuickBooks-native · Maker-checker enforced · Bank-grade security</p></Reveal>
@@ -635,22 +624,28 @@ function ProductExplorer() {
 // ─── Agentic spotlight ───────────────────────────────────────────────────────
 function AgenticSpotlight() {
   const steps = [{ n: "01", t: "Pulls from QuickBooks", d: "Live balances and the transactions behind them." }, { n: "02", t: "Ties out the account", d: "Rolls the opening, matches items, finds the gap." }, { n: "03", t: "Writes the commentary", d: "A grounded narrative, risk flags, a confidence score." }, { n: "04", t: "Hands it to you", d: "Suggest-only. You review and approve — always." }]
+  // FloQast-style deep-green statement band — white text on brand green.
   return (
-    <section className="relative overflow-hidden" style={{ background: INK }}>
+    <section className="relative overflow-hidden" style={{ background: "linear-gradient(165deg, #15342A 0%, #1E4736 55%, #245540 100%)" }}>
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-20 right-0 h-[420px] w-[520px] rounded-full" style={{ background: `radial-gradient(closest-side, ${BURGUNDY}, transparent)`, opacity: 0.07, filter: "blur(50px)" }} />
-        <div className="absolute bottom-[-30%] left-[-10%] h-[420px] w-[520px] rounded-full" style={{ background: `radial-gradient(closest-side, ${ROSE}, transparent)`, opacity: 0.06, filter: "blur(60px)" }} />
+        <div className="absolute -top-24 right-0 h-[440px] w-[560px] rounded-full" style={{ background: "radial-gradient(closest-side, #54B98A, transparent)", opacity: 0.16, filter: "blur(60px)" }} />
+        <div className="absolute bottom-[-30%] left-[-10%] h-[440px] w-[560px] rounded-full" style={{ background: "radial-gradient(closest-side, #EAC97C, transparent)", opacity: 0.10, filter: "blur(70px)" }} />
+        <div className="absolute inset-0" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)", backgroundSize: "56px 56px", maskImage: "radial-gradient(120% 90% at 50% 0%, black, transparent 70%)", WebkitMaskImage: "radial-gradient(120% 90% at 50% 0%, black, transparent 70%)", opacity: 0.6 }} />
       </div>
       <div className="relative max-w-6xl mx-auto px-6 py-24 md:py-32">
         <Reveal className="max-w-2xl">
-          <span className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold" style={{ background: "rgba(231,107,147,0.14)", color: ROSE }}><Sparkles size={13} strokeWidth={2} /> Agentic Mode</span>
-          <h2 className="mt-5 text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Meet your AI staff accountant.</h2>
-          <p className="mt-4 text-lg leading-relaxed" style={{ color: TXT_2 }}>Click once and Nordavix runs the first pass across every open account — pulling, tying out, and writing the working paper. It never approves anything. You keep the judgment; it removes the grind.</p>
+          <span className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold" style={{ background: "rgba(255,255,255,0.12)", color: "#FFFFFF" }}><Sparkles size={13} strokeWidth={2} /> Agentic Mode</span>
+          <h2 className="mt-5 text-3xl md:text-5xl font-bold tracking-tight text-white">Meet your AI staff accountant.</h2>
+          <p className="mt-4 text-lg leading-relaxed" style={{ color: "rgba(255,255,255,0.78)" }}>Click once and Nordavix runs the first pass across every open account — pulling, tying out, and writing the working paper. It never approves anything. You keep the judgment; it removes the grind.</p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <Link to="/sign-up" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-bold transition-transform hover:scale-[1.03]" style={{ background: "#FFFFFF", color: "#1E4736" }}>Start free <ArrowRight size={15} strokeWidth={2.3} /></Link>
+            <a href="#explore" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition-colors" style={{ color: "#FFFFFF", background: "rgba(255,255,255,0.10)", border: "1px solid rgba(255,255,255,0.25)" }}>See it work</a>
+          </div>
         </Reveal>
         <div className="mt-14 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {steps.map(({ n, t, d }, idx) => (
             <Reveal key={n} delay={idx * 0.08}>
-              <div className="h-full rounded-2xl p-6" style={{ background: SURFACE, border: `1px solid ${LINE}` }}><div className="text-sm font-bold tabular-nums" style={{ color: ROSE }}>{n}</div><h3 className="mt-3 text-base font-bold" style={{ color: TXT }}>{t}</h3><p className="mt-1.5 text-sm leading-relaxed" style={{ color: TXT_2 }}>{d}</p></div>
+              <div className="h-full rounded-2xl p-6" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.14)" }}><div className="text-sm font-bold tabular-nums" style={{ color: "#7BD7AC" }}>{n}</div><h3 className="mt-3 text-base font-bold text-white">{t}</h3><p className="mt-1.5 text-sm leading-relaxed" style={{ color: "rgba(255,255,255,0.72)" }}>{d}</p></div>
             </Reveal>
           ))}
         </div>
