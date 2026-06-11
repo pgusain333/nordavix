@@ -30,12 +30,6 @@ interface Props {
   /** Bulk select / clear every selectable row in this panel at once. */
   onBulkSet:    (suggestions: PrepaidSuggestion[], nextChecked: boolean) => void
   readOnly?:    boolean
-  /** When true, schedule items are AUTHORITATIVE — the parent's
-   *  auto-flow effect has already pre-selected every line as a
-   *  reconciling item and the user can't deselect them. Checkboxes
-   *  render disabled + checked; the bulk toggle is hidden; the footer
-   *  copy switches to "auto-included" wording. */
-  autoIncluded?: boolean
 }
 
 /** Stable synthetic ID matching what the parent stores in selectedItemMap. */
@@ -49,13 +43,8 @@ function fmt(s: string): string {
 }
 
 export function PrepaidSuggestionsPanel({
-  qboAccountId, periodEnd, selectedIds, onToggle, onBulkSet, readOnly, autoIncluded,
+  qboAccountId, periodEnd, selectedIds, onToggle, onBulkSet, readOnly,
 }: Props) {
-  // Auto-include lock: schedule items are the authoritative subledger,
-  // so the parent has already pre-ticked them. We render checkboxes
-  // disabled-checked and hide the bulk toggle so the user can't
-  // accidentally remove a schedule line from the SL.
-  const lockTicks = !!autoIncluded
   const { data, isLoading } = useQuery({
     queryKey: ["schedules", "prepaid", "suggestions", qboAccountId, periodEnd],
     queryFn:  () => schedulesApi.getPrepaidSuggestions(qboAccountId, periodEnd),
@@ -120,29 +109,21 @@ export function PrepaidSuggestionsPanel({
           borderBottom: "1px solid var(--border)",
         }}>
         <div className="flex items-center gap-2 min-w-0">
-          {!lockTicks && (
-            <BulkSelectCheckbox
-              total={items.filter((it) => !it.fully_amortized).length}
-              selected={items.filter((it) => !it.fully_amortized && selectedIds.has(prepaidTxnId(it))).length}
-              disabled={readOnly}
-              onChange={(nextChecked) => onBulkSet(items.filter((it) => !it.fully_amortized), nextChecked)}
-              title="Select / clear every active prepaid item in this period"
-            />
-          )}
+          <BulkSelectCheckbox
+            total={items.filter((it) => !it.fully_amortized).length}
+            selected={items.filter((it) => !it.fully_amortized && selectedIds.has(prepaidTxnId(it))).length}
+            disabled={readOnly}
+            onChange={(nextChecked) => onBulkSet(items.filter((it) => !it.fully_amortized), nextChecked)}
+            title="Select / clear every active prepaid item in this period"
+          />
           <Calendar size={13} strokeWidth={1.8} style={{ color: "#3c5a76" }} />
           <p className="text-[11px] font-semibold text-theme">
-            {lockTicks ? "From Prepaids schedule (auto-included)" : "Suggested from Prepaids schedule"}
+            Suggested from Prepaids schedule
           </p>
           <span className="text-[10px] px-1.5 py-0.5 rounded"
             style={{ background: "rgba(60, 90, 118, 0.12)", color: "#3c5a76" }}>
             {items.length} item{items.length === 1 ? "" : "s"} · days-based
           </span>
-          {lockTicks && (
-            <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-              Subledger source
-            </span>
-          )}
         </div>
         <Link to="/app/schedules/prepaids" target="_blank" rel="noopener noreferrer"
           className="text-[10px] inline-flex items-center gap-1 hover:underline"
@@ -185,17 +166,12 @@ export function PrepaidSuggestionsPanel({
                   <td className="py-2 pr-1">
                     <input
                       type="checkbox"
-                      checked={checked || (lockTicks && !dim)}
-                      disabled={readOnly || dim || lockTicks}
+                      checked={checked}
+                      disabled={readOnly || dim}
                       onChange={(e) => onToggle(it, e.target.checked)}
                       className="h-3.5 w-3.5 rounded"
-                      style={{
-                        accentColor: "var(--green)",
-                        cursor: lockTicks ? "default" : "pointer",
-                      }}
-                      title={lockTicks
-                        ? "Auto-included from the Prepaids schedule — this is the authoritative subledger source for this account"
-                        : dim ? "Fully amortized — nothing to add" : "Include in subledger"}
+                      style={{ accentColor: "var(--green)", cursor: "pointer" }}
+                      title={dim ? "Fully amortized — nothing to add" : "Tick to include in the subledger build-up as a reconciling item"}
                     />
                   </td>
                   <td className="py-2 pr-3">
@@ -231,22 +207,11 @@ export function PrepaidSuggestionsPanel({
       <div className="px-3 py-2 flex items-center justify-between gap-2 flex-wrap"
         style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
         <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-          {lockTicks ? (
-            <>
-              All {items.length} schedule {items.length === 1 ? "item" : "items"} auto-included ·
-              contributes{" "}
-              <span className="font-semibold tabular-nums text-theme">{fmt(allSum.toString())}</span>
-              {" "}to subledger
-            </>
-          ) : (
-            <>
-              {selectedCount} of {items.length} selected · contributes{" "}
-              <span className="font-semibold tabular-nums text-theme">{fmt(selectedSum.toString())}</span>
-              {" "}to subledger
-            </>
-          )}
+          {selectedCount} of {items.length} selected · contributes{" "}
+          <span className="font-semibold tabular-nums text-theme">{fmt(selectedSum.toString())}</span>
+          {" "}to subledger
         </p>
-        {!lockTicks && selectedSum === allSum && items.length > 0 && (
+        {selectedSum === allSum && items.length > 0 && (
           <span className="inline-flex items-center gap-1 text-[10px] font-semibold"
             style={{ color: "var(--green)" }}>
             <CheckCircle2 size={10} strokeWidth={2.4} />

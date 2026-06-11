@@ -1,22 +1,18 @@
 /**
- * SchedulePeriodJesPanel — replaces the QBO GL-drill-in "Items" table
- * for schedule-backed reconciliations (Prepaid, Accrual, Fixed Assets,
- * Lease, Loan accounts).
+ * SchedulePeriodJesPanel — read-only REFERENCE card rendered ABOVE the
+ * QBO GL-drill-in "Items" table for schedule-backed reconciliations
+ * (Prepaid, Accrual, Fixed Assets, Lease, Loan accounts).
  *
- * Rationale (from the user): "the schedules which are prepared in
- * Nordavix remove the attached section. Instead shows the schedule
- * line items JE to match here. Entries here will flow from subledger."
- *
- * The schedule IS the subledger for these accounts, so picking
- * reconciling items from QBO GL drill-in makes no sense. Instead we
- * show the per-period JE for each schedule line — the entry the
- * user should expect to see in QBO's GL for this period. They tick
- * each as posted / not-posted in QBO (handled outside this panel via
- * the variance gate + Re-sync loop).
+ * It shows the per-period JE for each schedule line — the entry the
+ * user should expect to see in QBO's GL for this period. The user posts
+ * these in QuickBooks; after a Re-sync the real GL entries appear in the
+ * tick table below and are ticked there like any other account. Until
+ * then, the same lines are available as TICKABLE suggestions in the
+ * Suggestions tab (nothing is auto-added or locked).
  *
  * Pulls all 5 per-account suggestion endpoints (cached, shared with
- * the existing Suggestions tab + the auto-flow effect). Renders each
- * non-zero line as a small JE card showing Dr / Cr + memo.
+ * the existing Suggestions tab). Renders each non-zero line as a small
+ * JE card showing Dr / Cr + memo.
  *
  * Per-kind JE mapping:
  *
@@ -77,8 +73,8 @@ interface PeriodJe {
   kindLabel:   string  // human-readable kind for the chip
   rows:        JeRow[]
   memo:        string
-  /** Stable key for the row — used to skip duplicates if both the
-   *  auto-flow effect and this panel render the same item. */
+  /** Stable key for the row — matches the Suggestions-tab panels'
+   *  synthetic txn_ids so the two surfaces stay correlatable. */
   syntheticId: string
 }
 
@@ -301,10 +297,11 @@ export function SchedulePeriodJesPanel({ qboAccountId, periodEnd }: Props) {
 
       <div className="px-3 py-2 text-[10.5px]"
         style={{ background: "rgba(79, 160, 122, 0.04)", color: "var(--text-2)" }}>
-        The Schedules module is the subledger for this account, so these JEs
-        replace the old "tick GL items" workflow. Each entry below should be
-        posted in QuickBooks for {formatDate(periodEnd)}. After posting, click
-        Re-sync above so the GL recognizes them and the variance clears.
+        These are the entries the Nordavix Schedules expect in QuickBooks for{" "}
+        {formatDate(periodEnd)} — for reference. Post each in QBO, then Re-sync:
+        the real GL entries will appear in the table below where you can tick
+        them. Until they're posted, you can tick the schedule lines in the
+        Suggestions tab to carry them as reconciling items.
       </div>
 
       <div className="px-3 py-2 space-y-2.5">

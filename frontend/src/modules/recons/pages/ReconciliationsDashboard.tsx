@@ -2373,19 +2373,20 @@ function InlineSubledgerForm({
   const selectedItemsRef = useRef(selectedItemMap)
   selectedItemsRef.current = selectedItemMap
 
-  // ── Auto-flow schedule items as reconciling items ──────────────────
+  // ── Schedule detection (prepaid/accrual/FA/lease/loan) ─────────────
   //
-  // The 5 per-account schedule endpoints (prepaid/accrual/FA/lease/loan)
-  // are the AUTHORITATIVE subledger source for accounts that have any
-  // schedule items mapped. Pre-tick every schedule line so the user
-  // doesn't have to manually check them in the Suggestions tab — the
-  // schedule IS the subledger, full stop.
+  // The 5 per-account schedule endpoints tell us whether this account is
+  // schedule-backed (drives the Suggestions-tab treatment + help copy).
+  // React Query shares cache with the per-type panels below so this is
+  // zero duplicate work.
   //
-  // Pulls all 5 queries in parallel. React Query shares cache with the
-  // per-type panels below so this is zero duplicate work. Auto-merges
-  // into selectedItemMap on first arrival per (qbo_id, period_end) —
-  // never clobbers user toggles after that (the keyed ref guards
-  // against re-running on every render).
+  // Deliberately NO auto-flow: schedule entries are NOT auto-added (or
+  // locked) into the reconciling items. They render in the Suggestions
+  // tab as TICKABLE rows — the user decides what flows into the build-up.
+  // Once the JEs are actually posted in QBO and the period is re-synced,
+  // the real GL entries appear in the Items tab and can be ticked from
+  // there, which avoids double-counting a schedule line against its own
+  // posted JE.
   const scheduleQueries = useQueries({
     queries: [
       {
@@ -2415,97 +2416,9 @@ function InlineSubledgerForm({
       },
     ],
   })
-  // Once-per-account-period guard so we don't re-merge on every render —
-  // only when the user navigates to a different account or period.
-  const autoFlowedKeyRef = useRef<string>("")
-  useEffect(() => {
-    const key = `${account.qbo_id}__${periodEnd}`
-    const allSettled = scheduleQueries.every((q) => q.isSuccess || q.isError)
-    if (!allSettled) return
-    if (autoFlowedKeyRef.current === key) return  // already merged this round
-    autoFlowedKeyRef.current = key
-
-    const [prepaidQ, accrualQ, faQ, leaseQ, loanQ] = scheduleQueries
-    const additions: Record<string, ReconcilingItem> = {}
-
-    for (const s of prepaidQ.data?.items ?? []) {
-      if (s.fully_amortized) continue
-      const id = prepaidTxnId(s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   "Prepaid amortization",
-        txn_number: s.reference ?? "",
-        txn_date:   s.start_date,
-        amount:     s.unamortized_at_period_end,
-        memo:       `${s.description} · unamortized as of ${periodEnd} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-    for (const s of accrualQ.data?.items ?? []) {
-      const id = accrualTxnId(s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   s.line_kind === "accrual" ? "Accrual" : "Accrual reversal",
-        txn_number: s.reference ?? "",
-        txn_date:   s.line_date,
-        amount:     s.amount,
-        memo:       `${s.description} · ${s.line_kind === "accrual" ? "accrued" : "reversed"} ${s.line_date} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-    for (const s of faQ.data?.items ?? []) {
-      const id = lineTxnId("fixed_asset", s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   `Fixed asset · ${s.line_kind}`,
-        txn_number: s.reference ?? "",
-        txn_date:   s.line_date,
-        amount:     s.amount,
-        memo:       `${s.description} · ${s.line_kind} ${s.line_date} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-    for (const s of leaseQ.data?.items ?? []) {
-      const id = lineTxnId("lease", s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   `Lease · ${s.line_kind}`,
-        txn_number: s.reference ?? "",
-        txn_date:   s.line_date,
-        amount:     s.amount,
-        memo:       `${s.description} · ${s.line_kind} ${s.line_date} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-    for (const s of loanQ.data?.items ?? []) {
-      const id = lineTxnId("loan", s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   `Loan · ${s.line_kind}`,
-        txn_number: s.reference ?? "",
-        txn_date:   s.line_date,
-        amount:     s.amount,
-        memo:       `${s.description} · ${s.line_kind} ${s.line_date} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-
-    if (Object.keys(additions).length === 0) return  // not a schedule-backed account
-
-    setSelectedItemMap((prev) => {
-      // Schedule items are authoritative. If an existing entry in prev
-      // shares a txn_id with our additions, the addition wins (latest
-      // computed balance from the schedule). Non-schedule entries
-      // (manual / QBO drill-in) are preserved as-is — the user may
-      // have added them on purpose for non-schedule reconciling
-      // items (e.g. a bank fee miscategorization).
-      return { ...prev, ...additions }
-    })
-  }, [scheduleQueries, account.qbo_id, periodEnd])
-
   /** True when any schedule has at least one item for this account —
-   *  drives the UI's "schedule-backed" treatment (locked checkboxes,
-   *  re-labeled help banner). */
+   *  drives the UI's "schedule-backed" treatment (Suggestions-tab help
+   *  copy + the expected-JEs reference panel in the Items tab). */
   const isScheduleBacked =
     (scheduleQueries[0].data?.items?.length ?? 0) > 0
     || (scheduleQueries[1].data?.items?.length ?? 0) > 0
@@ -2539,11 +2452,10 @@ function InlineSubledgerForm({
   }, [account.qbo_id, account.review_status])
 
   function toggleItem(item: ReconcilingItem) {
-    // Schedule-sourced items (prepaid/accrual/FA/lease/loan) are the
-    // authoritative subledger source — they are locked and can't be
-    // unticked/removed from the reconciliation here (manage them in
-    // Schedules). Adding still flows in via the schedule auto-merge.
-    if (item.txn_id.startsWith("schedule-")) return
+    // Every item — including schedule-sourced ones — is freely tickable.
+    // Schedule entries are suggestions the user opts into (Suggestions
+    // tab), never locked: once the JE posts in QBO the real GL entry
+    // replaces it from the Items tab.
     setSelectedItemMap((prev) => {
       const next = { ...prev }
       if (next[item.txn_id]) delete next[item.txn_id]
@@ -2613,8 +2525,10 @@ function InlineSubledgerForm({
   // ones surface as "open items" in the PDF — they're the unreconciled gap.
   // Open items are NEVER part of the subledger math: computedSubledger uses
   // ticked items only, and the backend skips cleared:false when summing.
-  // Schedule-backed accounts have no GL-drill-in candidate set, so no open
-  // items are derived for them.
+  // Schedule-backed accounts still skip open-item derivation: the schedule —
+  // not the open-GL list — defines what's outstanding there, and deriving
+  // open rows would phantom-save over AI-prepared schedule tie-outs the
+  // moment the drawer opens (payload hash would differ from the server).
   const buildSavePayload = (): ReconcilingItem[] => {
     const sel = selectedItemsRef.current
     const ticked = Object.values(sel).map((it) => ({ ...it, cleared: true }))
@@ -2880,13 +2794,13 @@ function InlineSubledgerForm({
           <span>
             {isScheduleBacked ? (
               <>
-                <strong style={{ color: "var(--green)" }}>Nordavix Schedules is the subledger for this account.</strong>{" "}
-                Every line below is auto-included in the reconciling-items
-                list and contributes to the subledger build-up — no manual
-                ticking required. To change what flows here, edit the items
-                in the Schedules module. The Items tab below shows the same
-                rows alongside any non-schedule reconciling items you
-                manually add.
+                <strong style={{ color: "var(--green)" }}>This account has Nordavix Schedules behind it.</strong>{" "}
+                Nothing is added automatically: tick the schedule lines below
+                to include them as reconciling items while the matching JEs
+                aren't in QuickBooks yet. Once you post the JEs in QBO and
+                re-sync the period, the real GL entries appear in the Items
+                tab — tick those there and untick these. To change the
+                amounts themselves, edit the items in the Schedules module.
               </>
             ) : (
               <>
@@ -2927,7 +2841,6 @@ function InlineSubledgerForm({
         periodEnd={periodEnd}
         selectedIds={new Set(Object.keys(selectedItemMap))}
         readOnly={readOnly}
-        autoIncluded={isScheduleBacked}
         onToggle={(s, nextChecked) => {
           const id = prepaidTxnId(s)
           setSelectedItemMap((prev) => {
@@ -2981,7 +2894,6 @@ function InlineSubledgerForm({
         periodEnd={periodEnd}
         selectedIds={new Set(Object.keys(selectedItemMap))}
         readOnly={readOnly}
-        autoIncluded={isScheduleBacked}
         onToggle={(s, nextChecked) => {
           const id = accrualTxnId(s)
           setSelectedItemMap((prev) => {
@@ -3038,7 +2950,6 @@ function InlineSubledgerForm({
           periodEnd={periodEnd}
           selectedIds={new Set(Object.keys(selectedItemMap))}
           readOnly={readOnly}
-          autoIncluded={isScheduleBacked}
           onToggle={(s, scheduleKind, nextChecked) => {
             const id = lineTxnId(scheduleKind, s)
             setSelectedItemMap((prev) => {
@@ -3173,10 +3084,12 @@ function InlineSubledgerForm({
           /period-entries. Plus a manual-add form for items not yet
           in QBO (outstanding bank checks, deposits in transit, JEs). */}
       {/* For schedule-backed accounts (Prepaid / Accrual / FA / Lease /
-          Loan), the Nordavix Schedules module IS the subledger. The
-          per-period JEs from each schedule line ARE the reconciling
-          items here — there's no GL-drill-in tick workflow to run.
-          Render the JE panel; skip the manual-add + GL-txn table. */}
+          Loan), show the expected per-period JEs from the schedule as a
+          REFERENCE — then the regular QBO GL-txn table below it. Once the
+          user posts those JEs in QuickBooks and re-syncs the period, the
+          real GL entries appear in the table and can be ticked exactly
+          like any other account. (Schedule lines themselves are tickable
+          suggestions in the Suggestions tab — never auto-added.) */}
       {isScheduleBacked && (
         <SchedulePeriodJesPanel
           qboAccountId={account.qbo_id}
@@ -3184,8 +3097,6 @@ function InlineSubledgerForm({
         />
       )}
 
-      {!isScheduleBacked && (
-      <>
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
           <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
@@ -3354,8 +3265,6 @@ function InlineSubledgerForm({
           blue "Rolled forward from prior period" card that used to live
           here: that information is already on the Opening balance line
           inside the build-up ("Rolled forward from <date>"). */}
-      </>
-      )}{/* /isScheduleBacked guard for the GL-drill-in items block */}
 
       </div>{/* end Items group */}
 
@@ -3610,8 +3519,9 @@ function SubledgerBuildup({
           <ul className="space-y-0.5 max-h-48 overflow-y-auto">
             {selectedItems.map((it) => {
               const isManual = it.txn_id.startsWith("manual-")
-              // Schedule-sourced items (prepaid/accrual/FA/lease/loan) are the
-              // authoritative subledger source — locked, can't be removed here.
+              // Schedule-sourced items (prepaid/accrual/FA/lease/loan) carry a
+              // provenance badge but are freely untickable like any other item —
+              // they're suggestions the user opted into, not a locked source.
               const isSchedule = it.txn_id.startsWith("schedule-")
               // Signed effective amount. For QBO items on a credit-
               // natural account this is the NEGATIVE of the raw QBO
@@ -3634,9 +3544,9 @@ function SubledgerBuildup({
                     </span>
                   )}
                   {isSchedule && (
-                    <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded inline-flex items-center gap-0.5"
+                    <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded"
                       style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-                      <Lock size={8} strokeWidth={2.4} /> Schedule
+                      Schedule
                     </span>
                   )}
                   <span className="flex-1 truncate text-theme">
@@ -3667,18 +3577,13 @@ function SubledgerBuildup({
                         <X size={12} strokeWidth={1.8} />
                       </button>
                     </>
-                  ) : isSchedule ? (
-                    <span
-                      className="h-5 w-5 inline-flex items-center justify-center rounded"
-                      title="Flows from a schedule — the authoritative subledger source. Manage it in Schedules; it can't be removed here."
-                      style={{ color: "var(--text-muted)", cursor: "default" }}>
-                      <Lock size={11} strokeWidth={1.8} />
-                    </span>
                   ) : (
                     <button type="button"
                       onClick={() => onUntickItem(it)}
                       className="h-5 w-5 inline-flex items-center justify-center rounded"
-                      title="Untick from selection"
+                      title={isSchedule
+                        ? "Untick this schedule suggestion (re-tick it any time in the Suggestions tab)"
+                        : "Untick from selection"}
                       style={{ color: "var(--text-muted)" }}>
                       <X size={12} strokeWidth={1.8} />
                     </button>

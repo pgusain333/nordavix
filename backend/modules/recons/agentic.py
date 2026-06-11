@@ -615,7 +615,12 @@ async def _save_prepared(
         metadata={
             "summary": (
                 f"AI agentic preparer reconciled account {qid} for {period_end}: "
-                f"tied subledger to GL by including {len(items)} period transaction(s)."
+                + (
+                    f"tied subledger to GL by including {len(items)} period transaction(s)."
+                    if items else
+                    "subledger ties to GL with no reconciling items "
+                    "(schedule-backed accounts keep schedule entries as suggestions only)."
+                )
             ),
             "qbo_account_id": qid,
             "period_end": period_end.isoformat(),
@@ -2173,10 +2178,16 @@ async def _process_schedule_backed_account(
                 f"matches GL of {_money(gl_balance)} — clean tie-out."
             ),
         }
+        # Deliberately items=[]: schedule entries are NEVER auto-added (or
+        # locked) as reconciling items. The tie-out needs none (GL == SL),
+        # and the period's schedule JEs stay visible as tickable suggestions
+        # in the drawer's Suggestions tab. Once posted in QBO, the real GL
+        # entries surface in the Items tab on the next sync — auto-storing
+        # the schedule lines here would double-count against them.
         await _save_prepared(
             db=db, tenant_id=tenant_id, user=user,
             qid=qid, period_end=period_end, review=review,
-            subledger_total=sl, items=je_items,
+            subledger_total=sl, items=[],
             source_note=(
                 f"AI-prepared (schedule-backed {pretty_type}): Nordavix Schedule "
                 f"yields {_money(sl)}, matches GL {_money(gl_balance)} "
@@ -2195,7 +2206,7 @@ async def _process_schedule_backed_account(
             qbo_account_id=qid, account_name=name, account_number=number,
             action="prepared",
             reason=f"Schedule-backed ({pretty_type}): Nordavix Schedule SL {_money(sl)} matches GL — tied out.",
-            items_added=len(je_items),
+            items_added=0,  # schedule entries are suggestions, never auto-added
             gap_before=str(gap.quantize(Decimal("0.01"))),
             gap_after=str(gap.quantize(Decimal("0.01"))),
         ))
@@ -2245,8 +2256,10 @@ async def _process_schedule_backed_account(
             f"Schedule shows a balance of {_money(sl)} but QBO GL shows {_money(gl_balance)} — "
             f"a {_money(gap)} gap. The Nordavix Schedule is your subledger of record, so this "
             "variance represents JE(s) that need to be posted to (or removed from) QuickBooks. "
-            "Open the Suggestions tab to see the expected JEs for this period and post them. "
-            "Re-Sync the period after posting and re-run AI to confirm the tie-out."
+            "Open the Suggestions tab: tick the schedule entries there to carry them as "
+            "reconciling items in the meantime, and post the JEs in QuickBooks. After posting, "
+            "re-Sync the period — the entries will appear in the Items tab from QBO — then "
+            "re-run AI to confirm the tie-out."
         ),
     }
     await _save_analyzed_row(
