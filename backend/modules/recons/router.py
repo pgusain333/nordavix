@@ -906,6 +906,15 @@ async def update_account_review_status(
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
     status_value: str = Query(..., alias="status", description="pending | reviewed | approved | flagged"),
     notes: str | None = Query(default=None),
+    preserve: bool = Query(
+        default=False,
+        description=(
+            "Only meaningful when status=pending. False (default) = full reset: "
+            "drop the subledger override + ticked items so the next preparer starts "
+            "fresh. True = a preparer unlocking their own Prepared work to edit — "
+            "keep the subledger + ticked items, clear only the prepared/approved stamps."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -1049,27 +1058,38 @@ async def update_account_review_status(
         row.approved_by = user.id
         row.approved_at = now
     elif status_value == "pending":
-        # Reset = start over. Drop subledger override + ticked items
-        # and wipe actor stamps. Matches the bulk endpoint.
-        row.subledger_total = None
-        row.subledger_source = None
-        row.subledger_entered_by = None
-        row.subledger_entered_at = None
-        row.reconciling_items = []
+        # Re-opening for editing always clears the actor stamps.
         row.prepared_by = None
         row.prepared_at = None
         row.approved_by = None
         row.approved_at = None
-        # Freeze the displayed subledger value if one isn't already
-        # saved. Without this, an account can be approved with the
-        # dashboard's defaulted display value (rolled-forward or
-        # GL-match) but no subledger_total stored — which breaks the
-        # close-and-roll chain for downstream periods because the
-        # picker only looks at rows where subledger_total IS NOT NULL.
-        if row.subledger_total is None:
-            await _freeze_displayed_subledger(
-                db, tenant_id, qbo_account_id, pe, row, user,
-            )
+        if preserve:
+            # "Reset to open" — a preparer unlocking their OWN Prepared work to
+            # tweak it before a reviewer approves. KEEP the subledger override +
+            # ticked items so they don't have to redo everything; the row simply
+            # returns to the editable in-progress state. (Re-opening an APPROVED
+            # row is gated to reviewer/admin above, so this only fires from a
+            # Prepared row.)
+            pass
+        else:
+            # "Reset to pending" — full start-over. Drop the subledger override +
+            # ticked items so the next preparer begins from a clean slate.
+            # Matches the bulk endpoint.
+            row.subledger_total = None
+            row.subledger_source = None
+            row.subledger_entered_by = None
+            row.subledger_entered_at = None
+            row.reconciling_items = []
+            # Freeze the displayed subledger value if one isn't already
+            # saved. Without this, an account can be approved with the
+            # dashboard's defaulted display value (rolled-forward or
+            # GL-match) but no subledger_total stored — which breaks the
+            # close-and-roll chain for downstream periods because the
+            # picker only looks at rows where subledger_total IS NOT NULL.
+            if row.subledger_total is None:
+                await _freeze_displayed_subledger(
+                    db, tenant_id, qbo_account_id, pe, row, user,
+                )
 
     from core.audit.log import write_audit_event
     await write_audit_event(

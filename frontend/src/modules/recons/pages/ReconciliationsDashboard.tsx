@@ -671,8 +671,8 @@ export function ReconciliationsDashboard() {
    * jumps to its new bucket immediately; rollback on error.
    */
   const setStatusMut = useMutation({
-    mutationFn: (v: { id: string; status: AccountReviewStatus }) =>
-      reconsApi.updateAccountReviewStatus(v.id, periodEnd, v.status),
+    mutationFn: (v: { id: string; status: AccountReviewStatus; preserve?: boolean }) =>
+      reconsApi.updateAccountReviewStatus(v.id, periodEnd, v.status, undefined, v.preserve),
     onMutate: async (v) => {
       await qc.cancelQueries({ queryKey: ["recons-overview", periodEnd] })
       const prev = qc.getQueryData<Overview>(["recons-overview", periodEnd])
@@ -680,8 +680,8 @@ export function ReconciliationsDashboard() {
         const nowIso = new Date().toISOString()
         const patched = prev.accounts.map((a) => {
           if (a.qbo_id !== v.id) return a
-          if (v.status === "pending") {
-            // Mirror the bulk reset + backend clear: start the row over.
+          if (v.status === "pending" && !v.preserve) {
+            // Full reset — mirror the bulk reset + backend clear: start over.
             return {
               ...a,
               review_status:        v.status,
@@ -694,7 +694,14 @@ export function ReconciliationsDashboard() {
               subledger_entered_at: null,
             }
           }
-          return { ...a, review_status: v.status, reviewed_at: nowIso }
+          // "Reset to open" (preserve) just unlocks — keep subledger + items so
+          // the preparer doesn't lose their work; only flip status + clear the
+          // reviewed stamp. Forward transitions also fall through here.
+          return {
+            ...a,
+            review_status: v.status,
+            reviewed_at:   v.status === "pending" ? null : nowIso,
+          }
         })
         qc.setQueryData<Overview>(["recons-overview", periodEnd], {
           ...prev,
@@ -1971,7 +1978,7 @@ export function ReconciliationsDashboard() {
             qboAccountId={a.qbo_id}
             periodEnd={periodEnd}
             glBalance={a.gl_balance}
-            readOnly={isClosed || a.review_status === "approved"}
+            readOnly={isClosed || a.review_status === "approved" || a.review_status === "reviewed"}
           />
         )}
         renderReconcileBody={(a, section) => (
@@ -1987,7 +1994,10 @@ export function ReconciliationsDashboard() {
             account={a}
             periodEnd={periodEnd}
             saving={subledgerMut.isPending}
-            readOnly={isClosed || a.review_status === "approved"}
+            // Lock the form once it's Approved OR Prepared (reviewed). A prepared
+            // recon is frozen — the preparer can't change entries; their only
+            // move is "Reset to open" in the footer (until a reviewer approves).
+            readOnly={isClosed || a.review_status === "approved" || a.review_status === "reviewed"}
             // Distinct from readOnly — the form uses this to show the
             // right banner copy. "books closed" wins when both apply
             // since reopening the row alone wouldn't unlock anything.
@@ -2001,16 +2011,14 @@ export function ReconciliationsDashboard() {
             onSave={(total, source, items) => {
               // Defense in depth: even if a stale form somehow tries
               // to save against an approved row, refuse the write.
-              if (a.review_status === "approved") return
+              if (a.review_status === "approved" || a.review_status === "reviewed") return
               subledgerMut.mutate({ qboId: a.qbo_id, total, source, items })
-              // TS knows "approved" is impossible here from the early
-              // return above — only check the remaining terminal state.
-              if (a.review_status !== "reviewed") {
-                setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })
-              }
+              // Guard above already blocked Approved + Prepared, so this row is
+              // still Pending/Flagged → promote it to Prepared (the maker step).
+              setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })
             }}
             onAutoSave={(total, source, items) => {
-              if (a.review_status === "approved") return
+              if (a.review_status === "approved" || a.review_status === "reviewed") return
               subledgerMut.mutate({
                 qboId: a.qbo_id, total, source, items, autoSave: true,
               })
@@ -2021,11 +2029,11 @@ export function ReconciliationsDashboard() {
               // the cached reconciling_items as the server's copy keeps the
               // debounced onAutoSave's "matches server" gate honest, so the
               // real persist still fires a beat later.
-              if (a.review_status === "approved") return
+              if (a.review_status === "approved" || a.review_status === "reviewed") return
               patchOverviewCache(a.qbo_id, total, "Saving…")
             }}
             onClear={() => {
-              if (a.review_status === "approved") return
+              if (a.review_status === "approved" || a.review_status === "reviewed") return
               subledgerMut.mutate({ qboId: a.qbo_id, total: null, source: null, items: [] })
             }}
             onClose={() => setDrawerAcctId(null)}
@@ -2114,17 +2122,34 @@ export function ReconciliationsDashboard() {
                           Mark prepared
                         </Button>
                       )}
-                      {/* Approve: when row is Prepared, ready for reviewer sign-off */}
+                      {/* Prepared state. The preparer's ONLY move is to send it
+                          back to Open to edit — and only before approval (this
+                          whole block is gone once the row is Approved). Approval
+                          itself is the reviewer's/admin's job, so it's gated to
+                          canReview (a preparer can't self-approve their work). */}
                       {a.review_status === "reviewed" && (
-                        <Button
-                          size="sm"
-                          icon={<ShieldCheck size={12} strokeWidth={1.8} />}
-                          loading={setStatusMut.isPending}
-                          disabled={disabled}
-                          onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "approved" })}
-                          title={tooltip}>
-                          Approve
-                        </Button>
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            icon={<RotateCcw size={12} strokeWidth={1.8} />}
+                            loading={setStatusMut.isPending}
+                            onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "pending", preserve: true })}
+                            title="Unlock for editing — sends this reconciliation back to Open, keeping your ticked items and subledger. Only available before a reviewer approves it.">
+                            Reset to open
+                          </Button>
+                          {canReview && (
+                            <Button
+                              size="sm"
+                              icon={<ShieldCheck size={12} strokeWidth={1.8} />}
+                              loading={setStatusMut.isPending}
+                              disabled={disabled}
+                              onClick={() => setStatusMut.mutate({ id: a.qbo_id, status: "approved" })}
+                              title={tooltip}>
+                              Approve
+                            </Button>
+                          )}
+                        </>
                       )}
                     </>
                   )
@@ -2821,10 +2846,17 @@ function InlineSubledgerForm({
                 item and attachment, but editing is locked until an admin reopens the
                 period from the dashboard.
               </>
+            ) : account.review_status === "reviewed" ? (
+              <>
+                This reconciliation is marked <b>Prepared</b> — entries are locked so
+                the numbers can't change while it's waiting for review. To edit, click{" "}
+                <b>Reset to open</b> in the footer (only possible before a reviewer
+                approves it).
+              </>
             ) : (
               <>
-                This account is approved — editing is locked. Click <b>Reopen</b> in
-                the footer (or use <b>Reset to pending</b>) to make changes.
+                This account is approved — editing is locked. Only a reviewer or admin
+                can <b>Reopen</b> it (in the footer) to make changes.
               </>
             )}
           </span>

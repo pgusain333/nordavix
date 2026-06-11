@@ -623,11 +623,15 @@ async function updateAccountReviewStatus(
   periodEnd: string,
   status: AccountReviewStatus,
   notes?: string,
+  /** Only meaningful for status="pending". true = "Reset to open" (a preparer
+   *  unlocking their own Prepared work to edit — keeps subledger + ticked items);
+   *  false/undefined = full reset (start over, wipes the work). */
+  preserve?: boolean,
 ): Promise<{ qbo_account_id: string; period_end: string; status: AccountReviewStatus; reviewed_by: string | null; reviewed_at: string | null }> {
   const { data } = await apiClient.post(
     `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/status`,
     null,
-    { params: { period_end: periodEnd, status, notes } },
+    { params: { period_end: periodEnd, status, notes, preserve } },
   )
   return data
 }
