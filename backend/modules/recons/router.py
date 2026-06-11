@@ -1003,6 +1003,36 @@ async def update_account_review_status(
                 ),
             )
 
+    # Schedule-backed tie-out gate (mark prepared): for accounts whose subledger
+    # IS a Nordavix Schedule (prepaid / accrual / fixed asset / lease / loan),
+    # the GL must tie to the schedule before the recon can even be marked
+    # PREPARED — a gap means the period's journal entries aren't in QuickBooks
+    # yet (or the schedule is wrong), so it isn't actually reconciled. Ordinary
+    # accounts can still be prepared with documented open items; this stricter
+    # rule applies only where the schedule makes tie-out the expectation. Fails
+    # open if schedule detection errors — the approve + close gates remain the
+    # hard backstop.
+    if status_value == "reviewed":
+        try:
+            from modules.recons.agentic import _schedule_backed_subledger
+            sched = await _schedule_backed_subledger(db, tenant_id, qbo_account_id, pe)
+        except Exception:
+            logger.warning("schedule-backed detection failed for %s @ %s", qbo_account_id, pe, exc_info=True)
+            sched = None
+        if sched is not None:
+            unrec = await _unreconciled_accounts(db, pe, [qbo_account_id])
+            if qbo_account_id in unrec:
+                pretty = sched["schedule_type"].replace("_", " ")
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Can't mark prepared — this account is backed by a Nordavix "
+                        f"{pretty} schedule, so its GL must tie to the schedule subledger "
+                        f"({unrec[qbo_account_id]}). Post the schedule's journal entries "
+                        "in QuickBooks and re-sync, or fix the schedule, then mark prepared."
+                    ),
+                )
+
     if row is None:
         row = AccountReviewStatus(
             id=uuid.uuid4(),

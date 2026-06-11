@@ -35,6 +35,10 @@ interface Props {
   onToggle:     (suggestion: ScheduleLineSuggestion, scheduleKind: ScheduleKind, nextChecked: boolean) => void
   onBulkSet:    (suggestions: ScheduleLineSuggestion[], scheduleKind: ScheduleKind, nextChecked: boolean) => void
   readOnly?:    boolean
+  /** When true, schedule lines are auto-included as reconciling items
+   *  by the parent — checkboxes render disabled + checked, the bulk
+   *  selector hides, and the header copy switches to "auto-included". */
+  autoIncluded?: boolean
 }
 
 const CHROME: Record<ScheduleKind, {
@@ -95,9 +99,10 @@ function kindBadge(kind: string): { label: string; bg: string; fg: string; icon:
 }
 
 export function ScheduleLinePanel({
-  scheduleKind, qboAccountId, periodEnd, selectedIds, onToggle, onBulkSet, readOnly,
+  scheduleKind, qboAccountId, periodEnd, selectedIds, onToggle, onBulkSet, readOnly, autoIncluded,
 }: Props) {
   const chrome = CHROME[scheduleKind]
+  const lockTicks = !!autoIncluded
 
   const { data, isLoading } = useQuery({
     queryKey: ["schedules", scheduleKind, "suggestions", qboAccountId, periodEnd],
@@ -156,21 +161,29 @@ export function ScheduleLinePanel({
           borderBottom: "1px solid var(--border)",
         }}>
         <div className="flex items-center gap-2 min-w-0">
-          <BulkSelectCheckbox
-            total={items.length}
-            selected={selectedCount}
-            disabled={readOnly}
-            onChange={(nextChecked) => onBulkSet(items, scheduleKind, nextChecked)}
-            title={`Select / clear all ${chrome.uncommitted_blurb} lines in this period`}
-          />
+          {!lockTicks && (
+            <BulkSelectCheckbox
+              total={items.length}
+              selected={selectedCount}
+              disabled={readOnly}
+              onChange={(nextChecked) => onBulkSet(items, scheduleKind, nextChecked)}
+              title={`Select / clear all ${chrome.uncommitted_blurb} lines in this period`}
+            />
+          )}
           {chrome.icon}
           <p className="text-[11px] font-semibold text-theme">
-            {chrome.human}
+            {lockTicks ? `From ${chrome.uncommitted_blurb}s schedule (auto-included)` : chrome.human}
           </p>
           <span className="text-[10px] px-1.5 py-0.5 rounded"
             style={{ background: chrome.accent, color: "var(--text-2)" }}>
             {items.length} line{items.length === 1 ? "" : "s"} · delta-based
           </span>
+          {lockTicks && (
+            <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              Subledger source
+            </span>
+          )}
         </div>
         <Link to={chrome.detailRoute} target="_blank" rel="noopener noreferrer"
           className="text-[10px] inline-flex items-center gap-1 hover:underline"
@@ -211,12 +224,17 @@ export function ScheduleLinePanel({
                   <td className="py-2 pr-1">
                     <input
                       type="checkbox"
-                      checked={checked}
-                      disabled={readOnly}
+                      checked={checked || lockTicks}
+                      disabled={readOnly || lockTicks}
                       onChange={(e) => onToggle(it, scheduleKind, e.target.checked)}
                       className="h-3.5 w-3.5 rounded"
-                      style={{ accentColor: "var(--green)", cursor: "pointer" }}
-                      title="Tick to include in the subledger build-up as a reconciling item"
+                      style={{
+                        accentColor: "var(--green)",
+                        cursor: lockTicks ? "default" : "pointer",
+                      }}
+                      title={lockTicks
+                        ? `Auto-included from the ${chrome.uncommitted_blurb}s schedule — this is the authoritative subledger source for this account`
+                        : undefined}
                     />
                   </td>
                   <td className="py-2 pr-3">
