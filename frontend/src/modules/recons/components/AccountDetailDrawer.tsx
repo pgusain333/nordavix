@@ -387,10 +387,10 @@ export function AccountDetailDrawer({
               >
                 <Sparkles size={12} strokeWidth={2} className="shrink-0 mt-px" />
                 <span>
-                  <span className="font-semibold">Auto-detected schedule entries are waiting in the Suggestions tab.</span>{" "}
-                  Open that tab to review prepaid amortization, accrual reversals,
-                  fixed-asset depreciation, lease, or loan lines for this account before
-                  marking the recon prepared or approving it.
+                  <span className="font-semibold">Schedule entries for this account are in the Suggestions tab.</span>{" "}
+                  The balance breakdown is already shown in the build-up; open Suggestions
+                  for the full per-item amortization / payment detail if you want it. (Not
+                  required to mark prepared.)
                 </span>
                 <button
                   type="button"

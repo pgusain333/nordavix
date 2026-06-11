@@ -2039,7 +2039,7 @@ export function ReconciliationsDashboard() {
             onClose={() => setDrawerAcctId(null)}
           />
         )}
-        renderFooter={(a, ctx) => (
+        renderFooter={(a) => (
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-1.5 text-[10.5px]"
               style={{ color: "var(--text-muted)" }}>
@@ -2100,13 +2100,14 @@ export function ReconciliationsDashboard() {
                          drawer body shows a purple callout pushing
                          them to that tab while the gate is active. */}
                 {(() => {
+                  // Variance is the ONLY gate now. The old "open the Suggestions
+                  // tab first" gate is gone — the schedule entries it wanted
+                  // reviewed are shown inline in the match panel, so a preparer
+                  // can mark prepared the moment the variance is zero.
                   const rowVarianceBlocked = Math.abs(parseFloat(a.variance) || 0) > VARIANCE_TOLERANCE
-                  const suggestionsUnreviewed = ctx.hasSuggestions && !ctx.hasViewedSuggestionsTab
-                  const disabled = rowVarianceBlocked || suggestionsUnreviewed
+                  const disabled = rowVarianceBlocked
                   const tooltip = rowVarianceBlocked
                     ? "Variance must be cleared before marking prepared. Post the missing JE in QuickBooks (Schedules > Scan GL suggests entries), re-sync, or add a reconciling item that zeros the gap."
-                    : suggestionsUnreviewed
-                    ? "Open the Suggestions tab first — auto-detected schedule entries are waiting for review."
                     : undefined
                   return (
                     <>
