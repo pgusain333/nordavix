@@ -152,6 +152,18 @@ function isCreditNatural(groupLabel: string): boolean {
   return CREDIT_NATURAL_GROUPS.has(groupLabel)
 }
 
+/** Pretty label for a schedule-backed account's subledger base line, keyed by
+ *  the backend's schedule_type. */
+const SCHEDULE_TYPE_LABEL: Record<string, string> = {
+  prepaid:            "prepaid",
+  accrual:            "accrual",
+  fixed_asset_cost:   "fixed-asset",
+  fixed_asset_accdep: "fixed-asset (accum. dep.)",
+  lease_liability:    "lease",
+  lease_rou:          "lease (ROU)",
+  loan:               "loan",
+}
+
 /**
  * Recompute KPI totals from the patched accounts array. Matches the
  * backend formula exactly: signed sums + variance = gl − subledger.
@@ -2342,6 +2354,24 @@ function InlineSubledgerForm({
     refetchOnWindowFocus: false,
   })
 
+  // Schedule-backed accounts: the authoritative subledger BALANCE computed
+  // from the Nordavix schedule (prepaid/accrual/FA/lease/loan). When present
+  // it becomes the build-up's base line (the subledger auto-pulls the schedule
+  // balance) instead of the rolled-forward opening — and the individual
+  // schedule entries are NOT added to the reconciling items; they stay in the
+  // Suggestions tab as reference. The user reconciles GL differences on top.
+  const scheduleSubQuery = useQuery({
+    queryKey: ["recon-schedule-subledger", account.qbo_id, periodEnd],
+    queryFn:  () => reconsApi.getScheduleSubledger(account.qbo_id, periodEnd),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  })
+  const scheduleSub = scheduleSubQuery.data
+  // "Settled" = success OR error. Saves wait on this (not just `data`) so a
+  // failed/erroring schedule-subledger fetch can't PERMANENTLY block saving —
+  // on error we fall back to the rolled-forward opening, like a normal account.
+  const scheduleSubSettled = scheduleSubQuery.isSuccess || scheduleSubQuery.isError
+
   // Transactions posted to this account in the closing period — these are
   // the candidates the user picks from to explain GL-vs-subledger variance.
   // For Retained Earnings accounts, we pass include_ytd_ni=true so the
@@ -2363,30 +2393,31 @@ function InlineSubledgerForm({
     // Only TICKED items belong in the selection map. Persisted open items
     // (cleared === false) are the un-ticked entries we record for the PDF —
     // keep them OUT so they don't render as ticked; they're re-derived at
-    // save time from the live period entries.
+    // save time from the live period entries. Synthetic "schedule-" items
+    // (from the old auto-flow) are also dropped — the schedule balance is now
+    // the build-up's base line, so keeping them would double-count.
     for (const it of account.reconciling_items ?? []) {
       if (it.cleared === false) continue
+      if (it.txn_id.startsWith("schedule-")) continue
       m[it.txn_id] = it
     }
     return m
   })
   const selectedItemsRef = useRef(selectedItemMap)
   selectedItemsRef.current = selectedItemMap
+  // Guards the one-time "persist the schedule base to the saved subledger"
+  // auto-save per (account, period) — see the auto-save effect.
+  const baseSyncedRef = useRef<string>("")
 
-  // ── Auto-flow schedule items as reconciling items ──────────────────
+  // ── Schedule reference data (prepaid/accrual/FA/lease/loan) ────────
   //
-  // The 5 per-account schedule endpoints (prepaid/accrual/FA/lease/loan)
-  // give this account its subledger. Pre-tick every schedule line so the
-  // subledger AUTO-PULLS the schedule balance the moment the drawer opens —
-  // the user doesn't have to hand-tick anything to see the right number.
-  // They're pre-selected, NOT locked: the user can untick any of them and
-  // tick the real posted entry from the QBO GL table instead.
-  //
-  // Pulls all 5 queries in parallel. React Query shares cache with the
-  // per-type panels below so this is zero duplicate work. Auto-merges
-  // into selectedItemMap on first arrival per (qbo_id, period_end) —
-  // never clobbers user toggles after that (the keyed ref guards
-  // against re-running on every render, so an untick sticks).
+  // The 5 per-account schedule endpoints power the Suggestions-tab panels,
+  // which now render the schedule lines as REFERENCE (what makes up the
+  // schedule balance). They are NOT auto-added to the reconciling items —
+  // the subledger auto-pulls its value from the authoritative schedule
+  // BALANCE (the `scheduleSub` query above), shown as the build-up's base
+  // line. The user reconciles GL differences on top by ticking real GL
+  // entries from the Items table. React Query shares cache with the panels.
   const scheduleQueries = useQueries({
     queries: [
       {
@@ -2416,93 +2447,6 @@ function InlineSubledgerForm({
       },
     ],
   })
-  // Once-per-account-period guard so we don't re-merge on every render —
-  // only when the user navigates to a different account or period.
-  const autoFlowedKeyRef = useRef<string>("")
-  useEffect(() => {
-    const key = `${account.qbo_id}__${periodEnd}`
-    const allSettled = scheduleQueries.every((q) => q.isSuccess || q.isError)
-    if (!allSettled) return
-    if (autoFlowedKeyRef.current === key) return  // already merged this round
-    autoFlowedKeyRef.current = key
-
-    const [prepaidQ, accrualQ, faQ, leaseQ, loanQ] = scheduleQueries
-    const additions: Record<string, ReconcilingItem> = {}
-
-    for (const s of prepaidQ.data?.items ?? []) {
-      if (s.fully_amortized) continue
-      const id = prepaidTxnId(s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   "Prepaid amortization",
-        txn_number: s.reference ?? "",
-        txn_date:   s.start_date,
-        amount:     s.unamortized_at_period_end,
-        memo:       `${s.description} · unamortized as of ${periodEnd} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-    for (const s of accrualQ.data?.items ?? []) {
-      const id = accrualTxnId(s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   s.line_kind === "accrual" ? "Accrual" : "Accrual reversal",
-        txn_number: s.reference ?? "",
-        txn_date:   s.line_date,
-        amount:     s.amount,
-        memo:       `${s.description} · ${s.line_kind === "accrual" ? "accrued" : "reversed"} ${s.line_date} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-    for (const s of faQ.data?.items ?? []) {
-      const id = lineTxnId("fixed_asset", s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   `Fixed asset · ${s.line_kind}`,
-        txn_number: s.reference ?? "",
-        txn_date:   s.line_date,
-        amount:     s.amount,
-        memo:       `${s.description} · ${s.line_kind} ${s.line_date} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-    for (const s of leaseQ.data?.items ?? []) {
-      const id = lineTxnId("lease", s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   `Lease · ${s.line_kind}`,
-        txn_number: s.reference ?? "",
-        txn_date:   s.line_date,
-        amount:     s.amount,
-        memo:       `${s.description} · ${s.line_kind} ${s.line_date} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-    for (const s of loanQ.data?.items ?? []) {
-      const id = lineTxnId("loan", s)
-      additions[id] = {
-        txn_id:     id,
-        txn_type:   `Loan · ${s.line_kind}`,
-        txn_number: s.reference ?? "",
-        txn_date:   s.line_date,
-        amount:     s.amount,
-        memo:       `${s.description} · ${s.line_kind} ${s.line_date} (schedule)`,
-        entity:     s.vendor ?? "",
-      }
-    }
-
-    if (Object.keys(additions).length === 0) return  // not a schedule-backed account
-
-    setSelectedItemMap((prev) => {
-      // Schedule items are authoritative. If an existing entry in prev
-      // shares a txn_id with our additions, the addition wins (latest
-      // computed balance from the schedule). Non-schedule entries
-      // (manual / QBO drill-in) are preserved as-is — the user may
-      // have added them on purpose for non-schedule reconciling
-      // items (e.g. a bank fee miscategorization).
-      return { ...prev, ...additions }
-    })
-  }, [scheduleQueries, account.qbo_id, periodEnd])
 
   /** True when any schedule has at least one item for this account —
    *  drives the UI's "schedule-backed" treatment (pre-selected schedule
@@ -2526,9 +2470,11 @@ function InlineSubledgerForm({
   // case the parent re-uses the form across accounts without a key.
   useEffect(() => {
     const m: Record<string, ReconcilingItem> = {}
-    // Skip persisted open items (cleared === false) — ticked only.
+    // Skip persisted open items (cleared === false) and legacy "schedule-"
+    // synthetics — ticked GL/manual items only.
     for (const it of account.reconciling_items ?? []) {
       if (it.cleared === false) continue
+      if (it.txn_id.startsWith("schedule-")) continue
       m[it.txn_id] = it
     }
     setSelectedItemMap(m)
@@ -2540,10 +2486,9 @@ function InlineSubledgerForm({
   }, [account.qbo_id, account.review_status])
 
   function toggleItem(item: ReconcilingItem) {
-    // Schedule-sourced items come in PRE-SELECTED (the auto-flow above) so the
-    // subledger auto-pulls the schedule balance — but they're NOT locked. The
-    // user can untick any of them and tick the real posted entry from the QBO
-    // GL table instead, to reconcile the variance to zero against actuals.
+    // Reconciling items are the GL transactions the user ticks to explain a
+    // variance. For schedule-backed accounts the subledger base auto-pulls the
+    // schedule balance, so ticking here only adjusts GL differences on top.
     setSelectedItemMap((prev) => {
       const next = { ...prev }
       if (next[item.txn_id]) delete next[item.txn_id]
@@ -2566,7 +2511,12 @@ function InlineSubledgerForm({
     const raw = parseFloat(it.amount) || 0
     return it.txn_id.startsWith("manual-") ? raw : flipSign * raw
   }
-  const selectedSum = selectedItems.reduce((n, it) => n + signedAmount(it), 0)
+  // Schedule-sourced lines live in the build-up's base (the auto-pulled schedule
+  // balance), so they never count in the reconciling-items sum — guard against
+  // any stray legacy "schedule-" item double-counting.
+  const selectedSum = selectedItems
+    .filter((it) => !it.txn_id.startsWith("schedule-"))
+    .reduce((n, it) => n + signedAmount(it), 0)
 
   // Subledger is CALCULATED now, not typed: opening (rolled forward from
   // the prior period) ± reconciling items = closing subledger. This
@@ -2591,7 +2541,25 @@ function InlineSubledgerForm({
     ?? prior?.subledger_total
     ?? "0"
   )
-  const computedSubledger = openingBalance + selectedSum
+
+  // For SCHEDULE-BACKED accounts the build-up's base is the schedule's
+  // authoritative computed balance (auto-pulled from the backend), NOT the
+  // rolled-forward opening — the individual schedule entries are deliberately
+  // not listed/ticked here (they live in the Suggestions tab as reference).
+  // sl_signed is already in the GL's signed convention, so it's used directly
+  // (no flipSign). Ticked reconciling items adjust GL differences on top.
+  // Falls back to the rolled-forward opening before the schedule query loads
+  // (or for non-schedule accounts).
+  const scheduleBaseBalance =
+    isScheduleBacked && scheduleSub?.subledger_balance != null
+      ? parseFloat(scheduleSub.subledger_balance)
+      : null
+  const baseBalance = scheduleBaseBalance ?? openingBalance
+  const computedSubledger = baseBalance + selectedSum
+  // Label for the build-up's base line when it's a schedule balance.
+  const scheduleBaseLabel = scheduleBaseBalance != null
+    ? `Per Nordavix ${SCHEDULE_TYPE_LABEL[scheduleSub?.schedule_type ?? ""] ?? "schedule"} schedule`
+    : null
 
   // Auto-save: when the user ticks an item (or edits the manual list)
   // debounce 500ms and push to the backend so the top KPI cards (which
@@ -2613,8 +2581,9 @@ function InlineSubledgerForm({
   // ones surface as "open items" in the PDF — they're the unreconciled gap.
   // Open items are NEVER part of the subledger math: computedSubledger uses
   // ticked items only, and the backend skips cleared:false when summing.
-  // Schedule-backed accounts have no GL-drill-in candidate set, so no open
-  // items are derived for them.
+  // Schedule-backed accounts skip open-item derivation: the schedule balance is
+  // the subledger base, so an un-ticked GL row isn't an "unreconciled gap" — it
+  // just matches the schedule. Only explicitly-ticked GL differences are saved.
   const buildSavePayload = (): ReconcilingItem[] => {
     const sel = selectedItemsRef.current
     const ticked = Object.values(sel).map((it) => ({ ...it, cleared: true }))
@@ -2627,20 +2596,38 @@ function InlineSubledgerForm({
   }
   useEffect(() => {
     if (readOnly || !onAutoSave) return
+    // Wait for the schedule balance to RESOLVE (success or error) before any
+    // save — otherwise a schedule-backed account could persist the rolled-
+    // forward fallback base (often $0) before scheduleSub loads. Keying off
+    // "settled" (not just data) means an erroring fetch can't block saves
+    // forever; it just falls back to the opening, like a normal account.
+    if (!scheduleSubSettled) return
     const hash = (items: ReconcilingItem[]) => items
       .map((it) => `${it.txn_id}:${it.amount}:${it.memo ?? ""}:${it.cleared === false ? "0" : "1"}`)
       .sort()
       .join("|")
     const currentHash = hash(buildSavePayload())
     const serverHash  = hash(account.reconciling_items ?? [])
-    if (currentHash === serverHash) return  // matches server → resync, not user edit
+    // For schedule-backed accounts the subledger base auto-pulls the schedule
+    // balance, which isn't a "reconciling item" — so persist it once per
+    // (account, period) when the saved subledger doesn't yet match it. Without
+    // this, a never-prepared schedule account would tie in the drawer but show
+    // a variance on the dashboard (which reads the saved subledger_total).
+    const baseKey = `${account.qbo_id}__${periodEnd}`
+    const savedSub = parseFloat(account.subledger_balance ?? "0")
+    const baseNeedsPersist =
+      scheduleBaseBalance != null
+      && baseSyncedRef.current !== baseKey
+      && Math.abs(computedSubledger - savedSub) > 0.005
+    if (currentHash === serverHash && !baseNeedsPersist) return  // nothing to save
+    if (baseNeedsPersist) baseSyncedRef.current = baseKey
 
     const handle = setTimeout(() => {
       const itemsList = buildSavePayload()
       const tickedCount = itemsList.filter((it) => it.cleared !== false).length
       const openCount   = itemsList.length - tickedCount
       const source = itemsList.length === 0
-        ? "Auto-saved (no reconciling items)"
+        ? (scheduleBaseLabel ? scheduleBaseLabel : "Auto-saved (no reconciling items)")
         : `Auto-saved ${tickedCount} reconciling item${tickedCount === 1 ? "" : "s"}`
           + (openCount > 0 ? ` · ${openCount} open` : "")
       onAutoSave(computedSubledger, source, itemsList)
@@ -2653,7 +2640,7 @@ function InlineSubledgerForm({
     // closure, so it'll pick up whatever the latest value is. periodEntries
     // is included so newly-loaded open items get persisted once known.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItemMap, account.reconciling_items, readOnly, onAutoSave, isScheduleBacked, periodEntries])
+  }, [selectedItemMap, account.reconciling_items, readOnly, onAutoSave, isScheduleBacked, periodEntries, scheduleSub, scheduleSubSettled])
 
   // Live preview — INSTANT and network-free. The moment the ticked selection
   // changes, paint the dashboard's per-row subledger/variance and KPI strip
@@ -2663,6 +2650,7 @@ function InlineSubledgerForm({
   // the drawer never flips a row — same protection as the auto-save effect.
   useEffect(() => {
     if (readOnly || !onPreview) return
+    if (!scheduleSubSettled) return  // wait for the schedule base to settle (see auto-save)
     const hash = (items: ReconcilingItem[]) => items
       .map((it) => `${it.txn_id}:${it.amount}:${it.memo ?? ""}:${it.cleared === false ? "0" : "1"}`)
       .sort()
@@ -2670,7 +2658,7 @@ function InlineSubledgerForm({
     if (hash(buildSavePayload()) === hash(account.reconciling_items ?? [])) return
     onPreview(computedSubledger)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedItemMap, computedSubledger, account.reconciling_items])
+  }, [selectedItemMap, computedSubledger, account.reconciling_items, scheduleSub, scheduleSubSettled])
 
   // Manual reconciling item form — for items that don't exist in QBO yet
   // (outstanding bank checks, deposits in transit, journal entries not
@@ -2881,11 +2869,12 @@ function InlineSubledgerForm({
             {isScheduleBacked ? (
               <>
                 <strong style={{ color: "var(--green)" }}>Nordavix Schedules backs this account's subledger.</strong>{" "}
-                The lines below come pre-selected, so the subledger ties to the
-                schedule automatically — but they're not locked. Untick any of
-                them and tick the real posted entries from the QuickBooks list
-                in the Items tab instead, to reconcile the variance to zero
-                against the actual GL. Edit the amounts in the Schedules module.
+                The subledger auto-pulls the schedule's balance — shown as the
+                base line in the build-up — so nothing here is auto-added or
+                needs ticking. The lines below are for reference (what makes up
+                that balance). To reconcile a GL difference, tick the real
+                posted entries from the QuickBooks list in the Items tab. Edit
+                the amounts in the Schedules module.
               </>
             ) : (
               <>
@@ -2925,7 +2914,9 @@ function InlineSubledgerForm({
         qboAccountId={account.qbo_id}
         periodEnd={periodEnd}
         selectedIds={new Set(Object.keys(selectedItemMap))}
-        readOnly={readOnly}
+        // Reference-only for schedule-backed accounts: the lines make up the
+        // auto-pulled base, so they aren't tickable here (that would double-count).
+        readOnly={readOnly || isScheduleBacked}
         onToggle={(s, nextChecked) => {
           const id = prepaidTxnId(s)
           setSelectedItemMap((prev) => {
@@ -2978,7 +2969,7 @@ function InlineSubledgerForm({
         qboAccountId={account.qbo_id}
         periodEnd={periodEnd}
         selectedIds={new Set(Object.keys(selectedItemMap))}
-        readOnly={readOnly}
+        readOnly={readOnly || isScheduleBacked}
         onToggle={(s, nextChecked) => {
           const id = accrualTxnId(s)
           setSelectedItemMap((prev) => {
@@ -3034,7 +3025,7 @@ function InlineSubledgerForm({
           qboAccountId={account.qbo_id}
           periodEnd={periodEnd}
           selectedIds={new Set(Object.keys(selectedItemMap))}
-          readOnly={readOnly}
+          readOnly={readOnly || isScheduleBacked}
           onToggle={(s, scheduleKind, nextChecked) => {
             const id = lineTxnId(scheduleKind, s)
             setSelectedItemMap((prev) => {
@@ -3111,7 +3102,11 @@ function InlineSubledgerForm({
           hashItems(selectedItems) !== hashItems(account.reconciling_items ?? [])
 
         const savedSubledger = parseFloat(account.subledger_balance || "0")
-        const displaySubledger = userIsEditing ? computedSubledger : savedSubledger
+        // For schedule-backed accounts the live computed value (schedule base +
+        // ticked GL differences) IS the authoritative subledger, so show it
+        // immediately — even before the auto-save persists it to the dashboard.
+        const displaySubledger = (scheduleBaseBalance != null || userIsEditing)
+          ? computedSubledger : savedSubledger
         const variance = gl - displaySubledger
         const tiedOut = Math.abs(variance) < 0.5
         const hasGap = !tiedOut
@@ -3151,7 +3146,8 @@ function InlineSubledgerForm({
           ticks below shows up here as a line so they can watch the
           closing total tie out to GL in real time. */}
       <SubledgerBuildup
-        openingBalance={openingBalance}
+        openingBalance={baseBalance}
+        scheduleBaseLabel={scheduleBaseLabel}
         prior={prior}
         selectedItems={selectedItems}
         selectedSum={selectedSum}
@@ -3171,10 +3167,9 @@ function InlineSubledgerForm({
       {/* For schedule-backed accounts (Prepaid / Accrual / FA / Lease /
           Loan), show the expected per-period JEs from the schedule as a
           REFERENCE card — then the regular QBO GL-txn table below it, like
-          every other account. The schedule lines come pre-selected (so the
-          subledger auto-pulls the schedule balance), but once the user posts
-          those JEs in QuickBooks and re-syncs, the real GL entries appear in
-          the table and can be ticked to reconcile against actuals. */}
+          every other account. The subledger auto-pulls the schedule BALANCE
+          (the build-up's base line); these entries aren't ticked. Tick the
+          real GL rows below only to explain a difference vs the schedule. */}
       {isScheduleBacked && (
         <SchedulePeriodJesPanel
           qboAccountId={account.qbo_id}
@@ -3542,10 +3537,13 @@ function InlineSubledgerForm({
 // total. Pure presentation — all state lives in the parent form.
 
 function SubledgerBuildup({
-  openingBalance, prior, selectedItems, selectedSum, computedSubledger, flipSign,
+  openingBalance, scheduleBaseLabel, prior, selectedItems, selectedSum, computedSubledger, flipSign,
   readOnly = false, onUntickItem, onEditManual, onDeleteManual,
 }: {
   openingBalance:    number
+  // When set, the base line IS the authoritative schedule balance (auto-pulled)
+  // — render this label instead of the "Opening balance / rolled forward" copy.
+  scheduleBaseLabel?: string | null
   // `prior` widened to also accept undefined so it matches what useQuery
   // hands back before the request resolves. Renders the same "no prior"
   // copy whether it's null or undefined.
@@ -3579,18 +3577,29 @@ function SubledgerBuildup({
         </span>
       </div>
       <div className="px-4 py-3 space-y-1.5 text-sm">
-        {/* Opening line — this is the rolled-forward prior close. The
-            source label is shown inline so users no longer need the
-            separate blue "Rolled forward from prior period" card that
-            used to live below. */}
+        {/* Base line. For schedule-backed accounts this is the authoritative
+            schedule balance (auto-pulled, with a green "Schedule" tag). For
+            every other account it's the rolled-forward prior close. */}
         <div className="flex items-center justify-between">
           <span style={{ color: "var(--text-2)" }}>
-            Opening balance
-            <span className="ml-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
-              {prior
-                ? `Rolled forward from ${prior.period_end}`
-                : "From dashboard (set books-start in onboarding to anchor properly)"}
-            </span>
+            {scheduleBaseLabel ? (
+              <>
+                {scheduleBaseLabel}
+                <span className="ml-1.5 text-[9px] font-bold uppercase px-1 py-0.5 rounded"
+                  style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                  auto-pulled
+                </span>
+              </>
+            ) : (
+              <>
+                Opening balance
+                <span className="ml-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                  {prior
+                    ? `Rolled forward from ${prior.period_end}`
+                    : "From dashboard (set books-start in onboarding to anchor properly)"}
+                </span>
+              </>
+            )}
           </span>
           <span className="tabular-nums font-semibold text-theme">{fmtMoney(openingBalance)}</span>
         </div>
@@ -3598,7 +3607,9 @@ function SubledgerBuildup({
         {/* Per-item lines (collapsible if very long) */}
         {selectedItems.length === 0 ? (
           <p className="text-[11px] py-1.5 italic" style={{ color: "var(--text-muted)" }}>
-            No reconciling items selected. Tick QBO entries in the table below or use “Add manual item”.
+            {scheduleBaseLabel
+              ? "Subledger ties to the schedule. Tick a GL entry in the table below only to explain a difference vs the schedule."
+              : "No reconciling items selected. Tick QBO entries in the table below or use “Add manual item”."}
           </p>
         ) : (
           <ul className="space-y-0.5 max-h-48 overflow-y-auto">

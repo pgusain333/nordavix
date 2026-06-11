@@ -832,6 +832,24 @@ async function getPriorOverride(qboAccountId: string, periodEnd: string): Promis
   return data.prior
 }
 
+export interface ScheduleSubledger {
+  is_schedule_backed: boolean
+  schedule_type:      string | null   // prepaid | accrual | fixed_asset_cost | ... | loan
+  subledger_balance:  string | null   // signed (debit-positive) authoritative schedule balance
+  item_count?:        number
+}
+
+/** For schedule-backed accounts (prepaid/accrual/FA/lease/loan), the schedule's
+ *  authoritative computed balance — used as the subledger build-up's base line
+ *  so the balance auto-pulls without listing each schedule entry. */
+async function getScheduleSubledger(qboAccountId: string, periodEnd: string): Promise<ScheduleSubledger> {
+  const { data } = await apiClient.get<ScheduleSubledger>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/schedule-subledger`,
+    { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
 export interface BooksStatus {
   books_start_date: string | null
   seeded:           boolean
@@ -1068,6 +1086,7 @@ export const reconsApi = {
   clearBankStatement,
   verifyEvidence,
   getPriorOverride,
+  getScheduleSubledger,
   getPeriodEntries,
   getBooksStatus,
   getSeedPreview,

@@ -2562,6 +2562,48 @@ async def get_prior_period_override(
     }
 
 
+@router.get("/account/{qbo_account_id}/schedule-subledger")
+async def get_schedule_subledger(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """If this account's subledger IS a Nordavix Schedule (prepaid / accrual /
+    fixed asset / lease / loan), return the schedule's AUTHORITATIVE computed
+    balance for the period (signed, debit-positive) plus its type. The recon
+    form shows this as the build-up's base line — the subledger auto-pulls the
+    schedule balance — instead of listing the individual schedule entries. The
+    user reconciles GL differences on top by ticking real GL entries.
+
+    Returns is_schedule_backed=false (balance null) for accounts with no
+    schedule mapped — those fall back to the rolled-forward opening."""
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    from modules.recons.agentic import _schedule_backed_subledger
+    try:
+        sched = await _schedule_backed_subledger(db, tenant_id, qbo_account_id, pe)
+    except Exception:
+        # Degrade gracefully: a schedule-calc error must not 500 this endpoint,
+        # or the recon form (which gates its save on this response) would be
+        # unable to save. Treat as not-schedule-backed → falls back to the
+        # rolled-forward opening, like any other account.
+        logger.warning("schedule-subledger calc failed for %s @ %s", qbo_account_id, pe, exc_info=True)
+        sched = None
+    if sched is None:
+        return {"is_schedule_backed": False, "schedule_type": None, "subledger_balance": None}
+    return {
+        "is_schedule_backed": True,
+        "schedule_type":      sched["schedule_type"],
+        "subledger_balance":  str(sched["sl_signed"]),
+        "item_count":         int(sched.get("item_count") or 0),
+    }
+
+
 @router.get("/account/{qbo_account_id}/period-entries")
 async def get_account_period_entries(
     qbo_account_id: str,
