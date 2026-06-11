@@ -836,11 +836,21 @@ async function getPriorOverride(qboAccountId: string, periodEnd: string): Promis
   return data.prior
 }
 
+/** One per-item balance component of the schedule subledger, signed
+ *  (debit-positive) so the entries sum to `subledger_balance`. Drives the
+ *  LEFT ("Per Nordavix schedule") column of the recon match view. */
+export interface ScheduleSubledgerEntry {
+  label:  string
+  amount: string        // signed, debit-positive
+  date:   string | null
+}
+
 export interface ScheduleSubledger {
   is_schedule_backed: boolean
   schedule_type:      string | null   // prepaid | accrual | fixed_asset_cost | ... | loan
   subledger_balance:  string | null   // signed (debit-positive) authoritative schedule balance
   item_count?:        number
+  entries?:           ScheduleSubledgerEntry[]
 }
 
 /** For schedule-backed accounts (prepaid/accrual/FA/lease/loan), the schedule's

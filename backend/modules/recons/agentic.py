@@ -1584,6 +1584,19 @@ async def _schedule_backed_subledger(
 
     p_start = period_end.replace(day=1)
 
+    # Per-item subledger BALANCE components (signed, debit-positive) for the
+    # "Nordavix vs QuickBooks" side-by-side match view in the recon drawer.
+    # Sum(sl_entries[*].amount) == sl_signed by construction. Entries below the
+    # half-cent floor (e.g. a fully-amortized prepaid) are skipped as noise.
+    _ENTRY_FLOOR = Decimal("0.005")
+
+    def _sl_entry(label: str, signed: Decimal, when) -> dict:
+        return {
+            "label":  label,
+            "amount": str(_q(signed)),
+            "date":   when.isoformat() if when is not None else None,
+        }
+
     # ── Prepaid (debit-natural asset) ────────────────────────────────
     prepaids = list((await db.execute(
         select(SchedulePrepaid).where(
@@ -1594,8 +1607,12 @@ async def _schedule_backed_subledger(
     if prepaids:
         sl = ZERO
         je: list[dict] = []
+        sl_entries: list[dict] = []
         for it in prepaids:
-            sl += _prepaid_unamortized_as_of(it, period_end)
+            _bal = _prepaid_unamortized_as_of(it, period_end)
+            sl += _bal
+            if _bal > _ENTRY_FLOOR:
+                sl_entries.append(_sl_entry(it.description, _bal, it.invoice_date))
             if p_start <= it.invoice_date <= period_end:
                 je.append({
                     "txn_id":     f"prepaid-init-{it.id}",
@@ -1619,7 +1636,7 @@ async def _schedule_backed_subledger(
                     "offset_qbo_account_id": it.offset_qbo_account_id,
                     "offset_account_name":   it.offset_account_name,
                 })
-        return {"schedule_type": "prepaid", "sl_signed": _q(sl), "item_count": len(prepaids), "je_items": je}
+        return {"schedule_type": "prepaid", "sl_signed": _q(sl), "item_count": len(prepaids), "je_items": je, "sl_entries": sl_entries}
 
     # ── Accrual (credit-natural liability) ───────────────────────────
     accruals = list((await db.execute(
@@ -1631,8 +1648,12 @@ async def _schedule_backed_subledger(
     if accruals:
         sl_pos = ZERO
         je = []
+        sl_entries = []
         for it in accruals:
-            sl_pos += _accrual_balance_as_of(it, period_end)
+            _bal = _accrual_balance_as_of(it, period_end)
+            sl_pos += _bal
+            if _bal > _ENTRY_FLOOR:
+                sl_entries.append(_sl_entry(it.description, -_bal, it.accrual_date))
             if p_start <= it.accrual_date <= period_end:
                 je.append({
                     "txn_id":     f"accrual-book-{it.id}",
@@ -1655,7 +1676,7 @@ async def _schedule_backed_subledger(
                     "offset_qbo_account_id": it.offset_qbo_account_id,
                     "offset_account_name":   it.offset_account_name,
                 })
-        return {"schedule_type": "accrual", "sl_signed": _q(-sl_pos), "item_count": len(accruals), "je_items": je}
+        return {"schedule_type": "accrual", "sl_signed": _q(-sl_pos), "item_count": len(accruals), "je_items": je, "sl_entries": sl_entries}
 
     # ── Fixed Asset COST account (debit-natural asset) ───────────────
     fas_cost = list((await db.execute(
@@ -1667,11 +1688,13 @@ async def _schedule_backed_subledger(
     if fas_cost:
         sl = ZERO
         je = []
+        sl_entries = []
         for it in fas_cost:
             in_svc = it.in_service_date <= period_end
             disposed = it.disposed_on is not None and it.disposed_on <= period_end
             if in_svc and not disposed:
                 sl += Decimal(it.cost)
+                sl_entries.append(_sl_entry(it.description, Decimal(it.cost), it.in_service_date))
             if p_start <= it.in_service_date <= period_end:
                 je.append({
                     "txn_id":     f"fa-add-{it.id}",
@@ -1690,7 +1713,7 @@ async def _schedule_backed_subledger(
                     "amount":     str(_q(-Decimal(it.cost))),
                     "memo":       f"{it.description} — disposed per Nordavix Schedule",
                 })
-        return {"schedule_type": "fixed_asset_cost", "sl_signed": _q(sl), "item_count": len(fas_cost), "je_items": je}
+        return {"schedule_type": "fixed_asset_cost", "sl_signed": _q(sl), "item_count": len(fas_cost), "je_items": je, "sl_entries": sl_entries}
 
     # ── Fixed Asset ACCUMULATED DEP contra-asset (credit-natural) ────
     fas_dep = list((await db.execute(
@@ -1702,8 +1725,12 @@ async def _schedule_backed_subledger(
     if fas_dep:
         sl_pos = ZERO
         je = []
+        sl_entries = []
         for it in fas_dep:
-            sl_pos += _fa_accumulated_dep_as_of(it, period_end)
+            _bal = _fa_accumulated_dep_as_of(it, period_end)
+            sl_pos += _bal
+            if _bal > _ENTRY_FLOOR:
+                sl_entries.append(_sl_entry(f"{it.description} — accum. dep.", -_bal, it.in_service_date))
             dep = fa_period_depreciation(it, p_start, period_end)
             if dep > ZERO:
                 je.append({
@@ -1714,7 +1741,7 @@ async def _schedule_backed_subledger(
                     "amount":     str(_q(-dep)),
                     "memo":       f"{it.description} — period depreciation per Nordavix Schedule",
                 })
-        return {"schedule_type": "fixed_asset_accdep", "sl_signed": _q(-sl_pos), "item_count": len(fas_dep), "je_items": je}
+        return {"schedule_type": "fixed_asset_accdep", "sl_signed": _q(-sl_pos), "item_count": len(fas_dep), "je_items": je, "sl_entries": sl_entries}
 
     # ── Lease LIABILITY (credit-natural) ─────────────────────────────
     leases_liab = list((await db.execute(
@@ -1727,12 +1754,16 @@ async def _schedule_backed_subledger(
         sl_pos = ZERO
         je = []
         pay_entries = []
+        sl_entries = []
         active_count = 0
         for it in leases_liab:
             if it.initial_liability is None or it.discount_rate_pct is None:
                 continue  # cash-basis lease — no BS liability
             active_count += 1
-            sl_pos += _lease_liability_as_of(it, period_end)
+            _bal = _lease_liability_as_of(it, period_end)
+            sl_pos += _bal
+            if _bal > _ENTRY_FLOOR:
+                sl_entries.append(_sl_entry(it.description, -_bal, it.lease_start))
             if p_start <= it.lease_start <= period_end:
                 je.append({
                     "txn_id":     f"lease-init-{it.id}",
@@ -1767,7 +1798,7 @@ async def _schedule_backed_subledger(
                     "offset_account_name":   it.offset_account_name,
                 })
         if active_count > 0:
-            return {"schedule_type": "lease_liability", "sl_signed": _q(-sl_pos), "item_count": active_count, "je_items": je, "payment_entries": pay_entries}
+            return {"schedule_type": "lease_liability", "sl_signed": _q(-sl_pos), "item_count": active_count, "je_items": je, "payment_entries": pay_entries, "sl_entries": sl_entries}
 
     # ── Lease ROU asset (debit-natural) ──────────────────────────────
     leases_rou = list((await db.execute(
@@ -1779,6 +1810,7 @@ async def _schedule_backed_subledger(
     if leases_rou:
         sl = ZERO
         je = []
+        sl_entries = []
         active_count = 0
         for it in leases_rou:
             if it.initial_rou_asset is None:
@@ -1791,6 +1823,8 @@ async def _schedule_backed_subledger(
             monthly_amort = Decimal(it.initial_rou_asset) / Decimal(total_months)
             rou_remaining = max(ZERO, Decimal(it.initial_rou_asset) - monthly_amort * Decimal(months_elapsed))
             sl += rou_remaining
+            if rou_remaining > _ENTRY_FLOOR:
+                sl_entries.append(_sl_entry(f"{it.description} — ROU asset", rou_remaining, it.lease_start))
             if p_start <= it.lease_start <= period_end:
                 je.append({
                     "txn_id":     f"lease-rou-init-{it.id}",
@@ -1820,7 +1854,7 @@ async def _schedule_backed_subledger(
                     "memo":       f"{it.description} — ROU period amortization per Nordavix Schedule",
                 })
         if active_count > 0:
-            return {"schedule_type": "lease_rou", "sl_signed": _q(sl), "item_count": active_count, "je_items": je}
+            return {"schedule_type": "lease_rou", "sl_signed": _q(sl), "item_count": active_count, "je_items": je, "sl_entries": sl_entries}
 
     # ── Loan (credit-natural liability) ──────────────────────────────
     loans = list((await db.execute(
@@ -1833,8 +1867,12 @@ async def _schedule_backed_subledger(
         sl_pos = ZERO
         je = []
         pay_entries = []
+        sl_entries = []
         for it in loans:
-            sl_pos += _loan_principal_as_of(it, period_end)
+            _bal = _loan_principal_as_of(it, period_end)
+            sl_pos += _bal
+            if _bal > _ENTRY_FLOOR:
+                sl_entries.append(_sl_entry(it.description, -_bal, it.loan_date))
             if p_start <= it.loan_date <= period_end:
                 je.append({
                     "txn_id":     f"loan-orig-{it.id}",
@@ -1869,7 +1907,7 @@ async def _schedule_backed_subledger(
                     "offset_qbo_account_id": it.offset_qbo_account_id,
                     "offset_account_name":   it.offset_account_name,
                 })
-        return {"schedule_type": "loan", "sl_signed": _q(-sl_pos), "item_count": len(loans), "je_items": je, "payment_entries": pay_entries}
+        return {"schedule_type": "loan", "sl_signed": _q(-sl_pos), "item_count": len(loans), "je_items": je, "payment_entries": pay_entries, "sl_entries": sl_entries}
 
     return None
 

@@ -2615,12 +2615,15 @@ async def get_schedule_subledger(
         logger.warning("schedule-subledger calc failed for %s @ %s", qbo_account_id, pe, exc_info=True)
         sched = None
     if sched is None:
-        return {"is_schedule_backed": False, "schedule_type": None, "subledger_balance": None}
+        return {"is_schedule_backed": False, "schedule_type": None, "subledger_balance": None, "entries": []}
     return {
         "is_schedule_backed": True,
         "schedule_type":      sched["schedule_type"],
         "subledger_balance":  str(sched["sl_signed"]),
         "item_count":         int(sched.get("item_count") or 0),
+        # Per-item balance components (signed) that sum to subledger_balance —
+        # the LEFT ("Per Nordavix schedule") column of the recon match view.
+        "entries":            sched.get("sl_entries") or [],
     }
 
 
