@@ -3188,6 +3188,7 @@ function InlineSubledgerForm({
           qboRows={periodEntries?.rows ?? []}
           glBalance={parseFloat(account.gl_balance) || 0}
           flipSign={flipSign}
+          periodEnd={periodEnd}
         />
       )}
 
@@ -3579,13 +3580,19 @@ function InlineSubledgerForm({
 // For schedule-backed accounts (prepaid / accrual / FA / lease / loan), renders
 // the subledger as two side-by-side columns — "Per Nordavix schedule" (the
 // schedule's per-item balance components) and "Per QuickBooks GL" (the posted GL
-// transactions for the period) — with a best-effort amount match (✓ when a GL
-// posting of the same size exists) and a tie-out bar (subledger balance vs GL
-// balance → difference). This is the user's "show the entries in Nordavix and in
-// QBO, then match" view. The build-up below still shows base + any reconciling
-// ticks = closing; this panel shows the raw gap those ticks explain.
+// transactions for the period) — plus a tie-out bar (subledger vs GL balance).
+// This is the user's "show the entries in Nordavix and in QBO, then match" view.
+//
+// Matching is by RECOGNITION DATE, not amount: a schedule balance and a GL
+// transaction rarely equal exactly (mid-period amortization, opening carry), so
+// amount-matching misleads. An entry recognized in a prior period is already in
+// the GL opening (✓); one recognized this period is ✓ once the account ties out,
+// else ⚠ "pending" — its JE isn't in QuickBooks yet. While the schedule is ahead
+// of GL we surface those pending entries as timing reconciling items that clear
+// themselves once the GL catches up. Display-only — never feeds the subledger
+// math, so it can't double-count.
 function ScheduleVsGlPanels({
-  scheduleType, entries, slTotal, qboRows, glBalance, flipSign,
+  scheduleType, entries, slTotal, qboRows, glBalance, flipSign, periodEnd,
 }: {
   scheduleType: string | null
   entries:      { label: string; amount: string; date: string | null }[]
@@ -3593,15 +3600,28 @@ function ScheduleVsGlPanels({
   qboRows:      ReconcilingItem[]
   glBalance:    number          // signed GL balance
   flipSign:     number
+  periodEnd:    string          // YYYY-MM-DD
 }) {
   const typeLabel = SCHEDULE_TYPE_LABEL[scheduleType ?? ""] ?? "schedule"
 
+  // Tie-out + per-entry status (recognition-date based — see header note).
+  const pStart = periodEnd.length >= 10 ? `${periodEnd.slice(0, 8)}01` : periodEnd
+  const isThisPeriod = (d: string | null) => !!d && d >= pStart && d <= periodEnd
+  const diff = glBalance - slTotal
+  const tied = Math.abs(diff) < 0.5
+  // Schedule "ahead" of GL = carries more balance (natural terms) than the GL,
+  // i.e. there are postings the schedule expects that QBO hasn't recorded yet.
+  const scheduleAhead = Math.abs(slTotal) > Math.abs(glBalance) + 0.005
+  const netToPost = slTotal - glBalance
+
   // LEFT — Nordavix schedule balance components (already signed).
   const nx = entries.map((e, i) => ({
-    key:   `nx-${i}`,
-    label: e.label,
-    amt:   parseFloat(e.amount) || 0,
+    key:     `nx-${i}`,
+    label:   e.label,
+    amt:     parseFloat(e.amount) || 0,
+    pending: isThisPeriod(e.date) && !tied && scheduleAhead,
   }))
+  const pendingEntries = nx.filter((n) => n.pending)
 
   // RIGHT — QBO period GL postings, signed to the GL convention (flipSign on the
   // credit-natural accounts; these drill-in rows are never manual).
@@ -3618,17 +3638,6 @@ function ScheduleVsGlPanels({
   const opening = glBalance - periodActivity
   const showOpening = Math.abs(opening) > 0.005
 
-  // Best-effort match by absolute amount, each QBO row consumed once.
-  const usedQbo = new Set<number>()
-  const nxMatched = nx.map((n) => {
-    const j = qbo.findIndex((q, idx) => !usedQbo.has(idx) && Math.abs(Math.abs(q.amt) - Math.abs(n.amt)) < 0.01)
-    if (j >= 0) usedQbo.add(j)
-    return j >= 0
-  })
-
-  const diff = glBalance - slTotal
-  const tied = Math.abs(diff) < 0.5
-
   return (
     <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
       <div className="px-4 py-2 flex items-center justify-between gap-2 flex-wrap"
@@ -3636,8 +3645,9 @@ function ScheduleVsGlPanels({
         <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
           Subledger match · Nordavix {typeLabel} schedule vs QuickBooks
         </span>
-        <span className="text-[10px] inline-flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
-          <CheckCircle2 size={10} strokeWidth={2.4} style={{ color: "var(--green)" }} /> same amount posted in QBO
+        <span className="text-[10px] inline-flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+          <span className="inline-flex items-center gap-1"><CheckCircle2 size={10} strokeWidth={2.4} style={{ color: "var(--green)" }} /> in GL</span>
+          <span className="inline-flex items-center gap-1"><AlertTriangle size={10} strokeWidth={2.2} style={{ color: "#c79a52" }} /> pending</span>
         </span>
       </div>
 
@@ -3651,12 +3661,12 @@ function ScheduleVsGlPanels({
             <p className="text-[11px] italic py-1" style={{ color: "var(--text-muted)" }}>No active schedule items.</p>
           ) : (
             <ul className="space-y-0.5 max-h-56 overflow-y-auto">
-              {nx.map((n, i) => (
+              {nx.map((n) => (
                 <li key={n.key} className="flex items-center justify-between gap-2 py-1 text-xs">
                   <span className="flex items-center gap-1.5 min-w-0">
-                    {nxMatched[i]
-                      ? <CheckCircle2 size={11} strokeWidth={2.2} style={{ color: "var(--green)", flexShrink: 0 }} />
-                      : <AlertTriangle size={11} strokeWidth={2} style={{ color: "#c79a52", flexShrink: 0 }} />}
+                    {n.pending
+                      ? <AlertTriangle size={11} strokeWidth={2} style={{ color: "#c79a52", flexShrink: 0 }} />
+                      : <CheckCircle2 size={11} strokeWidth={2.2} style={{ color: "var(--green)", flexShrink: 0 }} />}
                     <span className="truncate text-theme">{n.label}</span>
                   </span>
                   <span className="tabular-nums font-semibold whitespace-nowrap text-theme">{fmtMoney(n.amt)}</span>
@@ -3685,16 +3695,11 @@ function ScheduleVsGlPanels({
                   <span className="tabular-nums font-semibold whitespace-nowrap" style={{ color: "var(--text-2)" }}>{fmtMoney(opening)}</span>
                 </li>
               )}
-              {qbo.map((q, idx) => (
+              {qbo.map((q) => (
                 <li key={q.key} className="flex items-center justify-between gap-2 py-1 text-xs">
-                  <span className="flex items-center gap-1.5 min-w-0">
-                    {usedQbo.has(idx)
-                      ? <CheckCircle2 size={11} strokeWidth={2.2} style={{ color: "var(--green)", flexShrink: 0 }} />
-                      : <span className="inline-block" style={{ width: 11, flexShrink: 0 }} />}
-                    <span className="truncate text-theme">
-                      {q.label}
-                      {q.sub && <span className="ml-1 text-[10px]" style={{ color: "var(--text-muted)" }}>{q.sub}</span>}
-                    </span>
+                  <span className="truncate text-theme min-w-0">
+                    {q.label}
+                    {q.sub && <span className="ml-1 text-[10px]" style={{ color: "var(--text-muted)" }}>{q.sub}</span>}
                   </span>
                   <span className="tabular-nums font-semibold whitespace-nowrap text-theme">{fmtMoney(q.amt)}</span>
                 </li>
@@ -3714,12 +3719,60 @@ function ScheduleVsGlPanels({
           {tied
             ? <CheckCircle2 size={13} strokeWidth={2.2} />
             : <AlertTriangle size={13} strokeWidth={2} />}
-          {tied ? "Schedule ties to GL" : "Difference — post the missing JE in QuickBooks, or tick the GL entries below to explain it"}
+          {tied ? "Schedule ties to GL" : "Difference — see the timing items below"}
         </span>
         {!tied && (
           <span className="text-sm font-bold tabular-nums" style={{ color: "#b0564e" }}>{fmtMoney(diff)}</span>
         )}
       </div>
+
+      {/* Pending reconciling items — only while the schedule is AHEAD of GL.
+          These are the postings still owed to QuickBooks; the list clears
+          itself once the GL catches up (the gap closes). Display-only — it
+          never feeds the subledger math, so it can never double-count. This is
+          the answer to "I added an item, GL is behind, show it as a reconciling
+          item": here it is, and you don't tick anything. */}
+      {!tied && scheduleAhead && (
+        <div className="px-4 py-2.5" style={{ borderTop: "1px solid var(--border)", background: "rgba(199, 154, 82, 0.07)" }}>
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <AlertTriangle size={11} strokeWidth={2} style={{ color: "#c79a52", flexShrink: 0 }} />
+            <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#7a5622" }}>
+              Reconciling items · pending in QuickBooks (timing)
+            </span>
+          </div>
+          {pendingEntries.length > 0 ? (
+            <ul className="space-y-0.5">
+              {pendingEntries.map((n) => (
+                <li key={n.key} className="flex items-center justify-between gap-2 py-0.5 text-xs">
+                  <span className="truncate text-theme min-w-0">{n.label}</span>
+                  <span className="tabular-nums font-semibold whitespace-nowrap text-theme">{fmtMoney(n.amt)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[11px]" style={{ color: "var(--text-2)" }}>
+              The schedule is ahead of the GL — a posting hasn't reached QuickBooks yet.
+            </p>
+          )}
+          <div className="flex items-center justify-between mt-1.5 pt-1.5 text-xs font-bold" style={{ borderTop: "1px dashed var(--border)" }}>
+            <span style={{ color: "#7a5622" }}>Net still to post in QuickBooks</span>
+            <span className="tabular-nums" style={{ color: "#7a5622" }}>{fmtMoney(netToPost)}</span>
+          </div>
+          <p className="text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+            Post these in QuickBooks and Re-sync — this list clears itself the moment the GL catches up. Nothing to tick here.
+          </p>
+        </div>
+      )}
+
+      {/* Reverse case: GL carries a posting the schedule doesn't account for. */}
+      {!tied && !scheduleAhead && (
+        <div className="px-4 py-2" style={{ borderTop: "1px solid var(--border)", background: "rgba(155, 61, 55, 0.06)" }}>
+          <p className="text-[11px]" style={{ color: "#9b3d37" }}>
+            The GL is ahead of the schedule by {fmtMoney(Math.abs(netToPost))} — QuickBooks has a posting the schedule
+            doesn't account for. Add it to the schedule, or tick it in the Items tab to explain the difference.
+          </p>
+        </div>
+      )}
     </div>
   )
 }
