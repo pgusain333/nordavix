@@ -104,8 +104,22 @@ export function CommandCenterPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { organization } = useOrganization()
-  const { setActive } = useOrganizationList()
+  const { setActive, userMemberships } = useOrganizationList({
+    userMemberships: { infinite: true },
+  })
   const [switchingId, setSwitchingId] = useState<string | null>(null)
+
+  // Clerk is the canonical source for company names — the backend's
+  // Tenant.name can lag (tenants provisioned before the org was named
+  // hold the raw org_... id). Overlay Clerk's name whenever we have it.
+  const orgNames = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const mem of userMemberships?.data ?? []) m[mem.organization.id] = mem.organization.name
+    return m
+  }, [userMemberships?.data])
+  const displayName = (c: CommandCenterCompany) =>
+    orgNames[c.clerk_org_id]
+    ?? (c.name && !c.name.startsWith("org_") ? c.name : "Unnamed company")
 
   const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ["command-center"],
@@ -232,7 +246,7 @@ export function CommandCenterPage() {
                   <div className="min-w-[180px] flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-[15px] font-bold truncate" style={{ color: "var(--text)" }}>
-                        {c.name}
+                        {displayName(c)}
                       </p>
                       {isCurrent && (
                         <Chip label="Current" fg="var(--green)" bg="var(--green-subtle)" />

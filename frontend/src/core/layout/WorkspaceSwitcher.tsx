@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useOrganization, useOrganizationList, useSession } from "@clerk/clerk-react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Building2, Check, ChevronDown, Plus } from "lucide-react"
+import { Building2, Check, ChevronDown, LayoutGrid, Plus } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 
 interface Props {
@@ -38,6 +38,12 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
   const [switching, setSwitching] = useState<string | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef    = useRef<HTMLDivElement>(null)
+
+  // Warm the Command Center chunk the moment the menu opens — by the
+  // time the user reads the list, the firm view loads instantly.
+  useEffect(() => {
+    if (open) void import("@/modules/firm/pages/CommandCenterPage")
+  }, [open])
 
   // Click-outside + Esc close
   useEffect(() => {
@@ -148,10 +154,34 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
               maxHeight: "320px",
             }}
           >
+            {/* Firm level — sits ABOVE the company list. The Command
+                Center is the CPA-firm home: every company's close on one
+                screen, doubling as the company switcher. */}
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                navigate("/app/command-center")
+                onAfterSwitch?.()
+              }}
+              className="w-full text-left px-3 py-2.5 inline-flex items-center gap-2 transition-colors hover:bg-[var(--green-subtle)]"
+              style={{ borderBottom: "1px solid var(--border)" }}
+            >
+              <LayoutGrid size={13} strokeWidth={2} className="shrink-0" style={{ color: "var(--green)" }} />
+              <span className="flex-1 min-w-0">
+                <span className="block text-xs font-bold" style={{ color: "var(--text)" }}>
+                  Command Center
+                </span>
+                <span className="block text-[10px]" style={{ color: "var(--text-muted)" }}>
+                  All companies · firm overview
+                </span>
+              </span>
+            </button>
+
             {/* Header */}
             <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider"
               style={{ background: "var(--surface-2)", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
-              Workspaces
+              Companies
             </div>
 
             {/* Members list */}

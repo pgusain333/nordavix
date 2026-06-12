@@ -653,6 +653,27 @@ async def get_command_center(
     if not tids:
         return {"companies": []}
 
+    # Heal placeholder names. Tenants provisioned before the org had a
+    # human name carry the raw "org_..." id in Tenant.name — Clerk is the
+    # canonical source, so backfill once here (TTL-cached, read-only
+    # requests skip the write). Fixes the firm view AND every PDF/export
+    # cover sheet that reads the workspace name.
+    if not current_request_readonly.get():
+        from core.auth.clerk_users import get_clerk_org_name
+        healed = False
+        for t in tenants:
+            if t.name and t.name.startswith("org_"):
+                real = await get_clerk_org_name(t.clerk_org_id)
+                if real and real != t.name:
+                    t.name = real
+                    healed = True
+        if healed:
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                logger.exception("Tenant name backfill from Clerk failed")
+
     # Bulk pulls across all companies — review rows, locks, QBO connections.
     review_rows = list((await db.execute(
         select(

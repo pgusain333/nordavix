@@ -154,3 +154,38 @@ async def list_org_memberships(clerk_org_id: str) -> list[dict]:
         logger.exception("Clerk org memberships fetch failed for %s", clerk_org_id)
         return []
     return out
+
+
+# ── Organization names ──────────────────────────────────────────────────────
+
+_org_name_cache: dict[str, tuple[str, float]] = {}
+
+
+async def get_clerk_org_name(clerk_org_id: str) -> str | None:
+    """Fetch an organization's display name from Clerk, with TTL cache.
+
+    Used to heal Tenant.name rows that were provisioned before the org
+    had a human name (they hold the raw org_... id) — Clerk is the
+    canonical source for workspace names.
+    """
+    if not clerk_org_id:
+        return None
+    cached = _org_name_cache.get(clerk_org_id)
+    if cached and time.time() - cached[1] < _TTL_SECONDS:
+        return cached[0]
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"https://api.clerk.com/v1/organizations/{clerk_org_id}",
+                headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+            )
+        if resp.status_code != 200:
+            logger.warning("Clerk org fetch %s returned %s", clerk_org_id, resp.status_code)
+            return None
+        name = (resp.json() or {}).get("name")
+        if name:
+            _org_name_cache[clerk_org_id] = (name, time.time())
+        return name
+    except Exception:
+        logger.exception("Clerk org fetch failed for %s", clerk_org_id)
+        return None

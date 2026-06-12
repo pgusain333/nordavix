@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from "react"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Search, ChevronRight, HelpCircle } from "lucide-react"
+import { Search, ChevronRight, HelpCircle, LayoutGrid } from "lucide-react"
 import { workspaceApi } from "@/modules/workspace/api"
 import { reconsApi } from "@/modules/recons/api"
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
@@ -184,8 +184,17 @@ export function TopBar() {
           style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>⌘K</kbd>
       </button>
 
-      {/* Right — help · bell · divider · user */}
+      {/* Right — command center · help · bell · divider · user */}
       <div className="flex-1 flex items-center justify-end gap-2">
+        <button
+          onClick={() => navigate("/app/command-center")}
+          onMouseEnter={() => void import("@/modules/firm/pages/CommandCenterPage")}
+          className="flex items-center justify-center h-9 w-9 rounded-md transition-colors hover:bg-[var(--surface-2)]"
+          title="Command Center — all companies"
+          aria-label="Command Center"
+        >
+          <LayoutGrid size={17} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+        </button>
         <button
           onClick={() => navigate("/app/help")}
           className="flex items-center justify-center h-9 w-9 rounded-md transition-colors hover:bg-[var(--surface-2)]"

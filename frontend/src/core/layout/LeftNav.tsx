@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
-  LayoutDashboard, LayoutGrid, BarChart3, Scale, FileText, ArrowLeftRight,
+  LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
   MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList, Search,
   PanelLeft, PanelLeftClose, Sparkles,
@@ -54,7 +54,6 @@ function prefetchRoute(path: string): void {
   const p = path.replace(/[?#].*$/, "").replace(/^\/app\/?/, "")
   switch (p) {
     case "":               return // Dashboard is eager
-    case "command-center": void import("@/modules/firm/pages/CommandCenterPage");           return
     case "tasks":          void import("@/modules/tasks/pages/TasksPage");                  return
     case "connections":    void import("@/modules/connections/pages/ConnectionsPage");      return
     case "flux":           void import("@/modules/flux/pages/FluxMonthIndex");              return
@@ -111,7 +110,6 @@ function prefetchData(qc: QueryClient, path: string): void {
 // adjacent and sits last.
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard",          path: "/app",                 icon: LayoutDashboard, available: true  },
-  { label: "Command Center",     path: "/app/command-center",  icon: LayoutGrid,      available: true  },
   { label: "Close Tasks",        path: "/app/tasks",           icon: CheckSquare,     available: true  },
   { label: "Connections",        path: "/app/connections",     icon: Plug,            available: true  },
   { label: "Schedules",          path: "/app/schedules",       icon: ClipboardList,   available: true  },
