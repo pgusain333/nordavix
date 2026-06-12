@@ -27,7 +27,6 @@ import {
   RefreshCw,
   AlertTriangle,
   AlertCircle,
-  Lightbulb,
   CheckCircle2,
   Search,
   Eye,
@@ -46,6 +45,8 @@ import {
   ArrowLeft,
   ArrowRight,
   RotateCcw,
+  ListChecks,
+  ChevronRight as ChevronRightIcon,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -1981,7 +1982,7 @@ export function ReconciliationsDashboard() {
             readOnly={isClosed || a.review_status === "approved" || a.review_status === "reviewed"}
           />
         )}
-        renderReconcileBody={(a, section) => (
+        renderReconcileBody={(a, section, goToTab) => (
           <InlineSubledgerForm
             // key={qbo_id} forces a fresh mount when the user navigates
             // Next/Prev between accounts in the drawer. Without it the
@@ -2008,6 +2009,14 @@ export function ReconciliationsDashboard() {
             visibleSection={section}
             hideHeader
             hideFooter
+            // ReviewChecklist plumbing: deep-link rows jump tabs, and the
+            // inline CTA fires the SAME status mutation as the footer button.
+            onGoToTab={(t) => goToTab?.(t)}
+            markingPrepared={setStatusMut.isPending}
+            onMarkPrepared={() => {
+              if (a.review_status !== "pending" && a.review_status !== "flagged") return
+              setStatusMut.mutate({ id: a.qbo_id, status: "reviewed" })
+            }}
             onSave={(total, source, items) => {
               // Defense in depth: even if a stale form somehow tries
               // to save against an approved row, refuse the write.
@@ -2309,7 +2318,7 @@ type FormSection = "items" | "suggestions" | "evidence" | "ai"
 function InlineSubledgerForm({
   account, periodEnd, saving, readOnly = false, periodClosed = false,
   onSave, onClear, onClose, onAutoSave, onPreview,
-  visibleSection, hideHeader, hideFooter,
+  visibleSection, hideHeader, hideFooter, onGoToTab, onMarkPrepared, markingPrepared,
 }: {
   account: OverviewAccount
   periodEnd: string
@@ -2347,6 +2356,13 @@ function InlineSubledgerForm({
   /** Drawer mode owns the sticky action footer (Mark prepared / Approve)
    *  so the form's internal Save / Clear footer is redundant. */
   hideFooter?: boolean
+  /** Drawer-mode: jump to another tab — the ReviewChecklist's deep-links
+   *  ("Open Items →") use this. */
+  onGoToTab?: (tab: "items" | "suggestions" | "evidence") => void
+  /** Drawer-mode: the ReviewChecklist's inline "Mark prepared" CTA. Same
+   *  mutation the footer button fires; just surfaced where the work ends. */
+  onMarkPrepared?: () => void
+  markingPrepared?: boolean
 }) {
   // Helper: show this section's div based on visibleSection filter.
   // Returns inline style — sections always mount, just toggle visibility.
@@ -2872,6 +2888,26 @@ function InlineSubledgerForm({
           decides whether to trust the AI's work, then approves (or
           edits + saves to override). */}
       <div style={sectionStyle("ai")}>
+        {/* The actionable layer FIRST: everything the reviewer must do/verify,
+            in one tickable list with deep-links — then the AI evidence below. */}
+        {(() => {
+          const glLive = parseFloat(account.gl_balance) || 0
+          const liveVariance = glLive - computedSubledger
+          return (
+            <ReviewChecklist
+              account={account}
+              periodEnd={periodEnd}
+              variance={liveVariance}
+              tied={Math.abs(liveVariance) < 0.5}
+              scheduleSub={scheduleSub}
+              scheduleBaseBalance={scheduleBaseBalance}
+              readOnly={readOnly}
+              onGoToTab={onGoToTab}
+              onMarkPrepared={onMarkPrepared}
+              markingPrepared={markingPrepared}
+            />
+          )
+        })()}
         {account.ai_commentary && (
           <AiCommentaryCard commentary={account.ai_commentary} />
         )}
@@ -3977,6 +4013,218 @@ function SubledgerBuildup({
 // Mirrors the structure of the PDF section so a reviewer sees the same
 // shape on screen and on the audit working paper.
 
+// ── ReviewChecklist — AI work distilled into ONE actionable, tickable list ──
+// The answer to "I shouldn't have to look here and there": every actionable
+// thing about this account — the live variance blocker, schedule JEs still
+// pending in QuickBooks, the AI's flagged items, its recommended actions, and
+// any warn/fail automated checks — compiled into a single checklist the
+// reviewer works top-to-bottom. Each row is tickable (persisted per
+// account+period in localStorage — a personal worksheet, not an audit record)
+// and deep-links to the tab where the work happens. When everything is
+// verified AND the account ties out, the "Mark prepared" CTA appears right
+// here — zero hunting. Display + navigation only; no business logic.
+function ReviewChecklist({
+  account, periodEnd, variance, tied, scheduleSub, scheduleBaseBalance,
+  readOnly, onGoToTab, onMarkPrepared, markingPrepared,
+}: {
+  account:             OverviewAccount
+  periodEnd:           string
+  /** Live GL − computed subledger (signed). */
+  variance:            number
+  tied:                boolean
+  scheduleSub?:        import("@/modules/recons/api").ScheduleSubledger
+  scheduleBaseBalance: number | null
+  readOnly?:           boolean
+  onGoToTab?:          (tab: "items" | "suggestions" | "evidence") => void
+  onMarkPrepared?:     () => void
+  markingPrepared?:    boolean
+}) {
+  const commentary = account.ai_commentary
+  type Row = {
+    id:     string
+    label:  string
+    sub?:   string
+    tone:   "blocker" | "warn" | "info"
+    tab?:   "items" | "suggestions" | "evidence"
+  }
+  const rows: Row[] = []
+
+  // 1 · The variance blocker — the one thing that gates everything else.
+  if (!tied) {
+    rows.push({
+      id: "variance", tone: "blocker",
+      label: `Clear the ${fmtMoney(variance)} variance`,
+      sub: "Tick the explaining GL entries in Items, or post the missing JE in QuickBooks and Re-sync.",
+      tab: "items",
+    })
+  }
+
+  // 2 · Schedule timing items still owed to QuickBooks (schedule ahead of GL).
+  if (!tied && scheduleBaseBalance != null && scheduleSub?.entries?.length) {
+    const gl = parseFloat(account.gl_balance) || 0
+    const scheduleAhead = Math.abs(scheduleBaseBalance) > Math.abs(gl) + 0.005
+    if (scheduleAhead) {
+      const pStart = periodEnd.length >= 10 ? `${periodEnd.slice(0, 8)}01` : periodEnd
+      const pending = scheduleSub.entries.filter((e) => !!e.date && e.date >= pStart && e.date <= periodEnd)
+      if (pending.length > 0) {
+        rows.push({
+          id: "sched-pending", tone: "blocker",
+          label: `Post ${pending.length} pending schedule ${pending.length === 1 ? "entry" : "entries"} in QuickBooks`,
+          sub: "The schedule is ahead of the GL — post the JE(s), then Re-sync. The timing items clear themselves.",
+          tab: "suggestions",
+        })
+      }
+    }
+  }
+
+  // 3 · AI-flagged reconciling items (each carries its own what + why + fix).
+  for (const [i, f] of (commentary?.item_flags ?? []).entries()) {
+    rows.push({
+      id: `flag-${i}-${(f.label || "").slice(0, 24)}`,
+      tone: f.severity === "high" ? "blocker" : "warn",
+      label: f.amount ? `${f.label} · ${fmtMoney(parseFloat(f.amount) || 0)}` : f.label,
+      sub: f.action || f.reason,
+      tab: "items",
+    })
+  }
+
+  // 4 · The AI's recommended actions, verbatim.
+  for (const [i, r] of (commentary?.recommendations ?? []).entries()) {
+    rows.push({ id: `rec-${i}-${r.slice(0, 24)}`, tone: "info", label: r })
+  }
+
+  // 5 · Automated checks that did NOT pass.
+  for (const [i, c] of (commentary?.checks ?? []).entries()) {
+    if (c.status === "pass") continue
+    rows.push({
+      id: `chk-${i}-${c.name}`,
+      tone: c.status === "fail" ? "blocker" : "warn",
+      label: `Resolve check: ${c.name}`,
+      sub: c.detail,
+    })
+  }
+  const passCount = (commentary?.checks ?? []).filter((c) => c.status === "pass").length
+
+  // Tick state — a personal worksheet, persisted per account+period.
+  const storageKey = `ndvx.checklist.${account.qbo_id}.${periodEnd}`
+  const [done, setDone] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(storageKey) ?? "[]") as string[]) }
+    catch { return new Set() }
+  })
+  const toggle = (id: string) => {
+    if (readOnly) return
+    setDone((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      try { localStorage.setItem(storageKey, JSON.stringify([...next])) } catch { /* quota — ticks just won't persist */ }
+      return next
+    })
+  }
+
+  const doneCount = rows.filter((r) => done.has(r.id)).length
+  const allDone = rows.length === 0 || doneCount === rows.length
+  const canPrepare = !readOnly && tied && allDone && !!onMarkPrepared
+    && (account.review_status === "pending" || account.review_status === "flagged")
+
+  // Nothing to show at all (no AI yet, account already ties, no actions).
+  if (rows.length === 0 && !commentary && !canPrepare) return null
+
+  const toneMeta = {
+    blocker: { dot: "var(--danger)",  ring: "var(--danger-border)" },
+    warn:    { dot: "var(--warn)",    ring: "var(--warn-border)" },
+    info:    { dot: "var(--info)",    ring: "var(--info-border)" },
+  } as const
+
+  return (
+    <div className="rounded-xl mb-3 overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
+      {/* Header + progress */}
+      <div className="px-4 py-2.5 flex items-center gap-3"
+        style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-theme">
+          <ListChecks size={13} strokeWidth={2.2} style={{ color: "var(--green)" }} /> Reviewer checklist
+        </span>
+        {rows.length > 0 && (
+          <>
+            <div className="flex-1 max-w-[140px] h-1.5 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
+              <div className="h-full rounded-full transition-all duration-300"
+                style={{ width: `${rows.length ? (doneCount / rows.length) * 100 : 100}%`, background: "var(--green)" }} />
+            </div>
+            <span className="text-[10px] font-bold tabular-nums" style={{ color: "var(--text-muted)" }}>
+              {doneCount}/{rows.length} verified
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* Rows */}
+      {rows.length > 0 ? (
+        <ul>
+          {rows.map((r) => {
+            const isDone = done.has(r.id)
+            const meta = toneMeta[r.tone]
+            return (
+              <li key={r.id} className="flex items-start gap-2.5 px-4 py-2.5 transition-colors"
+                style={{ borderBottom: "1px solid var(--border)", opacity: isDone ? 0.55 : 1 }}>
+                <button type="button" onClick={() => toggle(r.id)} disabled={readOnly}
+                  aria-label={isDone ? "Mark unverified" : "Mark verified"}
+                  className="mt-0.5 h-[18px] w-[18px] shrink-0 rounded-full grid place-items-center transition-all"
+                  style={{
+                    background: isDone ? "var(--green)" : "transparent",
+                    border: `1.5px solid ${isDone ? "var(--green)" : meta.ring}`,
+                    cursor: readOnly ? "default" : "pointer",
+                  }}>
+                  {isDone && <CheckCircle2 size={12} strokeWidth={3} color="#fff" />}
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: meta.dot }} />
+                    <span className="text-[12.5px] font-semibold leading-snug text-theme"
+                      style={{ textDecoration: isDone ? "line-through" : "none" }}>{r.label}</span>
+                  </div>
+                  {r.sub && <p className="mt-0.5 text-[11px] leading-snug" style={{ color: "var(--text-2)" }}>{r.sub}</p>}
+                </div>
+                {r.tab && onGoToTab && (
+                  <button type="button" onClick={() => onGoToTab(r.tab!)}
+                    className="shrink-0 inline-flex items-center gap-0.5 text-[10.5px] font-bold rounded-full px-2 py-1 transition-colors hover:bg-[var(--surface-2)]"
+                    style={{ color: "var(--green)", border: "1px solid var(--border)" }}>
+                    {r.tab === "items" ? "Items" : r.tab === "suggestions" ? "Suggestions" : "Evidence"}
+                    <ChevronRightIcon size={11} strokeWidth={2.4} />
+                  </button>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
+        <p className="px-4 py-3 text-[12px]" style={{ color: "var(--text-2)" }}>
+          Nothing needs your attention — the AI found no exceptions and the account ties out.
+        </p>
+      )}
+
+      {/* Footer — passed checks + the CTA the moment it's earned. */}
+      <div className="px-4 py-2.5 flex items-center gap-3 flex-wrap" style={{ background: "var(--surface-2)" }}>
+        {passCount > 0 && (
+          <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold" style={{ color: "var(--green)" }}>
+            <CheckCircle2 size={12} strokeWidth={2.4} /> {passCount} automated check{passCount === 1 ? "" : "s"} passed
+          </span>
+        )}
+        <span className="ml-auto" />
+        {canPrepare ? (
+          <Button size="sm" icon={<CheckCircle2 size={12} strokeWidth={2.2} />}
+            loading={markingPrepared} onClick={onMarkPrepared}>
+            Mark prepared
+          </Button>
+        ) : !readOnly && rows.length > 0 ? (
+          <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+            {tied ? "Verify every item to unlock Mark prepared" : "Variance must reach zero to mark prepared"}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function AiCommentaryCard({ commentary }: {
   commentary: import("@/modules/recons/api").AiCommentary
 }) {
@@ -4037,63 +4285,10 @@ function AiCommentaryCard({ commentary }: {
         </p>
       )}
 
-      {/* Items to review — reconciling items the AI thinks look unrelated,
-          out-of-period, or doubtful. This is the "think like an accountant"
-          layer: each flag says what's wrong and what to do. */}
-      {commentary.item_flags && commentary.item_flags.length > 0 && (
-        <div className="px-4 pb-3" style={{ borderTop: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-1.5 mt-3 mb-2 text-[10px] font-bold uppercase tracking-wider"
-            style={{ color: "#8a6326" }}>
-            <AlertTriangle size={12} strokeWidth={2} /> Items to review ({commentary.item_flags.length})
-          </div>
-          <div className="space-y-2">
-            {commentary.item_flags.map((f, i) => {
-              const sevColor = f.severity === "high" ? "#9b3d37" : f.severity === "medium" ? "#8a6326" : "var(--text-muted)"
-              return (
-                <div key={i} className="rounded-lg p-2.5"
-                  style={{ background: "rgba(199, 154, 82, 0.06)", border: "1px solid rgba(199, 154, 82, 0.30)" }}>
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-[12px] font-semibold leading-snug" style={{ color: "var(--text)" }}>{f.label}</span>
-                    {f.amount && (
-                      <span className="text-[12px] font-semibold tabular-nums shrink-0" style={{ color: "var(--text)" }}>
-                        {fmtMoney(parseFloat(f.amount) || 0)}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] mt-1 leading-snug" style={{ color: "var(--text-2)" }}>
-                    <span className="font-semibold uppercase text-[9px] tracking-wider mr-1" style={{ color: sevColor }}>{f.severity}</span>
-                    {f.reason}
-                  </p>
-                  {f.action && (
-                    <p className="text-[11px] mt-1 leading-snug font-medium" style={{ color: "var(--green)" }}>
-                      → {f.action}
-                    </p>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Recommended actions */}
-      {commentary.recommendations && commentary.recommendations.length > 0 && (
-        <div className="px-4 pb-3" style={{ borderTop: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-1.5 mt-3 mb-2 text-[10px] font-bold uppercase tracking-wider"
-            style={{ color: "var(--green)" }}>
-            <Lightbulb size={12} strokeWidth={2} /> Recommended actions
-          </div>
-          <ul className="space-y-1.5">
-            {commentary.recommendations.map((r, i) => (
-              <li key={i} className="flex items-start gap-2 text-[12px] leading-snug" style={{ color: "var(--text)" }}>
-                <span className="inline-flex items-center justify-center h-4 w-4 rounded-full text-[9px] font-bold shrink-0 mt-0.5"
-                  style={{ background: "var(--green-subtle)", color: "var(--green)" }}>{i + 1}</span>
-                {r}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* NOTE: item_flags + recommendations are no longer rendered here — they
+          live as TICKABLE rows in the ReviewChecklist above this card, so the
+          actionable work sits in one list instead of three sections. This card
+          is now pure evidence: verdict, narrative, and the checks table. */}
 
       {/* Checks table */}
       {commentary.checks.length > 0 && (

@@ -76,8 +76,10 @@ interface Props {
   onClose:          () => void
   /** Render the InlineSubledgerForm. The parent passes a callback so we
    *  can call it with the current tab's section filter — that way the
-   *  form stays mounted but only the right sections render. */
-  renderReconcileBody?: (account: OverviewAccount, section: DrawerFormSection) => React.ReactNode
+   *  form stays mounted but only the right sections render. The third
+   *  arg lets the body jump the drawer to another tab (the AI checklist
+   *  uses it for "Open Items →" deep-links). */
+  renderReconcileBody?: (account: OverviewAccount, section: DrawerFormSection, goToTab?: (t: DrawerTabId) => void) => React.ReactNode
   /** Render the bank-rec worksheet (only invoked when the "bank_match"
    *  tab is active AND the account is a Bank type — the tab itself is
    *  hidden otherwise). */
@@ -439,7 +441,7 @@ export function AccountDetailDrawer({
                   // based on its visibleSection prop. The render-prop
                   // gets the current tab id so it can pass through.
                   <div className="px-1 py-1">
-                    {renderReconcileBody(account, tab as DrawerFormSection)}
+                    {renderReconcileBody(account, tab as DrawerFormSection, setTab)}
                   </div>
                 ) : (
                   <PlaceholderTab title="Coming soon" hint="The reconcile body will appear here when wired." />
@@ -486,9 +488,18 @@ function DrawerHeader({
       style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
       {/* Top row: position + nav + close */}
       <div className="flex items-center justify-between mb-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wider"
-          style={{ color: "var(--text-muted)" }}>
-          Account {index + 1} of {total}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap"
+            style={{ color: "var(--text-muted)" }}>
+            Account {index + 1} of {total}
+          </span>
+          {/* Make the existing keyboard shortcuts discoverable. */}
+          <span className="hidden lg:inline-flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}>
+            {["←", "→", "ESC"].map((k) => (
+              <kbd key={k} className="px-1 py-0.5 rounded font-semibold"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border)", fontFamily: "JetBrains Mono, monospace" }}>{k}</kbd>
+            ))}
+          </span>
         </div>
         <div className="flex items-center gap-1">
           <IconBtn
