@@ -86,7 +86,9 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
   // Open drafts let the user re-point any line to a different GL account — the
   // chart for the entry's period feeds the per-line dropdown. Re-pointing keeps
   // the amounts (so the entry still balances); the backend re-validates anyway.
-  const editable = entry.status === "open" && !readOnly
+  // Reviewer+ only: editing feeds straight into accept (and the backend now
+  // gates PATCH the same way), so preparers see the lines read-only.
+  const editable = entry.status === "open" && !readOnly && !!canReview
   const { data: accounts } = useQuery({
     queryKey: ["adjustments", "accounts", entry.period_end],
     queryFn:  () => adjustmentsApi.accounts(entry.period_end),
@@ -133,8 +135,9 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
   }
 
   const showApprove = isOpen && canReview && !readOnly
-  // Saved entries are a locked batch and can't be dismissed.
-  const showDismiss = (isOpen || entry.status === "accepted") && !readOnly && !saved
+  // Saved entries are a locked batch and can't be dismissed. Dismissing is a
+  // review decision (mirror of accept) — reviewer/admin only, like the API.
+  const showDismiss = (isOpen || entry.status === "accepted") && !readOnly && !saved && !!canReview
 
   return (
     <div

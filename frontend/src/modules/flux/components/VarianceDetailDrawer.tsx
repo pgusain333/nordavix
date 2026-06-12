@@ -541,6 +541,122 @@ function TabBar({ value, onChange }: { value: TabId; onChange: (v: TabId) => voi
   )
 }
 
+// ── Flux Reviewer checklist ───────────────────────────────────────────
+// Same idea as the recon drawer's ReviewChecklist: the AI's work distilled
+// into ONE tickable list the reviewer works top-to-bottom, instead of
+// hunting through verdict, bridge, drivers, and recommendations. Rows are
+// derived from the structured commentary: justification blockers, the
+// unexplained residual, each bridge driver to verify, and each recommended
+// action. Ticks persist per variance in localStorage (a personal worksheet
+// — the audit record stays the approve/flag mutations in the footer).
+
+function FluxReviewChecklist({ row }: { row: VarianceRow }) {
+  const c = row.ai_commentary
+  const fmtAmt = (s: string) => {
+    const n = parseFloat(s) || 0
+    return `$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  }
+
+  type Row = { id: string; label: string; sub?: string; tone: "blocker" | "warn" | "info" }
+  const rows: Row[] = []
+  if (c) {
+    if (c.justified === "no") {
+      rows.push({ id: "just-no", tone: "blocker", label: "AI says this variance is NOT justified", sub: "Investigate the driving transactions before any sign-off." })
+    } else if (c.justified === "needs_review") {
+      rows.push({ id: "just-rev", tone: "warn", label: "Confirm the variance is justified", sub: "The AI couldn't fully clear it — corroborate against the GL detail." })
+    }
+    const unexplained = parseFloat(c.unexplained_amount ?? "0") || 0
+    if (Math.abs(unexplained) > 1) {
+      rows.push({ id: "resid", tone: "blocker", label: `Explain the ${fmtAmt(String(unexplained))} the drivers don't cover`, sub: "The bridge leaves a residual — pull transactions or add a driver." })
+    }
+    if (c.risk_level === "high") {
+      rows.push({ id: "risk", tone: "warn", label: "High-risk variance — corroborate before approving" })
+    }
+    for (const [i, d] of (c.drivers ?? []).entries()) {
+      rows.push({
+        id: `drv-${i}-${d.label.slice(0, 24)}`, tone: "info",
+        label: `Verify driver: ${d.label}`,
+        sub: `${d.direction === "increase" ? "↑" : "↓"} ${fmtAmt(d.amount)} — confirm it's real and in-period.`,
+      })
+    }
+    for (const [i, r] of (c.recommendations ?? []).entries()) {
+      rows.push({ id: `rec-${i}-${r.slice(0, 24)}`, tone: "info", label: r })
+    }
+  }
+
+  const storageKey = `ndvx.fluxcheck.${row.id}`
+  const [done, setDone] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(storageKey) ?? "[]") as string[]) }
+    catch { return new Set() }
+  })
+  const locked = row.status === "approved"
+  const toggle = (id: string) => {
+    if (locked) return
+    setDone((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      try { localStorage.setItem(storageKey, JSON.stringify([...next])) } catch { /* non-fatal */ }
+      return next
+    })
+  }
+
+  if (rows.length === 0) return null
+  const doneCount = rows.filter((r) => done.has(r.id)).length
+  const allDone = doneCount === rows.length
+  const toneDot = { blocker: "var(--danger)", warn: "var(--warn)", info: "var(--info)" } as const
+
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
+      <div className="px-4 py-2.5 flex items-center gap-3" style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide" style={{ color: "var(--text)" }}>
+          <Lightbulb size={13} strokeWidth={2.2} style={{ color: "var(--green)" }} /> Reviewer checklist
+        </span>
+        <div className="flex-1 max-w-[140px] h-1.5 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
+          <div className="h-full rounded-full transition-all duration-300"
+            style={{ width: `${(doneCount / rows.length) * 100}%`, background: "var(--green)" }} />
+        </div>
+        <span className="text-[10px] font-bold tabular-nums" style={{ color: "var(--text-muted)" }}>
+          {doneCount}/{rows.length} verified
+        </span>
+      </div>
+      <ul>
+        {rows.map((r) => {
+          const isDone = done.has(r.id)
+          return (
+            <li key={r.id} className="flex items-start gap-2.5 px-4 py-2.5"
+              style={{ borderBottom: "1px solid var(--border)", opacity: isDone ? 0.55 : 1 }}>
+              <button type="button" onClick={() => toggle(r.id)} disabled={locked}
+                aria-label={isDone ? "Mark unverified" : "Mark verified"}
+                className="mt-0.5 h-[18px] w-[18px] shrink-0 rounded-full grid place-items-center transition-all"
+                style={{
+                  background: isDone ? "var(--green)" : "transparent",
+                  border: `1.5px solid ${isDone ? "var(--green)" : "var(--border-strong)"}`,
+                  cursor: locked ? "default" : "pointer",
+                }}>
+                {isDone && <CheckCircle2 size={12} strokeWidth={3} color="#fff" />}
+              </button>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: toneDot[r.tone] }} />
+                  <span className="text-[12.5px] font-semibold leading-snug" style={{ color: "var(--text)", textDecoration: isDone ? "line-through" : "none" }}>
+                    {r.label}
+                  </span>
+                </div>
+                {r.sub && <p className="mt-0.5 text-[11px] leading-snug" style={{ color: "var(--text-2)" }}>{r.sub}</p>}
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+      <div className="px-4 py-2 text-[10.5px]" style={{ background: "var(--surface-2)", color: allDone ? "var(--green)" : "var(--text-muted)" }}>
+        {locked ? "Approved — checklist frozen."
+          : allDone ? "All verified — approve (or flag) from the footer below."
+          : "Tick each item as you verify it against the GL."}
+      </div>
+    </div>
+  )
+}
+
 // ── Summary tab ───────────────────────────────────────────────────────
 
 function SummaryTab({ row }: { row: VarianceRow }) {
@@ -552,6 +668,10 @@ function SummaryTab({ row }: { row: VarianceRow }) {
   }
   return (
     <div className="space-y-4">
+      {/* The actionable layer first — one tickable list compiled from the
+          AI's verdict/bridge/recommendations — then the evidence below. */}
+      <FluxReviewChecklist row={row} />
+
       {/* AI verdict + bridge + actions */}
       {row.ai_commentary ? (
         <AiCommentaryView c={row.ai_commentary} />

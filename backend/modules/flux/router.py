@@ -26,13 +26,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ai.guard import enforce_ai_limits
 from core.audit.log import write_audit_event
-from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
+from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, require_role
 from core.config import settings
 from core.db.session import get_db
 from models.account import Account
 from models.narrative import Narrative
 from models.qbo_connection import QboConnection
 from models.trial_balance import TrialBalance
+from models.user import User
 from models.variance import Variance
 from models.variance_transaction import VarianceTransaction
 from modules.flux.schemas import (
@@ -608,6 +609,15 @@ async def set_variance_status(
         raise HTTPException(
             status_code=400,
             detail=f"status must be one of {sorted(_ALLOWED_STATUS_FLIPS)}",
+        )
+
+    # Role gate — mirrors the recon status endpoint: flagging is a reviewer
+    # signal ("needs attention before sign-off"), so it stays reviewer/admin.
+    # pending / generated / edited are the preparer's normal workflow.
+    if body.status == "flagged" and ROLE_ORDER.get(user.role or "preparer", 0) < ROLE_ORDER["reviewer"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only reviewers and admins can flag variances. Your role is {user.role or 'preparer'}.",
         )
 
     var_result = await db.execute(select(Variance).where(Variance.id == var_id))
@@ -1330,11 +1340,13 @@ async def reset_trial_balance(
 async def delete_trial_balance(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    _user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """
     Hard-delete an entire analysis and all its children.
-    Use with care — there is no undo.
+    Use with care — there is no undo. Admin-only: destroying a whole
+    analysis (and its sign-offs) is not a preparer/reviewer action.
     """
     tb_result = await db.execute(select(TrialBalance).where(TrialBalance.id == tb_id))
     tb = tb_result.scalar_one_or_none()

@@ -1161,10 +1161,11 @@ async def create_pair(
 async def delete_pair(
     pair_group_id: uuid.UUID,
     tenant_id: CurrentTenantId,
-    user: CurrentUser,
+    user: User = Depends(require_role("reviewer")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Delete BOTH halves of the pair_group (across tenants)."""
+    """Delete BOTH halves of the pair_group (across tenants). Reviewer+ —
+    unpairing changes eliminations + the consolidated TB on two entities."""
     # Look up both halves (skip tenant filter — pair belongs to two tenants)
     halves = list((await db.execute(
         select(IntercompanyPair).where(IntercompanyPair.pair_group_id == pair_group_id),

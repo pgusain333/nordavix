@@ -189,10 +189,11 @@ async def accept_proposal(
 async def dismiss_proposal(
     entry_id: str,
     tenant_id: CurrentTenantId,
-    user: CurrentUser,
+    user: User = Depends(require_role("reviewer")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Reject the draft (not applicable / wrong)."""
+    """Reject the draft (not applicable / wrong). Reviewer+ — killing a
+    proposed entry is a review decision, the mirror image of accepting it."""
     return await _transition(
         db, tenant_id, user, entry_id, new_status="dismissed", action="adjustment.dismiss"
     )
@@ -202,10 +203,11 @@ async def dismiss_proposal(
 async def mark_posted(
     entry_id: str,
     tenant_id: CurrentTenantId,
-    user: CurrentUser,
+    user: User = Depends(require_role("reviewer")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Record that the human booked this entry in QuickBooks."""
+    """Record that the human booked this entry in QuickBooks. Reviewer+ —
+    asserting "this is in the books now" is checker territory."""
     return await _transition(
         db, tenant_id, user, entry_id, new_status="posted", action="adjustment.posted"
     )
@@ -218,12 +220,13 @@ async def mark_posted(
 async def edit_proposal(
     entry_id: str,
     tenant_id: CurrentTenantId,
-    user: CurrentUser,
+    user: User = Depends(require_role("reviewer")),
     payload: dict = Body(...),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Edit a still-open draft — typically to pick the right offset account or
-    tweak the memo before accepting. Re-validates that the lines balance."""
+    tweak the memo before accepting. Re-validates that the lines balance.
+    Reviewer+ — edits feed straight into accept, so they share its gate."""
     entry = await _load(db, entry_id)
     if entry.status != "open":
         raise HTTPException(

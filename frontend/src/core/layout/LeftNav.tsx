@@ -134,6 +134,16 @@ export function LeftNav({ onClose }: Props) {
   const qc = useQueryClient()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
 
+  // Role for UI gating (shared cache key — TopBar/Adjustments use the same
+  // query, so this is a cache hit, not an extra request). Only admins get
+  // the company-rename affordance below.
+  const { data: meRole } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 5 * 60_000,
+  })
+  const isAdmin = meRole?.role === "admin"
+
   // Collapsed (icon-only) rail — persisted; defaults to collapsed so the app
   // opens lean. Only applies to the desktop rail; the mobile drawer (onClose
   // present) is always the full labelled sidebar.
@@ -281,7 +291,8 @@ export function LeftNav({ onClose }: Props) {
 
       {/* Org name — click to rename (hidden when collapsed) */}
       {organization && !isCollapsed && (
-        <OrgNameInline organizationName={organization.name} onRename={(n) => organization.update({ name: n })} />
+        <OrgNameInline organizationName={organization.name} canRename={isAdmin}
+          onRename={(n) => organization.update({ name: n })} />
       )}
 
       {/* Quick search + bell — desktop has these in the top bar now, so this
@@ -568,9 +579,12 @@ function UtilLink({ to, icon: Icon, label, title, isCollapsed, onClose }: {
 interface OrgNameInlineProps {
   organizationName: string
   onRename: (name: string) => Promise<unknown>
+  /** Only admins may rename the company. When false the name renders as
+   *  plain text — no pencil, no dead-end edit attempt. */
+  canRename?: boolean
 }
 
-function OrgNameInline({ organizationName, onRename }: OrgNameInlineProps) {
+function OrgNameInline({ organizationName, onRename, canRename = false }: OrgNameInlineProps) {
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(organizationName)
   const [saving, setSaving] = useState(false)
@@ -656,19 +670,26 @@ function OrgNameInline({ organizationName, onRename }: OrgNameInlineProps) {
         </div>
       ) : (
         <>
-          <button
-            onClick={() => setEditing(true)}
-            className="flex items-center gap-1.5 w-full text-left group/btn"
-            title="Click to rename company"
-          >
-            <p className="text-xs truncate flex-1" style={{ color: "var(--nav-text)" }}>{organizationName}</p>
-            <Pencil
-              size={11}
-              strokeWidth={1.8}
-              className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-              style={{ color: "var(--text-muted)" }}
-            />
-          </button>
+          {canRename ? (
+            <button
+              onClick={() => setEditing(true)}
+              className="flex items-center gap-1.5 w-full text-left group/btn"
+              title="Click to rename company"
+            >
+              <p className="text-xs truncate flex-1" style={{ color: "var(--nav-text)" }}>{organizationName}</p>
+              <Pencil
+                size={11}
+                strokeWidth={1.8}
+                className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                style={{ color: "var(--text-muted)" }}
+              />
+            </button>
+          ) : (
+            // Preparers/reviewers: company name is read-only (admin renames).
+            <p className="text-xs truncate" style={{ color: "var(--nav-text)" }} title={organizationName}>
+              {organizationName}
+            </p>
+          )}
           {/* Workspace switcher — dropdown listing every org the user
               belongs to, + "Create company" footer. */}
           <div className="mt-1">
