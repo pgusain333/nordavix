@@ -7,6 +7,7 @@ from models.audit_log import AuditLog
 from models.bank_statement import BankStatement
 from models.closed_period import ClosedPeriod
 from models.comment import Comment
+from models.evidence_request import EvidenceRequest
 from models.feedback import Feedback
 from models.insights_snapshot import InsightsSnapshot
 from models.intercompany_account import IntercompanyAccount
@@ -50,6 +51,7 @@ __all__ = [
     "Notification",
     "PeriodSync",
     "PrepaidCandidate",
+    "EvidenceRequest",
     "ProposedEntry",
     "QboConnection",
     "ReengagementEnrollment",

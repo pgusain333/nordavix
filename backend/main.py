@@ -22,6 +22,8 @@ from modules.intercompany.router import router as intercompany_router
 from modules.internal.router import router as internal_router
 from modules.notifications.router import router as notifications_router
 from modules.onboarding.router import router as onboarding_router
+from modules.pbc.router import public_router as pbc_public_router
+from modules.pbc.router import router as pbc_router
 from modules.qbo.router import oauth_router as qbo_oauth_router
 from modules.qbo.router import qbo_router
 from modules.recons.router import router as recons_router
@@ -120,6 +122,8 @@ app.include_router(notifications_router, prefix="/api/notifications", tags=["not
 app.include_router(onboarding_router,    prefix="/api/onboarding",   tags=["onboarding"])
 app.include_router(comments_router,      prefix="/api/comments",     tags=["comments"])
 app.include_router(adjustments_router,    prefix="/api/adjustments",  tags=["adjustments"])
+app.include_router(pbc_router,            prefix="/api/pbc",          tags=["pbc"])
+app.include_router(pbc_public_router,     prefix="/api/pbc-public",   tags=["pbc-public"])
 
 
 @app.get("/api/health", tags=["system"])

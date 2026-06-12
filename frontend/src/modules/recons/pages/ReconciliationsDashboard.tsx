@@ -20,6 +20,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ClientRequestsPanel } from "@/modules/pbc/ClientRequestsPanel"
 import { motion, AnimatePresence } from "framer-motion"
 import { formatDate, formatDateLong, formatDateTime } from "@/core/lib/dates"
 import { useDemoMode } from "@/core/demo/DemoModeProvider"
@@ -3434,6 +3435,17 @@ function InlineSubledgerForm({
 
       {/* ── Evidence group (source notes + supporting evidence + AI verify) ── */}
       <div style={sectionStyle("evidence")}>
+
+      {/* PBC: request documents straight from the client — files arrive
+          below as evidence with zero inbox round-trips. */}
+      <div className="mb-4">
+        <ClientRequestsPanel
+          qboAccountId={account.qbo_id}
+          periodEnd={periodEnd}
+          accountLabel={`${account.account_number ?? ""} ${account.account_name ?? ""}`.trim() || undefined}
+          readOnly={readOnly}
+        />
+      </div>
 
       {/* ── Lower two-column area: entry fields | evidence ────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">

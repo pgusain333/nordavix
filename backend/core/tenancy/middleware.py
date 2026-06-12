@@ -25,7 +25,7 @@ _PUBLIC_PATHS = {"/api/health", "/docs", "/redoc", "/openapi.json"}
 # /api/email/ is public too: the unsubscribe link is followed directly from an
 # email (and POSTed by mail clients for one-click), so it can't carry a JWT — its
 # token is HMAC-signed instead (modules/email/tokens.py).
-_PUBLIC_PREFIXES = {"/api/oauth/", "/api/internal/", "/api/email/"}
+_PUBLIC_PREFIXES = {"/api/oauth/", "/api/internal/", "/api/email/", "/api/pbc-public/"}
 
 
 class TenantMiddleware(BaseHTTPMiddleware):

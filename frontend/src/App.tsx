@@ -36,6 +36,7 @@ const ReconciliationDetail    = lazy(() => import("@/modules/recons/pages/Reconc
 const OverridesDashboard      = lazy(() => import("@/modules/recons/pages/OverridesDashboard").then(m => ({ default: m.OverridesDashboard })))
 const TasksPage               = lazy(() => import("@/modules/tasks/pages/TasksPage").then(m => ({ default: m.TasksPage })))
 const CommandCenterPage       = lazy(() => import("@/modules/firm/pages/CommandCenterPage").then(m => ({ default: m.CommandCenterPage })))
+const PublicUploadPage        = lazy(() => import("@/modules/pbc/PublicUploadPage").then(m => ({ default: m.PublicUploadPage })))
 const IntercompanyPage        = lazy(() => import("@/modules/intercompany/pages/IntercompanyPage").then(m => ({ default: m.IntercompanyPage })))
 const FinancialsPage          = lazy(() => import("@/modules/financials/pages/FinancialsPage").then(m => ({ default: m.FinancialsPage })))
 const InsightsPage            = lazy(() => import("@/modules/insights/pages/InsightsPage").then(m => ({ default: m.InsightsPage })))
@@ -178,6 +179,9 @@ export default function App() {
         {/* Public Help — same content as /app/help, hosted at the
             marketing root so it's shareable + indexable. */}
         <Route path="/help"    element={<PublicHelpPage />} />
+        {/* PBC magic link — the client side of a document request. PUBLIC by
+            design: the token in the URL is the credential; no Clerk, no shell. */}
+        <Route path="/r/:token" element={<PublicUploadPage />} />
 
         {/* Blog — public, indexed, SEO-targeted. /blog lists posts;
             /blog/:slug renders an individual post. Registry-driven so
