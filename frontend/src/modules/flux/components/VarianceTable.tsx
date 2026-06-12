@@ -982,6 +982,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       <VarianceDetailDrawer
         row={drawerRowId ? rows.find((r) => r.id === drawerRowId) ?? null : null}
         rows={rows}
+        tbId={tbId}
         readOnly={readOnly}
         onNavigate={(r) => setDrawerRowId(r.id)}
         onClose={() => setDrawerRowId(null)}

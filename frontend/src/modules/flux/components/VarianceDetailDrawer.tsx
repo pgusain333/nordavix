@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Download,
   FileText,
   GripVertical,
   Layers,
@@ -37,7 +38,7 @@ import {
   X,
 } from "lucide-react"
 
-import type { VarianceRow, AICommentary } from "@/modules/flux/api"
+import { api as fluxApi, type VarianceRow, type AICommentary } from "@/modules/flux/api"
 import { formatDateTime } from "@/core/lib/dates"
 import { CommentThread } from "@/modules/comments/CommentThread"
 
@@ -55,6 +56,8 @@ interface Props {
   row:           VarianceRow | null
   /** Ordered list the user is browsing — drives Prev/Next. */
   rows:          VarianceRow[]
+  /** Trial-balance id — enables the per-variance PDF download. */
+  tbId?:         string
   /** True when books are closed → drawer renders read-only. */
   readOnly:      boolean
   /** Called when the user picks a different variance. */
@@ -91,7 +94,7 @@ function persistWidth(w: number): void {
 }
 
 export function VarianceDetailDrawer({
-  row, rows, readOnly, onNavigate, onClose,
+  row, rows, tbId, readOnly, onNavigate, onClose,
   renderCommentary, renderTransactions, renderFooter,
 }: Props) {
   const [tab, setTab] = useTabHash(row?.id ?? null)
@@ -275,6 +278,7 @@ export function VarianceDetailDrawer({
               prevRow={prevRow}
               nextRow={nextRow}
               readOnly={readOnly}
+              tbId={tbId}
               onNavigate={onNavigate}
               onClose={onClose}
             />
@@ -338,7 +342,7 @@ export function VarianceDetailDrawer({
 // ── Header ─────────────────────────────────────────────────────────────
 
 function DrawerHeader({
-  row, index, total, prevRow, nextRow, readOnly, onNavigate, onClose,
+  row, index, total, prevRow, nextRow, readOnly, tbId, onNavigate, onClose,
 }: {
   row:        VarianceRow
   index:      number
@@ -346,9 +350,23 @@ function DrawerHeader({
   prevRow:    VarianceRow | null
   nextRow:    VarianceRow | null
   readOnly:   boolean
+  tbId?:      string
   onNavigate: (r: VarianceRow) => void
   onClose:    () => void
 }) {
+  const [downloading, setDownloading] = useState(false)
+  async function downloadPdf() {
+    if (!tbId || downloading) return
+    setDownloading(true)
+    try {
+      await fluxApi.downloadVariancePdf(tbId, row.id,
+        `flux-variance-${row.account_number}-${row.account_name}.pdf`)
+    } catch {
+      /* surfaced by the browser as a failed download; never block the drawer */
+    } finally {
+      setDownloading(false)
+    }
+  }
   return (
     <div className="px-5 pt-4 pb-3 sticky top-0 z-10"
       style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
@@ -359,6 +377,18 @@ function DrawerHeader({
           Variance {index + 1} of {total}
         </div>
         <div className="flex items-center gap-1">
+          {tbId && (
+            <>
+              <IconBtn
+                label="Download working-paper PDF"
+                disabled={downloading}
+                onClick={downloadPdf}>
+                <Download size={14} strokeWidth={2}
+                  className={downloading ? "animate-pulse" : ""} />
+              </IconBtn>
+              <div className="w-px h-5 mx-1" style={{ background: "var(--border)" }} />
+            </>
+          )}
           <IconBtn
             label="Previous variance (←)"
             disabled={!prevRow}

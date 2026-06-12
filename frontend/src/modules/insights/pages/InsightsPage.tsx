@@ -24,6 +24,7 @@ import {
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { PageHeader } from "@/core/ui/PageHeader"
 import {
   insightsApi, type InsightsOverview, type KpiRow, type RiskLevel, type HistoryPoint,
   type Advisory,
@@ -406,60 +407,25 @@ function Header({
     : !!periodStart && !!periodEnd && periodStart <= periodEnd
 
   return (
-    <div className="px-4 sm:px-8 py-5 sm:py-6 shrink-0"
-      style={{ borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
-      <div className="w-full">
-        <div className="flex items-start gap-3 flex-wrap">
-          <div className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-            <Lightbulb size={18} strokeWidth={1.8} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-lg sm:text-xl font-bold text-theme leading-tight lg:hidden">Insights</h1>
-              {loadedLabel && (
-                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full"
-                  style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
-                  {loadedLabel}
-                </span>
-              )}
-            </div>
-            <p className="text-xs sm:text-sm mt-1" style={{ color: "var(--text-muted)" }}>
-              Pick a period, click <em>Generate</em>, and Nordavix synthesises risks
-              and recommendations from your books.
-            </p>
-          </div>
-
-          {/* Saved-snapshot status + Sync (recompute). Insights persist once
-              generated, so a revisit is instant; Sync refreshes from the books. */}
-          {savedAt && onSync && (
-            <div className="flex flex-col items-end gap-1 ml-auto shrink-0">
-              <button
-                onClick={onSync}
-                disabled={isSyncing}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-60 transition-opacity"
-                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-              >
-                <RefreshCw size={12} strokeWidth={2.2} className={isSyncing ? "animate-spin" : ""} />
-                {isSyncing ? "Syncing…" : "Sync"}
-              </button>
-              {syncError ? (
-                <span className="text-[10px] font-medium" style={{ color: "#9b3d37" }}>Sync failed — retry</span>
-              ) : (
-                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Synced {fmtSyncedAt(savedAt)}</span>
-              )}
-            </div>
+    <PageHeader
+      title="Insights"
+      hideTitleOnDesktop
+      subtitle="Pick a period, click Generate, and Nordavix synthesises risks and recommendations from your books."
+      actions={
+        <>
+          {loadedLabel && (
+            <span className="hidden sm:inline text-[11px] font-medium px-2 py-0.5 rounded-full"
+              style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+              {loadedLabel}
+            </span>
           )}
-        </div>
 
-        {/* Period picker row */}
-        <div className="mt-4 flex items-end gap-2 flex-wrap">
           {/* Mode tabs */}
           <div className="inline-flex rounded-lg p-0.5"
             style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
             <button
               onClick={() => setMode("month")}
-              className="px-3 py-1.5 text-xs font-semibold rounded-md transition-all"
+              className="px-2.5 py-1 text-xs font-semibold rounded-md transition-all"
               style={{
                 background: mode === "month" ? "var(--surface)" : "transparent",
                 color:      mode === "month" ? "var(--text)"    : "var(--text-muted)",
@@ -467,7 +433,7 @@ function Header({
             >Month</button>
             <button
               onClick={() => setMode("custom")}
-              className="px-3 py-1.5 text-xs font-semibold rounded-md transition-all"
+              className="px-2.5 py-1 text-xs font-semibold rounded-md transition-all"
               style={{
                 background: mode === "custom" ? "var(--surface)" : "transparent",
                 color:      mode === "custom" ? "var(--text)"    : "var(--text-muted)",
@@ -476,24 +442,23 @@ function Header({
           </div>
 
           {mode === "month" ? (
-            <FieldShell label="Period">
-              <select
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-                className="rounded-lg px-3 py-1.5 text-sm font-medium outline-none"
-                style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
-              >
-                {monthOptions().map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-              </select>
-            </FieldShell>
+            <select
+              value={periodEnd}
+              onChange={(e) => setPeriodEnd(e.target.value)}
+              aria-label="Period"
+              className="rounded-lg px-2.5 py-1.5 text-xs font-medium outline-none"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+            >
+              {monthOptions().map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
           ) : (
             <>
-              <FieldShell label="From">
-                <DatePicker value={periodStart} onChange={setPeriodStart} max={periodEnd} />
-              </FieldShell>
-              <FieldShell label="To">
-                <DatePicker value={periodEnd} onChange={setPeriodEnd} min={periodStart} />
-              </FieldShell>
+              <span className="hidden sm:inline text-[10px] font-semibold uppercase tracking-wide"
+                style={{ color: "var(--text-muted)" }}>From</span>
+              <DatePicker value={periodStart} onChange={setPeriodStart} max={periodEnd} />
+              <span className="hidden sm:inline text-[10px] font-semibold uppercase tracking-wide"
+                style={{ color: "var(--text-muted)" }}>To</span>
+              <DatePicker value={periodEnd} onChange={setPeriodEnd} min={periodStart} />
               <PresetButtons
                 onPick={(s, e) => { setPeriodStart(s); setPeriodEnd(e) }}
               />
@@ -503,34 +468,41 @@ function Header({
           <button
             onClick={onGenerate}
             disabled={!valid || isFetching}
-            className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
             style={{ background: "var(--green)" }}
           >
             {isFetching
-              ? <><Spinner className="h-3.5 w-3.5" /> Generating…</>
-              : <><Play size={12} strokeWidth={2.4} /> Generate insights</>}
+              ? <><Spinner className="h-3 w-3" /> Generating…</>
+              : <><Play size={11} strokeWidth={2.4} /> Generate insights</>}
           </button>
-        </div>
 
-        {mode === "custom" && (
-          <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
-            For custom ranges we call QuickBooks ProfitAndLoss live for the exact
-            window — slightly slower than monthly snapshots, but accurate to the day.
-          </p>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function FieldShell({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-wider mb-0.5" style={{ color: "var(--text-muted)" }}>
-        {label}
-      </p>
-      {children}
-    </div>
+          {/* Saved-snapshot status + Sync (recompute). Insights persist once
+              generated, so a revisit is instant; Sync refreshes from the books. */}
+          {savedAt && onSync && (
+            <button
+              onClick={onSync}
+              disabled={isSyncing}
+              title={syncError ? "Sync failed — retry" : `Synced ${fmtSyncedAt(savedAt)}`}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold disabled:opacity-60 transition-opacity"
+              style={{
+                background: "var(--surface-2)", border: "1px solid var(--border-strong)",
+                color: syncError ? "#9b3d37" : "var(--text)",
+              }}
+            >
+              <RefreshCw size={12} strokeWidth={2.2} className={isSyncing ? "animate-spin" : ""} />
+              {isSyncing ? "Syncing…" : (syncError ? "Retry sync" : "Sync")}
+            </button>
+          )}
+        </>
+      }
+    >
+      {mode === "custom" && (
+        <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+          For custom ranges we call QuickBooks ProfitAndLoss live for the exact
+          window — slightly slower than monthly snapshots, but accurate to the day.
+        </p>
+      )}
+    </PageHeader>
   )
 }
 

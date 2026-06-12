@@ -1106,6 +1106,134 @@ async def update_narrative(
     return {"id": str(var_id), "status": "edited", "narrative": body.content}
 
 
+@router.get("/trial-balances/{tb_id}/variances/{var_id}/pdf")
+async def export_variance_pdf(
+    tb_id: uuid.UUID,
+    var_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Per-variance flux analysis PDF — a working paper for one account's
+    period-over-period movement. Bundles the prior/current/change summary,
+    the AI variance bridge (drivers + explained/unexplained), the full AI
+    assessment (narrative, risk, justification, entities, recommendations),
+    the supporting QBO transactions, and the approval sign-off.
+
+    Unapproved variances export as DRAFT (large watermark); approved
+    variances produce a clean signed-off file. Mirrors the per-account
+    reconciliation PDF so a close binder reads as one document set.
+    """
+    import io
+
+    row = (await db.execute(
+        select(Variance, Account).join(Account, Variance.account_id == Account.id)
+        .where(Variance.id == var_id, Account.trial_balance_id == tb_id)
+    )).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Variance not found in this analysis.")
+    var, acct = row
+
+    tb = (await db.execute(
+        select(TrialBalance).where(TrialBalance.id == tb_id)
+    )).scalar_one_or_none()
+    if tb is None:
+        raise HTTPException(status_code=404, detail="Trial balance not found")
+
+    try:
+        from modules.financials.router import _company_name
+        company = await _company_name(db, tenant_id)
+
+        # Supporting QBO transactions (if the user pulled them)
+        txns = list((await db.execute(
+            select(VarianceTransaction)
+            .where(VarianceTransaction.variance_id == var_id)
+            .order_by(VarianceTransaction.txn_date.desc().nullslast())
+        )).scalars().all())
+
+        # Legacy prose narrative for rows analyzed before structured commentary
+        narr = (await db.execute(
+            select(Narrative).where(Narrative.variance_id == var_id)
+        )).scalar_one_or_none()
+
+        # Approver display name: Clerk "First Last" → email → short id.
+        approved_by_name: str | None = None
+        if var.approved_by:
+            u = (await db.execute(
+                select(User).where(User.id == var.approved_by)
+            )).scalar_one_or_none()
+            if u:
+                approved_by_name = u.email or f"User {str(u.id)[:8]}"
+                if u.clerk_user_id:
+                    try:
+                        from core.auth.clerk_users import _format_display_name, get_clerk_user
+                        cu = await get_clerk_user(u.clerk_user_id)
+                        if cu:
+                            approved_by_name = _format_display_name(cu) or approved_by_name
+                    except Exception:
+                        logger.debug("clerk lookup failed for approver", exc_info=True)
+
+        is_draft = var.status != "approved"
+        data = {
+            "company":          company,
+            "account_number":   acct.account_number or "",
+            "account_name":     acct.account_name,
+            "tb_name":          tb.name,
+            "period_current":   tb.period_current,
+            "period_prior":     tb.period_prior,
+            "current_balance":  str(acct.current_balance),
+            "prior_balance":    str(acct.prior_balance),
+            "dollar_variance":  str(var.dollar_variance),
+            "pct_variance":     str(var.pct_variance) if var.pct_variance is not None else None,
+            "is_material":      var.is_material,
+            "status":           var.status,
+            "ai_commentary":    var.ai_commentary,
+            "legacy_narrative": narr.content if narr else None,
+            "transactions": [
+                {
+                    "txn_date":    t.txn_date,
+                    "txn_type":    t.txn_type,
+                    "txn_number":  t.txn_number,
+                    "entity_name": t.entity_name,
+                    "memo":        t.memo,
+                    "amount":      str(t.amount),
+                    "is_checked":  t.is_checked,
+                }
+                for t in txns
+            ],
+            "approved_by_name": approved_by_name,
+            "approved_at":      var.approved_at.isoformat() if var.approved_at else None,
+            "exported_by":      user.email or "",
+            "is_draft":         is_draft,
+        }
+
+        from modules.flux.pdf import build_variance_pdf
+        buf = io.BytesIO()
+        build_variance_pdf(buf, data=data)
+        buf.seek(0)
+
+        safe_name = (
+            (acct.account_number + "-" if acct.account_number else "")
+            + acct.account_name.replace(" ", "-").replace("/", "-")
+        )[:80]
+        prefix = "draft-" if is_draft else ""
+        fname = f"{prefix}flux-variance-{tb.period_current.isoformat()}-{safe_name}.pdf"
+        logger.info("Variance PDF export done: %d bytes for %s", buf.getbuffer().nbytes, var_id)
+        return StreamingResponse(
+            buf, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Variance PDF export failed for variance %s", var_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not build the variance PDF. Try again in a moment.",
+        )
+
+
 # ── Export ──────────────────────────────────────────────────────────────────────
 
 @router.get("/trial-balances/{tb_id}/export")

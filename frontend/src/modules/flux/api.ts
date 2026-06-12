@@ -380,6 +380,33 @@ async function exportExcel(tbId: string, fileName?: string): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
+/** Per-variance flux working-paper PDF. Server suggests the filename
+ *  via Content-Disposition (draft- prefix until approved); honor it. */
+async function downloadVariancePdf(
+  tbId: string,
+  varId: string,
+  fallbackName?: string,
+): Promise<void> {
+  const resp = await apiClient.get(
+    `/api/flux/trial-balances/${tbId}/variances/${varId}/pdf`,
+    { responseType: "blob", timeout: 60_000 },
+  )
+  if (!resp.data || (resp.data as Blob).size === 0) {
+    throw new Error("Server returned an empty PDF. Try again.")
+  }
+  const cd = (resp.headers as Record<string, string>)["content-disposition"] ?? ""
+  const fname = cd.match(/filename="([^"]+)"/)?.[1]
+    ?? fallbackName ?? "flux-variance.pdf"
+  const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }))
+  const a = document.createElement("a")
+  a.href = url
+  a.download = fname
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 // ── QBO ───────────────────────────────────────────────────────────────────────
 
 async function getQboConnection(): Promise<QboConnection | null> {
@@ -440,6 +467,7 @@ export const api = {
   // Export
   exportUrl,
   exportExcel,
+  downloadVariancePdf,
   // QBO
   getQboConnection,
   getQboConnectUrl,
