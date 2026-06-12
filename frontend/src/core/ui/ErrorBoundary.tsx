@@ -6,20 +6,30 @@
  * so this is the one place we use a class. Wrap any non-trivial widget
  * that a user is actively working inside — a thrown error in one panel
  * should never blank a CPA's reconciliation mid-close.
+ *
+ * The default fallback shows the actual error message. During beta that's
+ * a feature: a screenshot of the fallback is enough to pinpoint the bug
+ * without needing the browser console.
  */
 import { Component, type ReactNode } from "react"
 
 interface Props {
   children: ReactNode
-  /** Shown when the subtree throws. Defaults to a quiet inline notice. */
+  /** Shown when the subtree throws. Defaults to a notice that includes the
+   *  error message (useful for diagnosing without the console). */
   fallback?: ReactNode
   /** Optional label for the default fallback copy ("… in {label}"). */
   label?: string
 }
 
-export class ErrorBoundary extends Component<Props, { failed: boolean }> {
-  state = { failed: false }
-  static getDerivedStateFromError() { return { failed: true } }
+function errMsg(error: unknown): string {
+  if (error instanceof Error) return error.message || error.name
+  try { return String(error) } catch { return "Unknown error" }
+}
+
+export class ErrorBoundary extends Component<Props, { error: unknown }> {
+  state: { error: unknown } = { error: null }
+  static getDerivedStateFromError(error: unknown) { return { error } }
 
   componentDidCatch(error: unknown) {
     // Surfaced in the console + (in prod) Sentry's global handler; we
@@ -29,13 +39,19 @@ export class ErrorBoundary extends Component<Props, { failed: boolean }> {
   }
 
   render() {
-    if (!this.state.failed) return this.props.children
+    if (!this.state.error) return this.props.children
     if (this.props.fallback !== undefined) return this.props.fallback
     return (
       <div className="rounded-lg p-4 text-sm"
         style={{ background: "#f7eeec", border: "1px solid #ecd7d3", color: "#86332e" }}>
-        Something on this panel hit an error{this.props.label ? ` (${this.props.label})` : ""}.
-        The rest of your work is safe — reload the page to retry.
+        <p className="font-semibold">
+          Something on this panel hit an error{this.props.label ? ` (${this.props.label})` : ""}.
+        </p>
+        <p className="mt-1 text-[13px]">The rest of your work is safe — reload the page to retry.</p>
+        <p className="mt-2 font-mono text-[11px] leading-relaxed rounded px-2 py-1.5"
+          style={{ background: "#fff", border: "1px solid #ecd7d3", color: "#7a2f2a", wordBreak: "break-word" }}>
+          {errMsg(this.state.error)}
+        </p>
       </div>
     )
   }

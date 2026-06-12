@@ -2444,6 +2444,12 @@ function InlineSubledgerForm({
     // the build-up's base line, so keeping them would double-count.
     for (const it of account.reconciling_items ?? []) {
       if (it.cleared === false) continue
+      // A saved item with no txn_id is malformed (can't match a GL row or
+      // be ticked) — skip it. Guarding here is critical: `.startsWith` on a
+      // null txn_id throws during the form's first render and, with the
+      // drawer error boundary, blanks every tab. Seen on schedule-backed
+      // accounts whose persisted items predate a txn_id being required.
+      if (!it.txn_id) continue
       if (it.txn_id.startsWith("schedule-")) continue
       m[it.txn_id] = it
     }
@@ -2520,6 +2526,12 @@ function InlineSubledgerForm({
     // synthetics — ticked GL/manual items only.
     for (const it of account.reconciling_items ?? []) {
       if (it.cleared === false) continue
+      // A saved item with no txn_id is malformed (can't match a GL row or
+      // be ticked) — skip it. Guarding here is critical: `.startsWith` on a
+      // null txn_id throws during the form's first render and, with the
+      // drawer error boundary, blanks every tab. Seen on schedule-backed
+      // accounts whose persisted items predate a txn_id being required.
+      if (!it.txn_id) continue
       if (it.txn_id.startsWith("schedule-")) continue
       m[it.txn_id] = it
     }
@@ -2555,13 +2567,13 @@ function InlineSubledgerForm({
   const flipSign = isCreditNatural(account.group_label) ? -1 : 1
   const signedAmount = (it: ReconcilingItem): number => {
     const raw = parseFloat(it.amount) || 0
-    return it.txn_id.startsWith("manual-") ? raw : flipSign * raw
+    return (it.txn_id ?? "").startsWith("manual-") ? raw : flipSign * raw
   }
   // Schedule-sourced lines live in the build-up's base (the auto-pulled schedule
   // balance), so they never count in the reconciling-items sum — guard against
   // any stray legacy "schedule-" item double-counting.
   const selectedSum = selectedItems
-    .filter((it) => !it.txn_id.startsWith("schedule-"))
+    .filter((it) => !(it.txn_id ?? "").startsWith("schedule-"))
     .reduce((n, it) => n + signedAmount(it), 0)
 
   // Subledger is CALCULATED now, not typed: opening (rolled forward from
@@ -3913,11 +3925,11 @@ function SubledgerBuildup({
         ) : (
           <ul className="space-y-0.5 max-h-48 overflow-y-auto">
             {selectedItems.map((it) => {
-              const isManual = it.txn_id.startsWith("manual-")
+              const isManual = (it.txn_id ?? "").startsWith("manual-")
               // Schedule-sourced items (prepaid/accrual/FA/lease/loan) carry a
               // provenance badge but are freely untickable — they come in
               // pre-selected, not locked.
-              const isSchedule = it.txn_id.startsWith("schedule-")
+              const isSchedule = (it.txn_id ?? "").startsWith("schedule-")
               // Signed effective amount. For QBO items on a credit-
               // natural account this is the NEGATIVE of the raw QBO
               // amount (so a credit invoice on AP shows here as
