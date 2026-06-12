@@ -20,8 +20,12 @@ import * as monthEndCloseChecklist          from "@/marketing/blog/posts/month-e
 import * as monthEndCloseSoftware           from "@/marketing/blog/posts/month-end-close-software"
 import * as intercompanyConsolidationQbo    from "@/marketing/blog/posts/intercompany-consolidation-quickbooks"
 import * as aiAccounting2026                from "@/marketing/blog/posts/ai-in-accounting-2026"
+import * as prepaidAmortizationSchedule     from "@/marketing/blog/posts/prepaid-expense-amortization-schedule"
+import * as makerCheckerControls            from "@/marketing/blog/posts/maker-checker-accounting-controls"
 
 const RAW_POSTS: BlogPostModule[] = [
+  prepaidAmortizationSchedule     as BlogPostModule,
+  makerCheckerControls            as BlogPostModule,
   fluxAnalysisGuide               as BlogPostModule,
   fluxAnalysisExample             as BlogPostModule,
   balanceSheetReconciliationChecklist as BlogPostModule,

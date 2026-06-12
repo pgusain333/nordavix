@@ -1,71 +1,45 @@
 /**
- * BlogIndex — /blog landing page.
+ * BlogIndex — /blog
  *
- * Layout:
- *   - Hero header with title + lead
- *   - Featured post (the newest one) as a wide gradient hero card
- *   - Category filter chips (with counts) + search input
- *   - Two-column responsive grid of remaining posts
- *   - CTA strip at bottom
+ * "Finance editorial" design matching the marketing site: a deep-pine
+ * masthead with a Fraunces serif title, the newest post as a large
+ * FEATURED story, mono category filter chips, and a paper-card grid for
+ * the archive. Color appears only where it carries meaning (the category
+ * accents from categories.ts — all muted, on-brand tones).
  *
- * Design language matches the rest of the marketing site (surface/
- * border/text-2 tokens), with per-category accent colors threaded
- * through chips, card top-borders, and the hero gradient. The visual
- * differentiation per category is what gives the index its texture
- * without needing stock photos.
+ * SEO: list page emits Breadcrumb JSON-LD; per-post schema lives on the
+ * post pages themselves.
  */
 import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { motion } from "framer-motion"
-import { ArrowRight, Calendar, Clock, Search, Sparkles, X } from "lucide-react"
+import { ArrowRight, Clock } from "lucide-react"
 import { POSTS } from "@/marketing/blog/posts/registry"
 import { CATEGORIES, getCategoryMeta } from "@/marketing/blog/categories"
 import { BlogLayout } from "@/marketing/blog/BlogLayout"
 import { SEO, breadcrumbSchema } from "@/marketing/seo/SEO"
 
+const SERIF = '"Fraunces", Georgia, serif'
+const MONO  = '"JetBrains Mono", ui-monospace, monospace'
+const PINE  = "#0C2620"
+
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    year: "numeric", month: "long", day: "numeric",
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-US", {
+    year: "numeric", month: "short", day: "numeric",
   })
 }
 
 export function BlogIndex() {
-  const [activeCategory, setActiveCategory] = useState<string | null>(null)
-  const [search, setSearch] = useState("")
+  const [activeCat, setActiveCat] = useState<string | null>(null)
 
-  // Featured = newest post (POSTS is already sorted desc by registry).
-  const featured  = POSTS[0]
-  const rest      = POSTS.slice(1)
-
-  // Build per-category counts for the filter chips. Always show every
-  // category that has at least one post — otherwise the bar grows as
-  // posts arrive.
-  const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const p of POSTS) counts[p.meta.category] = (counts[p.meta.category] ?? 0) + 1
-    return counts
-  }, [])
-
-  const activeCategoryList = useMemo(
-    () => CATEGORIES.filter((c) => (categoryCounts[c.label] ?? 0) > 0),
-    [categoryCounts],
+  const filtered = useMemo(
+    () => (activeCat ? POSTS.filter((p) => p.meta.category === activeCat) : POSTS),
+    [activeCat],
   )
-
-  // Apply category + search filters together. We always show the
-  // featured card too, so when a filter narrows the grid the featured
-  // hero stays as visual anchor.
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return rest.filter((p) => {
-      if (activeCategory && p.meta.category !== activeCategory) return false
-      if (!q) return true
-      return (
-        p.meta.title.toLowerCase().includes(q)
-        || p.meta.excerpt.toLowerCase().includes(q)
-        || p.meta.category.toLowerCase().includes(q)
-      )
-    })
-  }, [rest, activeCategory, search])
+  // Featured = newest post overall (only when unfiltered, so a category
+  // view reads as a clean archive list).
+  const featured = !activeCat ? filtered[0] : undefined
+  const rest     = featured ? filtered.slice(1) : filtered
 
   return (
     <BlogLayout>
@@ -79,255 +53,180 @@ export function BlogIndex() {
         ])}
       />
 
-      {/* ── Hero header ───────────────────────────────────────────── */}
-      <section className="px-4 sm:px-6 lg:px-8 pt-14 pb-10 sm:pt-20 sm:pb-12"
-        style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-        <div className="max-w-5xl mx-auto">
-          <motion.div
-            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-            <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider mb-3"
-              style={{ color: "var(--green)" }}>
-              <Sparkles size={11} strokeWidth={2} /> The Nordavix blog
-            </p>
-            <h1 className="font-bold leading-[1.1] tracking-tight text-theme"
-              style={{ fontSize: "clamp(34px, 6vw, 56px)" }}>
-              Working notes on the close.
-            </h1>
-            <p className="mt-4 text-base sm:text-lg max-w-2xl leading-relaxed"
-              style={{ color: "var(--text-2)" }}>
-              Guides, opinions, and deep-dives — written by CPAs for the people who
-              actually do the close work. No fluff, no LinkedIn-influencer takes.
-            </p>
-          </motion.div>
+      {/* ── Masthead — pine editorial band ──────────────────────────── */}
+      <section className="relative overflow-hidden" style={{ background: PINE }}>
+        <div aria-hidden className="pointer-events-none absolute inset-0" style={{
+          backgroundImage: "linear-gradient(rgba(244,241,233,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(244,241,233,0.07) 1px, transparent 1px)",
+          backgroundSize: "64px 64px", opacity: 0.5,
+          maskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 80%)",
+          WebkitMaskImage: "radial-gradient(120% 80% at 50% 0%, black, transparent 80%)",
+        }} />
+        <div className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-14 pb-12 sm:pt-20 sm:pb-16">
+          <div className="flex items-center gap-2.5 text-[11px] font-medium tracking-[0.22em] uppercase"
+            style={{ fontFamily: MONO, color: "#9CC4AD" }}>
+            <span className="h-[5px] w-[5px] rounded-[1px]" style={{ background: "#9CC4AD" }} />
+            The Nordavix journal
+          </div>
+          <h1 className="mt-5 max-w-2xl" style={{
+            fontFamily: SERIF, fontWeight: 550, lineHeight: 1.05,
+            fontSize: "clamp(2.2rem, 5vw, 3.6rem)", color: "#F4F1E9", letterSpacing: "-0.01em",
+          }}>
+            Field notes for people who <em style={{ fontStyle: "italic", color: "#9CC4AD" }}>close the books</em>.
+          </h1>
+          <p className="mt-5 max-w-xl text-[15px] leading-relaxed" style={{ color: "rgba(244,241,233,0.68)" }}>
+            Reconciliation technique, close-process design, controls that survive small
+            teams, and what AI actually changes — written by CPAs, with worked numbers.
+          </p>
         </div>
       </section>
 
-      {/* ── Featured post hero ───────────────────────────────────── */}
-      {featured && (
-        <section className="px-4 sm:px-6 lg:px-8 -mt-1 pt-12">
-          <div className="max-w-5xl mx-auto">
-            <FeaturedCard post={featured} />
-          </div>
-        </section>
-      )}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pb-20">
 
-      {/* ── Filter strip ─────────────────────────────────────────── */}
-      <section className="px-4 sm:px-6 lg:px-8 mt-12">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex items-center gap-3 flex-wrap mb-6">
-            <button
-              onClick={() => setActiveCategory(null)}
-              className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-full px-3.5 py-1.5 transition-all"
-              style={{
-                background:   activeCategory === null ? "var(--text)" : "var(--surface-2)",
-                color:        activeCategory === null ? "var(--bg)" : "var(--text-2)",
-                border:       "1px solid transparent",
-              }}>
-              All
-              <span className="text-[10px] opacity-70">{POSTS.length}</span>
-            </button>
-            {activeCategoryList.map((c) => {
-              const Icon = c.icon
-              const active = activeCategory === c.label
-              return (
-                <button key={c.label}
-                  onClick={() => setActiveCategory(active ? null : c.label)}
-                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-full px-3.5 py-1.5 transition-all"
-                  style={{
-                    background: active ? c.color   : c.bg,
-                    color:      active ? "#FFFFFF" : c.color,
-                    border:     `1px solid ${active ? c.color : "transparent"}`,
-                  }}>
-                  <Icon size={11} strokeWidth={2} />
-                  {c.label}
-                  <span className="text-[10px] opacity-70">{categoryCounts[c.label]}</span>
-                </button>
-              )
-            })}
-            <div className="relative ml-auto w-full sm:w-64">
-              <Search size={13} strokeWidth={1.8}
-                className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                style={{ color: "var(--text-muted)" }} />
-              <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search posts…"
-                className="w-full rounded-full pl-9 pr-9 py-1.5 text-sm outline-none"
+        {/* ── Category chips ─────────────────────────────────────────── */}
+        <div className="flex items-center gap-2 flex-wrap py-6" role="tablist" aria-label="Filter posts by category">
+          {[null, ...CATEGORIES.map((c) => c.label)].map((label) => {
+            const on = activeCat === label
+            return (
+              <button key={label ?? "all"} role="tab" aria-selected={on}
+                onClick={() => setActiveCat(label)}
+                className="rounded-full px-3.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em] transition-all"
                 style={{
-                  background: "var(--surface-2)",
-                  border: "1px solid var(--border)",
-                  color: "var(--text)",
-                }} />
-              {search && (
-                <button onClick={() => setSearch("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 h-5 w-5 rounded-full flex items-center justify-center"
-                  style={{ color: "var(--text-muted)" }}>
-                  <X size={11} strokeWidth={2} />
-                </button>
-              )}
-            </div>
-          </div>
+                  fontFamily: MONO,
+                  background: on ? PINE : "var(--surface)",
+                  color: on ? "#F4F1E9" : "var(--text-2)",
+                  border: `1px solid ${on ? PINE : "var(--border-strong)"}`,
+                }}>
+                {label ?? "All posts"}
+              </button>
+            )
+          })}
         </div>
-      </section>
 
-      {/* ── Post grid ────────────────────────────────────────────── */}
-      <section className="px-4 sm:px-6 lg:px-8 pb-16">
-        <div className="max-w-5xl mx-auto">
-          {filtered.length === 0 ? (
-            <div className="rounded-2xl p-12 text-center"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              <p className="text-sm" style={{ color: "var(--text-2)" }}>
-                No posts match those filters. Try clearing them or searching for something else.
+        {/* ── Featured story ─────────────────────────────────────────── */}
+        {featured && (() => {
+          const m = featured.meta
+          const cat = getCategoryMeta(m.category)
+          const CatIcon = cat.icon
+          return (
+            <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+              <Link to={`/blog/${m.slug}`}
+                className="group block rounded-2xl overflow-hidden mb-10 transition-all hover:-translate-y-0.5"
+                style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", boxShadow: "var(--card-shadow-hover)" }}>
+                <div className="h-[5px]" style={{ background: `linear-gradient(90deg, ${cat.gradient[0]}, ${cat.gradient[1]})` }} />
+                <div className="grid md:grid-cols-[1fr_280px] gap-6 p-6 sm:p-9">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9.5px] font-bold uppercase tracking-[0.12em]"
+                        style={{ fontFamily: MONO, background: cat.bg, color: cat.color }}>
+                        <CatIcon size={10} strokeWidth={2.2} /> {cat.label}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ fontFamily: MONO, color: "var(--text-muted)" }}>
+                        Latest
+                      </span>
+                    </div>
+                    <h2 className="mt-4 transition-opacity group-hover:opacity-85" style={{
+                      fontFamily: SERIF, fontWeight: 560, lineHeight: 1.14,
+                      fontSize: "clamp(1.5rem, 3vw, 2.1rem)", color: "var(--text)", letterSpacing: "-0.01em",
+                    }}>
+                      {m.title}
+                    </h2>
+                    <p className="mt-3 text-[14.5px] leading-relaxed max-w-2xl" style={{ color: "var(--text-2)" }}>
+                      {m.excerpt}
+                    </p>
+                    <div className="mt-5 flex items-center gap-4 text-[11px]" style={{ fontFamily: MONO, color: "var(--text-muted)" }}>
+                      <span>{formatDate(m.date)}</span>
+                      <span className="inline-flex items-center gap-1"><Clock size={11} strokeWidth={2} /> {m.readingTime}</span>
+                      <span className="ml-auto hidden sm:inline-flex items-center gap-1.5 font-bold" style={{ color: "var(--green)" }}>
+                        READ <ArrowRight size={12} strokeWidth={2.4} className="transition-transform group-hover:translate-x-0.5" />
+                      </span>
+                    </div>
+                  </div>
+                  {/* Editorial monogram panel — the category icon as cover art. */}
+                  <div className="hidden md:flex items-center justify-center rounded-xl"
+                    style={{ background: `linear-gradient(150deg, ${cat.gradient[0]}, ${cat.gradient[1]})` }}>
+                    <CatIcon size={88} strokeWidth={1} style={{ color: "rgba(244,241,233,0.85)" }} />
+                  </div>
+                </div>
+              </Link>
+            </motion.div>
+          )
+        })()}
+
+        {/* ── Archive grid ───────────────────────────────────────────── */}
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {rest.map((p, i) => {
+            const m = p.meta
+            const cat = getCategoryMeta(m.category)
+            const CatIcon = cat.icon
+            return (
+              <motion.div key={m.slug}
+                initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.35, delay: Math.min(i * 0.04, 0.3) }}>
+                <Link to={`/blog/${m.slug}`}
+                  className="group flex flex-col h-full rounded-xl overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-lg"
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+                  <div className="h-[3px]" style={{ background: `linear-gradient(90deg, ${cat.gradient[0]}, ${cat.gradient[1]})` }} />
+                  <div className="flex flex-col flex-1 p-5">
+                    <span className="self-start inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em]"
+                      style={{ fontFamily: MONO, background: cat.bg, color: cat.color }}>
+                      <CatIcon size={9} strokeWidth={2.2} /> {cat.label}
+                    </span>
+                    <h3 className="mt-3 transition-opacity group-hover:opacity-85" style={{
+                      fontFamily: SERIF, fontWeight: 580, lineHeight: 1.22,
+                      fontSize: 19, color: "var(--text)", letterSpacing: "-0.005em",
+                    }}>
+                      {m.title}
+                    </h3>
+                    <p className="mt-2 text-[12.5px] leading-relaxed flex-1" style={{
+                      color: "var(--text-2)",
+                      display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
+                    }}>
+                      {m.excerpt}
+                    </p>
+                    <div className="mt-4 pt-3 flex items-center gap-3 text-[10px]"
+                      style={{ fontFamily: MONO, color: "var(--text-muted)", borderTop: "1px solid var(--border)" }}>
+                      <span>{formatDate(m.date)}</span>
+                      <span className="inline-flex items-center gap-1"><Clock size={10} strokeWidth={2} /> {m.readingTime}</span>
+                      <ArrowRight size={12} strokeWidth={2.4} className="ml-auto transition-transform group-hover:translate-x-0.5"
+                        style={{ color: "var(--green)" }} />
+                    </div>
+                  </div>
+                </Link>
+              </motion.div>
+            )
+          })}
+        </div>
+
+        {filtered.length === 0 && (
+          <p className="py-16 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+            Nothing in this category yet — check back soon.
+          </p>
+        )}
+
+        {/* ── Bottom CTA — pine band ─────────────────────────────────── */}
+        <div className="mt-16 rounded-2xl overflow-hidden relative" style={{ background: PINE }}>
+          <div aria-hidden className="pointer-events-none absolute inset-0" style={{
+            backgroundImage: "linear-gradient(rgba(244,241,233,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(244,241,233,0.06) 1px, transparent 1px)",
+            backgroundSize: "56px 56px", opacity: 0.6,
+          }} />
+          <div className="relative px-7 py-10 sm:px-12 sm:py-12 flex flex-col sm:flex-row items-start sm:items-center gap-6 justify-between">
+            <div>
+              <p style={{ fontFamily: SERIF, fontWeight: 550, fontSize: "clamp(1.3rem, 2.6vw, 1.8rem)", lineHeight: 1.15, color: "#F4F1E9" }}>
+                Reading about the close is good.<br />
+                <em style={{ fontStyle: "italic", color: "#9CC4AD" }}>Finishing it early</em> is better.
+              </p>
+              <p className="mt-2 text-[13px]" style={{ color: "rgba(244,241,233,0.66)" }}>
+                Nordavix runs reconciliations, flux, schedules, and the reporting package on top of QuickBooks. Free during beta.
               </p>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
-              {filtered.map((post, i) => (
-                <PostCard key={post.meta.slug} post={post} index={i} />
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* ── Bottom CTA strip ─────────────────────────────────────── */}
-      <section className="px-4 sm:px-6 lg:px-8 pb-20">
-        <div className="max-w-5xl mx-auto rounded-2xl px-6 sm:px-10 py-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-          <div>
-            <h3 className="text-xl font-bold text-theme mb-1">Try Nordavix free during beta</h3>
-            <p className="text-sm" style={{ color: "var(--text-2)" }}>
-              The close-process platform that does what you&apos;ve been reading about.
-            </p>
+            <Link to="/sign-up"
+              className="shrink-0 inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-bold transition-transform hover:-translate-y-0.5"
+              style={{ background: "#F4F1E9", color: PINE }}>
+              Start free <ArrowRight size={14} strokeWidth={2.4} />
+            </Link>
           </div>
-          <Link to="/sign-up"
-            className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-md text-sm font-semibold text-white transition-all hover:opacity-90 shrink-0"
-            style={{ background: "var(--green)", boxShadow: "0 4px 12px rgba(62,143,102,0.20)" }}>
-            Start free workspace <ArrowRight size={13} strokeWidth={2} />
-          </Link>
         </div>
-      </section>
+      </div>
     </BlogLayout>
-  )
-}
-
-// ── FeaturedCard ───────────────────────────────────────────────────
-//
-// The newest post gets a 2-column "hero" treatment — gradient cover
-// on the left with the category badge, content + CTA on the right.
-// This is the visual anchor of the blog index; everything else is a
-// secondary card.
-
-function FeaturedCard({ post }: { post: { meta: { slug: string; title: string; description: string; date: string; excerpt: string; readingTime: string; category: string; author?: string } } }) {
-  const cat = getCategoryMeta(post.meta.category)
-  const Icon = cat.icon
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-      <Link to={`/blog/${post.meta.slug}`} className="block group">
-        <div className="rounded-2xl overflow-hidden grid grid-cols-1 md:grid-cols-5 transition-all hover:shadow-lg"
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            boxShadow: "var(--card-shadow)",
-          }}>
-          {/* Cover panel — gradient + faint geometric overlay */}
-          <div className="md:col-span-2 relative min-h-[180px] md:min-h-[280px] overflow-hidden"
-            style={{
-              background: `linear-gradient(135deg, ${cat.gradient[0]} 0%, ${cat.gradient[1]} 100%)`,
-            }}>
-            {/* Decorative SVG mesh */}
-            <svg className="absolute inset-0 w-full h-full opacity-25" preserveAspectRatio="none"
-              viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <pattern id={`grid-${post.meta.slug}`} width="32" height="32" patternUnits="userSpaceOnUse">
-                  <path d="M 32 0 L 0 0 0 32" fill="none" stroke="white" strokeWidth="0.6" />
-                </pattern>
-              </defs>
-              <rect width="400" height="400" fill={`url(#grid-${post.meta.slug})`} />
-            </svg>
-            {/* Category badge */}
-            <div className="absolute top-4 left-4 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/95 text-[10px] font-bold uppercase tracking-wider"
-              style={{ color: cat.color }}>
-              <Icon size={10} strokeWidth={2} /> Featured · {cat.label}
-            </div>
-            {/* Big category glyph */}
-            <Icon size={140} strokeWidth={1}
-              className="absolute -bottom-8 -right-8 text-white/30" />
-          </div>
-          {/* Content */}
-          <div className="md:col-span-3 p-6 sm:p-8 flex flex-col">
-            <div className="flex items-center gap-3 text-[11px] mb-3"
-              style={{ color: "var(--text-muted)" }}>
-              <span className="inline-flex items-center gap-1"><Calendar size={11} strokeWidth={1.8} /> {formatDate(post.meta.date)}</span>
-              <span>·</span>
-              <span className="inline-flex items-center gap-1"><Clock size={11} strokeWidth={1.8} /> {post.meta.readingTime}</span>
-            </div>
-            <h2 className="text-2xl sm:text-3xl font-bold text-theme leading-tight tracking-tight mb-3 group-hover:opacity-80 transition-opacity">
-              {post.meta.title}
-            </h2>
-            <p className="text-sm sm:text-base leading-relaxed mb-5 flex-1"
-              style={{ color: "var(--text-2)" }}>
-              {post.meta.excerpt}
-            </p>
-            <span className="inline-flex items-center gap-1.5 text-sm font-semibold self-start"
-              style={{ color: cat.color }}>
-              Read the post <ArrowRight size={13} strokeWidth={2} />
-            </span>
-          </div>
-        </div>
-      </Link>
-    </motion.article>
-  )
-}
-
-// ── PostCard ──────────────────────────────────────────────────────
-//
-// Standard card for non-featured posts. Top accent stripe carries the
-// category color; the icon + label sit in the meta row. Hover lifts
-// the whole card with a softer shadow.
-
-function PostCard({ post, index }: {
-  post: { meta: { slug: string; title: string; excerpt: string; date: string; readingTime: string; category: string } }
-  index: number
-}) {
-  const cat = getCategoryMeta(post.meta.category)
-  const Icon = cat.icon
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, delay: 0.04 + index * 0.04 }}
-      className="rounded-2xl overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-md"
-      style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        boxShadow: "var(--card-shadow)",
-      }}>
-      <Link to={`/blog/${post.meta.slug}`} className="block group h-full flex flex-col">
-        {/* Top accent stripe — category color */}
-        <div className="h-1" style={{ background: `linear-gradient(90deg, ${cat.gradient[0]}, ${cat.gradient[1]})` }} />
-
-        <div className="p-5 sm:p-6 flex-1 flex flex-col">
-          <div className="flex items-center gap-3 text-[11px] mb-3"
-            style={{ color: "var(--text-muted)" }}>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[10px]"
-              style={{ background: cat.bg, color: cat.color }}>
-              <Icon size={10} strokeWidth={2} /> {cat.label}
-            </span>
-            <span className="inline-flex items-center gap-1"><Calendar size={11} strokeWidth={1.8} /> {formatDate(post.meta.date)}</span>
-            <span className="inline-flex items-center gap-1"><Clock size={11} strokeWidth={1.8} /> {post.meta.readingTime}</span>
-          </div>
-          <h2 className="text-lg sm:text-xl font-bold text-theme leading-snug tracking-tight mb-2 group-hover:opacity-80 transition-opacity">
-            {post.meta.title}
-          </h2>
-          <p className="text-sm leading-relaxed mb-4 flex-1"
-            style={{ color: "var(--text-2)" }}>
-            {post.meta.excerpt}
-          </p>
-          <span className="inline-flex items-center gap-1.5 text-xs font-semibold self-start"
-            style={{ color: cat.color }}>
-            Read post <ArrowRight size={11} strokeWidth={2} />
-          </span>
-        </div>
-      </Link>
-    </motion.article>
   )
 }

@@ -2,7 +2,11 @@
  * Blog category metadata — single source for the chip color, icon,
  * gradient header, and hex accent of each category. Used by:
  *   - BlogIndex (filter chips, card top-accent, hero badge)
- *   - BlogPostPage (header gradient, breadcrumb tone)
+ *   - BlogPostPage (header accents, breadcrumb tone)
+ *
+ * Palette: the brand's "finance editorial" system — every category is a
+ * muted, low-chroma tone from the pine family (no rainbow). Color carries
+ * taxonomy, never decoration; on cream cards each reads as a quiet accent.
  *
  * Adding a new category: just add it to CATEGORIES below. The chip
  * order in the UI follows declaration order here.
@@ -31,54 +35,54 @@ export interface CategoryMeta {
 export const CATEGORIES: CategoryMeta[] = [
   {
     label:    "Close process",
-    color:    "#2E7A55",
-    bg:       "rgba(62, 143, 102, 0.10)",
+    color:    "#2E7A55",                       // brand green
+    bg:       "rgba(46, 122, 85, 0.10)",
     icon:     Workflow,
     gradient: ["#2E7A55", "#7FB89B"],
   },
   {
-    label:    "Consolidation",
-    color:    "#1D4ED8",
-    bg:       "rgba(29, 78, 216, 0.10)",
-    icon:     ArrowLeftRight,
-    gradient: ["#1D4ED8", "#3B82F6"],
-  },
-  {
-    label:    "AI",
-    color:    "#7C3AED",
-    bg:       "rgba(124, 58, 237, 0.10)",
-    icon:     Brain,
-    gradient: ["#7C3AED", "#A78BFA"],
+    label:    "Reconciliation",
+    color:    "#2F6B66",                       // pine-teal
+    bg:       "rgba(47, 107, 102, 0.10)",
+    icon:     Banknote,
+    gradient: ["#2F6B66", "#6FA8A1"],
   },
   {
     label:    "Flux analysis",
-    color:    "#B45309",
-    bg:       "rgba(180, 83, 9, 0.10)",
+    color:    "#96702F",                       // muted ochre
+    bg:       "rgba(150, 112, 47, 0.10)",
     icon:     GitCompareArrows,
-    gradient: ["#B45309", "#F59E0B"],
+    gradient: ["#96702F", "#C9A45C"],
   },
   {
-    label:    "Reconciliation",
-    color:    "#0E7490",
-    bg:       "rgba(14, 116, 144, 0.10)",
-    icon:     Banknote,
-    gradient: ["#0E7490", "#22D3EE"],
+    label:    "AI",
+    color:    "#5F7019",                       // deep olive (the AI accent family)
+    bg:       "rgba(95, 112, 25, 0.10)",
+    icon:     Brain,
+    gradient: ["#5F7019", "#9CC4AD"],
+  },
+  {
+    label:    "Consolidation",
+    color:    "#3C5A76",                       // muted slate
+    bg:       "rgba(60, 90, 118, 0.10)",
+    icon:     ArrowLeftRight,
+    gradient: ["#3C5A76", "#8FA9BF"],
   },
   {
     label:    "Audit",
-    color:    "#BE185D",
-    bg:       "rgba(190, 24, 93, 0.10)",
+    color:    "#7A4A52",                       // muted wine
+    bg:       "rgba(122, 74, 82, 0.10)",
     icon:     ShieldCheck,
-    gradient: ["#BE185D", "#F472B6"],
+    gradient: ["#7A4A52", "#B58791"],
   },
 ]
 
 const FALLBACK: CategoryMeta = {
   label:    "General",
-  color:    "#4B5563",
-  bg:       "rgba(75, 85, 99, 0.10)",
+  color:    "#5C6660",
+  bg:       "rgba(92, 102, 96, 0.10)",
   icon:     BookOpen,
-  gradient: ["#4B5563", "#9CA3AF"],
+  gradient: ["#5C6660", "#9AA59E"],
 }
 
 /**

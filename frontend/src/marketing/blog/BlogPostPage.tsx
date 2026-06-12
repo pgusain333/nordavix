@@ -19,7 +19,7 @@ import { Link, useParams, Navigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Share2, Linkedin, Twitter,
-  Link as LinkIcon, Check, ChevronRight, Sparkles,
+  Link as LinkIcon, Check, ChevronRight,
 } from "lucide-react"
 import { findPostBySlug, POSTS } from "@/marketing/blog/posts/registry"
 import { getCategoryMeta } from "@/marketing/blog/categories"
@@ -28,7 +28,7 @@ import { SEO, articleSchema, breadcrumbSchema, faqSchema } from "@/marketing/seo
 import "@/marketing/blog/blog-prose.css"
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
   })
 }
@@ -135,54 +135,50 @@ export function BlogPostPage() {
           }} />
       </div>
 
-      {/* ── Hero — gradient header with title + meta ────────────── */}
-      <section className="relative overflow-hidden"
-        style={{
-          background: `linear-gradient(135deg, ${cat.gradient[0]} 0%, ${cat.gradient[1]} 100%)`,
-        }}>
-        {/* Geometric overlay so the hero never feels flat */}
-        <svg className="absolute inset-0 w-full h-full opacity-15 pointer-events-none"
-          preserveAspectRatio="none" viewBox="0 0 1200 400" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <pattern id="hero-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="0.6" />
-            </pattern>
-          </defs>
-          <rect width="1200" height="400" fill="url(#hero-grid)" />
-        </svg>
-        {/* Huge category icon as decoration */}
-        <CatIcon size={260} strokeWidth={0.8}
-          className="absolute -right-12 -top-12 text-white/15 hidden md:block" />
+      {/* ── Masthead — pine editorial header (Fraunces title, mono meta).
+          The category contributes a muted accent, not a wall of color. */}
+      <section className="relative overflow-hidden" style={{ background: "#0C2620" }}>
+        <div aria-hidden className="pointer-events-none absolute inset-0" style={{
+          backgroundImage: "linear-gradient(rgba(244,241,233,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(244,241,233,0.07) 1px, transparent 1px)",
+          backgroundSize: "64px 64px", opacity: 0.5,
+          maskImage: "radial-gradient(120% 85% at 50% 0%, black, transparent 82%)",
+          WebkitMaskImage: "radial-gradient(120% 85% at 50% 0%, black, transparent 82%)",
+        }} />
+        {/* Huge category icon as quiet cover art */}
+        <CatIcon size={280} strokeWidth={0.7}
+          className="absolute -right-14 -top-10 hidden md:block pointer-events-none"
+          style={{ color: "rgba(244,241,233,0.07)" }} />
 
         <div className="relative max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
-          <nav className="text-[11px] mb-5 flex items-center gap-1.5 text-white/85">
-            <Link to="/" className="hover:text-white">Home</Link>
-            <ChevronRight size={11} strokeWidth={2} className="opacity-60" />
-            <Link to="/blog" className="hover:text-white">Blog</Link>
-            <ChevronRight size={11} strokeWidth={2} className="opacity-60" />
-            <span className="text-white/70">{cat.label}</span>
+          <nav className="text-[10px] mb-6 flex items-center gap-2 uppercase tracking-[0.16em]"
+            style={{ fontFamily: '"JetBrains Mono", monospace', color: "rgba(244,241,233,0.55)" }}>
+            <Link to="/" className="hover:text-white transition-colors">Home</Link>
+            <ChevronRight size={10} strokeWidth={2} className="opacity-50" />
+            <Link to="/blog" className="hover:text-white transition-colors">Blog</Link>
+            <ChevronRight size={10} strokeWidth={2} className="opacity-50" />
+            <span style={{ color: cat.gradient[1] }}>{cat.label}</span>
           </nav>
 
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/95 text-[10px] font-bold uppercase tracking-wider mb-4"
-            style={{ color: cat.color }}>
-            <CatIcon size={10} strokeWidth={2} /> {cat.label}
-          </div>
-
-          <h1 className="font-bold leading-[1.1] tracking-tight text-white max-w-3xl"
-            style={{ fontSize: "clamp(28px, 5vw, 46px)" }}>
+          <h1 className="max-w-3xl" style={{
+            fontFamily: '"Fraunces", Georgia, serif', fontWeight: 550,
+            lineHeight: 1.08, letterSpacing: "-0.012em",
+            fontSize: "clamp(28px, 4.6vw, 46px)", color: "#F4F1E9",
+          }}>
             {meta.title}
           </h1>
 
-          <p className="mt-4 text-base sm:text-lg text-white/85 max-w-2xl leading-relaxed">
+          <p className="mt-5 text-[15px] sm:text-[16.5px] max-w-2xl leading-relaxed"
+            style={{ color: "rgba(244,241,233,0.72)" }}>
             {meta.description}
           </p>
 
-          <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-white/85">
+          <div className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] uppercase tracking-[0.1em]"
+            style={{ fontFamily: '"JetBrains Mono", monospace', color: "rgba(244,241,233,0.62)" }}>
             <span className="inline-flex items-center gap-1.5">
-              <Calendar size={12} strokeWidth={1.8} /> {formatDate(meta.date)}
+              <Calendar size={11} strokeWidth={1.8} /> {formatDate(meta.date)}
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <Clock size={12} strokeWidth={1.8} /> {meta.readingTime}
+              <Clock size={11} strokeWidth={1.8} /> {meta.readingTime}
             </span>
             <span>By {meta.author ?? "The Founder CPA"}</span>
           </div>
@@ -210,9 +206,10 @@ export function BlogPostPage() {
               foregrounding any specific person. */}
           <div className="mt-12 rounded-2xl p-5 sm:p-6 flex items-start gap-4"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-            <div className="h-12 w-12 rounded-full shrink-0 flex items-center justify-center text-white"
-              style={{ background: `linear-gradient(135deg, ${cat.gradient[0]}, ${cat.gradient[1]})` }}>
-              <Sparkles size={20} strokeWidth={1.8} />
+            <div className="h-12 w-12 rounded-full shrink-0 flex items-center justify-center"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+              <img src="/logo-mark-dark.svg" alt="Nordavix" className="h-7 w-7 dark:hidden" loading="lazy" />
+              <img src="/logo-mark-light.svg" alt="Nordavix" className="h-7 w-7 hidden dark:block" loading="lazy" />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-bold text-theme">{meta.author ?? "The Founder CPA"}</p>
@@ -282,21 +279,30 @@ export function BlogPostPage() {
             </nav>
           )}
 
-          {/* Bottom CTA */}
-          <div className="mt-12 rounded-2xl p-6 sm:p-8 text-center"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-            <p className="text-base sm:text-lg font-bold text-theme">
-              Stop closing the books in Excel.
-            </p>
-            <p className="text-sm mt-1 mb-5" style={{ color: "var(--text-2)" }}>
-              Nordavix runs reconciliations, flux analysis, intercompany, and the financial
-              package on top of your QuickBooks. Free during beta.
-            </p>
-            <Link to="/sign-up"
-              className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-md text-sm font-semibold text-white transition-all hover:opacity-90"
-              style={{ background: "var(--green)", boxShadow: "0 4px 12px rgba(62,143,102,0.20)" }}>
-              Start free workspace <ArrowRight size={13} strokeWidth={2} />
-            </Link>
+          {/* Bottom CTA — pine band, matching the marketing system */}
+          <div className="mt-12 rounded-2xl p-7 sm:p-10 text-center relative overflow-hidden"
+            style={{ background: "#0C2620" }}>
+            <div aria-hidden className="pointer-events-none absolute inset-0" style={{
+              backgroundImage: "linear-gradient(rgba(244,241,233,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(244,241,233,0.06) 1px, transparent 1px)",
+              backgroundSize: "56px 56px", opacity: 0.6,
+            }} />
+            <div className="relative">
+              <p style={{
+                fontFamily: '"Fraunces", Georgia, serif', fontWeight: 550,
+                fontSize: "clamp(1.25rem, 2.6vw, 1.7rem)", lineHeight: 1.18, color: "#F4F1E9",
+              }}>
+                Stop closing the books <em style={{ fontStyle: "italic", color: "#9CC4AD" }}>in Excel</em>.
+              </p>
+              <p className="text-[13px] mt-2 mb-6" style={{ color: "rgba(244,241,233,0.68)" }}>
+                Nordavix runs reconciliations, flux analysis, schedules, and the financial
+                package on top of your QuickBooks. Free during beta.
+              </p>
+              <Link to="/sign-up"
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold transition-transform hover:-translate-y-0.5"
+                style={{ background: "#F4F1E9", color: "#0C2620" }}>
+                Start free workspace <ArrowRight size={14} strokeWidth={2.4} />
+              </Link>
+            </div>
           </div>
         </article>
 

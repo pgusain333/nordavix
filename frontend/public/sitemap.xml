@@ -150,4 +150,18 @@
     <priority>0.4</priority>
   </url>
 
+  <url>
+    <loc>https://nordavix.com/blog/prepaid-expense-amortization-schedule</loc>
+    <lastmod>2026-06-12</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
+  <url>
+    <loc>https://nordavix.com/blog/maker-checker-accounting-controls</loc>
+    <lastmod>2026-06-12</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
 </urlset>
