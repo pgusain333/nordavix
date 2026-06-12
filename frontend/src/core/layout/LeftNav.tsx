@@ -18,7 +18,7 @@ import {
   PanelLeft, PanelLeftClose, Sparkles,
   type LucideIcon,
 } from "lucide-react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { cn } from "@/core/ui/utils"
 import { Badge } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
@@ -26,6 +26,8 @@ import { FeedbackDialog } from "@/core/ui/FeedbackDialog"
 import { WorkspaceSwitcher } from "@/core/layout/WorkspaceSwitcher"
 import { workspaceApi } from "@/modules/workspace/api"
 import { tasksApi } from "@/modules/tasks/api"
+import { reconsApi } from "@/modules/recons/api"
+import { api as fluxApi } from "@/modules/flux/api"
 import { CMDK_EVENT } from "@/core/ui/CommandPalette"
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
 
@@ -67,6 +69,35 @@ function prefetchRoute(path: string): void {
   }
 }
 
+/**
+ * Warm the destination's DATA on hover, not just its code chunk — this is what
+ * makes the numbers paint instantly on click. We prefetch the period-agnostic
+ * queries each page reads first (books-status, period-tracker, flux TBs, the
+ * tasks list) using the EXACT same queryKey + queryFn + staleTime as the pages
+ * themselves, so React Query treats it as the same cache entry: fresh data →
+ * no-op; stale/missing → fetched in the hover-to-click gap. Pages still own
+ * their period-keyed queries, but those fire immediately on mount because the
+ * books-status / tracker gates they `enabled:`-wait on are already cached —
+ * collapsing the old two-round-trip serial chain into zero or one.
+ */
+function prefetchData(qc: QueryClient, path: string): void {
+  const p = path.replace(/[?#].*$/, "").replace(/^\/app\/?/, "")
+  const warm = (queryKey: unknown[], queryFn: () => Promise<unknown>, staleTime: number) =>
+    void qc.prefetchQuery({ queryKey, queryFn, staleTime }).catch(() => {})
+  const books   = () => warm(["books-status"],          reconsApi.getBooksStatus,    5 * 60_000)
+  const tracker = () => warm(["period-tracker"],        reconsApi.listPeriodTracker, 60_000)
+  const fluxTBs = () => warm(["flux-trial-balances"],   fluxApi.listTrialBalances,   30_000)
+  const tasks   = () => warm(["tasks", "all-with-closed"], () => tasksApi.list(true), 30_000)
+  switch (p) {
+    case "":               books(); tracker(); fluxTBs(); tasks(); return  // dashboard reads all four
+    case "reconciliations":
+    case "schedules":
+    case "adjustments":    books(); tracker();           return
+    case "flux":           books(); tracker(); fluxTBs(); return
+    case "tasks":          tasks();                      return
+  }
+}
+
 // Order (per spec):
 //   Dashboard → Tasks → Connections → Schedules → Flux → Intercompany
 //   → Reconciliations → Insights → Financial Package → Team
@@ -100,6 +131,7 @@ export function LeftNav({ onClose }: Props) {
   const { organization } = useOrganization()
   const { user } = useUser()
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   // Collapsed (icon-only) rail — persisted; defaults to collapsed so the app
@@ -215,7 +247,7 @@ export function LeftNav({ onClose }: Props) {
           {!isCollapsed && (
             <span className="text-xl lg:text-[24px] font-semibold tracking-tight leading-none truncate"
               style={{ color: "#FFFFFF" }}>
-              nordavix<span style={{ color: "#D4F361" }}>.</span>
+              nordavix<span style={{ color: "#9CC4AD" }}>.</span>
             </span>
           )}
         </button>
@@ -326,8 +358,8 @@ export function LeftNav({ onClose }: Props) {
               onClick={() => onClose?.()}
               // Prefetch the destination's lazy chunk on hover/focus so the
               // click renders immediately instead of waiting for JS.
-              onMouseEnter={() => prefetchRoute(item.path)}
-              onFocus={() => prefetchRoute(item.path)}
+              onMouseEnter={() => { prefetchRoute(item.path); prefetchData(qc, item.path) }}
+              onFocus={() => { prefetchRoute(item.path); prefetchData(qc, item.path) }}
               title={isCollapsed ? item.label : undefined}
               className={({ isActive }) =>
                 cn("flex items-center rounded-md text-sm transition-colors duration-150",

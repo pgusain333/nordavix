@@ -36,9 +36,11 @@
   --info:            #3C5A76;  /* informational / neutral status — muted slate-blue */
   --info-subtle:     #E9EEF3;
   --info-border:     #D3DEE8;
-  --accent:          #5F7019;  /* AI moments — deep olive (the lime family, readable on cream) */
-  --accent-subtle:   #EFF4D4;
-  --accent-border:   #DCE6A6;
+  --accent:          #2E7A55;  /* AI moments — fold into the brand green; the
+                                  Sparkles icon carries the "AI" meaning, color
+                                  stays calm ("colorful only when necessary") */
+  --accent-subtle:   #E7F0E9;
+  --accent-border:   #C9DDD0;
   /* Sidebar — deep pine rail, cream text, brand-green active pill. Identical
      in light + dark so the rail is a consistent brand anchor (matches the
      marketing site's pine bands). */
@@ -79,9 +81,9 @@
   --info:            #92AFC5;
   --info-subtle:     #16242E;
   --info-border:     #24394A;
-  --accent:          #D4F361;  /* AI moments — the brand lime, at home on pine */
-  --accent-subtle:   #243114;
-  --accent-border:   #3D4F1E;
+  --accent:          #9CC4AD;  /* AI moments — soft sage; calm, no neon */
+  --accent-subtle:   #18382D;
+  --accent-border:   #2C5A47;
   /* Sidebar — same pine rail as light mode (consistent brand anchor). */
   --nav-bg:       #0C2620;
   --nav-border:   rgba(244,241,233,0.10);
@@ -153,10 +155,10 @@
     box-shadow: 0 0 0 3px color-mix(in oklab, var(--green) 18%, transparent);
   }
 
-  /* Brand text selection — lime on pine, the marketing accent moment. */
+  /* Brand text selection — quiet sage on pine. */
   ::selection {
-    background: #D4F361;
-    color: #0E2A14;
+    background: #BFD9CB;
+    color: #11271F;
   }
 
   /* Themed scrollbars so long tables/drawers feel native to the brand

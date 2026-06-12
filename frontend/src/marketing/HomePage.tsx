@@ -41,8 +41,7 @@ const D_LINE2 = "rgba(244,241,233,0.16)"
 const D_TXT   = "#F4F1E9"   // text on dark — warm cream-white
 const D_TXT2  = "rgba(244,241,233,0.66)"
 const D_TXT3  = "rgba(244,241,233,0.42)"
-const LIME    = "#D4F361"   // THE accent
-const LIME_D  = "#0E2A14"   // text on lime
+const LIME    = "#9CC4AD"   // THE accent — soft sage (electric lime retired: too loud for a finance brand)
 const SAGE    = "#7FB89B"   // quiet support on dark
 const CREAM   = "#F4F1E9"   // light section base
 const PAPER   = "#FCFBF7"   // cards on cream
@@ -95,7 +94,7 @@ function LimeBtn({ to, children }: { to: string; children: ReactNode }) {
   return (
     <Link to={to}
       className="inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-sm font-bold transition-transform hover:-translate-y-0.5"
-      style={{ background: LIME, color: LIME_D, boxShadow: "0 16px 40px -14px rgba(212,243,97,0.45)" }}>
+      style={{ background: D_TXT, color: PINE, boxShadow: "0 16px 40px -16px rgba(0,0,0,0.55)" }}>
       {children}
     </Link>
   )
@@ -121,11 +120,13 @@ function Navbar() {
   useEffect(() => { document.body.style.overflow = open ? "hidden" : ""; return () => { document.body.style.overflow = "" } }, [open])
   return (
     <>
-      {/* announcement microbar */}
+      {/* announcement microbar — near-black pine, quiet mono; the only color is
+          the soft-sage link. (The electric-lime bar was the loudest element on
+          the site — retired for the calm, premium read.) */}
       <div className="relative z-50 text-center px-4 py-2 text-[11px] tracking-[0.08em]"
-        style={{ fontFamily: MONO, background: LIME, color: LIME_D }}>
+        style={{ fontFamily: MONO, background: "#081914", color: "rgba(244,241,233,0.72)" }}>
         PRIVATE BETA IS OPEN — FOUNDING FIRMS GET THE FULL PLATFORM FREE{" "}
-        <Link to="/sign-up" className="font-bold underline underline-offset-2">CLAIM A SPOT →</Link>
+        <Link to="/sign-up" className="font-bold underline underline-offset-2" style={{ color: LIME }}>CLAIM A SPOT →</Link>
       </div>
       <nav className="sticky top-0 inset-x-0 z-50 transition-all duration-300"
         style={{
@@ -150,12 +151,12 @@ function Navbar() {
             <div className="hidden md:flex items-center gap-2.5">
               {isSignedIn ? (
                 <Link to="/app" className="inline-flex items-center gap-1.5 text-[13px] font-bold rounded-full px-4 py-2 transition-transform hover:-translate-y-0.5"
-                  style={{ background: LIME, color: LIME_D }}>Open dashboard <ArrowRight size={13} strokeWidth={2.4} /></Link>
+                  style={{ background: D_TXT, color: PINE }}>Open dashboard <ArrowRight size={13} strokeWidth={2.4} /></Link>
               ) : (
                 <>
                   <Link to="/sign-in" className="text-[13.5px] font-medium px-2.5 py-2 transition-colors hover:text-white" style={{ color: D_TXT2 }}>Sign in</Link>
                   <Link to="/sign-up" className="inline-flex items-center gap-1.5 text-[13px] font-bold rounded-full px-4 py-2 transition-transform hover:-translate-y-0.5"
-                    style={{ background: LIME, color: LIME_D }}>Start free <ArrowRight size={13} strokeWidth={2.4} /></Link>
+                    style={{ background: D_TXT, color: PINE }}>Start free <ArrowRight size={13} strokeWidth={2.4} /></Link>
                 </>
               )}
             </div>
@@ -179,7 +180,7 @@ function Navbar() {
               ? <a key={it.label} href={it.to} onClick={() => setOpen(false)} className="block py-3.5 text-base font-medium" style={{ color: D_TXT, borderBottom: `1px solid ${D_LINE}` }}>{it.label}</a>
               : <Link key={it.label} to={it.to} onClick={() => setOpen(false)} className="block py-3.5 text-base font-medium" style={{ color: D_TXT, borderBottom: `1px solid ${D_LINE}` }}>{it.label}</Link>)}
             <div className="pt-7 space-y-3">
-              <Link to="/sign-up" onClick={() => setOpen(false)} className="flex items-center justify-center gap-2 w-full py-3.5 rounded-full text-sm font-bold" style={{ background: LIME, color: LIME_D }}>Start free <ArrowRight size={14} /></Link>
+              <Link to="/sign-up" onClick={() => setOpen(false)} className="flex items-center justify-center gap-2 w-full py-3.5 rounded-full text-sm font-bold" style={{ background: D_TXT, color: PINE }}>Start free <ArrowRight size={14} /></Link>
               <Link to="/sign-in" onClick={() => setOpen(false)} className="flex items-center justify-center w-full py-3 rounded-full text-sm font-medium" style={{ color: D_TXT2, border: `1px solid ${D_LINE2}` }}>Sign in</Link>
             </div>
           </div>
@@ -216,7 +217,7 @@ function AppShot() {
     <div className="relative">
       {/* glow */}
       <div aria-hidden className="pointer-events-none absolute -inset-x-10 -top-16 -bottom-10"
-        style={{ background: `radial-gradient(58% 56% at 50% 38%, rgba(212,243,97,0.13), transparent 70%), radial-gradient(40% 40% at 78% 70%, rgba(127,184,155,0.12), transparent 70%)` }} />
+        style={{ background: `radial-gradient(58% 56% at 50% 38%, rgba(156,196,173,0.13), transparent 70%), radial-gradient(40% 40% at 78% 70%, rgba(127,184,155,0.12), transparent 70%)` }} />
       {/* browser frame */}
       <div className="relative rounded-2xl overflow-hidden"
         style={{ border: `1px solid ${D_LINE2}`, background: "#0E2B23", boxShadow: "0 60px 140px -50px rgba(0,0,0,0.65), 0 24px 60px -30px rgba(0,0,0,0.5)" }}>
@@ -234,7 +235,7 @@ function AppShot() {
           <div className="flex flex-col items-center gap-1.5 py-3" style={{ background: PINE }}>
             {[BookCheck, GitCompareArrows, Layers, Receipt, TrendingUp, FileText].map((Ic, i) => (
               <span key={i} className="h-8 w-8 grid place-items-center rounded-lg"
-                style={{ background: i === 1 ? "rgba(212,243,97,0.16)" : "transparent", color: i === 1 ? LIME : "rgba(244,241,233,0.4)" }}>
+                style={{ background: i === 1 ? "rgba(156,196,173,0.16)" : "transparent", color: i === 1 ? LIME : "rgba(244,241,233,0.4)" }}>
                 <Ic size={14.5} strokeWidth={1.9} />
               </span>
             ))}
@@ -315,7 +316,7 @@ function AppShot() {
       {/* floating: agentic chip */}
       <div className="hidden md:block absolute -left-6 -bottom-7 -rotate-[1.5deg]">
         <div className="flex items-center gap-3 rounded-xl px-4 py-3"
-          style={{ background: LIME, color: LIME_D, boxShadow: "0 30px 70px -24px rgba(212,243,97,0.55)" }}>
+          style={{ background: D_TXT, color: PINE, boxShadow: "0 30px 70px -26px rgba(0,0,0,0.6)" }}>
           <Sparkles size={16} strokeWidth={2.2} />
           <div>
             <div className="text-[12px] font-extrabold leading-none">Agentic Mode</div>
@@ -340,7 +341,7 @@ function Hero() {
           WebkitMaskImage: "radial-gradient(120% 70% at 50% 0%, black, transparent 78%)",
         }} />
         <div className="absolute -top-40 left-1/2 -translate-x-1/2 h-[480px] w-[820px] rounded-full"
-          style={{ background: "radial-gradient(closest-side, rgba(212,243,97,0.10), transparent)", filter: "blur(50px)" }} />
+          style={{ background: "radial-gradient(closest-side, rgba(156,196,173,0.10), transparent)", filter: "blur(50px)" }} />
       </div>
       <div className="relative max-w-6xl mx-auto px-6 pt-16 md:pt-24 pb-16 md:pb-24">
         <div className="max-w-3xl mx-auto text-center">
@@ -697,7 +698,7 @@ function AIBand() {
   return (
     <section className="relative overflow-hidden" style={{ background: PINE }}>
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-32 right-[-10%] h-[400px] w-[560px] rounded-full" style={{ background: "radial-gradient(closest-side, rgba(212,243,97,0.10), transparent)", filter: "blur(56px)" }} />
+        <div className="absolute -top-32 right-[-10%] h-[400px] w-[560px] rounded-full" style={{ background: "radial-gradient(closest-side, rgba(156,196,173,0.10), transparent)", filter: "blur(56px)" }} />
       </div>
       <div className="relative max-w-6xl mx-auto px-6 py-24 md:py-32">
         <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-12 lg:gap-16 items-center">
@@ -718,7 +719,7 @@ function AIBand() {
               {principles.map(({ Icon, t, d }, i) => (
                 <Reveal key={t} delay={0.12 + i * 0.06}>
                   <div className="flex items-start gap-4">
-                    <span className="shrink-0 h-10 w-10 rounded-xl grid place-items-center" style={{ background: "rgba(212,243,97,0.12)", color: LIME }}><Icon size={17} strokeWidth={2} /></span>
+                    <span className="shrink-0 h-10 w-10 rounded-xl grid place-items-center" style={{ background: "rgba(156,196,173,0.12)", color: LIME }}><Icon size={17} strokeWidth={2} /></span>
                     <div>
                       <div className="text-[15px] font-bold" style={{ color: D_TXT }}>{t}</div>
                       <p className="mt-1 text-[13.5px] leading-relaxed" style={{ color: D_TXT2 }}>{d}</p>
@@ -959,7 +960,7 @@ function FinalCTA() {
           WebkitMaskImage: "radial-gradient(100% 80% at 50% 100%, black, transparent 75%)",
         }} />
         <div className="absolute -bottom-44 left-1/2 -translate-x-1/2 h-[420px] w-[760px] rounded-full"
-          style={{ background: "radial-gradient(closest-side, rgba(212,243,97,0.12), transparent)", filter: "blur(56px)" }} />
+          style={{ background: "radial-gradient(closest-side, rgba(156,196,173,0.12), transparent)", filter: "blur(56px)" }} />
       </div>
       <div className="relative max-w-4xl mx-auto px-6 py-28 md:py-36 text-center">
         <Reveal>
