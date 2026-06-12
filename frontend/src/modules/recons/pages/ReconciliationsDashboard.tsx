@@ -96,7 +96,7 @@ import { schedulesApi, type ScheduleLineSuggestion } from "@/modules/schedules/a
  * the SL build-up so the user sees what they checked. */
 function labelForScheduleLine(kind: "fixed_asset" | "lease" | "loan", s: ScheduleLineSuggestion): string {
   const human = kind === "fixed_asset" ? "FA" : kind === "lease" ? "Lease" : "Loan"
-  const pretty = s.line_kind.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  const pretty = (s.line_kind ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
   return `${human} · ${pretty}`
 }
 
@@ -2281,7 +2281,7 @@ function VerificationBadge({
           </>
         )}
         <span style={{ color: "var(--text-muted)" }}>Doc type</span>
-        <span className="text-right text-theme">{v.doc_type.replace(/_/g, " ")}</span>
+        <span className="text-right text-theme">{v.doc_type ? v.doc_type.replace(/_/g, " ") : "—"}</span>
         {liveDiff !== null && (
           <>
             <span style={{ color: "var(--text-muted)" }}>You entered − document</span>
@@ -3122,7 +3122,7 @@ function InlineSubledgerForm({
                   txn_number: s.reference ?? "",
                   txn_date:   s.line_date,
                   amount:     s.amount,
-                  memo:       `${s.description} · ${s.line_kind.replace(/_/g, " ")} ${s.line_date}`,
+                  memo:       `${s.description} · ${(s.line_kind ?? "").replace(/_/g, " ")} ${s.line_date}`,
                   entity:     s.vendor ?? "",
                 }
               } else {
@@ -3143,7 +3143,7 @@ function InlineSubledgerForm({
                     txn_number: s.reference ?? "",
                     txn_date:   s.line_date,
                     amount:     s.amount,
-                    memo:       `${s.description} · ${s.line_kind.replace(/_/g, " ")} ${s.line_date}`,
+                    memo:       `${s.description} · ${(s.line_kind ?? "").replace(/_/g, " ")} ${s.line_date}`,
                     entity:     s.vendor ?? "",
                   }
                 } else {
