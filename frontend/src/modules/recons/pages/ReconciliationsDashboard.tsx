@@ -21,6 +21,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ClientRequestsPanel } from "@/modules/pbc/ClientRequestsPanel"
+import { ErrorBoundary } from "@/core/ui/ErrorBoundary"
 import { motion, AnimatePresence } from "framer-motion"
 import { formatDate, formatDateLong, formatDateTime } from "@/core/lib/dates"
 import { useDemoMode } from "@/core/demo/DemoModeProvider"
@@ -1984,6 +1985,7 @@ export function ReconciliationsDashboard() {
           />
         )}
         renderReconcileBody={(a, section, goToTab) => (
+          <ErrorBoundary label="reconciliation">
           <InlineSubledgerForm
             // key={qbo_id} forces a fresh mount when the user navigates
             // Next/Prev between accounts in the drawer. Without it the
@@ -2048,6 +2050,7 @@ export function ReconciliationsDashboard() {
             }}
             onClose={() => setDrawerAcctId(null)}
           />
+          </ErrorBoundary>
         )}
         renderFooter={(a) => (
           <div className="flex items-center justify-between gap-2 flex-wrap">

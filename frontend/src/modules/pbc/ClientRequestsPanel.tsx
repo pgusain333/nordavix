@@ -10,16 +10,42 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Mail, Plus, RefreshCw, X } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
-import { pbcApi, type EvidenceRequestRow } from "@/modules/pbc/api"
+import { ErrorBoundary } from "@/core/ui/ErrorBoundary"
+import { pbcApi } from "@/modules/pbc/api"
 
-const STATUS_META: Record<EvidenceRequestRow["status"], { label: string; fg: string; bg: string }> = {
+const STATUS_META: Record<string, { label: string; fg: string; bg: string }> = {
   pending:   { label: "Waiting on client", fg: "#8a6326",         bg: "rgba(199,154,82,0.12)" },
   fulfilled: { label: "Received",          fg: "var(--green)",    bg: "var(--green-subtle)" },
   expired:   { label: "Expired",           fg: "var(--text-muted)", bg: "var(--surface-2)" },
   cancelled: { label: "Cancelled",         fg: "var(--text-muted)", bg: "var(--surface-2)" },
 }
+const FALLBACK_META = { label: "Sent", fg: "var(--text-muted)", bg: "var(--surface-2)" }
 
-export function ClientRequestsPanel({ qboAccountId, periodEnd, accountLabel, readOnly }: {
+/** Belt-and-suspenders: this panel is a non-critical add-on to the recon
+ *  drawer. If it ever throws, it must NEVER take the whole reconciliation
+ *  screen down with it — contain the error to a quiet one-line notice. */
+export function ClientRequestsPanel(props: {
+  qboAccountId: string
+  periodEnd: string
+  accountLabel?: string
+  readOnly?: boolean
+}) {
+  return (
+    <ErrorBoundary
+      label="client requests"
+      fallback={
+        <div className="rounded-lg p-3 text-[11px]"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+          Client requests couldn't load right now. Your reconciliation is unaffected — reload to try again.
+        </div>
+      }
+    >
+      <ClientRequestsPanelInner {...props} />
+    </ErrorBoundary>
+  )
+}
+
+function ClientRequestsPanelInner({ qboAccountId, periodEnd, accountLabel, readOnly }: {
   qboAccountId: string
   periodEnd: string
   accountLabel?: string
@@ -150,8 +176,11 @@ export function ClientRequestsPanel({ qboAccountId, periodEnd, accountLabel, rea
           lands here as evidence, untouched by your inbox.
         </p>
       )}
-      {requests.map((r) => {
-        const meta = STATUS_META[r.status]
+      {(Array.isArray(requests) ? requests : []).map((r) => {
+        // Defensive: never let an unexpected status or missing files array
+        // throw — that would blank the whole recon screen.
+        const meta = STATUS_META[r.status] ?? FALLBACK_META
+        const fileCount = Array.isArray(r.files) ? r.files.length : 0
         return (
           <div key={r.id} className="rounded-lg px-3 py-2 flex items-center gap-2.5 flex-wrap"
             style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -161,7 +190,7 @@ export function ClientRequestsPanel({ qboAccountId, periodEnd, accountLabel, rea
               </p>
               <p className="text-[10.5px] mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
                 {r.recipient_email}
-                {r.files.length > 0 && ` · ${r.files.length} file${r.files.length === 1 ? "" : "s"} received`}
+                {fileCount > 0 && ` · ${fileCount} file${fileCount === 1 ? "" : "s"} received`}
               </p>
             </div>
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
