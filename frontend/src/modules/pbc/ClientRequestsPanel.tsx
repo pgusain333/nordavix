@@ -65,6 +65,18 @@ export function ClientRequestsPanel({ qboAccountId, periodEnd, accountLabel, rea
   const defaultTitle = `${accountLabel ?? "Account"} — ${new Date(periodEnd + "T00:00:00")
     .toLocaleDateString(undefined, { month: "long", year: "numeric" })} statement`
 
+  const canSend = title.trim().length >= 3 && email.includes("@")
+
+  // This panel lives inside the recon drawer's <form onSubmit={save}>. Without
+  // this guard, pressing Enter in a field would submit THAT form and flip the
+  // account to Prepared. Swallow Enter here and route it to "send" instead.
+  const onFieldKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault()
+      if (canSend && !createMut.isPending) createMut.mutate()
+    }
+  }
+
   return (
     <div className="rounded-lg p-3 space-y-2.5"
       style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
@@ -75,6 +87,7 @@ export function ClientRequestsPanel({ qboAccountId, periodEnd, accountLabel, rea
         </p>
         {!readOnly && !open && (
           <button
+            type="button"
             onClick={() => { setOpen(true); if (!title) setTitle(defaultTitle) }}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-opacity hover:opacity-90"
             style={{ background: "var(--green)", color: "white" }}
@@ -89,13 +102,13 @@ export function ClientRequestsPanel({ qboAccountId, periodEnd, accountLabel, rea
         <div className="rounded-lg p-3 space-y-2"
           style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}>
           <input
-            value={title} onChange={(e) => setTitle(e.target.value)}
+            value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={onFieldKey}
             placeholder="What do you need? e.g. March 2026 Chase bank statement"
             className="w-full rounded-md px-2.5 py-1.5 text-xs outline-none"
             style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
           />
           <input
-            value={email} onChange={(e) => setEmail(e.target.value)} type="email"
+            value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={onFieldKey} type="email"
             placeholder="Client's email address"
             className="w-full rounded-md px-2.5 py-1.5 text-xs outline-none"
             style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
@@ -108,13 +121,14 @@ export function ClientRequestsPanel({ qboAccountId, periodEnd, accountLabel, rea
           />
           {err && <p className="text-[11px] font-medium" style={{ color: "#9b3d37" }}>{err}</p>}
           <div className="flex items-center justify-end gap-2">
-            <button onClick={() => { setOpen(false); setErr(null) }}
+            <button type="button" onClick={() => { setOpen(false); setErr(null) }}
               className="text-[11px] font-semibold px-2 py-1" style={{ color: "var(--text-muted)" }}>
               Cancel
             </button>
             <button
+              type="button"
               onClick={() => createMut.mutate()}
-              disabled={createMut.isPending || title.trim().length < 3 || !email.includes("@")}
+              disabled={createMut.isPending || !canSend}
               className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-bold transition-opacity hover:opacity-90 disabled:opacity-50"
               style={{ background: "var(--green)", color: "white" }}
             >
@@ -156,13 +170,13 @@ export function ClientRequestsPanel({ qboAccountId, periodEnd, accountLabel, rea
             </span>
             {!readOnly && r.status === "pending" && (
               <>
-                <button title="Resend the email (mints a fresh link)"
+                <button type="button" title="Resend the email (mints a fresh link)"
                   onClick={() => remindMut.mutate(r.id)} disabled={remindMut.isPending}
                   className="h-6 w-6 rounded-md inline-flex items-center justify-center hover:bg-[var(--surface-2)]"
                   style={{ color: "var(--text-muted)" }}>
                   <RefreshCw size={11} strokeWidth={2} className={remindMut.isPending ? "animate-spin" : ""} />
                 </button>
-                <button title="Cancel this request"
+                <button type="button" title="Cancel this request"
                   onClick={() => cancelMut.mutate(r.id)} disabled={cancelMut.isPending}
                   className="h-6 w-6 rounded-md inline-flex items-center justify-center hover:bg-[var(--surface-2)]"
                   style={{ color: "var(--text-muted)" }}>
