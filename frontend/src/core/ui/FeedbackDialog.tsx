@@ -60,7 +60,7 @@ const CATEGORIES: CategoryMeta[] = [
     helper: "An idea for something new — what problem would it solve?" },
   { key: "improvement", label: "Improvement", icon: Sparkles,    fg: "#8a6326", bg: "rgba(180, 83, 9, 0.10)",
     helper: "A tweak to something that already works — what would make it better?" },
-  { key: "praise",      label: "Praise",      icon: Heart,       fg: "#3E8F66", bg: "rgba(62, 143, 102, 0.12)",
+  { key: "praise",      label: "Praise",      icon: Heart,       fg: "#2E7A55", bg: "rgba(46, 122, 85, 0.12)",
     helper: "What's working well? We genuinely read these." },
   { key: "other",       label: "Other",       icon: HelpCircle,  fg: "#6b7280", bg: "rgba(107, 114, 128, 0.10)",
     helper: "Anything else on your mind." },

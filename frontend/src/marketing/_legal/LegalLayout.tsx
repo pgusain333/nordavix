@@ -497,7 +497,7 @@ function MarketingNavbar() {
         style={{
           // Brand burgundy when scrolled — consistent across all
           // marketing pages (Home / Solutions / Legal / Help / Blog).
-          background: scrolled ? "#8B1538" : "transparent",
+          background: scrolled ? "#0C2620" : "transparent",
           borderColor: scrolled ? "rgba(255,255,255,0.10)" : "transparent",
         }}>
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">

@@ -61,7 +61,7 @@ export function AuthPage({ mode }: Props) {
   // form controls + social buttons.
   const appearance = useMemo(() => ({
     variables: {
-      colorPrimary:   "#3E8F66",  // brand --green
+      colorPrimary:   "#2E7A55",  // brand --green
       colorBackground: "transparent",
       borderRadius:    "8px",
       fontFamily:      "inherit",

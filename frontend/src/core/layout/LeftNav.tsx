@@ -215,7 +215,7 @@ export function LeftNav({ onClose }: Props) {
           {!isCollapsed && (
             <span className="text-xl lg:text-[24px] font-semibold tracking-tight leading-none truncate"
               style={{ color: "#FFFFFF" }}>
-              nordavix<span style={{ color: "#5BB089" }}>.</span>
+              nordavix<span style={{ color: "#D4F361" }}>.</span>
             </span>
           )}
         </button>

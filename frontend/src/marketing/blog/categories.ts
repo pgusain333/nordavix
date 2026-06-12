@@ -31,10 +31,10 @@ export interface CategoryMeta {
 export const CATEGORIES: CategoryMeta[] = [
   {
     label:    "Close process",
-    color:    "#3E8F66",
+    color:    "#2E7A55",
     bg:       "rgba(62, 143, 102, 0.10)",
     icon:     Workflow,
-    gradient: ["#3E8F66", "#5BB089"],
+    gradient: ["#2E7A55", "#7FB89B"],
   },
   {
     label:    "Consolidation",

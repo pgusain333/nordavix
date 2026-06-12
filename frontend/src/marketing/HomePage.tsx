@@ -135,10 +135,11 @@ function Navbar() {
           borderBottom: `1px solid ${scrolled ? D_LINE : "transparent"}`,
         }}>
         <div className="max-w-6xl mx-auto px-6 h-[64px] flex items-center justify-between gap-4">
-          <Link to="/" className="flex items-center gap-2 shrink-0 group">
-            <span className="h-[22px] w-[22px] rounded-[6px] grid place-items-center text-[13px] font-extrabold transition-transform group-hover:rotate-[-6deg]"
-              style={{ background: LIME, color: LIME_D, fontFamily: MONO }}>n</span>
-            <span className="font-bold text-[17px] tracking-tight" style={{ color: D_TXT }}>nordavix</span>
+          <Link to="/" className="flex items-center gap-2.5 shrink-0 group">
+            {/* Real brand mark — white variant for the pine navbar (same asset
+                the app's LeftNav rail uses). */}
+            <img src="/logo-mark-white.svg" alt="Nordavix" className="h-7 w-7 transition-transform group-hover:scale-105" />
+            <span className="font-bold text-[17px] tracking-tight" style={{ color: D_TXT }}>nordavix<span style={{ color: LIME }}>.</span></span>
           </Link>
           <div className="hidden md:flex items-center gap-7">
             {NAV.map((it) => it.anchor
@@ -166,7 +167,10 @@ function Navbar() {
       {open && (
         <div className="fixed inset-0 z-[60] md:hidden" style={{ background: PINE }}>
           <div className="flex items-center justify-between px-6 h-[64px]">
-            <span className="font-bold text-[17px]" style={{ color: D_TXT }}>nordavix</span>
+            <span className="flex items-center gap-2.5">
+              <img src="/logo-mark-white.svg" alt="Nordavix" className="h-7 w-7" />
+              <span className="font-bold text-[17px]" style={{ color: D_TXT }}>nordavix<span style={{ color: LIME }}>.</span></span>
+            </span>
             <button onClick={() => setOpen(false)} className="h-9 w-9 grid place-items-center rounded-lg"
               style={{ background: PINE_2, color: D_TXT2 }} aria-label="Close menu"><X size={17} /></button>
           </div>
@@ -844,7 +848,7 @@ function FounderLetter() {
               and the judgment kept exactly where it belongs: with you.
             </p>
             <div className="mt-8 flex items-center gap-3">
-              <span className="h-9 w-9 rounded-full grid place-items-center text-[13px] font-extrabold" style={{ background: PINE, color: LIME, fontFamily: MONO }}>n</span>
+              <img src="/logo-mark-dark.svg" alt="Nordavix" className="h-9 w-9" loading="lazy" />
               <div>
                 <div className="text-[13px] font-bold" style={{ color: L_TXT }}>The founding CPA</div>
                 <div className="text-[11px]" style={{ color: L_TXT3 }}>Nordavix</div>

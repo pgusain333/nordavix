@@ -8,7 +8,7 @@
  * change.
  *
  * Header behavior matches the other marketing pages: transparent at the
- * top of the page, solid burgundy (#8B1538) with white logo + nav once
+ * top of the page, solid burgundy (#0C2620) with white logo + nav once
  * the user scrolls. Theme toggle was removed from the top bar — per the
  * site-wide rule that theme toggling lives in the footer only.
  */
@@ -31,7 +31,7 @@ export function BlogLayout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <header className="sticky top-0 z-30 border-b transition-colors duration-300"
         style={{
-          background: scrolled ? "#8B1538" : "color-mix(in oklab, var(--surface) 88%, transparent)",
+          background: scrolled ? "#0C2620" : "color-mix(in oklab, var(--surface) 88%, transparent)",
           borderColor: scrolled ? "rgba(255,255,255,0.10)" : "var(--border)",
         }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">

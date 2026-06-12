@@ -183,7 +183,7 @@ export function BooksClosedCelebration({
               >
                 {/* Top accent strip — brand green, hints at the
                     Nordavix wordmark color without overpowering. */}
-                <div style={{ height: 4, background: "linear-gradient(90deg, #3E8F66 0%, #5BB089 50%, #3E8F66 100%)" }} />
+                <div style={{ height: 4, background: "linear-gradient(90deg, #2E7A55 0%, #4FA07A 50%, #2E7A55 100%)" }} />
 
                 {/* Card body */}
                 <div className="px-8 sm:px-10 pt-9 sm:pt-10 pb-8">
@@ -194,7 +194,7 @@ export function BooksClosedCelebration({
                       {companyName || "Workspace"}
                     </p>
                     <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider"
-                      style={{ background: "rgba(62, 143, 102, 0.10)", color: "#3E8F66" }}>
+                      style={{ background: "rgba(46, 122, 85, 0.10)", color: "#2E7A55" }}>
                       <CheckCircle2 size={11} strokeWidth={2.4} />
                       Closed
                     </span>
@@ -207,7 +207,7 @@ export function BooksClosedCelebration({
                     style={{ color: "#0E1112" }}
                   >
                     {monthLabel.toUpperCase()}
-                    <span style={{ color: "#3E8F66" }}> books</span>
+                    <span style={{ color: "#2E7A55" }}> books</span>
                     <br />
                     are closed.
                   </h2>
@@ -244,7 +244,7 @@ export function BooksClosedCelebration({
                     style={{ borderTop: "1px solid #EDECEA" }}>
                     <span className="text-[15px] font-bold tracking-tight"
                       style={{ color: "#0E1112" }}>
-                      nordavix<span style={{ color: "#3E8F66" }}>.</span>
+                      nordavix<span style={{ color: "#2E7A55" }}>.</span>
                     </span>
                     <span className="text-[10.5px]" style={{ color: "#8C8B88" }}>
                       Closed in Nordavix

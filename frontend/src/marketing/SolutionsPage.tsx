@@ -78,10 +78,10 @@ function Navbar() {
           : "backdrop-blur-sm py-5"
       }`}
         // Solid burgundy header when scrolled — matches the HomePage
-        // pattern + the FounderQuote brand color (#8B1538). Switches
+        // pattern + the FounderQuote brand color (#0C2620). Switches
         // logo/text to white for contrast.
         style={{
-          background: scrolled ? "#8B1538" : "transparent",
+          background: scrolled ? "#0C2620" : "transparent",
           borderColor: scrolled ? "rgba(255,255,255,0.10)" : "transparent",
         }}
       >

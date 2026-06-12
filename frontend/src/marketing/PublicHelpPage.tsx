@@ -45,7 +45,7 @@ export function PublicHelpPage() {
       {/* ── Marketing header ── */}
       <header className="sticky top-0 z-30 border-b transition-colors duration-300"
         style={{
-          background: scrolled ? "#8B1538" : "color-mix(in oklab, var(--surface) 88%, transparent)",
+          background: scrolled ? "#0C2620" : "color-mix(in oklab, var(--surface) 88%, transparent)",
           borderColor: scrolled ? "rgba(255,255,255,0.10)" : "var(--border)",
         }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">

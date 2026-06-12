@@ -2,87 +2,92 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── CSS design tokens — light mode ───────────────────────────────────────── */
+/* ── CSS design tokens — light mode ("cream & pine") ──────────────────────────
+   Brand system matched 1:1 to the marketing site's "finance editorial" look:
+   warm cream canvas, paper surfaces, deep pine ink text, ONE brand green for
+   actions, and lime reserved for AI moments (the --accent family). Tokens only
+   — every component reads these vars, so this restyles the whole app with zero
+   logic changes. */
 :root {
-  --bg:           #F7F5F0;
-  --surface:      #FFFFFF;
-  --surface-2:    #F7F5F0;
-  --border:       #EDECEA;
-  --border-strong:#D4D2CE;
-  --text:         #0E1112;
-  --text-2:       #4A4946;
-  --text-muted:   #8C8B88;
-  --green:        #3E8F66;
-  --green-light:  #5BB089;
-  --green-subtle: #EEF7F2;
+  --bg:           #F4F1E9;   /* warm cream — marketing CREAM */
+  --surface:      #FCFBF7;   /* paper cards — marketing PAPER */
+  --surface-2:    #F0EDE3;   /* inset panels / table headers */
+  --border:       #E6E2D5;
+  --border-strong:#CFC9B8;
+  --text:         #11271F;   /* pine ink */
+  --text-2:       #46584F;
+  --text-muted:   #7C8A82;
+  --green:        #2E7A55;   /* primary action green (marketing GREEN) */
+  --green-light:  #4FA07A;
+  --green-subtle: #E7F0E9;
   /* ── Semantic palette — deliberately low-saturation so long close sessions
      don't fatigue the eyes. Each meaning has one muted text color, one subtle
      tint background, and a soft border. Used for status badges, pills, alerts,
      charts — color carries meaning, never decoration. */
-  --positive:        #3E8F66;  /* success / approved / favorable (= brand green) */
-  --positive-subtle: #EEF7F2;
-  --positive-border: #CFE6DA;
-  --danger:          #9B3D37;  /* error / overdue / unfavorable — muted brick */
-  --danger-subtle:   #F4E9E7;
-  --danger-border:   #E6CFCB;
-  --warn:            #8A6326;  /* warning / in-progress / needs review — muted ochre */
-  --warn-subtle:     #F4EDDF;
-  --warn-border:     #E8DBC2;
+  --positive:        #2E7A55;  /* success / approved / favorable (= brand green) */
+  --positive-subtle: #E7F0E9;
+  --positive-border: #C9DDD0;
+  --danger:          #A8544A;  /* error / overdue / unfavorable — muted brick */
+  --danger-subtle:   #F4E8E4;
+  --danger-border:   #E5CEC7;
+  --warn:            #96702F;  /* warning / in-progress / needs review — muted ochre */
+  --warn-subtle:     #F4ECDC;
+  --warn-border:     #E6D8BB;
   --info:            #3C5A76;  /* informational / neutral status — muted slate-blue */
   --info-subtle:     #E9EEF3;
   --info-border:     #D3DEE8;
-  --accent:          #54588A;  /* AI moments only — a single restrained indigo */
-  --accent-subtle:   #ECEDF5;
-  --accent-border:   #D8D9EA;
-  /* Sidebar — deep charcoal, white text, burgundy active highlight, green dot.
-     Identical in light + dark so the rail is a consistent brand anchor. */
-  --nav-bg:       #16181B;
-  --nav-border:   rgba(255,255,255,0.08);
-  --nav-active:   #8B1538;
-  --nav-hover:    rgba(255,255,255,0.06);
-  --nav-text:     rgba(255,255,255,0.78);
+  --accent:          #5F7019;  /* AI moments — deep olive (the lime family, readable on cream) */
+  --accent-subtle:   #EFF4D4;
+  --accent-border:   #DCE6A6;
+  /* Sidebar — deep pine rail, cream text, brand-green active pill. Identical
+     in light + dark so the rail is a consistent brand anchor (matches the
+     marketing site's pine bands). */
+  --nav-bg:       #0C2620;
+  --nav-border:   rgba(244,241,233,0.10);
+  --nav-active:   #2E7A55;
+  --nav-hover:    rgba(244,241,233,0.07);
+  --nav-text:     rgba(244,241,233,0.74);
   --nav-text-act: #FFFFFF;
-  --card-shadow:  0 1px 3px rgba(14,17,18,0.08), 0 1px 2px rgba(14,17,18,0.04);
-  --card-shadow-hover: 0 4px 16px rgba(14,17,18,0.10), 0 2px 4px rgba(14,17,18,0.06);
+  --card-shadow:  0 1px 3px rgba(12,38,32,0.08), 0 1px 2px rgba(12,38,32,0.04);
+  --card-shadow-hover: 0 4px 16px rgba(12,38,32,0.10), 0 2px 4px rgba(12,38,32,0.06);
   color-scheme: light;
 }
 
-/* ── CSS design tokens — dark mode ────────────────────────────────────────── */
+/* ── CSS design tokens — dark mode ("pine night") ─────────────────────────── */
 .dark {
-  --bg:           #0E1112;
-  --surface:      #161B1D;
-  --surface-2:    #1C2224;
-  --border:       #252B2D;
-  --border-strong:#323A3D;
-  --text:         #F0EDE8;
-  --text-2:       #A8A5A0;
-  --text-muted:   #6B6966;
-  --green:        #5BB089;
-  --green-light:  #7BC9A1;
-  --green-subtle: #1A2E24;
-  /* Semantic palette — dark mode (lighter, still low-chroma on the dark bg). */
-  --positive:        #5BB089;
-  --positive-subtle: #1A2E24;
-  --positive-border: #285841;
-  --danger:          #CF8A82;
-  --danger-subtle:   #2C201E;
-  --danger-border:   #43302C;
-  --warn:            #CBA76A;
-  --warn-subtle:     #2A2417;
-  --warn-border:     #3D3522;
-  --info:            #8FA9BF;
-  --info-subtle:     #1A2530;
-  --info-border:     #29333E;
-  --accent:          #9092C2;
-  --accent-subtle:   #1F2030;
-  --accent-border:   #2E2F42;
-  /* Sidebar — deep charcoal, white text, burgundy active highlight, green dot
-     (same as light mode). */
-  --nav-bg:       #16181B;
-  --nav-border:   rgba(255,255,255,0.08);
-  --nav-active:   #8B1538;
-  --nav-hover:    rgba(255,255,255,0.06);
-  --nav-text:     rgba(255,255,255,0.78);
+  --bg:           #0A1F1A;   /* deep pine — one shade under the rail */
+  --surface:      #102B24;
+  --surface-2:    #15332B;
+  --border:       #1D4036;
+  --border-strong:#2B5547;
+  --text:         #F2EFE7;   /* warm cream-white */
+  --text-2:       #B6C2BA;
+  --text-muted:   #7E8F86;
+  --green:        #7FB89B;   /* sage — marketing's quiet support on dark */
+  --green-light:  #9CCDB3;
+  --green-subtle: #16352B;
+  /* Semantic palette — dark mode (lighter, still low-chroma on the pine bg). */
+  --positive:        #7FB89B;
+  --positive-subtle: #16352B;
+  --positive-border: #285844;
+  --danger:          #D6948A;
+  --danger-subtle:   #33211D;
+  --danger-border:   #4A302A;
+  --warn:            #D6B26C;
+  --warn-subtle:     #32291A;
+  --warn-border:     #4A3C23;
+  --info:            #92AFC5;
+  --info-subtle:     #16242E;
+  --info-border:     #24394A;
+  --accent:          #D4F361;  /* AI moments — the brand lime, at home on pine */
+  --accent-subtle:   #243114;
+  --accent-border:   #3D4F1E;
+  /* Sidebar — same pine rail as light mode (consistent brand anchor). */
+  --nav-bg:       #0C2620;
+  --nav-border:   rgba(244,241,233,0.10);
+  --nav-active:   #2E7A55;
+  --nav-hover:    rgba(244,241,233,0.07);
+  --nav-text:     rgba(244,241,233,0.74);
   --nav-text-act: #FFFFFF;
   --card-shadow:  0 1px 3px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20);
   --card-shadow-hover: 0 4px 16px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25);
@@ -127,7 +132,7 @@
   select:focus {
     outline: none;
     border-color: var(--green) !important;
-    box-shadow: 0 0 0 3px rgba(94, 176, 137, 0.15);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--green) 18%, transparent);
   }
   select:hover:not(:disabled) {
     border-color: var(--border-strong) !important;
@@ -145,7 +150,69 @@
   input[type="number"]:focus,
   textarea:focus {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(94, 176, 137, 0.15);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--green) 18%, transparent);
+  }
+
+  /* Brand text selection — lime on pine, the marketing accent moment. */
+  ::selection {
+    background: #D4F361;
+    color: #0E2A14;
+  }
+
+  /* Themed scrollbars so long tables/drawers feel native to the brand
+     instead of OS-gray. Thin, quiet, slightly darker on hover. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 8px;
+    border: 2.5px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+    background-clip: padding-box;
+  }
+
+  /* Kill the mobile tap flash — transitions carry the feedback instead. */
+  html { -webkit-tap-highlight-color: transparent; }
+
+  /* Brand watermark — a faint Nordavix mark pinned to the bottom-right of
+     every screen (marketing + app). Pure chrome: pointer-events none, ~4%
+     opacity, sits above backgrounds but never intercepts a click. Swaps to
+     the white mark in dark mode. Hidden on small screens and in print. */
+  body::after {
+    content: "";
+    position: fixed;
+    right: -110px;
+    bottom: -110px;
+    width: 460px;
+    height: 460px;
+    background: url("/logo-mark-dark.svg") no-repeat center / contain;
+    opacity: 0.04;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .dark body::after {
+    background-image: url("/logo-mark-white.svg");
+    opacity: 0.05;
+  }
+  @media (max-width: 768px) { body::after { display: none; } }
+  @media print { body::after { display: none; } }
+
+  /* Accessibility: anyone asking for reduced motion gets an app that snaps
+     instead of slides — every animation and transition collapses to ~0. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
@@ -185,7 +252,7 @@
     border: 1px solid rgba(255, 255, 255, 0.06);
   }
   .text-gradient {
-    background: linear-gradient(135deg, #5BB089 0%, #3E8F66 50%, #2E7A55 100%);
+    background: linear-gradient(135deg, #7FB89B 0%, #2E7A55 55%, #11271F 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
