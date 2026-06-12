@@ -109,6 +109,11 @@ async def create_trial_balance(
         status="pending",
     )
     db.add(tb)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="flux.analysis_created", entity_type="trial_balance", entity_id=tb.id,
+        metadata={"summary": f"Created flux analysis '{body.name}' ({body.period_current} vs {body.period_prior})"},
+    )
     await db.commit()
     await db.refresh(tb)
     return tb
@@ -237,6 +242,11 @@ async def create_trial_balance_from_qbo(
     # from the variance table to fire commentary. No auto-spend at creation.
     # Status goes straight to ready_for_review so the user can browse rows.
     tb.status = "ready_for_review"
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="flux.analysis_created", entity_type="trial_balance", entity_id=tb.id,
+        metadata={"summary": f"Created flux analysis '{tb.name}' from QuickBooks ({tb.period_current} vs {tb.period_prior})"},
+    )
     await db.commit()
     await db.refresh(tb)
     return tb
@@ -262,6 +272,7 @@ async def get_trial_balance(
 async def upload_trial_balance(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ) -> UploadPreview:
@@ -299,6 +310,11 @@ async def upload_trial_balance(
         "_filename": safe_name,
     }
     tb.status = "pending"
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="flux.tb_file_uploaded", entity_type="trial_balance", entity_id=tb.id,
+        metadata={"summary": f"Uploaded trial balance file '{safe_name}' to '{tb.name}'"},
+    )
     await db.commit()
 
     return UploadPreview(
@@ -313,6 +329,7 @@ async def parse_trial_balance(
     tb_id: uuid.UUID,
     body: ColumnMappingBody,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> ParseResult:
@@ -389,6 +406,11 @@ async def parse_trial_balance(
     # AI commentary is on-demand only — user clicks "Find reasons" or per-row
     # "Generate AI commentary" from the variance table. No auto-spend.
     tb.status = "ready_for_review"
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="flux.tb_parsed", entity_type="trial_balance", entity_id=tb.id,
+        metadata={"summary": f"Parsed trial balance for '{tb.name}' — {accts} accounts, {vars_} variances ({material} material)"},
+    )
     await db.commit()
 
     return ParseResult(
@@ -405,6 +427,7 @@ async def parse_trial_balance(
 async def run_flux(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> FluxRunResponse:
@@ -442,6 +465,11 @@ async def run_flux(
 
     if queued > 0:
         tb.status = "generating"
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user.id,
+            action="flux.analysis_run", entity_type="trial_balance", entity_id=tb.id,
+            metadata={"summary": f"Queued AI commentary for {queued} material variance{'s' if queued != 1 else ''} on '{tb.name}'"},
+        )
         await db.commit()
 
     task_id = f"batch-{tb_id}"
@@ -769,6 +797,12 @@ async def run_deep_agentic_on_variance(
             db=db, tenant_id=tenant_id, variance_id=var_id,
             force_refresh_txns=True,
         )
+        _var, _acct = row
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user.id,
+            action="flux.variance_ai_run", entity_type="variance", entity_id=var_id,
+            metadata={"summary": f"Ran deep AI analysis on variance for {_acct.account_number} {_acct.account_name}".strip()},
+        )
         await db.commit()
     except Exception as e:
         logger.exception("Per-row deep agentic failed for variance %s", var_id)
@@ -983,6 +1017,7 @@ async def regenerate_variance(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -1006,6 +1041,11 @@ async def regenerate_variance(
 
     # Reset status back to pending so the worker picks it up
     var_row.status = "pending"
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="flux.variance_regenerated", entity_type="variance", entity_id=var_id,
+        metadata={"summary": "Requested a fresh AI explanation for a variance"},
+    )
     await db.commit()
 
     background_tasks.add_task(generate_narrative_async, str(var_id), str(tenant_id))
@@ -1057,6 +1097,11 @@ async def update_narrative(
         db.add(narr)
 
     var.status = "edited"
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="flux.narrative_edited", entity_type="variance", entity_id=var_id,
+        metadata={"summary": "Manually edited the AI narrative for a variance"},
+    )
     await db.commit()
     return {"id": str(var_id), "status": "edited", "narrative": body.content}
 
@@ -1328,6 +1373,7 @@ async def sync_one_account_from_qbo(
 async def reset_trial_balance(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -1350,6 +1396,11 @@ async def reset_trial_balance(
     tb.column_mapping = {}
     tb.fs_line_mapping = {}
     tb.error_detail = None
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="flux.analysis_reset", entity_type="trial_balance", entity_id=tb.id,
+        metadata={"summary": f"Reset flux analysis '{tb.name}' to its just-created state"},
+    )
     await db.commit()
     return {"id": str(tb_id), "status": "pending", "message": "Analysis reset — ready for re-upload."}
 
@@ -1371,6 +1422,12 @@ async def delete_trial_balance(
     if tb is None:
         raise HTTPException(status_code=404, detail="Trial balance not found")
 
+    tb_name, tb_period = tb.name, tb.period_current
     await _wipe_tb_children(tb_id, db)
     await db.delete(tb)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=_user.id,
+        action="flux.analysis_deleted", entity_type="trial_balance", entity_id=tb_id,
+        metadata={"summary": f"Deleted flux analysis '{tb_name}' ({tb_period})"},
+    )
     await db.commit()

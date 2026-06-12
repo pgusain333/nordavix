@@ -44,14 +44,6 @@ import {
   CompanyForm, readMeta, writeMeta, type CompanyMeta,
 } from "@/modules/onboarding/components/CompanyForm"
 
-interface AuditEntry {
-  id:         string
-  user_id:    string | null
-  action:     string
-  created_at: string
-  summary:    string
-}
-
 // ── Section registry ─────────────────────────────────────────────────────────
 
 type SectionKey =
@@ -1073,32 +1065,28 @@ function DataExportSection() {
     }
   }
 
+  /** Full audit trail as a server-built Excel workbook — every recorded
+   * action with date, time, and user, in the user's local timezone
+   * (we pass the browser's offset so the server can convert). */
   async function downloadAuditLog() {
     setError(null)
     setDownloading("audit")
     try {
-      const { data } = await apiClient.get<{ entries: AuditEntry[] }>(
-        "/api/audit", { params: { limit: 1000 } },
+      const resp = await apiClient.get<Blob>(
+        "/api/audit/export",
+        { params: { tz_offset: new Date().getTimezoneOffset() }, responseType: "blob" },
       )
-      const rows = data.entries
-      const fields: (keyof AuditEntry)[] = ["created_at","action","summary","user_id","id"]
-      const header = fields.join(",")
-      const escape = (v: unknown) => {
-        if (v == null) return ""
-        const s = String(v).replace(/"/g, '""')
-        return /[",\n]/.test(s) ? `"${s}"` : s
-      }
-      const body = rows.map((r) => fields.map((f) => escape(r[f])).join(",")).join("\n")
-      const csv = header + "\n" + body
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" })
-      const url = URL.createObjectURL(blob)
+      const disp = (resp.headers["content-disposition"] ?? resp.headers["Content-Disposition"] ?? "") as string
+      const match = disp.match(/filename="?([^"]+)"?/i)
+      const fname = match?.[1] ?? `nordavix_audit_trail_${new Date().toISOString().slice(0, 10)}.xlsx`
+      const url = URL.createObjectURL(resp.data)
       const a = document.createElement("a")
       a.href = url
-      a.download = `nordavix-audit-${new Date().toISOString().slice(0,10)}.csv`
+      a.download = fname
       document.body.appendChild(a); a.click(); document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } catch {
-      setError("Could not export audit log. Try again?")
+      setError("Could not export the audit trail. Try again?")
     } finally {
       setDownloading(null)
     }
@@ -1152,9 +1140,9 @@ function DataExportSection() {
 
         <ExportRow
           icon={<FileDown size={14} strokeWidth={1.8} />}
-          title="Audit log (CSV)"
-          description="Just the workspace events — logins, recon approvals, period closes. Lighter file than the full Period Export above. Up to 1,000 most-recent rows."
-          buttonLabel={downloading === "audit" ? "Generating…" : "Download CSV"}
+          title="Audit trail (Excel)"
+          description="The complete, structured history of every action in this workspace — who did what, with date and time stamps in your local timezone. Organized by module with filters built in. Audit- and SOC-ready."
+          buttonLabel={downloading === "audit" ? "Generating…" : "Download .xlsx"}
           loading={downloading === "audit"}
           onClick={downloadAuditLog}
           disabled={!organization || downloading !== null}

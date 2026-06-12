@@ -41,6 +41,7 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ai.guard import enforce_ai_limits
+from core.audit.log import write_audit_event
 from core.auth.clerk_users import _format_display_name, get_clerk_user
 from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, require_role
 from core.db.base import current_request_readonly
@@ -118,6 +119,11 @@ async def create_reconciliation(
         created_by=user.id,
     )
     db.add(recon)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.created", entity_type="reconciliation", entity_id=recon.id,
+        metadata={"summary": f"Created reconciliation '{body.name}' ({body.recon_type}, {body.period_end})"},
+    )
     await db.commit()
     await db.refresh(recon)
 
@@ -288,6 +294,12 @@ async def run_agentic_endpoint(
     )
     try:
         result = await run_agentic_prep(db, tenant_id, user, pe)
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user.id,
+            action="recon.agentic_run", entity_type="period", entity_id=None,
+            metadata={"summary": f"Ran the agentic preparer on all open accounts for {pe}"},
+        )
+        await db.commit()
         # asdict converts the nested dataclasses → plain dict for JSON
         return asdict(result)
     except HTTPException:
@@ -342,6 +354,12 @@ async def run_agentic_on_one_account_endpoint(
         result = await run_agentic_prep_for_account(
             db, tenant_id, user, pe, qbo_account_id,
         )
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user.id,
+            action="recon.agentic_run", entity_type="account", entity_id=None,
+            metadata={"summary": f"Ran the agentic preparer on one account (QBO id {qbo_account_id}) for {pe}"},
+        )
+        await db.commit()
         return asdict(result)
     except HTTPException:
         raise
@@ -431,6 +449,12 @@ async def sync_overview_endpoint(
         0 if cp is not None
         else await _reflag_stale_approvals(db, tenant_id, pe, overview, user, background_tasks)
     )
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.period_synced", entity_type="period", entity_id=None,
+        metadata={"summary": f"Synced {pe} from QuickBooks ({len(overview.get('accounts', []))} accounts)"},
+    )
+    await db.commit()
     return overview
 
 
@@ -3076,6 +3100,7 @@ async def list_overrides(
 @router.post("/clear-synced-data", status_code=status.HTTP_200_OK)
 async def clear_synced_data(
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -3090,6 +3115,11 @@ async def clear_synced_data(
     await db.execute(delete(ReconTransaction))
     await db.execute(delete(ReconciliationItem))
     await db.execute(delete(Reconciliation))
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.synced_data_cleared", entity_type="reconciliation", entity_id=None,
+        metadata={"summary": "Cleared all cached reconciliation data for the workspace"},
+    )
     await db.commit()
     return {"status": "ok", "message": "All cached reconciliation data cleared."}
 
@@ -3261,6 +3291,11 @@ async def approve_reconciliation(
     recon.approved_by = user.id
     recon.approved_at = datetime.now(UTC)
     recon.status = "approved"
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.approved", entity_type="reconciliation", entity_id=recon.id,
+        metadata={"summary": f"Approved reconciliation '{recon.name}'"},
+    )
     await db.commit()
     return recon
 
@@ -3270,6 +3305,7 @@ async def assign_reconciliation(
     recon_id: uuid.UUID,
     body: AssignBody,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> Reconciliation:
     recon = (await db.execute(
@@ -3278,6 +3314,11 @@ async def assign_reconciliation(
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
     recon.assigned_to = body.user_id
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.assigned", entity_type="reconciliation", entity_id=recon.id,
+        metadata={"summary": f"Assigned reconciliation '{recon.name}'"},
+    )
     await db.commit()
     return recon
 
@@ -3306,6 +3347,11 @@ async def add_note(
         body=body.body,
     )
     db.add(note)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.note_added", entity_type="reconciliation", entity_id=recon_id,
+        metadata={"summary": f"Added a note on reconciliation '{recon.name}'"},
+    )
     await db.commit()
     await db.refresh(note)
     return note
@@ -3334,6 +3380,11 @@ async def set_item_status(
     if body.status == "approved":
         item.approved_by = user.id
         item.approved_at = datetime.now(UTC)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.item_status_changed", entity_type="reconciliation", entity_id=recon_id,
+        metadata={"summary": f"Set a reconciliation item to '{body.status}'"},
+    )
     await db.commit()
     return item
 
@@ -3403,6 +3454,7 @@ async def explain_recon_endpoint(
 async def delete_reconciliation(
     recon_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> None:
     recon = (await db.execute(
@@ -3410,7 +3462,13 @@ async def delete_reconciliation(
     )).scalar_one_or_none()
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    recon_name = recon.name
     await db.delete(recon)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.deleted", entity_type="reconciliation", entity_id=recon_id,
+        metadata={"summary": f"Deleted reconciliation '{recon_name}'"},
+    )
     await db.commit()
 
 
@@ -3650,6 +3708,11 @@ async def upload_bank_statement(
     header.tie_out_ok = tie_ok
     header.tie_out_diff = tie_diff
     header.uploaded_by = user_uuid
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.bank_statement_uploaded", entity_type="bank_statement", entity_id=header.id,
+        metadata={"summary": f"Uploaded bank statement '{name}' for account {qbo_account_id} ({pe})"},
+    )
     await db.commit()
 
     # Run match (fresh GL pull → cached on the header) + return worksheet.
@@ -3680,6 +3743,7 @@ async def get_bank_statement_worksheet(
 async def clear_bank_statement(
     qbo_account_id: str,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -3700,6 +3764,11 @@ async def clear_bank_statement(
             BankStatementTxn.qbo_account_id == qbo_account_id,
             BankStatementTxn.period_end == pe,
         )
+    )
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="recon.bank_statement_deleted", entity_type="bank_statement", entity_id=None,
+        metadata={"summary": f"Deleted the uploaded bank statement for account {qbo_account_id} ({pe})"},
     )
     await db.commit()
     return {"deleted": result.rowcount or 0}

@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ai.guard import enforce_ai_limits
+from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
 from models.gl_balance_snapshot import GlBalanceSnapshot
@@ -372,6 +373,16 @@ async def auto_detect(
                 m.counterparty = top[0]
                 classified += 1
 
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="intercompany.auto_detect_run", entity_type="ic_account", entity_id=None,
+        metadata={
+            "summary": f"Auto-detected {added} intercompany accounts",
+            "added": added,
+            "classified": classified,
+            "scanned": scanned,
+        },
+    )
     await db.commit()
     return {
         "added":          added,
@@ -415,6 +426,18 @@ async def upsert_mark(
         existing.notes = body.notes
         # Once a user touches the row, it's no longer purely auto-detected.
         existing.auto_detected = False
+
+    await db.flush()  # populate existing.id (new rows) for the audit event
+    label = await _account_label_from_snapshot(db, tenant_id, body.qbo_account_id)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="intercompany.account_marked", entity_type="ic_account", entity_id=existing.id,
+        metadata={
+            "summary": f"Marked account {label} as intercompany ({body.kind})",
+            "qbo_account_id": body.qbo_account_id,
+            "kind": body.kind,
+        },
+    )
     await db.commit()
     await db.refresh(existing)
     return {"id": str(existing.id), "ok": True}
@@ -424,6 +447,7 @@ async def upsert_mark(
 async def delete_mark(
     mark_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     row = (await db.execute(
@@ -431,7 +455,18 @@ async def delete_mark(
     )).scalar_one_or_none()
     if row is None:
         raise HTTPException(404, "Mark not found.")
+    # Capture identifying info BEFORE the delete for the audit trail.
+    qbo_account_id = row.qbo_account_id
+    label = await _account_label_from_snapshot(db, tenant_id, qbo_account_id)
     await db.delete(row)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="intercompany.account_unmarked", entity_type="ic_account", entity_id=mark_id,
+        metadata={
+            "summary": f"Unmarked account {label} as intercompany",
+            "qbo_account_id": qbo_account_id,
+        },
+    )
     await db.commit()
     return {"ok": True}
 
@@ -617,6 +652,16 @@ Empty list is acceptable.
         existing_ids.add(qid)
         added += 1
 
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="intercompany.ai_detect_run", entity_type="ic_account", entity_id=None,
+        metadata={
+            "summary": f"AI detection found {added} intercompany accounts",
+            "added": added,
+            "ai_candidates": len(matches),
+            "skipped_lowconf": skipped_lowconf,
+        },
+    )
     await db.commit()
     return {
         "added":           added,
@@ -630,6 +675,7 @@ Empty list is acceptable.
 @router.post("/auto-classify")
 async def auto_classify(
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     lookback_months: int = 6,
 ) -> dict:
@@ -686,6 +732,16 @@ async def auto_classify(
         if votes / len(rows) >= 0.5:
             m.counterparty = winner
             classified += 1
+
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="intercompany.auto_classified", entity_type="ic_account", entity_id=None,
+        metadata={
+            "summary": f"Auto-classified counterparty for {classified} intercompany accounts",
+            "classified": classified,
+            "considered": len(marks),
+        },
+    )
     await db.commit()
     return {"classified": classified, "considered": len(marks)}
 
@@ -1141,6 +1197,17 @@ async def create_pair(
 
     db.add(my_side)
     db.add(cp_side)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="intercompany.pair_created", entity_type="ic_pair", entity_id=pair_group,
+        metadata={
+            "summary": (
+                f"Linked {my_company_name} · {my_account_label} ↔ "
+                f"{cp_company_name} · {cp_account_label} as intercompany pair"
+            ),
+            "counterparty_tenant_id": str(cp_tenant_uuid),
+        },
+    )
     await db.commit()
     await db.refresh(my_side)
 
@@ -1179,8 +1246,27 @@ async def delete_pair(
     if not any(h.tenant_id in accessible for h in halves):
         raise HTTPException(403, "You don't have access to this pair.")
 
+    # Capture display names BEFORE the delete for the audit trail. The mirror
+    # half's cached counterparty_label names THIS side ("My Co · 1010 Due from
+    # Sub"), so the summary can name both companies/accounts.
+    my_half = next((h for h in halves if h.tenant_id == tenant_id), halves[0])
+    other_half = next((h for h in halves if h is not my_half), None)
+    my_label = (
+        other_half.counterparty_label if other_half is not None
+        else await _account_label_from_snapshot(db, my_half.tenant_id, my_half.my_qbo_account_id)
+    )
+    cp_label = my_half.counterparty_label
+
     for h in halves:
         await db.delete(h)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="intercompany.pair_deleted", entity_type="ic_pair", entity_id=pair_group_id,
+        metadata={
+            "summary": f"Unlinked intercompany pair {my_label} ↔ {cp_label}",
+            "deleted_halves": len(halves),
+        },
+    )
     await db.commit()
     return {"ok": True, "deleted": len(halves)}
 

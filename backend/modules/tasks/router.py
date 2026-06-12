@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
 from models.account_review_status import AccountReviewStatus
@@ -800,6 +801,25 @@ async def upsert_action(
     elif body.dismissed is False:
         existing.dismissed_at = None
 
+    changed: list[str] = []
+    if apply_admin_fields:
+        if body.assigned_preparer_id is not None:
+            changed.append("preparer assigned")
+        if body.assigned_reviewer_id is not None:
+            changed.append("reviewer assigned")
+        if body.due_date is not None:
+            changed.append("due date set")
+    if body.notes is not None:
+        changed.append("notes updated")
+    if body.dismissed is True:
+        changed.append("dismissed")
+    elif body.dismissed is False:
+        changed.append("restored")
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="task.updated", entity_type="task", entity_id=existing.id,
+        metadata={"summary": f"Task updated ({body.source_type}): {', '.join(changed) or 'no changes'}"},
+    )
     await db.commit()
 
     # Newly assigned preparer / reviewer → tell them work is waiting.
@@ -927,6 +947,12 @@ async def bulk_action(
             row.completed_at = None
         applied += 1
 
+    if applied:
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user.id,
+            action="task.bulk_updated", entity_type="task", entity_id=None,
+            metadata={"summary": f"Bulk task update applied to {applied} task{'s' if applied != 1 else ''}"},
+        )
     await db.commit()
     return {"applied": applied}
 
@@ -963,6 +989,11 @@ async def create_manual_task(
         due_date=due_override,
     )
     db.add(row)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="task.created", entity_type="task", entity_id=row.id,
+        metadata={"summary": f"Created manual task '{body.subject}'"},
+    )
     await db.commit()
     await db.refresh(row)
 
@@ -1057,6 +1088,11 @@ async def update_manual_task(
         row.assigned_reviewer_id = _parse_uuid_if_admin(body.assigned_reviewer_id, is_admin, "assigned_reviewer_id")
     if body.due_date is not None:
         row.due_date = _parse_date_if_admin(body.due_date, is_admin, "due_date")
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="task.updated", entity_type="task", entity_id=row.id,
+        metadata={"summary": f"Updated manual task '{row.subject or 'Untitled'}'"},
+    )
     await db.commit()
     await db.refresh(row)
     return _serialize_manual_task(row)
@@ -1066,6 +1102,7 @@ async def update_manual_task(
 async def complete_task(
     action_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     row = (await db.execute(
@@ -1074,5 +1111,10 @@ async def complete_task(
     if row is None:
         raise HTTPException(404, "Task not found.")
     row.completed_at = datetime.now(UTC)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="task.completed", entity_type="task", entity_id=row.id,
+        metadata={"summary": f"Marked task '{row.subject or row.source_type}' complete"},
+    )
     await db.commit()
     return {"id": str(row.id), "completed_at": row.completed_at.isoformat()}

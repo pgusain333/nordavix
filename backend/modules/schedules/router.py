@@ -33,6 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ai.guard import enforce_ai_limits
+from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
 from models.closed_period import ClosedPeriod
@@ -541,6 +542,11 @@ async def create_item(
     # …and un-approves any already-approved recon on those accounts: it was
     # signed off on numbers that just changed.
     await _reflag_approved_recons(db, tenant_id, accts, user_id=user.id, reason="schedule item added")
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.item_created", entity_type="schedule_item", entity_id=row.id,
+        metadata={"summary": f"Created {schedule_type} schedule item '{row.description}'"},
+    )
     await db.commit()
     await db.refresh(row)
     return _serialize(schedule_type, row)
@@ -571,6 +577,11 @@ async def update_item(
     # Editing a line moves the subledger → un-approve any approved recon on the
     # old or new account so it's re-reviewed before close.
     await _reflag_approved_recons(db, tenant_id, affected, user_id=user.id, reason="schedule item edited")
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.item_updated", entity_type="schedule_item", entity_id=row.id,
+        metadata={"summary": f"Updated {schedule_type} schedule item '{row.description}'"},
+    )
     await db.commit()
     await db.refresh(row)
     return _serialize(schedule_type, row)
@@ -595,7 +606,13 @@ async def delete_item(
     accts = _item_account_ids(schedule_type, row)
     await _invalidate_committed_snapshots(db, tenant_id, schedule_type, accts)
     await _reflag_approved_recons(db, tenant_id, accts, user_id=user.id, reason="schedule item deleted")
+    item_name = row.description  # capture before the row is deleted
     await db.delete(row)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.item_deleted", entity_type="schedule_item", entity_id=item_id,
+        metadata={"summary": f"Deleted {schedule_type} schedule item '{item_name}'"},
+    )
     await db.commit()
     return {"id": str(item_id), "deleted": True}
 
@@ -732,6 +749,14 @@ async def commit_snapshot(
         db, tenant_id, {qbo_account_id}, user_id=user.id, reason="schedule committed",
     )
 
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.snapshot_committed", entity_type="schedule_snapshot", entity_id=existing.id,
+        metadata={"summary": (
+            f"Committed {schedule_type} snapshot for account {qbo_account_id} "
+            f"({pe.isoformat()}), {snap.item_count} item(s)"
+        )},
+    )
     await db.commit()
     await db.refresh(existing)
     return {
@@ -1398,6 +1423,11 @@ async def prepaid_import_qbo(
         # Bulk-import added lines → any committed snapshot for this
         # account is now stale; prompt a re-commit.
         await _invalidate_committed_snapshots(db, tenant_id, "prepaid", {qbo_id})
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user_uuid,
+            action="schedule.prepaids_imported", entity_type="schedule_item", entity_id=None,
+            metadata={"summary": f"Imported {len(created)} prepaid item(s) from QuickBooks into account {qbo_id}"},
+        )
         await db.commit()
         for c in created:
             await db.refresh(c)
@@ -1616,6 +1646,11 @@ async def accrual_import_qbo(
         # Bulk-import added lines → any committed snapshot for this
         # account is now stale; prompt a re-commit.
         await _invalidate_committed_snapshots(db, tenant_id, "accrual", {qbo_id})
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user_uuid,
+            action="schedule.accruals_imported", entity_type="schedule_item", entity_id=None,
+            metadata={"summary": f"Imported {len(created)} accrual item(s) from QuickBooks into account {qbo_id}"},
+        )
         await db.commit()
         for c in created:
             await db.refresh(c)
@@ -1768,6 +1803,11 @@ async def fixed_asset_import_qbo(
         # Bulk-import added lines → any committed snapshot for this
         # account is now stale; prompt a re-commit.
         await _invalidate_committed_snapshots(db, tenant_id, "fixed_asset", {qbo_id})
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user_uuid,
+            action="schedule.fixed_assets_imported", entity_type="schedule_item", entity_id=None,
+            metadata={"summary": f"Imported {len(created)} fixed asset(s) from QuickBooks into account {qbo_id}"},
+        )
         await db.commit()
         for c in created:
             await db.refresh(c)
@@ -1924,6 +1964,11 @@ async def loan_import_qbo(
         # Bulk-import added lines → any committed snapshot for this
         # account is now stale; prompt a re-commit.
         await _invalidate_committed_snapshots(db, tenant_id, "loan", {qbo_id})
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user_uuid,
+            action="schedule.loans_imported", entity_type="schedule_item", entity_id=None,
+            metadata={"summary": f"Imported {len(created)} loan(s) from QuickBooks into account {qbo_id}"},
+        )
         await db.commit()
         for c in created:
             await db.refresh(c)
@@ -1940,6 +1985,7 @@ async def loan_import_qbo(
              dependencies=[Depends(require_role("preparer")), Depends(enforce_ai_limits)])
 async def prepaid_ai_scan(
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     period_end: str = Query(..., description="YYYY-MM-DD"),
     materiality_floor: str = Query(
         "500.00",
@@ -1972,6 +2018,15 @@ async def prepaid_ai_scan(
         period_end=pe,
         materiality_floor=floor,
     )
+
+    # The detector commits the candidate rows itself; this commit only
+    # needs to persist the audit entry.
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.ai_scan_run", entity_type="prepaid_candidate", entity_id=None,
+        metadata={"summary": f"AI prepaid scan found {result['new_candidates']} candidates for {pe.isoformat()}"},
+    )
+    await db.commit()
 
     return {
         "scanned_accounts": result["scanned_accounts"],
@@ -2030,6 +2085,11 @@ async def prepaid_ai_dismiss(
     row.status = "dismissed"
     row.status_changed_at = _datetime.utcnow()
     row.status_changed_by = uuid.UUID(str(user.id)) if user else None
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.candidate_dismissed", entity_type="prepaid_candidate", entity_id=row.id,
+        metadata={"summary": f"Dismissed AI prepaid candidate '{row.gl_vendor or row.gl_memo or row.gl_txn_id}'"},
+    )
     await db.commit()
     return {"id": str(row.id), "status": row.status}
 
@@ -2074,6 +2134,11 @@ async def prepaid_ai_accept(
     row.status_changed_at = _datetime.utcnow()
     row.status_changed_by = uuid.UUID(str(user.id)) if user else None
     row.accepted_item_id = item_uuid
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.candidate_accepted", entity_type="prepaid_candidate", entity_id=row.id,
+        metadata={"summary": f"Accepted AI prepaid candidate '{row.gl_vendor or row.gl_memo or row.gl_txn_id}'"},
+    )
     await db.commit()
     return {"id": str(row.id), "status": row.status, "accepted_item_id": str(item_uuid) if item_uuid else None}
 
@@ -2108,6 +2173,7 @@ def _serialize_missed_accrual(row: MissedAccrualCandidate) -> dict:
              dependencies=[Depends(require_role("preparer")), Depends(enforce_ai_limits)])
 async def accrual_ai_scan_missed(
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     period_end: str = Query(..., description="YYYY-MM-DD — the period_end we're checking for missed accruals."),
     materiality_floor: str = Query("500.00"),
     db: AsyncSession = Depends(get_db),
@@ -2135,6 +2201,14 @@ async def accrual_ai_scan_missed(
         period_end=pe,
         materiality_floor=floor,
     )
+    # The detector commits the candidate rows itself; this commit only
+    # needs to persist the audit entry.
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.ai_scan_run", entity_type="missed_accrual_candidate", entity_id=None,
+        metadata={"summary": f"AI missed-accrual scan found {result['new_candidates']} candidates for {pe.isoformat()}"},
+    )
+    await db.commit()
     return {
         "scanned_accounts": result["scanned_accounts"],
         "scanned_txns":     result["scanned_txns"],
@@ -2197,6 +2271,11 @@ async def accrual_ai_missed_dismiss(
     row.status = "dismissed"
     row.status_changed_at = _datetime.utcnow()
     row.status_changed_by = uuid.UUID(str(user.id)) if user else None
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.candidate_dismissed", entity_type="missed_accrual_candidate", entity_id=row.id,
+        metadata={"summary": f"Dismissed AI missed-accrual candidate '{row.gl_vendor or row.gl_memo or row.gl_txn_id}'"},
+    )
     await db.commit()
     return {"id": str(row.id), "status": row.status}
 
@@ -2235,6 +2314,11 @@ async def accrual_ai_missed_accept(
     row.status_changed_at = _datetime.utcnow()
     row.status_changed_by = uuid.UUID(str(user.id)) if user else None
     row.accepted_item_id = item_uuid
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.candidate_accepted", entity_type="missed_accrual_candidate", entity_id=row.id,
+        metadata={"summary": f"Accepted AI missed-accrual candidate '{row.gl_vendor or row.gl_memo or row.gl_txn_id}'"},
+    )
     await db.commit()
     return {"id": str(row.id), "status": row.status, "accepted_item_id": str(item_uuid) if item_uuid else None}
 
@@ -2306,6 +2390,7 @@ def _serialize_fa_candidate(row: FixedAssetCandidate) -> dict:
              dependencies=[Depends(require_role("preparer")), Depends(enforce_ai_limits)])
 async def fixed_asset_ai_scan(
     tenant_id: CurrentTenantId,
+    user: CurrentUser,
     period_end: str = Query(..., description="YYYY-MM-DD"),
     cap_threshold: str = Query(
         "1000.00",
@@ -2340,6 +2425,14 @@ async def fixed_asset_ai_scan(
         period_end=pe,
         cap_threshold=threshold,
     )
+    # The detector commits the candidate rows itself; this commit only
+    # needs to persist the audit entry.
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.ai_scan_run", entity_type="fixed_asset_candidate", entity_id=None,
+        metadata={"summary": f"AI fixed-asset scan found {result['new_candidates']} candidates for {pe.isoformat()}"},
+    )
+    await db.commit()
     return {
         "scanned_accounts": result["scanned_accounts"],
         "scanned_txns":     result["scanned_txns"],
@@ -2397,6 +2490,11 @@ async def fixed_asset_ai_dismiss(
     row.status = "dismissed"
     row.status_changed_at = _datetime.utcnow()
     row.status_changed_by = uuid.UUID(str(user.id)) if user else None
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.candidate_dismissed", entity_type="fixed_asset_candidate", entity_id=row.id,
+        metadata={"summary": f"Dismissed AI fixed-asset candidate '{row.ai_description or row.gl_vendor or row.gl_memo or row.gl_txn_id}'"},
+    )
     await db.commit()
     return {"id": str(row.id), "status": row.status}
 
@@ -2436,5 +2534,10 @@ async def fixed_asset_ai_accept(
     row.status_changed_at = _datetime.utcnow()
     row.status_changed_by = uuid.UUID(str(user.id)) if user else None
     row.accepted_item_id = item_uuid
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="schedule.candidate_accepted", entity_type="fixed_asset_candidate", entity_id=row.id,
+        metadata={"summary": f"Accepted AI fixed-asset candidate '{row.ai_description or row.gl_vendor or row.gl_memo or row.gl_txn_id}'"},
+    )
     await db.commit()
     return {"id": str(row.id), "status": row.status, "accepted_item_id": str(item_uuid) if item_uuid else None}

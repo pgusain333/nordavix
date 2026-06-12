@@ -29,7 +29,6 @@ import { motion } from "framer-motion"
 import {
   CalendarCheck,
   ArrowRight,
-  ArrowLeft,
   Search,
   Lock,
   CheckCircle2,
@@ -40,6 +39,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/core/ui/components"
 import { SkeletonTable } from "@/core/ui/Skeleton"
+import { PageHeader } from "@/core/ui/PageHeader"
 import { reconsApi, type PeriodStatus } from "@/modules/recons/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 
@@ -118,40 +118,17 @@ export function ReconciliationsMonthIndex() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-        className="px-4 sm:px-8 pt-6 pb-4"
-        style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <button
-              onClick={() => navigate("/app")}
-              className="inline-flex items-center gap-1 text-[11px] font-medium mb-2 transition-opacity hover:opacity-70"
-              style={{ color: "var(--text-muted)" }}
-              title="Back to the workspace dashboard"
-            >
-              <ArrowLeft size={12} strokeWidth={2} />
-              Back to dashboard
-            </button>
-            <h1 style={{
-              fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 700, lineHeight: 1.2,
-              letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
-            }}>
-              Reconciliations
-            </h1>
-            <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              Pick a month to open its live GL-vs-subledger reconciliation.
-              Every balance-sheet account from QuickBooks is reconciled to its
-              source data — bank statements, AR/AP aging, fixed-asset rolls, etc.
-            </p>
-          </div>
+      {/* Header — compact single-row PageHeader (was a ~140px three-deck) */}
+      <PageHeader
+        title="Reconciliations"
+        subtitle="Pick a month to open its live GL-vs-subledger reconciliation. Every balance-sheet account from QuickBooks is reconciled to its source data — bank statements, AR/AP aging, fixed-asset rolls, etc."
+        actions={
           <Button size="sm" variant="outline" icon={<ListChecks size={12} strokeWidth={1.8} />}
             onClick={() => navigate("/app/reconciliations/overrides")}>
             Manual overrides
           </Button>
-        </div>
-      </motion.div>
+        }
+      />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
 

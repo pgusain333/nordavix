@@ -25,7 +25,6 @@ import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
-  ArrowLeft,
   Download,
   FileText,
   Lock,
@@ -42,6 +41,7 @@ import {
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { PageHeader } from "@/core/ui/PageHeader"
 import {
   financialsApi, FINANCIAL_SCHEDULES, SCHEDULE_GROUPS,
   type Statement, type FinancialRow, type FinancialSource,
@@ -238,33 +238,17 @@ export function FinancialsPage() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      {/* Header — relative + z-30 so its stacking context floats above
-          the sticky tab bar (z-20) and the StatementView card below.
-          Without this, the Export PDF dropdown opens behind the
-          income-statement card because motion's transform creates a
-          stacking context that lands under the sibling tab bar. */}
-      <motion.div
-        initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-        className="px-4 sm:px-8 pt-4 pb-3 relative z-30"
-        style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <button onClick={() => navigate("/app")}
-              className="inline-flex items-center gap-1 text-[11px] font-medium mb-2 transition-opacity hover:opacity-70"
-              style={{ color: "var(--text-muted)" }}>
-              <ArrowLeft size={12} strokeWidth={2} /> Back to dashboard
-            </button>
-            <h1 className="lg:hidden" style={{
-              fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 700,
-              letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
-            }}>
-              Financial Package
-            </h1>
-            <p className="text-xs sm:text-sm mt-1" style={{ color: "var(--text-muted)" }}>
-              Audit-ready Income Statement, Balance Sheet, and Statement of Cash Flows —
-              from your synced books or QuickBooks live.
-            </p>
-          </div>
+      {/* Header — compact single-row PageHeader (was a ~140px three-deck).
+          relative + z-30 so its stacking context floats above the sticky
+          tab bar (z-20) and the StatementView card below. Without this,
+          the Export PDF dropdown opens behind the income-statement card
+          because the sibling tab bar's stacking context lands above it. */}
+      <PageHeader
+        title="Financial Package"
+        hideTitleOnDesktop
+        subtitle="Audit-ready Income Statement, Balance Sheet, and Statement of Cash Flows — from your synced books or QuickBooks live."
+        className="relative z-30"
+        actions={
           <div className="flex items-end gap-2 flex-wrap">
             {/* Period mode — controls whether IS / CF show YTD or a
                 custom range. Hidden when on BS (point-in-time). */}
@@ -353,15 +337,15 @@ export function FinancialsPage() {
               />
             )}
           </div>
-        </div>
-
+        }
+      >
         {/* Quick-period chips — one-click presets so the user doesn't
             have to click into the date pickers for the most common
             cuts (last month / quarter / YTD / last year). Each chip
             sets BOTH the period type AND the date(s), so "Last month"
             puts the Income Statement on that exact month, not on YTD
             ending in that month. */}
-        <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
           <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mr-1"
             style={{ color: "var(--text-muted)" }}>
             <Calendar size={10} strokeWidth={1.8} />
@@ -412,7 +396,7 @@ export function FinancialsPage() {
             </button>
           )}
         </div>
-      </motion.div>
+      </PageHeader>
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-5xl w-full mx-auto space-y-4">
 

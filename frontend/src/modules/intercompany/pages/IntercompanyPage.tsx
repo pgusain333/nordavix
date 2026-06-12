@@ -19,7 +19,6 @@ import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
-  ArrowLeft,
   Building2,
   Plus,
   Search,
@@ -43,6 +42,7 @@ import {
 import { Button, Spinner } from "@/core/ui/components"
 import { SkeletonTable } from "@/core/ui/Skeleton"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { PageHeader } from "@/core/ui/PageHeader"
 import { useEscapeClose } from "@/core/hooks/useEscapeClose"
 import {
   icApi,
@@ -155,36 +155,17 @@ export function IntercompanyPage() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-        className="px-4 sm:px-8 pt-6 pb-4"
-        style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <button onClick={() => navigate("/app")}
-              className="inline-flex items-center gap-1 text-[11px] font-medium mb-2 transition-opacity hover:opacity-70"
-              style={{ color: "var(--text-muted)" }}>
-              <ArrowLeft size={12} strokeWidth={2} /> Back to dashboard
-            </button>
-            <h1 className="lg:hidden" style={{
-              fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 700,
-              letterSpacing: "-0.01em", color: "var(--text)", margin: 0,
-            }}>
-              Intercompany
-            </h1>
-            <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-              Flag GL accounts that record transactions with related entities. Balances
-              should net to zero against the matching account on the counterparty&apos;s books.
-            </p>
-          </div>
-          <div className="flex items-end gap-2 flex-wrap">
-            <div className="flex flex-col">
-              <span className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>
-                Period end
-              </span>
-              <DatePicker value={periodEnd} onChange={setPeriodEnd} disabled={!qbo} />
-            </div>
+      {/* Header — compact single-row PageHeader (was a ~140px three-deck) */}
+      <PageHeader
+        title="Intercompany"
+        hideTitleOnDesktop
+        subtitle="Flag GL accounts that record transactions with related entities. Balances should net to zero against the matching account on the counterparty's books."
+        actions={
+          <>
+            <span className="hidden sm:inline text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              Period end
+            </span>
+            <DatePicker value={periodEnd} onChange={setPeriodEnd} disabled={!qbo} />
             <Button size="sm" variant="outline"
               icon={<Wand2 size={14} strokeWidth={1.8} />}
               loading={autoDetectMut.isPending}
@@ -205,9 +186,9 @@ export function IntercompanyPage() {
               onClick={() => setAddingNew(true)} disabled={!qbo}>
               Mark account
             </Button>
-          </div>
-        </div>
-      </motion.div>
+          </>
+        }
+      />
 
       {/* ── Tabs strip ─────────────────────────────────────────────── */}
       <div className="px-4 sm:px-8" style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>

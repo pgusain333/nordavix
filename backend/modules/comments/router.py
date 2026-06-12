@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit.log import write_audit_event
 from core.auth.clerk_users import get_clerk_user
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
@@ -84,6 +85,16 @@ async def _actor_name(user: CurrentUser) -> str:
     return user.email or "Someone"
 
 
+def _audit_entity_uuid(entity_id: str) -> uuid.UUID | None:
+    """Comment entity ids are strings (e.g. "<qbo_account_id>:<period_end>"),
+    but audit_log.entity_id is a UUID column — pass it through only when it
+    really is a UUID. The raw string always travels in the event metadata."""
+    try:
+        return uuid.UUID(entity_id)
+    except ValueError:
+        return None
+
+
 @router.get("", response_model=CommentList)
 async def get_comments(
     tenant_id: CurrentTenantId,
@@ -121,6 +132,23 @@ async def create_comment(
         link=(payload.link or None),
     )
     db.add(row)
+    await db.flush()  # populate row.id for the audit event
+
+    # Audit — reuse the comment's entity so the event links to the
+    # recon/variance it sits on. No comment body in the summary (privacy);
+    # a short truncated preview in metadata is enough for the trail.
+    audit_preview = text if len(text) <= 60 else text[:59] + "…"
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="comment.added",
+        entity_type=row.entity_type, entity_id=_audit_entity_uuid(row.entity_id),
+        metadata={
+            "summary": f"Comment added on {row.entity_type}",
+            "entity_id": row.entity_id,
+            "comment_id": str(row.id),
+            "preview": audit_preview,
+        },
+    )
     await db.commit()
 
     # @mentions → in-app notifications + (best-effort) email. Never let a
@@ -169,5 +197,15 @@ async def delete_comment(
     if row.author_user_id != user.id and user.role != "admin":
         raise HTTPException(status_code=403, detail="You can only delete your own comments.")
     row.deleted_at = datetime.now(UTC)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="comment.deleted",
+        entity_type=row.entity_type, entity_id=_audit_entity_uuid(row.entity_id),
+        metadata={
+            "summary": f"Comment deleted on {row.entity_type}",
+            "entity_id": row.entity_id,
+            "comment_id": str(row.id),
+        },
+    )
     await db.commit()
     return {"ok": True}
