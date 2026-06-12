@@ -179,7 +179,14 @@ async def create_trial_balance_from_qbo(
         tb.status = "error"
         tb.error_detail = str(exc)[:1000]
         await db.commit()
-        raise HTTPException(status_code=502, detail=str(exc))
+        # Full detail stays in the log + error_detail column; the client gets a
+        # generic message so upstream QBO errors can't leak internals (URLs,
+        # request ids, token fragments) into the browser.
+        logger.exception("QBO trial-balance fetch failed for tb %s", tb.id)
+        raise HTTPException(
+            status_code=502,
+            detail="QuickBooks did not return the trial balance. Try again, or reconnect QuickBooks if this persists.",
+        )
 
     # 3b) Pull the Account list so we can use the proper AcctNum from QBO
     # instead of relying on whatever the TrialBalance report shows as the row
@@ -284,9 +291,12 @@ async def upload_trial_balance(
 
     # Store raw file bytes in column_mapping temporarily (base64) for re-use in /parse
     import base64
+    # Keep only the basename of the client-supplied filename — strip any path
+    # separators so a crafted name can never read as a path downstream.
+    safe_name = (file.filename or "file.xlsx").replace("\\", "/").rsplit("/", 1)[-1] or "file.xlsx"
     tb.column_mapping = {
         "_file_b64": base64.b64encode(file_bytes).decode("ascii"),
-        "_filename": file.filename or "file.xlsx",
+        "_filename": safe_name,
     }
     tb.status = "pending"
     await db.commit()
@@ -881,8 +891,12 @@ async def list_variance_transactions(
                 metadata={"summary": f"Pulled QBO transactions for variance on {acct.account_number} {acct.account_name}".strip()},
             )
             await db.commit()
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc))
+        except RuntimeError:
+            logger.exception("QBO transaction pull failed for variance %s", var_id)
+            raise HTTPException(
+                status_code=502,
+                detail="Could not pull transactions from QuickBooks. Try again in a moment.",
+            )
 
     # Return current rows (whether we just pulled them or not)
     txns = list((await db.execute(
@@ -1190,8 +1204,12 @@ async def sync_one_account_from_qbo(
     try:
         report_current = await fetch_trial_balance(conn, tb.period_current)
         report_prior   = await fetch_trial_balance(conn, tb.period_prior)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"QBO sync failed: {exc}")
+    except Exception:
+        logger.exception("QBO sync failed for tb %s", tb.id)
+        raise HTTPException(
+            status_code=502,
+            detail="QuickBooks sync failed. Try again, or reconnect QuickBooks if this persists.",
+        )
 
     tb_current = parse_trial_balance(report_current)
     tb_prior   = parse_trial_balance(report_prior)

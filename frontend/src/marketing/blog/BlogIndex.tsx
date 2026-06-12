@@ -44,7 +44,7 @@ export function BlogIndex() {
   return (
     <BlogLayout>
       <SEO
-        title="Blog — guides, opinions, and deep-dives for CPAs and controllers"
+        title="Blog — close guides for CPAs & controllers"
         description="Practical writing on the month-end close, intercompany consolidation, AI in accounting, QuickBooks workflows, and everything Nordavix is building. Written by CPAs."
         path="/blog"
         jsonLd={breadcrumbSchema([

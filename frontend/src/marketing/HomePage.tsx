@@ -1007,7 +1007,7 @@ export function HomePage() {
   return (
     <div className="min-h-screen" style={{ background: PINE, color: D_TXT, scrollBehavior: "smooth" }}>
       <SEO
-        title="Nordavix — AI month-end close software for CPAs and controllers"
+        title="Nordavix — AI month-end close software for CPAs"
         description="Close your books in days, not weeks. AI-prepared reconciliations, flux analysis, cash-runway and break-even insights, intercompany consolidation, and an executive financial package — all on top of QuickBooks Online."
         path="/" bareTitle jsonLd={[faqSchemaObj, crumbs]} />
       <Navbar />

@@ -357,7 +357,7 @@ export function SecurityPage() {
     <>
     <SEO
       title="Security & Trust"
-      description="How Nordavix protects your clients' financial data: encryption in transit and at rest, database-level workspace isolation, read-only QuickBooks access, no AI training on your data, audit logging, and one-click export and deletion."
+      description="How Nordavix protects client financial data: encryption in transit and at rest, workspace isolation, read-only QuickBooks access, no AI training on your data."
       path="/security"
     />
     <LegalLayout

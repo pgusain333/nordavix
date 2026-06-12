@@ -68,6 +68,27 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Baseline security headers on every API response.
+
+    The API serves JSON only (no HTML), so the high-value headers are the
+    anti-sniff / anti-embed ones. CSP is intentionally omitted — it protects
+    rendered documents, and the SPA's headers are set at the Vercel edge.
+    HSTS only in production: localhost must stay reachable over plain http.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if settings.is_production:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+        )
+    return response
+
+
 @app.exception_handler(DemoReadOnlyError)
 async def _demo_readonly_handler(request: Request, exc: DemoReadOnlyError) -> JSONResponse:  # noqa: ARG001
     """A read-only demo request tried to write to the DB — return a clean 403

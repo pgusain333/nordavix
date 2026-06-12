@@ -35,7 +35,7 @@ export function PublicHelpPage() {
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <SEO
         title="Help & documentation — how to use Nordavix"
-        description="How Nordavix works: connecting QuickBooks, running reconciliations and flux analysis, agentic AI mode, intercompany consolidation, closing the books. Step-by-step guides for controllers and CPAs."
+        description="How Nordavix works: connect QuickBooks, run reconciliations and flux analysis, close the books. Step-by-step guides for controllers and CPAs."
         path="/help"
         jsonLd={breadcrumbSchema([
           { name: "Home", path: "/" },

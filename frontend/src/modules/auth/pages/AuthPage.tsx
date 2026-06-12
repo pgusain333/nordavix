@@ -1,10 +1,17 @@
 /**
  * AuthPage — Nordavix-branded sign-in / sign-up surface.
  *
- * Replaces Clerk's hosted page with a split-layout that puts brand on
- * the left and form on the right. The actual auth is still Clerk's
- * <SignIn> / <SignUp> component — we just style it to match the rest
- * of the app and wrap it in the Nordavix visual language.
+ * Replaces Clerk's hosted page with a split-layout: a fixed-pine
+ * editorial brand panel on the left (same visual language as the
+ * marketing homepage — Fraunces serif, JetBrains Mono kickers, sage
+ * accents on deep pine) and the form on the right. The actual auth is
+ * still Clerk's <SignIn> / <SignUp> component — we just style it to
+ * match the rest of the app and wrap it in the Nordavix shell.
+ *
+ * The left panel is intentionally NOT theme-aware: it is always deep
+ * pine, exactly like the marketing hero, so the brand moment reads the
+ * same whether the app theme is light or dark. The right column uses
+ * app tokens and adapts.
  *
  * Mode is driven by the route: /sign-in/* → sign-in, /sign-up/* →
  * sign-up. The trailing /* is required so Clerk can handle its own
@@ -17,10 +24,7 @@
 import { useMemo } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { SignIn, SignUp } from "@clerk/clerk-react"
-import {
-  Sparkles, Scale, Lightbulb, Quote, ShieldCheck, ArrowLeft,
-} from "lucide-react"
-import { useTheme } from "@/core/theme/ThemeProvider"
+import { ShieldCheck, ArrowLeft } from "lucide-react"
 
 type Mode = "sign-in" | "sign-up"
 
@@ -28,27 +32,36 @@ interface Props {
   mode: Mode
 }
 
+/* ── Brand constants (mirrors marketing HomePage) ───────────────── */
+const PINE   = "#0C2620"
+const CREAM  = "#F4F1E9"
+const SAGE   = "#9CC4AD"
+const SERIF  = '"Fraunces", Georgia, serif'
+const MONO   = '"JetBrains Mono", ui-monospace, monospace'
+
+const CREAM_70 = "rgba(244,241,233,0.70)"
+const CREAM_45 = "rgba(244,241,233,0.45)"
+const HAIRLINE = "rgba(244,241,233,0.14)"
+
 const VALUE_PROPS = [
   {
-    icon:    Sparkles,
-    title:   "Flux Analysis",
-    blurb:   "AI commentary on every material variance — the why, not just the number.",
+    n:     "01",
+    title: "Flux analysis",
+    blurb: "AI commentary on every material variance — the why, not just the number.",
   },
   {
-    icon:    Scale,
-    title:   "Reconciliations",
-    blurb:   "Agentic preparer auto-ties subledgers to GL; you approve.",
+    n:     "02",
+    title: "Reconciliations",
+    blurb: "An agentic preparer ties subledgers to GL. You review and approve.",
   },
   {
-    icon:    Lightbulb,
-    title:   "Insights",
-    blurb:   "Liquidity, AR/AP, expense risks — surfaced before they cost you.",
+    n:     "03",
+    title: "Insights",
+    blurb: "Liquidity, runway, AR/AP risk — surfaced before they cost you.",
   },
 ]
 
 export function AuthPage({ mode }: Props) {
-  const { resolved } = useTheme()
-  void resolved  // reserved for future per-theme tweaks (e.g. Clerk baseTheme)
   const location = useLocation()
   const otherPath = mode === "sign-in" ? "/sign-up" : "/sign-in"
 
@@ -99,26 +112,31 @@ export function AuthPage({ mode }: Props) {
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row" style={{ background: "var(--bg)" }}>
-      {/* ────── LEFT: brand showcase ────── */}
-      <aside className="relative lg:flex-1 lg:basis-1/2 overflow-hidden hidden lg:flex"
-        style={{ background: "var(--surface-2)" }}>
-        {/* Mesh gradient backdrop */}
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute -top-32 -left-32 w-[500px] h-[500px] rounded-full opacity-50 blur-3xl"
-            style={{ background: "radial-gradient(circle, var(--green-subtle), transparent 70%)" }} />
-          <div className="absolute -bottom-32 -right-32 w-[600px] h-[600px] rounded-full opacity-40 blur-3xl"
-            style={{ background: "radial-gradient(circle, rgba(139,21,56,0.22), transparent 70%)" }} />
-          <div className="absolute top-1/3 left-1/4 w-[300px] h-[300px] rounded-full opacity-30 blur-3xl"
-            style={{ background: "radial-gradient(circle, rgba(123,201,161,0.22), transparent 70%)" }} />
+      {/* ────── LEFT: pine editorial brand panel ──────
+          sticky + h-screen pins the panel to exactly the viewport: if the
+          form column grows taller (Clerk steps, dev banner), only the right
+          side scrolls and the quote/trust footer stays on screen. */}
+      <aside className="relative lg:flex-1 lg:basis-1/2 overflow-hidden hidden lg:flex lg:sticky lg:top-0 lg:h-screen lg:min-h-[780px]"
+        style={{ background: PINE }}>
+        {/* Soft sage / green glows on pine */}
+        <div className="absolute inset-0 pointer-events-none" aria-hidden>
+          <div className="absolute -top-40 -left-40 w-[560px] h-[560px] rounded-full blur-3xl"
+            style={{ background: "radial-gradient(circle, rgba(156,196,173,0.16), transparent 70%)" }} />
+          <div className="absolute -bottom-44 -right-44 w-[640px] h-[640px] rounded-full blur-3xl"
+            style={{ background: "radial-gradient(circle, rgba(46,122,85,0.30), transparent 70%)" }} />
         </div>
 
-        {/* Faint grid pattern */}
-        <div className="absolute inset-0 pointer-events-none opacity-[0.03]"
+        {/* Faint cream grid */}
+        <div className="absolute inset-0 pointer-events-none opacity-[0.04]" aria-hidden
           style={{
             backgroundImage:
-              "linear-gradient(var(--text) 1px, transparent 1px), linear-gradient(90deg, var(--text) 1px, transparent 1px)",
-            backgroundSize: "32px 32px",
+              `linear-gradient(${CREAM} 1px, transparent 1px), linear-gradient(90deg, ${CREAM} 1px, transparent 1px)`,
+            backgroundSize: "36px 36px",
           }} />
+
+        {/* Oversized watermark mark, bleeding off the corner */}
+        <img src="/logo-mark-white.svg" alt="" aria-hidden
+          className="absolute -bottom-20 -right-20 w-[380px] opacity-[0.05] pointer-events-none select-none" />
 
         {/* Content stack.
             Animations on this side dropped entirely. /sign-in/* and
@@ -127,77 +145,72 @@ export function AuthPage({ mode }: Props) {
             replayed every motion.div on every toggle and made the
             page feel "jumpy." Static brand panel is calmer + faster. */}
         <div className="relative z-10 flex flex-col w-full p-12 xl:p-16">
-          {/* Header: logo + wordmark — sized to balance against the
-              4xl/5xl headline immediately below. The 48px mark and
-              30px wordmark visually read as one unit at this scale. */}
-          <Link to="/" className="inline-flex items-center gap-3 group/logo">
-            <img src="/logo-mark-dark.svg" alt="" className="h-12 w-12 dark:hidden" />
-            <img src="/logo-mark-light.svg" alt="" className="h-12 w-12 hidden dark:block" />
-            <span className="font-bold text-3xl xl:text-[34px] tracking-tight leading-none" style={{ color: "var(--text)" }}>
-              nordavix<span style={{ color: "var(--green)" }}>.</span>
+          {/* Header: logo + wordmark. The panel is always pine, so the
+              white mark is used unconditionally — no dark: toggling. */}
+          <Link to="/" className="inline-flex items-center gap-3">
+            <img src="/logo-mark-white.svg" alt="" className="h-10 w-10" />
+            <span className="font-bold text-[26px] tracking-tight leading-none" style={{ color: CREAM }}>
+              nordavix<span style={{ color: SAGE }}>.</span>
             </span>
           </Link>
 
-          {/* Tagline + sub */}
-          <div className="mt-16 max-w-md">
-            <h1 className="text-4xl xl:text-5xl font-bold leading-tight" style={{ color: "var(--text)" }}>
-              Close the books in <span style={{ color: "var(--green)" }}>days</span>,
+          {/* Kicker + headline */}
+          <div className="mt-14 xl:mt-16 max-w-lg">
+            <p className="text-[11px] uppercase"
+              style={{ fontFamily: MONO, color: SAGE, letterSpacing: "0.22em" }}>
+              AI-native month-end close
+            </p>
+            <h1 className="mt-4 text-[38px] xl:text-[44px] leading-[1.06]"
+              style={{ fontFamily: SERIF, fontWeight: 550, color: CREAM, letterSpacing: "-0.01em" }}>
+              Close the books in{" "}
+              <em style={{ fontStyle: "italic", fontWeight: 450, color: SAGE }}>days</em>,
               not weeks.
             </h1>
-            <p className="mt-4 text-base xl:text-lg leading-relaxed" style={{ color: "var(--text-2)" }}>
-              An AI-powered month-end close platform built by CPAs.
-              Flux, reconciliations, and insights — without the swivel-chair.
+            <p className="mt-5 text-[15px] xl:text-base leading-relaxed max-w-md" style={{ color: CREAM_70 }}>
+              Built by CPAs. Flux, reconciliations, and insights on top of
+              QuickBooks — without the swivel-chair.
             </p>
           </div>
 
-          {/* Value-prop cards */}
-          <div className="mt-12 space-y-3 max-w-md">
-            {VALUE_PROPS.map((v) => {
-              const Icon = v.icon
-              return (
-                <div
-                  key={v.title}
-                  className="rounded-xl p-4 flex items-start gap-3 backdrop-blur"
-                  style={{
-                    background: "color-mix(in oklab, var(--surface) 75%, transparent)",
-                    border:     "1px solid var(--border)",
-                    boxShadow:  "0 4px 12px rgba(0,0,0,0.04)",
-                  }}
-                >
-                  <span className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-                    <Icon size={17} strokeWidth={1.8} />
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold" style={{ color: "var(--text)" }}>{v.title}</p>
-                    <p className="text-[12px] mt-0.5 leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                      {v.blurb}
-                    </p>
-                  </div>
+          {/* Numbered value rows — editorial index, not cards */}
+          <div className="mt-10 max-w-md" style={{ borderTop: `1px solid ${HAIRLINE}` }}>
+            {VALUE_PROPS.map((v) => (
+              <div key={v.n} className="py-3.5 flex items-baseline gap-4"
+                style={{ borderBottom: `1px solid ${HAIRLINE}` }}>
+                <span className="text-[11px] shrink-0" style={{ fontFamily: MONO, color: SAGE }}>
+                  {v.n}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[15px]" style={{ fontFamily: SERIF, fontWeight: 550, color: CREAM }}>
+                    {v.title}
+                  </p>
+                  <p className="text-[12.5px] mt-1 leading-relaxed" style={{ color: CREAM_45 }}>
+                    {v.blurb}
+                  </p>
                 </div>
-              )
-            })}
+              </div>
+            ))}
           </div>
 
-          {/* Footer: quote + trust marker */}
-          <div className="mt-auto pt-12">
-            <div className="flex items-start gap-3 mb-6">
-              <Quote size={20} strokeWidth={1.8} style={{ color: "var(--green)" }} className="shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm italic leading-relaxed max-w-md" style={{ color: "var(--text-2)" }}>
-                  "I built Nordavix after living through 100+ month-end closes — it's the
-                  close I always wished I'd had: faster, with an audit trail cleaner than
-                  any spreadsheet."
-                </p>
-                <p className="text-[11px] mt-2 font-semibold" style={{ color: "var(--text-muted)" }}>
-                  The Nordavix founder · CPA
-                </p>
-              </div>
-            </div>
+          {/* Footer: founder quote + trust line */}
+          <div className="mt-auto pt-10 max-w-md">
+            <blockquote className="pl-4" style={{ borderLeft: `2px solid ${SAGE}` }}>
+              <p className="text-[14.5px] leading-relaxed"
+                style={{ fontFamily: SERIF, fontStyle: "italic", fontWeight: 450, color: CREAM_70 }}>
+                "I built Nordavix after living through 100+ month-end closes — it's
+                the close I always wished I'd had: faster, with an audit trail
+                cleaner than any spreadsheet."
+              </p>
+              <footer className="mt-2.5 text-[10.5px] uppercase"
+                style={{ fontFamily: MONO, color: CREAM_45, letterSpacing: "0.14em" }}>
+                The Nordavix founder · CPA
+              </footer>
+            </blockquote>
 
-            <div className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
-              <ShieldCheck size={12} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-              Bank-grade encryption · SOC 2 (in progress) · Read-only QuickBooks scope
+            <div className="mt-7 flex items-center gap-2 text-[10.5px] uppercase"
+              style={{ fontFamily: MONO, color: CREAM_45, letterSpacing: "0.1em" }}>
+              <ShieldCheck size={12} strokeWidth={1.8} style={{ color: SAGE }} />
+              Encrypted at rest · Read-only QuickBooks · SOC 2 in progress
             </div>
           </div>
         </div>
@@ -205,7 +218,7 @@ export function AuthPage({ mode }: Props) {
 
       {/* ────── RIGHT: form ────── */}
       <section className="flex-1 lg:basis-1/2 flex flex-col">
-        {/* Top nav — back to marketing + theme-aware mode pill */}
+        {/* Top nav — back to marketing + mode pill */}
         <div className="px-6 py-5 flex items-center justify-between"
           style={{ borderBottom: "1px solid var(--border)" }}>
           {/* "Back to home" only on desktop — on mobile the logo (rendered
@@ -224,8 +237,11 @@ export function AuthPage({ mode }: Props) {
               nordavix<span style={{ color: "var(--green)" }}>.</span>
             </span>
           </Link>
-          <span className="text-[11px] font-medium px-2 py-1 rounded-full"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+          <span className="text-[10px] uppercase px-2.5 py-1 rounded-full"
+            style={{
+              fontFamily: MONO, letterSpacing: "0.12em",
+              background: "var(--green-subtle)", color: "var(--green)",
+            }}>
             {isSignIn ? "Sign in" : "Sign up"}
           </span>
         </div>
@@ -252,11 +268,12 @@ export function AuthPage({ mode }: Props) {
           style={{ scrollPaddingTop: 96 }}
         >
           <div className="w-full max-w-md mx-auto">
-            {/* Our own header */}
-            <h2 className="text-2xl sm:text-3xl font-bold leading-tight" style={{ color: "var(--text)" }}>
+            {/* Our own header — serif display to match the brand panel */}
+            <h2 className="text-[28px] sm:text-[32px] leading-tight"
+              style={{ fontFamily: SERIF, fontWeight: 550, color: "var(--text)", letterSpacing: "-0.01em" }}>
               {isSignIn ? "Welcome back" : "Create your account"}
             </h2>
-            <p className="text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
+            <p className="text-sm mt-2" style={{ color: "var(--text-muted)" }}>
               {isSignIn
                 ? "Sign in to keep closing your books with AI."
                 : "Free during early access. No credit card needed."}

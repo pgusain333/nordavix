@@ -711,7 +711,7 @@ export function SolutionsPage() {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <SEO
-        title="Solutions — every step of the month-end close, one platform"
+        title="Solutions — the month-end close on one platform"
         description="Reconciliations, flux analysis, schedules, intercompany consolidation, financial package, and AI commentary. Tour every Nordavix app and how they connect into the close loop."
         path="/solutions"
         jsonLd={breadcrumbSchema([
