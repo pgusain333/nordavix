@@ -17,7 +17,6 @@ export function HelpPage() {
       {/* Header — compact single-row PageHeader (was a ~140px three-deck) */}
       <PageHeader
         title="Help"
-        hideTitleOnDesktop
         subtitle="Step-by-step guide to the Nordavix close platform — every workflow, every screen, in order. Reference it anytime; share section links with teammates."
         actions={
           /* Open public version in new tab — useful when the user

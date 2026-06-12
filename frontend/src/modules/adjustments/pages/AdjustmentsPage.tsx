@@ -10,9 +10,10 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Sparkles, CheckCheck, FileText, Save, Download, Lock, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react"
+import { CheckCheck, FileText, Save, Download, Lock, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react"
 
 import { SkeletonTable } from "@/core/ui/Skeleton"
+import { PageHeader } from "@/core/ui/PageHeader"
 import { formatDate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import { adjustmentsApi, type AdjustmentStatus, type CheckPostedResult, type ProposedEntry, type ProposedEntryList } from "../api"
@@ -158,24 +159,11 @@ export function AdjustmentsPage() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
-      {/* Header */}
-      <div className="px-4 sm:px-8 py-5 shrink-0"
-        style={{ borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
-        <div className="max-w-5xl mx-auto w-full">
-          <div className="flex items-center gap-2.5">
-            <span className="inline-flex items-center justify-center h-8 w-8 rounded-lg"
-              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-              <Sparkles size={16} strokeWidth={2} />
-            </span>
-            <div>
-              <h1 className="text-lg font-semibold text-theme leading-tight">Adjustments</h1>
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                AI-drafted journal entries to review, then copy into QuickBooks. Nordavix never posts for you.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Header — compact single-row PageHeader (matches every other module) */}
+      <PageHeader
+        title="Adjustments"
+        subtitle="AI-drafted journal entries to review, then copy into QuickBooks. Nordavix never posts for you."
+      />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-5xl w-full mx-auto space-y-5">
         {/* Period + batch actions (Save → CSV) */}

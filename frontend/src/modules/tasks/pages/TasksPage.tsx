@@ -267,7 +267,6 @@ export function TasksPage() {
       {/* Header — compact single-row PageHeader (was a ~140px three-deck) */}
       <PageHeader
         title="Close Tasks"
-        hideTitleOnDesktop
         subtitle={`One row per synced GL account + per flux analysis.${isAdmin ? " Click a Preparer / Reviewer / Due cell to assign or override the default." : ""}`}
         actions={
           <Button size="sm" icon={<Plus size={12} strokeWidth={1.8} />}

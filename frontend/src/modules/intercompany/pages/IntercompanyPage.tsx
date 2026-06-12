@@ -158,7 +158,6 @@ export function IntercompanyPage() {
       {/* Header — compact single-row PageHeader (was a ~140px three-deck) */}
       <PageHeader
         title="Intercompany"
-        hideTitleOnDesktop
         subtitle="Flag GL accounts that record transactions with related entities. Balances should net to zero against the matching account on the counterparty's books."
         actions={
           <>

@@ -35,6 +35,7 @@ const APReconciliations       = lazy(() => import("@/modules/recons/pages/APReco
 const ReconciliationDetail    = lazy(() => import("@/modules/recons/pages/ReconciliationDetail").then(m => ({ default: m.ReconciliationDetail })))
 const OverridesDashboard      = lazy(() => import("@/modules/recons/pages/OverridesDashboard").then(m => ({ default: m.OverridesDashboard })))
 const TasksPage               = lazy(() => import("@/modules/tasks/pages/TasksPage").then(m => ({ default: m.TasksPage })))
+const CommandCenterPage       = lazy(() => import("@/modules/firm/pages/CommandCenterPage").then(m => ({ default: m.CommandCenterPage })))
 const IntercompanyPage        = lazy(() => import("@/modules/intercompany/pages/IntercompanyPage").then(m => ({ default: m.IntercompanyPage })))
 const FinancialsPage          = lazy(() => import("@/modules/financials/pages/FinancialsPage").then(m => ({ default: m.FinancialsPage })))
 const InsightsPage            = lazy(() => import("@/modules/insights/pages/InsightsPage").then(m => ({ default: m.InsightsPage })))
@@ -116,6 +117,7 @@ function AppRoutes() {
             <Route path="connections"  element={<ConnectionsPage />} />
             <Route path="help"         element={<HelpPage />} />
             <Route path="tasks"        element={<TasksPage />} />
+            <Route path="command-center" element={<CommandCenterPage />} />
             <Route path="intercompany" element={<IntercompanyPage />} />
             <Route path="financials"   element={<FinancialsPage />} />
             <Route path="insights"     element={<InsightsPage />} />

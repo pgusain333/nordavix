@@ -29,8 +29,6 @@ interface PageHeaderProps {
   subtitle?: string
   /** Where the back button goes. Defaults to the workspace dashboard. */
   backTo?: string
-  /** Pages whose title the global TopBar already shows on lg+. */
-  hideTitleOnDesktop?: boolean
   /** Right-aligned controls (buttons, pickers). */
   actions?: ReactNode
   /** Extra classes on the outer bar (e.g. "relative z-30" for pages
@@ -44,7 +42,6 @@ export function PageHeader({
   title,
   subtitle,
   backTo = "/app",
-  hideTitleOnDesktop = false,
   actions,
   className = "",
   children,
@@ -66,8 +63,10 @@ export function PageHeader({
           <ArrowLeft size={13} strokeWidth={2} />
         </button>
 
+        {/* Module name is ALWAYS visible — it anchors which app you're in
+            no matter how the page was reached. */}
         <h1
-          className={`shrink-0 ${hideTitleOnDesktop ? "lg:hidden" : ""}`}
+          className="shrink-0"
           style={{
             fontSize: 15, fontWeight: 700, lineHeight: 1.2,
             letterSpacing: "-0.01em", color: "var(--text)", margin: 0,

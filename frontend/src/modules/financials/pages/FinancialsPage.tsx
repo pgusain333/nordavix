@@ -245,7 +245,6 @@ export function FinancialsPage() {
           because the sibling tab bar's stacking context lands above it. */}
       <PageHeader
         title="Financial Package"
-        hideTitleOnDesktop
         subtitle="Audit-ready Income Statement, Balance Sheet, and Statement of Cash Flows — from your synced books or QuickBooks live."
         className="relative z-30"
         actions={

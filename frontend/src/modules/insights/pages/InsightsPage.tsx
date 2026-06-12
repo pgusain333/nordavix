@@ -409,7 +409,6 @@ function Header({
   return (
     <PageHeader
       title="Insights"
-      hideTitleOnDesktop
       subtitle="Pick a period, click Generate, and Nordavix synthesises risks and recommendations from your books."
       actions={
         <>

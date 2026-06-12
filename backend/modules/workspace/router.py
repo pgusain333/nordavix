@@ -3,6 +3,7 @@ Workspace endpoints — team / member management.
 
   GET  /workspace/members           Resolved org members (Clerk-backed)
   GET  /workspace/users/lookup       Bulk resolve our user UUIDs → display names
+  GET  /workspace/command-center     Firm view: every company's close, one payload
 
 Used by the frontend to render "Reviewed by Jatin" instead of
 "Reviewed by 4c1d8a-...-uuid" in the audit log and on the dashboards.
@@ -605,3 +606,197 @@ async def delete_workspace(
         "grace_days": _DELETE_GRACE_DAYS,
         "qbo_revoked": qbo_revoked,
     }
+
+
+# ── Close Command Center (firm view) ─────────────────────────────────────────
+
+@router.get("/command-center")
+async def get_command_center(
+    tenant_id: CurrentTenantId,  # noqa: ARG001 — auth context; data is cross-tenant by membership
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Firm-level close cockpit: one payload with every company the current
+    user belongs to (Clerk-org membership = authorization, same model as
+    intercompany's accessible-companies) and where its close stands.
+
+    Per company we surface the FOCUS period — the oldest month that isn't
+    closed yet (the same month the TopBar close chip points at) — with its
+    recon progress, flagged count, flux status, and open AI adjustments,
+    plus how many days have passed since that period ended. Everything is
+    computed from snapshot tables in a handful of bulk queries; no QBO
+    calls, so the screen is dashboard-fast even with many companies.
+    """
+    from calendar import monthrange
+    from datetime import date as _date
+
+    from sqlalchemy import func
+
+    from models.account import Account
+    from models.account_review_status import AccountReviewStatus
+    from models.closed_period import ClosedPeriod
+    from models.proposed_entry import ProposedEntry
+    from models.trial_balance import TrialBalance
+    from models.variance import Variance
+    from modules.intercompany.router import _user_accessible_tenant_ids
+
+    accessible = await _user_accessible_tenant_ids(db, user)
+    if not accessible:
+        return {"companies": []}
+
+    tenants = list((await db.execute(
+        select(Tenant).where(Tenant.id.in_(accessible), Tenant.deleted_at.is_(None)),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all())
+    tids = [t.id for t in tenants]
+    if not tids:
+        return {"companies": []}
+
+    # Bulk pulls across all companies — review rows, locks, QBO connections.
+    review_rows = list((await db.execute(
+        select(
+            AccountReviewStatus.tenant_id,
+            AccountReviewStatus.period_end,
+            AccountReviewStatus.status,
+        ).where(AccountReviewStatus.tenant_id.in_(tids)),
+        execution_options={"skip_tenant_filter": True},
+    )).all())
+    closed_rows = list((await db.execute(
+        select(ClosedPeriod.tenant_id, ClosedPeriod.period_end)
+        .where(ClosedPeriod.tenant_id.in_(tids)),
+        execution_options={"skip_tenant_filter": True},
+    )).all())
+    conn_tids = {
+        r[0] for r in (await db.execute(
+            select(QboConnection.tenant_id).where(QboConnection.tenant_id.in_(tids)),
+            execution_options={"skip_tenant_filter": True},
+        )).all()
+    }
+
+    reviews_by_tid: dict[uuid.UUID, dict] = {}
+    for tid, pe, status_ in review_rows:
+        reviews_by_tid.setdefault(tid, {}).setdefault(pe, []).append(status_)
+    closed_by_tid: dict[uuid.UUID, set] = {}
+    for tid, pe in closed_rows:
+        closed_by_tid.setdefault(tid, set()).add(pe)
+
+    def month_ends_from(start, today):
+        cur = _date(start.year, start.month, 1)
+        out = []
+        while cur <= today.replace(day=1):
+            out.append(_date(cur.year, cur.month, monthrange(cur.year, cur.month)[1]))
+            cur = _date(cur.year + 1, 1, 1) if cur.month == 12 else _date(cur.year, cur.month + 1, 1)
+        return out
+
+    today = _date.today()
+
+    # First pass: focus period per tenant (oldest non-closed month — the
+    # exact month the close chip in the TopBar points at).
+    focus_by_tid: dict[uuid.UUID, _date] = {}
+    for t in tenants:
+        if not t.books_start_date:
+            continue
+        months = month_ends_from(t.books_start_date, today)
+        closed = closed_by_tid.get(t.id, set())
+        focus = next((pe for pe in months if pe not in closed), None)
+        if focus:
+            focus_by_tid[t.id] = focus
+
+    # Flux for each tenant's focus period: latest TB whose current period
+    # matches, then variance counts by status — both as bulk queries.
+    tb_rows = list((await db.execute(
+        select(TrialBalance.id, TrialBalance.tenant_id,
+               TrialBalance.period_current, TrialBalance.created_at)
+        .where(TrialBalance.tenant_id.in_(tids)),
+        execution_options={"skip_tenant_filter": True},
+    )).all())
+    focus_tb_by_tid: dict[uuid.UUID, uuid.UUID] = {}
+    for tb_id, tid, pe_cur, _created in sorted(
+        tb_rows, key=lambda r: (r[3] is not None, r[3]),
+    ):
+        if focus_by_tid.get(tid) == pe_cur:
+            focus_tb_by_tid[tid] = tb_id  # later created_at wins
+    var_counts: dict[uuid.UUID, dict[str, int]] = {}
+    if focus_tb_by_tid:
+        rows = list((await db.execute(
+            select(Account.trial_balance_id, Variance.status, func.count())
+            .join(Account, Variance.account_id == Account.id)
+            .where(Account.trial_balance_id.in_(set(focus_tb_by_tid.values())))
+            .group_by(Account.trial_balance_id, Variance.status),
+            execution_options={"skip_tenant_filter": True},
+        )).all())
+        for tb_id, status_, n in rows:
+            var_counts.setdefault(tb_id, {})[status_] = n
+
+    # Open AI adjustments for the focus period, grouped per tenant.
+    adj_rows = list((await db.execute(
+        select(ProposedEntry.tenant_id, ProposedEntry.period_end, func.count())
+        .where(ProposedEntry.tenant_id.in_(tids), ProposedEntry.status == "open")
+        .group_by(ProposedEntry.tenant_id, ProposedEntry.period_end),
+        execution_options={"skip_tenant_filter": True},
+    )).all())
+    adj_by_tid: dict[uuid.UUID, int] = {}
+    for tid, pe, n in adj_rows:
+        if focus_by_tid.get(tid) == pe:
+            adj_by_tid[tid] = n
+
+    companies = []
+    for t in tenants:
+        focus = focus_by_tid.get(t.id)
+        per_period = reviews_by_tid.get(t.id, {})
+        closed = closed_by_tid.get(t.id, set())
+
+        focus_payload = None
+        if focus:
+            statuses = per_period.get(focus, [])
+            total = len(statuses)
+            approved = sum(1 for s in statuses if s == "approved")
+            flagged = sum(1 for s in statuses if s == "flagged")
+            reviewed = sum(1 for s in statuses if s == "reviewed")
+            if total > 0 and approved == total:
+                wf = "complete"
+            elif total > 0:
+                wf = "in_progress"
+            else:
+                wf = "not_started"
+            focus_payload = {
+                "period_end": focus.isoformat(),
+                "label":      focus.strftime("%b %Y"),
+                "status":     wf,
+                "total":      total,
+                "approved":   approved,
+                "reviewed":   reviewed,
+                "flagged":    flagged,
+                "days_since_period_end": max(0, (today - focus).days),
+            }
+
+        # Latest fully-closed month (reads as "Closed through Apr 2026").
+        closed_through = max(closed) if closed else None
+
+        flux_payload = None
+        tb_id = focus_tb_by_tid.get(t.id)
+        if tb_id is not None:
+            counts = var_counts.get(tb_id, {})
+            v_total = sum(counts.values())
+            v_done = counts.get("approved", 0)
+            flux_payload = {
+                "total":    v_total,
+                "approved": v_done,
+                "state":    "done" if v_total > 0 and v_done == v_total else "in_progress",
+            }
+
+        companies.append({
+            "tenant_id":     str(t.id),
+            "name":          t.name,
+            "clerk_org_id":  t.clerk_org_id,
+            "is_demo":       bool(t.is_demo),
+            "qbo_connected": t.id in conn_tids,
+            "books_set":     t.books_start_date is not None,
+            "focus":         focus_payload,
+            "closed_through": closed_through.strftime("%b %Y") if closed_through else None,
+            "flux":          flux_payload,
+            "open_adjustments": adj_by_tid.get(t.id, 0),
+        })
+
+    return {"companies": companies, "generated_at": datetime.now(UTC).isoformat()}
