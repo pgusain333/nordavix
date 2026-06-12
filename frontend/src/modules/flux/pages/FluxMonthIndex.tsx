@@ -43,7 +43,8 @@ import {
   AlertCircle,
   Sparkles,
 } from "lucide-react"
-import { Button, Spinner } from "@/core/ui/components"
+import { Button } from "@/core/ui/components"
+import { SkeletonTable } from "@/core/ui/Skeleton"
 import { humanize } from "@/core/ui/utils"
 import { api as fluxApi, type TrialBalance } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
@@ -324,7 +325,11 @@ export function FluxMonthIndex() {
 
         {/* Month rows */}
         {loading ? (
-          <div className="py-16 flex items-center justify-center"><Spinner /></div>
+          /* Structured skeleton — keeps the table's shape while data lands. */
+          <div className="rounded-xl overflow-hidden px-4 py-3"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <SkeletonTable rows={6} />
+          </div>
         ) : !qbo ? null : rows.length === 0 ? (
           <div className="rounded-xl p-10 text-center"
             style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>

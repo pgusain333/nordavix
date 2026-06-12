@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useEffect } from "react"
 import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react"
 import { Routes, Route, Navigate, useLocation } from "react-router-dom"
 import { AnimatePresence, motion } from "framer-motion"
@@ -85,6 +85,17 @@ function AppRoutes() {
   // Use the first two segments as the transition key — that's our "page".
   const segments = location.pathname.split("/").filter(Boolean)
   const transitionKey = segments.slice(0, 2).join("/") || "root"
+
+  // Scroll restoration: a new page starts at the top. Without this, React
+  // Router preserves the previous page's scroll offset, so Recons → Schedules
+  // landed mid-page. Keyed on the full pathname (drilling month → period also
+  // resets) but NOT the hash — the recon drawer drives tab/account state via
+  // #acct=…, and opening it must not yank the list back to the top.
+  // "instant" bypasses the global CSS scroll-behavior:smooth so route changes
+  // don't animate a long scroll.
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" })
+  }, [location.pathname])
 
   return (
     <AnimatePresence mode="wait">

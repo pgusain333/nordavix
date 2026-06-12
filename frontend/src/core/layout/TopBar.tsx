@@ -57,6 +57,14 @@ export function TopBar() {
   const sectionPath = section?.[0] ?? ""
   const subTitle = SUB_TITLES.find(([p]) => pathname === p || pathname.startsWith(p + "/"))?.[1] ?? ""
 
+  // Browser-tab title follows the page — "Reconciliations · Nordavix" — so a
+  // CPA with six tabs open can tell them apart. Marketing pages set their own
+  // title via the SEO/Helmet component; this covers the app shell.
+  useEffect(() => {
+    const t = subTitle || pageTitle
+    document.title = t ? `${t} · Nordavix` : "Nordavix"
+  }, [pageTitle, subTitle])
+
   // Role → chip. Same source + mapping the nav used; long staleTime.
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],

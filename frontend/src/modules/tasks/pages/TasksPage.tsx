@@ -33,7 +33,8 @@ import {
   Pencil,
   Calendar,
 } from "lucide-react"
-import { Button, Spinner } from "@/core/ui/components"
+import { Button } from "@/core/ui/components"
+import { SkeletonTable } from "@/core/ui/Skeleton"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { tasksApi, type Task, type TaskSeverity, type TaskSourceType } from "@/modules/tasks/api"
 import { useUserNames } from "@/modules/workspace/hooks"
@@ -445,7 +446,11 @@ export function TasksPage() {
 
         {/* Table */}
         {isLoading ? (
-          <div className="py-16 flex items-center justify-center"><Spinner /></div>
+          /* Structured skeleton — keeps the table's shape while data lands. */
+          <div className="rounded-xl overflow-hidden px-4 py-3"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <SkeletonTable rows={7} />
+          </div>
         ) : filtered.length === 0 ? (
           <EmptyState
             tab={tab}

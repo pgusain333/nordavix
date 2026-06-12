@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Sparkles, CheckCheck, FileText, Save, Download, Lock, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react"
 
-import { Spinner } from "@/core/ui/components"
+import { SkeletonTable } from "@/core/ui/Skeleton"
 import { formatDate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import { adjustmentsApi, type AdjustmentStatus, type CheckPostedResult, type ProposedEntry, type ProposedEntryList } from "../api"
@@ -331,7 +331,11 @@ export function AdjustmentsPage() {
 
         {/* Body */}
         {isLoading ? (
-          <div className="py-16 flex items-center justify-center"><Spinner className="h-6 w-6" /></div>
+          /* Structured skeleton — keeps the queue's shape while data lands. */
+          <div className="rounded-xl overflow-hidden px-4 py-3"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <SkeletonTable rows={5} />
+          </div>
         ) : visible.length === 0 ? (
           <div className="rounded-xl p-12 text-center"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>

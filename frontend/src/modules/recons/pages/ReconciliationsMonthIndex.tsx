@@ -38,7 +38,8 @@ import {
   ShieldCheck,
   ListChecks,
 } from "lucide-react"
-import { Button, Spinner } from "@/core/ui/components"
+import { Button } from "@/core/ui/components"
+import { SkeletonTable } from "@/core/ui/Skeleton"
 import { reconsApi, type PeriodStatus } from "@/modules/recons/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 
@@ -205,7 +206,13 @@ export function ReconciliationsMonthIndex() {
 
         {/* Month rows */}
         {loading ? (
-          <div className="py-16 flex items-center justify-center"><Spinner /></div>
+          /* Structured skeleton instead of a bare spinner — the page keeps its
+             shape while data lands, so the eventual paint is a fill-in, not a
+             layout jump. */
+          <div className="rounded-xl overflow-hidden px-4 py-3"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <SkeletonTable rows={6} />
+          </div>
         ) : qbo && books?.seeded && (tracker?.periods.length ?? 0) === 0 ? (
           <div className="rounded-xl p-10 text-center"
             style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
