@@ -1,24 +1,23 @@
 /**
  * HomePage — the Nordavix marketing landing page.
  *
- * Art direction: dark, premium, but NOT monotone — a soft-dark base with
- * colored panels (burgundy / green / rose) and warm cream moments for
- * contrast (a cream bento tile, and the product explorer on a cream section
- * with a dark card). Everything animates in with smooth scroll-reveal.
+ * Art direction: "finance editorial" — the confident big-SaaS look (Ramp /
+ * Mercury / Linear lineage), deliberately NOT the generic AI-gradient site.
+ *   · Deep pine ink (#0C2620) as the dominant dark, warm cream (#F4F1E9)
+ *     for the product sections — a two-world rhythm: dark statement bands,
+ *     light "show the work" bands.
+ *   · ONE loud accent: electric lime (#D4F361). Everything else is quiet.
+ *   · Type system: Fraunces (editorial serif) for display headlines,
+ *     Plus Jakarta Sans for body, JetBrains Mono for eyebrows / metrics /
+ *     figures — the mono-label discipline big SaaS sites use.
+ *   · The hero centerpiece is a browser-framed product shot built in pure
+ *     CSS/SVG (no images): the recon dashboard with the Nordavix-vs-
+ *     QuickBooks subledger match card floating beside it.
  *
- * Sections:
- *   1.  Navbar (transparent → frosted on scroll)
- *   2.  Hero — aurora bg · headline + CTAs · FIXED arrow + rotating phrase
- *   3.  Trust strip
- *   4.  Bento — mixed-size, mixed-color tiles with mini visuals
- *   5.  Product explorer — left tabs (modules) → swapping visual + capability
- *       list, on a warm cream section with a dark card (interactive)
- *   6.  Agentic spotlight · Control grid · Personas · Founder · Early access ·
- *       FAQ · Final CTA · Footer
- *
- * Real product mockups (recon working-paper "PDF", cash-runway chart,
- * break-even chart, AI commentary card, executive report) live inside the
- * explorer. Charts/mockups are SVG + styled divs — no external libraries.
+ * Sections: Topbar → Navbar → Hero (+AppShot) → MetricsBar → Platform
+ * (3 deep feature rows) → Bento ("the rest of the close") → AI band →
+ * Workflow ribbon → Security → Founder letter → Beta → FAQ → Final CTA →
+ * shared MarketingFooter.
  */
 import { useEffect, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
@@ -27,70 +26,88 @@ import { motion, AnimatePresence } from "framer-motion"
 import { MarketingFooter } from "@/marketing/MarketingFooter"
 import { SEO, faqSchema, breadcrumbSchema } from "@/marketing/seo/SEO"
 import {
-  Sparkles, ArrowRight, CheckCircle2, Menu, X, ShieldCheck,
-  GitCompareArrows, Brain, Workflow, Plug, Scale, FileCheck,
-  Building2, UserCheck, Lock, Plus, Minus, ScrollText, TrendingUp,
-  Layers, ChevronRight,
+  Sparkles, ArrowRight, CheckCircle2, Menu, X, ShieldCheck, Lock,
+  ScrollText, UserCheck, Plug, Layers, TrendingUp, Scale, FileText,
+  GitCompareArrows, Plus, Minus, ChevronRight, AlertTriangle, Landmark,
+  RefreshCw, Receipt, BookCheck,
 } from "lucide-react"
 
-// ─── Palette (calm light base + restrained accents) ─────────────────────────
-const INK      = "#F7F5F0"   // page background — warm cream (matches the app)
-const INK_2    = "#FFFFFF"
-const SURFACE  = "#FFFFFF"   // cards / panels
-const SURFACE2 = "#F2F0EA"
-const LINE     = "rgba(14,17,18,0.08)"   // hairline on light
-const LINE_2   = "rgba(14,17,18,0.14)"
-const TXT      = "#14181A"   // primary text — near-black
-const TXT_2    = "#4A4946"
-const TXT_3    = "#8C8B88"
-const GREEN    = "#3E8F66"   // brand sage (reads on light)
-const GREEN_D  = "#2E7A55"
-const ROSE     = "#A8546F"   // muted rose
-const AMBER    = "#B07F3C"   // muted ochre
-// deeper warm panel for banded "context" sections
-const CREAM    = "#EFEBE3"
-const ON_CREAM   = "#15181A"
-const ON_CREAM_2 = "#4C5052"
-// Soft tonal bands for section rhythm (Notion-style) + diffuse glows (Linear-style).
-// Calm, low-chroma — they give the page depth without shouting.
-const TINT_SAGE  = "#E9F2EC"   // soft green band
-const TINT_SLATE = "#ECF1F5"   // soft blue-gray band
-const TINT_SAND  = "#F5EFE4"   // soft warm band
-const GLOW_SAGE  = "#6FB793"   // diffuse sage glow
-const GLOW_WARM  = "#E6C79C"   // diffuse warm glow
+// ─── Palette ─────────────────────────────────────────────────────────────────
+const PINE    = "#0C2620"   // page dark — deep pine ink
+const PINE_2  = "#103028"   // raised dark surface
+const PINE_3  = "#163D33"   // dark hover / strong hairline
+const D_LINE  = "rgba(244,241,233,0.10)"  // hairline on dark
+const D_LINE2 = "rgba(244,241,233,0.16)"
+const D_TXT   = "#F4F1E9"   // text on dark — warm cream-white
+const D_TXT2  = "rgba(244,241,233,0.66)"
+const D_TXT3  = "rgba(244,241,233,0.42)"
+const LIME    = "#D4F361"   // THE accent
+const LIME_D  = "#0E2A14"   // text on lime
+const SAGE    = "#7FB89B"   // quiet support on dark
+const CREAM   = "#F4F1E9"   // light section base
+const PAPER   = "#FCFBF7"   // cards on cream
+const L_LINE  = "rgba(12,38,32,0.10)"     // hairline on light
+const L_LINE2 = "rgba(12,38,32,0.16)"
+const L_TXT   = "#11271F"   // text on light — pine
+const L_TXT2  = "#46584F"
+const L_TXT3  = "#7C8A82"
+const GREEN   = "#2E7A55"   // semantic ok (on light)
+const AMBER   = "#B07F3C"   // semantic pending (on light)
+const RED     = "#A8544A"   // semantic gap (on light)
 
-const EASE = [0.22, 1, 0.36, 1] as const
+const SERIF = '"Fraunces", Georgia, "Times New Roman", serif'
+const MONO  = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
+const EASE  = [0.22, 1, 0.36, 1] as const
 
-// ─── Motion + small helpers ─────────────────────────────────────────────────
-function Reveal({ children, delay = 0, y = 24, className = "" }:
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function Reveal({ children, delay = 0, y = 22, className = "" }:
   { children: ReactNode; delay?: number; y?: number; className?: string }) {
   return (
     <motion.div className={className}
       initial={{ opacity: 0, y }} whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-80px" }}
-      transition={{ duration: 0.6, ease: EASE, delay }}>
+      viewport={{ once: true, margin: "-70px" }}
+      transition={{ duration: 0.65, ease: EASE, delay }}>
       {children}
     </motion.div>
   )
 }
-function Eyebrow({ children, color = GREEN }: { children: ReactNode; color?: string }) {
+/** Mono uppercase eyebrow — the section label discipline. */
+function Kicker({ children, dark = false }: { children: ReactNode; dark?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em]" style={{ color }}>
-      <span className="h-px w-6" style={{ background: color }} />{children}
-    </span>
+    <div className="flex items-center gap-2.5 text-[11px] font-medium tracking-[0.22em] uppercase"
+      style={{ fontFamily: MONO, color: dark ? SAGE : GREEN }}>
+      <span className="h-[5px] w-[5px] rounded-[1px]" style={{ background: LIME }} />
+      {children}
+    </div>
   )
 }
-function GradWord({ children }: { children: ReactNode }) {
-  return <span style={{ background: `linear-gradient(100deg, ${ROSE}, ${GREEN})`, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>{children}</span>
+/** Display headline — Fraunces serif. */
+function Display({ children, dark = false, size = "clamp(2rem, 4.2vw, 3.4rem)", className = "" }:
+  { children: ReactNode; dark?: boolean; size?: string; className?: string }) {
+  return (
+    <h2 className={`tracking-[-0.01em] ${className}`}
+      style={{ fontFamily: SERIF, fontWeight: 550, lineHeight: 1.06, fontSize: size, color: dark ? D_TXT : L_TXT }}>
+      {children}
+    </h2>
+  )
+}
+function LimeBtn({ to, children }: { to: string; children: ReactNode }) {
+  return (
+    <Link to={to}
+      className="inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-sm font-bold transition-transform hover:-translate-y-0.5"
+      style={{ background: LIME, color: LIME_D, boxShadow: "0 16px 40px -14px rgba(212,243,97,0.45)" }}>
+      {children}
+    </Link>
+  )
 }
 
-// ─── Navbar ──────────────────────────────────────────────────────────────────
-const NAV_LINKS = [
-  { label: "Product", to: "#explore", external: true },
-  { label: "Solutions", to: "/solutions", external: false },
-  { label: "Blog", to: "/blog", external: false },
-  { label: "Early access", to: "#beta", external: true },
-  { label: "FAQ", to: "#faq", external: true },
+// ─── Topbar + Navbar ─────────────────────────────────────────────────────────
+const NAV = [
+  { label: "Platform", to: "#platform", anchor: true },
+  { label: "Workflow", to: "#workflow", anchor: true },
+  { label: "Security", to: "#security", anchor: true },
+  { label: "Blog", to: "/blog", anchor: false },
+  { label: "FAQ", to: "#faq", anchor: true },
 ]
 function Navbar() {
   const [scrolled, setScrolled] = useState(false)
@@ -102,56 +119,64 @@ function Navbar() {
     return () => window.removeEventListener("scroll", onScroll)
   }, [])
   useEffect(() => { document.body.style.overflow = open ? "hidden" : ""; return () => { document.body.style.overflow = "" } }, [open])
-  const greenBtn = { color: "#06140D", background: GREEN, boxShadow: `0 8px 22px -8px ${GREEN}` }
   return (
     <>
-      <nav className="fixed top-0 inset-x-0 z-50 transition-all duration-300"
-        style={{ paddingTop: scrolled ? 12 : 18, paddingBottom: scrolled ? 12 : 18,
-          background: scrolled ? "rgba(247,245,240,0.82)" : "transparent",
-          backdropFilter: scrolled ? "saturate(160%) blur(14px)" : "none", WebkitBackdropFilter: scrolled ? "saturate(160%) blur(14px)" : "none",
-          borderBottom: `1px solid ${scrolled ? LINE : "transparent"}` }}>
-        <div className="max-w-6xl mx-auto px-6 flex items-center justify-between gap-4">
-          <Link to="/" className="flex items-center gap-2.5 group shrink-0">
-            <img src="/logo-mark-light.svg" alt="Nordavix" className="h-8 w-8 transition-transform group-hover:scale-105" />
-            <span className="font-bold text-lg tracking-tight" style={{ color: TXT }}>nordavix<span style={{ color: GREEN }}>.</span></span>
+      {/* announcement microbar */}
+      <div className="relative z-50 text-center px-4 py-2 text-[11px] tracking-[0.08em]"
+        style={{ fontFamily: MONO, background: LIME, color: LIME_D }}>
+        PRIVATE BETA IS OPEN — FOUNDING FIRMS GET THE FULL PLATFORM FREE{" "}
+        <Link to="/sign-up" className="font-bold underline underline-offset-2">CLAIM A SPOT →</Link>
+      </div>
+      <nav className="sticky top-0 inset-x-0 z-50 transition-all duration-300"
+        style={{
+          background: scrolled ? "rgba(12,38,32,0.86)" : "transparent",
+          backdropFilter: scrolled ? "saturate(150%) blur(14px)" : "none",
+          WebkitBackdropFilter: scrolled ? "saturate(150%) blur(14px)" : "none",
+          borderBottom: `1px solid ${scrolled ? D_LINE : "transparent"}`,
+        }}>
+        <div className="max-w-6xl mx-auto px-6 h-[64px] flex items-center justify-between gap-4">
+          <Link to="/" className="flex items-center gap-2 shrink-0 group">
+            <span className="h-[22px] w-[22px] rounded-[6px] grid place-items-center text-[13px] font-extrabold transition-transform group-hover:rotate-[-6deg]"
+              style={{ background: LIME, color: LIME_D, fontFamily: MONO }}>n</span>
+            <span className="font-bold text-[17px] tracking-tight" style={{ color: D_TXT }}>nordavix</span>
           </Link>
-          <div className="hidden md:flex items-center gap-8">
-            {NAV_LINKS.map((it) => {
-              const p = { className: "text-sm font-medium transition-colors", style: { color: TXT_2 },
-                onMouseEnter: (e: { currentTarget: HTMLElement }) => { e.currentTarget.style.color = TXT },
-                onMouseLeave: (e: { currentTarget: HTMLElement }) => { e.currentTarget.style.color = TXT_2 } }
-              return it.external ? <a key={it.label} href={it.to} {...p}>{it.label}</a> : <Link key={it.label} to={it.to} {...p}>{it.label}</Link>
-            })}
+          <div className="hidden md:flex items-center gap-7">
+            {NAV.map((it) => it.anchor
+              ? <a key={it.label} href={it.to} className="text-[13.5px] font-medium transition-colors hover:text-white" style={{ color: D_TXT2 }}>{it.label}</a>
+              : <Link key={it.label} to={it.to} className="text-[13.5px] font-medium transition-colors hover:text-white" style={{ color: D_TXT2 }}>{it.label}</Link>)}
           </div>
-          <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="hidden md:flex items-center gap-2.5">
               {isSignedIn ? (
-                <Link to="/app" className="text-sm font-semibold px-4 py-2 rounded-full inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5" style={greenBtn}>Open dashboard <ArrowRight size={14} /></Link>
+                <Link to="/app" className="inline-flex items-center gap-1.5 text-[13px] font-bold rounded-full px-4 py-2 transition-transform hover:-translate-y-0.5"
+                  style={{ background: LIME, color: LIME_D }}>Open dashboard <ArrowRight size={13} strokeWidth={2.4} /></Link>
               ) : (
                 <>
-                  <Link to="/sign-in" className="text-sm font-medium px-3 py-2 transition-colors" style={{ color: TXT_2 }}
-                    onMouseEnter={(e) => (e.currentTarget.style.color = TXT)} onMouseLeave={(e) => (e.currentTarget.style.color = TXT_2)}>Sign in</Link>
-                  <Link to="/sign-up" className="text-sm font-semibold px-4 py-2 rounded-full transition-all hover:-translate-y-0.5" style={greenBtn}>Start free</Link>
+                  <Link to="/sign-in" className="text-[13.5px] font-medium px-2.5 py-2 transition-colors hover:text-white" style={{ color: D_TXT2 }}>Sign in</Link>
+                  <Link to="/sign-up" className="inline-flex items-center gap-1.5 text-[13px] font-bold rounded-full px-4 py-2 transition-transform hover:-translate-y-0.5"
+                    style={{ background: LIME, color: LIME_D }}>Start free <ArrowRight size={13} strokeWidth={2.4} /></Link>
                 </>
               )}
             </div>
-            <button onClick={() => setOpen(true)} className="md:hidden h-9 w-9 flex items-center justify-center rounded-lg" style={{ color: TXT, border: `1px solid ${LINE_2}` }} aria-label="Open menu"><Menu size={18} /></button>
+            <button onClick={() => setOpen(true)} className="md:hidden h-9 w-9 grid place-items-center rounded-lg"
+              style={{ color: D_TXT, border: `1px solid ${D_LINE2}` }} aria-label="Open menu"><Menu size={17} /></button>
           </div>
         </div>
       </nav>
       {open && (
-        <div className="fixed inset-0 z-[60] md:hidden" style={{ background: INK }}>
-          <div className="flex items-center justify-between px-6 py-5">
-            <span className="font-bold text-lg" style={{ color: TXT }}>nordavix<span style={{ color: GREEN }}>.</span></span>
-            <button onClick={() => setOpen(false)} className="h-9 w-9 flex items-center justify-center rounded-lg" style={{ background: SURFACE2, color: TXT_2 }} aria-label="Close menu"><X size={18} /></button>
+        <div className="fixed inset-0 z-[60] md:hidden" style={{ background: PINE }}>
+          <div className="flex items-center justify-between px-6 h-[64px]">
+            <span className="font-bold text-[17px]" style={{ color: D_TXT }}>nordavix</span>
+            <button onClick={() => setOpen(false)} className="h-9 w-9 grid place-items-center rounded-lg"
+              style={{ background: PINE_2, color: D_TXT2 }} aria-label="Close menu"><X size={17} /></button>
           </div>
-          <div className="px-6 py-4 space-y-1">
-            {NAV_LINKS.map((item) => item.external
-              ? <a key={item.label} href={item.to} onClick={() => setOpen(false)} className="block py-3 text-base font-medium" style={{ color: TXT, borderBottom: `1px solid ${LINE}` }}>{item.label}</a>
-              : <Link key={item.label} to={item.to} onClick={() => setOpen(false)} className="block py-3 text-base font-medium" style={{ color: TXT, borderBottom: `1px solid ${LINE}` }}>{item.label}</Link>)}
-            <div className="pt-6 space-y-3">
-              <Link to="/sign-up" onClick={() => setOpen(false)} className="flex items-center justify-center gap-2 w-full py-3 rounded-full text-sm font-semibold" style={greenBtn}>Start free <ArrowRight size={14} /></Link>
-              <Link to="/sign-in" onClick={() => setOpen(false)} className="flex items-center justify-center w-full py-2.5 rounded-full text-sm font-medium" style={{ color: TXT_2, border: `1px solid ${LINE_2}` }}>Sign in</Link>
+          <div className="px-6 py-2">
+            {NAV.map((it) => it.anchor
+              ? <a key={it.label} href={it.to} onClick={() => setOpen(false)} className="block py-3.5 text-base font-medium" style={{ color: D_TXT, borderBottom: `1px solid ${D_LINE}` }}>{it.label}</a>
+              : <Link key={it.label} to={it.to} onClick={() => setOpen(false)} className="block py-3.5 text-base font-medium" style={{ color: D_TXT, borderBottom: `1px solid ${D_LINE}` }}>{it.label}</Link>)}
+            <div className="pt-7 space-y-3">
+              <Link to="/sign-up" onClick={() => setOpen(false)} className="flex items-center justify-center gap-2 w-full py-3.5 rounded-full text-sm font-bold" style={{ background: LIME, color: LIME_D }}>Start free <ArrowRight size={14} /></Link>
+              <Link to="/sign-in" onClick={() => setOpen(false)} className="flex items-center justify-center w-full py-3 rounded-full text-sm font-medium" style={{ color: D_TXT2, border: `1px solid ${D_LINE2}` }}>Sign in</Link>
             </div>
           </div>
         </div>
@@ -160,542 +185,605 @@ function Navbar() {
   )
 }
 
-// ─── Hero (copy left · fixed-arrow rotating list right) ─────────────────────
-const ROTATION = [
-  "Reconcile every account",
-  "Explain every variance",
-  "Forecast your cash runway",
-  "Pinpoint the break-even",
-  "Build the financial package",
-  "Write the executive report",
-  "Lock the period — defensibly",
-]
-const N = ROTATION.length
-const LH = 52            // px height of each rotating row
-const VIS = 7            // rows visible in the window
-const ARROW_SLOT = 3     // 0-indexed row the fixed arrow points at
-const TRIPLE = [...ROTATION, ...ROTATION, ...ROTATION]
-
-function Hero() {
-  // Vertical carousel: the list scrolls up one row per tick so each phrase
-  // arrives at the FIXED arrow line; then we snap back across the duplicated
-  // copies with NO transition so it loops seamlessly. The row at the arrow is
-  // bright; the rest are a lighter shade.
-  const [active, setActive] = useState(N)
-  const [withT, setWithT] = useState(true)
-  useEffect(() => { const id = setInterval(() => setActive((a) => a + 1), 2600); return () => clearInterval(id) }, [])
-  useEffect(() => {
-    if (active < 2 * N) return
-    const timer = setTimeout(() => { setWithT(false); setActive(N) }, 620)
-    return () => clearTimeout(timer)
-  }, [active])
-  useEffect(() => {
-    if (withT) return
-    const id = requestAnimationFrame(() => setWithT(true))
-    return () => cancelAnimationFrame(id)
-  }, [withT])
-  const y = -((active - ARROW_SLOT) * LH)
-
+// ─── The AppShot — browser-framed product mockup (pure CSS/SVG) ──────────────
+function StatusPill({ kind }: { kind: "ok" | "prep" | "open" }) {
+  const map = {
+    ok:   { t: "Approved", bg: "rgba(46,122,85,0.12)", fg: GREEN },
+    prep: { t: "Prepared", bg: "rgba(60,90,118,0.12)", fg: "#3C5A76" },
+    open: { t: "Open",     bg: "rgba(176,127,60,0.14)", fg: AMBER },
+  }[kind]
   return (
-    <header
-      className="relative overflow-hidden"
-      style={{
-        // Full-bleed abstract colour mesh — bold sage / amber / sky / rose blobs
-        // over a tinted base, with a faint violet bloom at the core. Pure
-        // gradients (no blur filter) so it fills the whole hero and paints cheaply.
-        background: `
-          radial-gradient(125% 100% at 4% 6%, rgba(74,164,121,0.55), transparent 56%),
-          radial-gradient(120% 95% at 96% 2%, rgba(232,176,98,0.60), transparent 56%),
-          radial-gradient(125% 105% at 84% 96%, rgba(108,164,208,0.56), transparent 58%),
-          radial-gradient(115% 95% at 10% 100%, rgba(168,84,111,0.34), transparent 56%),
-          radial-gradient(95% 80% at 52% 46%, rgba(124,116,196,0.20), transparent 62%),
-          linear-gradient(135deg, #E4F0E8 0%, #F2ECE0 46%, #DFEAF3 100%)
-        `,
-      }}
-    >
-      <div aria-hidden className="pointer-events-none absolute inset-0">
-        {/* faint grid texture over the colour wash */}
-        <div className="absolute inset-0" style={{ backgroundImage: `linear-gradient(${LINE} 1px, transparent 1px), linear-gradient(90deg, ${LINE} 1px, transparent 1px)`, backgroundSize: "56px 56px", maskImage: "radial-gradient(140% 90% at 50% 0%, black, transparent 80%)", WebkitMaskImage: "radial-gradient(140% 90% at 50% 0%, black, transparent 80%)", opacity: 0.45 }} />
-        {/* soft fade into the calm sections below so the band blends out */}
-        <div className="absolute inset-x-0 bottom-0 h-32" style={{ background: `linear-gradient(to bottom, transparent, ${INK})` }} />
+    <span className="inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-[9.5px] font-bold uppercase tracking-wide whitespace-nowrap"
+      style={{ background: map.bg, color: map.fg }}>
+      <span className="h-1 w-1 rounded-full" style={{ background: map.fg }} />{map.t}
+    </span>
+  )
+}
+const SHOT_ROWS: { name: string; num: string; gl: string; sl: string; v: string; s: "ok" | "prep" | "open" }[] = [
+  { name: "Operating cash",      num: "1100", gl: "2,847,392",  sl: "2,847,392",  v: "0.00", s: "ok" },
+  { name: "Accounts receivable", num: "1200", gl: "1,204,118",  sl: "1,204,118",  v: "0.00", s: "ok" },
+  { name: "Prepaid expenses",    num: "1400", gl: "33,000",     sl: "33,000",     v: "0.00", s: "prep" },
+  { name: "Fixed assets",        num: "1600", gl: "486,200",    sl: "486,200",    v: "0.00", s: "ok" },
+  { name: "Bank loan",           num: "2700", gl: "(100,000)",  sl: "(100,000)",  v: "0.00", s: "prep" },
+  { name: "Accrued liabilities", num: "2300", gl: "(86,420)",   sl: "(82,100)",   v: "(4,320)", s: "open" },
+]
+function AppShot() {
+  return (
+    <div className="relative">
+      {/* glow */}
+      <div aria-hidden className="pointer-events-none absolute -inset-x-10 -top-16 -bottom-10"
+        style={{ background: `radial-gradient(58% 56% at 50% 38%, rgba(212,243,97,0.13), transparent 70%), radial-gradient(40% 40% at 78% 70%, rgba(127,184,155,0.12), transparent 70%)` }} />
+      {/* browser frame */}
+      <div className="relative rounded-2xl overflow-hidden"
+        style={{ border: `1px solid ${D_LINE2}`, background: "#0E2B23", boxShadow: "0 60px 140px -50px rgba(0,0,0,0.65), 0 24px 60px -30px rgba(0,0,0,0.5)" }}>
+        <div className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom: `1px solid ${D_LINE}` }}>
+          <div className="flex gap-1.5">{[0, 1, 2].map((i) => <span key={i} className="h-2.5 w-2.5 rounded-full" style={{ background: "rgba(244,241,233,0.16)" }} />)}</div>
+          <div className="mx-auto flex items-center gap-1.5 rounded-md px-3 py-1 text-[10.5px]"
+            style={{ fontFamily: MONO, background: "rgba(244,241,233,0.07)", color: D_TXT3 }}>
+            <Lock size={9} strokeWidth={2.4} /> app.nordavix.com/reconciliations
+          </div>
+          <div className="w-12" />
+        </div>
+        {/* app body */}
+        <div className="grid grid-cols-[44px_1fr] sm:grid-cols-[52px_1fr]" style={{ background: "#F1EEE5" }}>
+          {/* mini sidebar */}
+          <div className="flex flex-col items-center gap-1.5 py-3" style={{ background: PINE }}>
+            {[BookCheck, GitCompareArrows, Layers, Receipt, TrendingUp, FileText].map((Ic, i) => (
+              <span key={i} className="h-8 w-8 grid place-items-center rounded-lg"
+                style={{ background: i === 1 ? "rgba(212,243,97,0.16)" : "transparent", color: i === 1 ? LIME : "rgba(244,241,233,0.4)" }}>
+                <Ic size={14.5} strokeWidth={1.9} />
+              </span>
+            ))}
+          </div>
+          {/* main */}
+          <div className="p-3.5 sm:p-5">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <div className="text-[13.5px] sm:text-[15px] font-bold" style={{ color: L_TXT }}>Reconciliations · March 2026</div>
+                <div className="text-[10px] mt-0.5" style={{ fontFamily: MONO, color: L_TXT3 }}>SYNCED 2 MIN AGO · QUICKBOOKS ONLINE</div>
+              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold"
+                style={{ background: PINE, color: LIME }}><Sparkles size={11} strokeWidth={2.2} /> Run Agentic Mode</span>
+            </div>
+            {/* KPIs */}
+            <div className="mt-3.5 grid grid-cols-2 lg:grid-cols-4 gap-2">
+              {[["GL BALANCE", "$4,384,290", L_TXT], ["SUBLEDGER", "$4,388,610", L_TXT], ["VARIANCE", "$(4,320)", RED], ["APPROVED", "11 / 14", GREEN]].map(([k, v, c]) => (
+                <div key={k as string} className="rounded-lg px-3 py-2.5" style={{ background: PAPER, border: `1px solid ${L_LINE}` }}>
+                  <div className="text-[8.5px] tracking-[0.14em]" style={{ fontFamily: MONO, color: L_TXT3 }}>{k}</div>
+                  <div className="text-[13px] sm:text-[15px] font-bold tabular-nums mt-0.5" style={{ color: c as string }}>{v}</div>
+                </div>
+              ))}
+            </div>
+            {/* table */}
+            <div className="mt-3.5 rounded-lg overflow-hidden" style={{ background: PAPER, border: `1px solid ${L_LINE}` }}>
+              <div className="grid grid-cols-[1.5fr_auto] md:grid-cols-[1.5fr_0.9fr_0.9fr_0.7fr_auto] gap-2 px-3.5 py-2 text-[8.5px] tracking-[0.14em]"
+                style={{ fontFamily: MONO, color: L_TXT3, borderBottom: `1px solid ${L_LINE}` }}>
+                <span>ACCOUNT</span><span className="hidden md:block text-right">GL</span>
+                <span className="hidden md:block text-right">SUBLEDGER</span>
+                <span className="hidden md:block text-right">VARIANCE</span><span className="text-right">STATUS</span>
+              </div>
+              {SHOT_ROWS.map((r) => (
+                <div key={r.num} className="grid grid-cols-[1.5fr_auto] md:grid-cols-[1.5fr_0.9fr_0.9fr_0.7fr_auto] gap-2 items-center px-3.5 py-[7px] text-[11.5px]"
+                  style={{ borderBottom: `1px solid ${L_LINE}` }}>
+                  <span className="truncate font-medium" style={{ color: L_TXT }}>
+                    {r.name} <span style={{ fontFamily: MONO, fontSize: 9.5, color: L_TXT3 }}>{r.num}</span>
+                  </span>
+                  <span className="hidden md:block text-right tabular-nums" style={{ color: L_TXT2 }}>{r.gl}</span>
+                  <span className="hidden md:block text-right tabular-nums" style={{ color: L_TXT2 }}>{r.sl}</span>
+                  <span className="hidden md:block text-right tabular-nums font-semibold" style={{ color: r.v === "0.00" ? GREEN : RED }}>{r.v}</span>
+                  <span className="justify-self-end"><StatusPill kind={r.s} /></span>
+                </div>
+              ))}
+              <div className="px-3.5 py-2 text-[10px]" style={{ fontFamily: MONO, color: L_TXT3 }}>14 ACCOUNTS · 1 OPEN · CLOSE GATE LOCKED UNTIL ZERO</div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div className="relative max-w-6xl mx-auto px-6 pt-36 md:pt-44 pb-20 md:pb-28">
-        <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-12 lg:gap-10 items-center">
-          {/* left — copy */}
-          <div>
-            <Reveal>
-              <span className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-semibold" style={{ background: "rgba(14,17,18,0.04)", color: TXT, border: `1px solid ${LINE_2}` }}>
-                <Sparkles size={13} strokeWidth={2} style={{ color: ROSE }} /> Built by a CPA · Agentic month-end close
-              </span>
-            </Reveal>
-            <Reveal delay={0.05}>
-              <h1 className="mt-6 text-[2.1rem] leading-[1.07] sm:text-[2.6rem] md:text-[3.15rem] font-bold tracking-tight" style={{ color: TXT }}>
-                Close the books in <GradWord>days</GradWord>, not weeks.
-              </h1>
-            </Reveal>
-            <Reveal delay={0.1}>
-              <p className="mt-5 max-w-xl text-[15px] md:text-base leading-relaxed" style={{ color: TXT_2 }}>
-                Every account reconciled, every variance explained, every report written — AI-prepared, you approve. Right on top of QuickBooks Online.
-              </p>
-            </Reveal>
-            <Reveal delay={0.15}>
-              <div className="mt-9">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                  <Link to="/sign-up" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Start free <ArrowRight size={16} /></Link>
-                  <a href="#explore" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-colors" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>See it work</a>
-                </div>
-              </div>
-            </Reveal>
-            <Reveal delay={0.2}><p className="mt-7 text-[13px]" style={{ color: TXT_3 }}>QuickBooks-native · Maker-checker enforced · Bank-grade security</p></Reveal>
+      {/* floating: subledger match card (the real feature) */}
+      <div className="hidden lg:block absolute -right-8 top-16 w-[300px] rotate-[1.2deg]">
+        <div className="rounded-xl overflow-hidden" style={{ background: PAPER, border: `1px solid ${L_LINE2}`, boxShadow: "0 36px 80px -30px rgba(0,0,0,0.55)" }}>
+          <div className="px-4 py-2.5 text-[9px] tracking-[0.16em] flex items-center justify-between"
+            style={{ fontFamily: MONO, color: L_TXT3, borderBottom: `1px solid ${L_LINE}` }}>
+            <span>SUBLEDGER MATCH · 1400</span><GitCompareArrows size={11} style={{ color: GREEN }} />
           </div>
+          <div className="grid grid-cols-2 text-[10.5px]">
+            <div className="p-3" style={{ borderRight: `1px solid ${L_LINE}` }}>
+              <div className="text-[8.5px] tracking-[0.14em] mb-1.5" style={{ fontFamily: MONO, color: GREEN }}>PER NORDAVIX</div>
+              {[["Insurance 24-mo", "12,000"], ["Rent deposit", "8,000"], ["Software", "13,000"]].map(([a, b]) => (
+                <div key={a} className="flex justify-between py-[3px]"><span style={{ color: L_TXT2 }}>{a}</span><span className="tabular-nums font-semibold" style={{ color: L_TXT }}>{b}</span></div>
+              ))}
+            </div>
+            <div className="p-3">
+              <div className="text-[8.5px] tracking-[0.14em] mb-1.5" style={{ fontFamily: MONO, color: "#3C5A76" }}>PER QUICKBOOKS</div>
+              {[["JE 1042", "12,000"], ["JE 1043", "8,000"], ["JE 1051", "13,000"]].map(([a, b]) => (
+                <div key={a} className="flex justify-between py-[3px]"><span style={{ color: L_TXT2 }}>{a}</span><span className="tabular-nums font-semibold" style={{ color: L_TXT }}>{b}</span></div>
+              ))}
+            </div>
+          </div>
+          <div className="px-4 py-2 flex items-center gap-1.5 text-[10.5px] font-bold"
+            style={{ background: "rgba(46,122,85,0.10)", color: GREEN, borderTop: `1px solid ${L_LINE}` }}>
+            <CheckCircle2 size={12} strokeWidth={2.4} /> Schedule ties to GL — $33,000
+          </div>
+        </div>
+      </div>
 
-          {/* right — fixed arrow + rotating list */}
-          <Reveal delay={0.15} className="lg:pl-8">
-            <div className="text-[11px] font-bold uppercase tracking-[0.18em] mb-3" style={{ color: TXT_3 }}>One workspace that can</div>
-            <div className="relative overflow-hidden" style={{ height: VIS * LH, WebkitMaskImage: "linear-gradient(transparent, #000 16%, #000 84%, transparent)", maskImage: "linear-gradient(transparent, #000 16%, #000 84%, transparent)" }}>
-              {/* fixed arrow marker */}
-              <div className="absolute left-0 z-10 flex items-center" style={{ top: ARROW_SLOT * LH, height: LH }}>
-                <svg width="16" height="18" viewBox="0 0 13 15" aria-hidden><path d="M0 0 L13 7.5 L0 15 Z" fill={ROSE} /></svg>
-              </div>
-              {/* scrolling strip (3 copies → seamless loop) */}
-              <div style={{ transform: `translateY(${y}px)`, transition: withT ? "transform 0.6s cubic-bezier(0.22,1,0.36,1)" : "none" }}>
-                {TRIPLE.map((phrase, i) => {
-                  const on = i === active
-                  return (
-                    <div key={i} className="flex items-center pl-9" style={{ height: LH }}>
-                      <span className="text-2xl md:text-[1.7rem] tracking-tight transition-colors duration-300" style={{ color: on ? TXT : "#474d4c", fontWeight: on ? 800 : 600 }}>{phrase}</span>
-                    </div>
-                  )
-                })}
-              </div>
+      {/* floating: agentic chip */}
+      <div className="hidden md:block absolute -left-6 -bottom-7 -rotate-[1.5deg]">
+        <div className="flex items-center gap-3 rounded-xl px-4 py-3"
+          style={{ background: LIME, color: LIME_D, boxShadow: "0 30px 70px -24px rgba(212,243,97,0.55)" }}>
+          <Sparkles size={16} strokeWidth={2.2} />
+          <div>
+            <div className="text-[12px] font-extrabold leading-none">Agentic Mode</div>
+            <div className="text-[10px] mt-1" style={{ fontFamily: MONO }}>12/14 PREPARED · YOU APPROVE</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Hero ────────────────────────────────────────────────────────────────────
+function Hero() {
+  const { isSignedIn } = useUser()
+  return (
+    <header className="relative overflow-hidden" style={{ background: PINE }}>
+      <div aria-hidden className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0" style={{
+          backgroundImage: `linear-gradient(${D_LINE} 1px, transparent 1px), linear-gradient(90deg, ${D_LINE} 1px, transparent 1px)`,
+          backgroundSize: "64px 64px", opacity: 0.5,
+          maskImage: "radial-gradient(120% 70% at 50% 0%, black, transparent 78%)",
+          WebkitMaskImage: "radial-gradient(120% 70% at 50% 0%, black, transparent 78%)",
+        }} />
+        <div className="absolute -top-40 left-1/2 -translate-x-1/2 h-[480px] w-[820px] rounded-full"
+          style={{ background: "radial-gradient(closest-side, rgba(212,243,97,0.10), transparent)", filter: "blur(50px)" }} />
+      </div>
+      <div className="relative max-w-6xl mx-auto px-6 pt-16 md:pt-24 pb-16 md:pb-24">
+        <div className="max-w-3xl mx-auto text-center">
+          <Reveal>
+            <div className="flex justify-center"><Kicker dark>The AI close platform for QuickBooks</Kicker></div>
+          </Reveal>
+          <Reveal delay={0.06}>
+            <h1 className="mt-6 tracking-[-0.015em]"
+              style={{ fontFamily: SERIF, fontWeight: 550, lineHeight: 1.02, fontSize: "clamp(2.7rem, 6.4vw, 5rem)", color: D_TXT }}>
+              A Fortune&nbsp;500 close.
+              <br />
+              <em style={{ fontStyle: "italic", color: LIME }}>On QuickBooks.</em>
+            </h1>
+          </Reveal>
+          <Reveal delay={0.12}>
+            <p className="mt-6 mx-auto max-w-xl text-[15.5px] md:text-[17px] leading-relaxed" style={{ color: D_TXT2 }}>
+              Nordavix reconciles every balance-sheet account, explains every variance,
+              and drafts the adjusting entries — your team reviews and signs off.
+              Controls a Big&nbsp;4 auditor would recognize, at QuickBooks scale.
+            </p>
+          </Reveal>
+          <Reveal delay={0.18}>
+            <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3">
+              <LimeBtn to={isSignedIn ? "/app" : "/sign-up"}>{isSignedIn ? "Open dashboard" : "Start free in beta"} <ArrowRight size={15} strokeWidth={2.4} /></LimeBtn>
+              <a href="#platform" className="inline-flex items-center justify-center gap-2 rounded-full px-6 py-3.5 text-sm font-semibold transition-colors"
+                style={{ color: D_TXT, border: `1px solid ${D_LINE2}` }}>See the platform</a>
             </div>
           </Reveal>
+          <Reveal delay={0.24}>
+            <p className="mt-7 text-[10.5px] tracking-[0.16em]" style={{ fontFamily: MONO, color: D_TXT3 }}>
+              READ-ONLY QUICKBOOKS CONNECTION · NO CARD · MAKER-CHECKER BUILT IN
+            </p>
+          </Reveal>
         </div>
+        <Reveal delay={0.2} y={36} className="mt-14 md:mt-20">
+          <AppShot />
+        </Reveal>
       </div>
     </header>
   )
 }
 
-// ─── Trust strip ─────────────────────────────────────────────────────────────
-function TrustStrip() {
-  const items = [{ Icon: Plug, label: "QuickBooks-native" }, { Icon: Building2, label: "Built by a CPA" }, { Icon: UserCheck, label: "Maker-checker enforced" }, { Icon: ShieldCheck, label: "Bank-grade security" }]
+// ─── Metrics bar ─────────────────────────────────────────────────────────────
+function MetricsBar() {
+  const items = [["31", "balance-sheet account types"], ["5", "schedule engines"], ["2-step", "maker · checker control"], ["100%", "of actions audit-logged"]]
   return (
-    <section style={{ background: INK }}>
-      <div className="max-w-5xl mx-auto px-6 py-8" style={{ borderTop: `1px solid ${LINE}` }}>
-        <Reveal>
-          <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-4">
-            {items.map(({ Icon, label }) => <div key={label} className="inline-flex items-center gap-2 text-sm font-medium" style={{ color: TXT_3 }}><Icon size={16} strokeWidth={1.8} /> {label}</div>)}
-          </div>
-        </Reveal>
-      </div>
-    </section>
-  )
-}
-
-// ─── Bento — mixed-size, mixed-color tiles ──────────────────────────────────
-function Bento() {
-  return (
-    <section style={{ background: INK }}>
-      <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
-        <Reveal className="max-w-2xl mb-12">
-          <Eyebrow>One workspace</Eyebrow>
-          <h2 className="mt-4 text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Your whole month-end, <GradWord>connected</GradWord>.</h2>
-        </Reveal>
-        <div className="grid md:grid-cols-3 gap-4 md:auto-rows-fr">
-          {/* big dark tile */}
-          <Reveal className="md:col-span-2 md:row-span-2" y={28}>
-            <div className="h-full rounded-2xl p-7 relative overflow-hidden" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
-              <div aria-hidden className="absolute -top-16 -right-10 h-60 w-60 rounded-full" style={{ background: `radial-gradient(closest-side, ${GREEN_D}, transparent)`, opacity: 0.08, filter: "blur(30px)" }} />
-              <div className="relative">
-                <h3 className="text-2xl font-bold" style={{ color: TXT }}>The entire close on one canvas</h3>
-                <p className="mt-2 max-w-md text-[15px] leading-relaxed" style={{ color: TXT_2 }}>Connect QuickBooks, sync the period, and every tool works off one source of truth — reconcile, explain, report, and close without leaving.</p>
-                {/* close-flow mini visual */}
-                <div className="mt-6 flex items-center gap-2 flex-wrap">
-                  {["Connect", "Sync", "Reconcile", "Explain", "Approve", "Close"].map((s, i, a) => (
-                    <div key={s} className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full" style={{ background: i <= 3 ? "rgba(84,185,138,0.14)" : SURFACE2, color: i <= 3 ? GREEN : TXT_3, border: `1px solid ${LINE}` }}>
-                        {i <= 3 && <CheckCircle2 size={11} strokeWidth={2.4} />}{s}
-                      </span>
-                      {i < a.length - 1 && <ChevronRight size={13} style={{ color: TXT_3 }} />}
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-6 rounded-xl p-4" style={{ background: INK_2, border: `1px solid ${LINE}` }}>
-                  <div className="flex items-center justify-between text-xs"><span style={{ color: TXT_3 }}>March 2026 · close progress</span><span className="font-bold" style={{ color: GREEN }}>86%</span></div>
-                  <div className="mt-2 h-2 rounded-full overflow-hidden" style={{ background: SURFACE2 }}><div className="h-full rounded-full" style={{ width: "86%", background: `linear-gradient(90deg, ${GREEN}, ${GREEN_D})` }} /></div>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                    {[["Recons", "12/14"], ["Flux", "Signed"], ["Package", "Ready"]].map(([a2, b]) => (<div key={a2}><div className="text-[10px] uppercase tracking-wider" style={{ color: TXT_3 }}>{a2}</div><div className="text-sm font-bold" style={{ color: TXT }}>{b}</div></div>))}
-                  </div>
-                </div>
-              </div>
+    <section style={{ background: PINE, borderTop: `1px solid ${D_LINE}` }}>
+      <div className="max-w-6xl mx-auto px-6 py-10 grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-8">
+        {items.map(([n, l], i) => (
+          <Reveal key={l} delay={i * 0.05}>
+            <div className="text-center lg:text-left">
+              <div className="text-3xl md:text-4xl" style={{ fontFamily: SERIF, fontWeight: 550, color: LIME }}>{n}</div>
+              <div className="mt-1.5 text-[10px] tracking-[0.18em] uppercase" style={{ fontFamily: MONO, color: D_TXT3 }}>{l}</div>
             </div>
           </Reveal>
-          {/* cream tile */}
-          <Reveal delay={0.06} className="md:col-span-1">
-            <div className="h-full rounded-2xl p-7" style={{ background: CREAM }}>
-              <h3 className="text-xl font-bold" style={{ color: ON_CREAM }}>Every close tool, ready to go</h3>
-              <p className="mt-2 text-sm leading-relaxed" style={{ color: ON_CREAM_2 }}>Six tools, one login, no setup.</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {[[GitCompareArrows, "Reconciliations"], [Brain, "Flux"], [TrendingUp, "Insights"], [FileCheck, "Financials"], [Scale, "Intercompany"], [Layers, "Schedules"]].map(([Ic, label]) => {
-                  const Icon = Ic as typeof GitCompareArrows
-                  return <span key={label as string} className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full" style={{ background: "#FFFFFF", color: ON_CREAM, border: "1px solid rgba(0,0,0,0.08)" }}><Icon size={12} strokeWidth={2} style={{ color: GREEN_D }} /> {label as string}</span>
-                })}
-              </div>
-            </div>
-          </Reveal>
-          {/* green tile */}
-          <Reveal delay={0.12} className="md:col-span-1">
-            <div className="h-full rounded-2xl p-7 relative overflow-hidden" style={{ background: "linear-gradient(155deg, #EEF7F2, #FFFFFF)", border: `1px solid rgba(62,143,102,0.30)` }}>
-              <h3 className="text-xl font-bold" style={{ color: TXT }}>Your close in one click</h3>
-              <p className="mt-2 text-sm leading-relaxed" style={{ color: TXT_2 }}>Agentic Mode prepares every open account, then hands it to you.</p>
-              <div className="mt-5 inline-flex items-center gap-2 text-sm font-semibold px-3.5 py-2 rounded-full" style={{ color: "#06140D", background: GREEN }}><Sparkles size={14} strokeWidth={2} /> Run AI</div>
-              <div className="mt-3 text-xs" style={{ color: TXT_3 }}>12 of 14 prepared · you approve</div>
-            </div>
-          </Reveal>
-          {/* burgundy wide tile */}
-          <Reveal delay={0.1} className="md:col-span-3">
-            <div className="rounded-2xl p-7 relative overflow-hidden" style={{ background: "linear-gradient(120deg, #F7EEF1, #FFFFFF)", border: `1px solid rgba(168,84,111,0.28)` }}>
-              <div className="grid md:grid-cols-2 gap-6 items-center">
-                <div>
-                  <h3 className="text-xl font-bold" style={{ color: TXT }}>One place, your whole team</h3>
-                  <p className="mt-2 text-[15px] leading-relaxed" style={{ color: TXT_2 }}>Maker-checker is enforced — preparers prepare, reviewers approve, nobody signs off their own work. Every action is logged.</p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap md:justify-end">
-                  {[["Preparer", "enters"], ["Reviewer", "approves"], ["Admin", "closes"]].map(([r, a], i, arr) => (
-                    <div key={r} className="flex items-center gap-2">
-                      <div className="rounded-xl px-4 py-3 text-center" style={{ background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE}` }}><div className="text-sm font-bold" style={{ color: TXT }}>{r}</div><div className="text-[11px]" style={{ color: TXT_3 }}>{a}</div></div>
-                      {i < arr.length - 1 && <ChevronRight size={14} style={{ color: ROSE }} />}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </Reveal>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-// ─── Mockups (used inside the explorer) ─────────────────────────────────────
-function ReconPaper() {
-  return (
-    <div className="rounded-2xl p-4 sm:p-6" style={{ background: "#FAFAF8", boxShadow: "0 20px 50px -30px rgba(14,17,18,0.22)" }}>
-      <div className="flex items-center justify-between text-[10px] font-semibold tracking-wide" style={{ color: "#8A8F98" }}>
-        <span>HELIO LOGISTICS, INC.</span><span className="text-right">RECONCILIATION PACKET<br /><span style={{ color: "#B6BAC0" }}>REC-202603-1100</span></span>
-      </div>
-      <div className="mt-3 pt-3" style={{ borderTop: "1px solid #ECEAE5" }}>
-        <div className="text-[10px] font-bold tracking-[0.16em]" style={{ color: GREEN_D }}>GENERAL LEDGER RECONCILIATION</div>
-        <div className="mt-1 text-xl font-bold" style={{ color: "#14181A" }}>Operating cash · 1100</div>
-        <div className="text-xs" style={{ color: "#8A8F98" }}>Q1 2026 · period close</div>
-      </div>
-      <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-        <div><div className="text-[9px] uppercase tracking-wider" style={{ color: "#8A8F98" }}>Per general ledger</div><div className="text-lg font-bold tabular-nums" style={{ color: "#14181A" }}>$2,847,392</div></div>
-        <div className="text-2xl font-light" style={{ color: GREEN_D }}>=</div>
-        <div className="text-right"><div className="text-[9px] uppercase tracking-wider" style={{ color: "#8A8F98" }}>Per bank statement</div><div className="text-lg font-bold tabular-nums" style={{ color: "#14181A" }}>$2,847,392</div></div>
-      </div>
-      <div className="mt-4 space-y-1.5 text-xs" style={{ color: "#3C4146" }}>
-        {[["Opening balance", "rolled fwd"], ["Deposits in transit", "+ 342,180"], ["Outstanding checks", "− 12,840"]].map(([a, b]) => <div key={a} className="flex justify-between"><span>{a}</span><span className="tabular-nums" style={{ color: "#8A8F98" }}>{b}</span></div>)}
-        <div className="flex justify-between pt-1.5 font-bold" style={{ borderTop: "1px solid #14181A", color: "#14181A" }}><span>Reconciled balance — matches source</span><span className="tabular-nums" style={{ color: GREEN_D }}>$2,847,392</span></div>
-      </div>
-      <div className="mt-4 rounded-lg p-3 text-[11px] leading-relaxed" style={{ background: "#EAF4EE", borderLeft: `3px solid ${GREEN_D}`, color: "#3C4146" }}><span className="font-bold" style={{ color: GREEN_D }}>AI summary · </span>Outstanding items are timing differences only; both checks cleared 03 Apr. Variance $0.00. Defensible in audit.</div>
-    </div>
-  )
-}
-function CashRunwayChart() {
-  const pts = [[30,28],[56,38],[82,50],[108,58],[134,72],[160,84],[186,98],[212,110],[238,122],[264,132],[290,140],[316,146],[340,150]]
-  const line = pts.map((p) => p.join(",")).join(" ")
-  return (
-    <div className="rounded-2xl p-5" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
-      <div className="flex items-center justify-between"><span className="text-sm font-semibold" style={{ color: TXT }}>Cash runway</span><span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(84,185,138,0.14)", color: GREEN }}>14 months</span></div>
-      <svg viewBox="0 0 360 168" className="mt-3 w-full">
-        <defs>
-          <linearGradient id="runFill" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor={GREEN} stopOpacity="0.35" /><stop offset="65%" stopColor={AMBER} stopOpacity="0.25" /><stop offset="100%" stopColor={ROSE} stopOpacity="0.28" /></linearGradient>
-          <linearGradient id="runLine" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor={GREEN} /><stop offset="70%" stopColor={AMBER} /><stop offset="100%" stopColor={ROSE} /></linearGradient>
-        </defs>
-        <line x1="30" y1="150" x2="340" y2="150" stroke={LINE_2} strokeWidth="1" />
-        <polygon points={`30,150 ${line} 340,150`} fill="url(#runFill)" />
-        <polyline points={line} fill="none" stroke="url(#runLine)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx="340" cy="150" r="3.5" fill={ROSE} />
-      </svg>
-      <div className="mt-2 grid grid-cols-3 gap-2 text-center">{[["Cash", "$1.24M"], ["Net burn", "$89k/mo"], ["Runway", "14 mo"]].map(([a, b]) => <div key={a}><div className="text-[10px] uppercase tracking-wider" style={{ color: TXT_3 }}>{a}</div><div className="text-sm font-bold tabular-nums" style={{ color: TXT }}>{b}</div></div>)}</div>
-    </div>
-  )
-}
-function BreakEvenChart() {
-  const beX = 244, beY = 92
-  return (
-    <div className="rounded-2xl p-5" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
-      <div className="flex items-center justify-between"><span className="text-sm font-semibold" style={{ color: TXT }}>Break-even analysis</span><span className="inline-flex items-center gap-1.5 text-xs font-semibold" style={{ color: TXT_3 }}><TrendingUp size={13} /> safety 22%</span></div>
-      <svg viewBox="0 0 360 168" className="mt-3 w-full">
-        <polygon points={`${beX},${beY} 330,40 330,72`} fill={GREEN} opacity="0.18" />
-        <polygon points={`40,150 ${beX},${beY} 40,108`} fill={ROSE} opacity="0.14" />
-        <line x1="40" y1="150" x2="330" y2="150" stroke={LINE_2} strokeWidth="1" /><line x1="40" y1="24" x2="40" y2="150" stroke={LINE_2} strokeWidth="1" />
-        <line x1="40" y1="108" x2="330" y2="72" stroke={AMBER} strokeWidth="2.5" strokeLinecap="round" />
-        <line x1="40" y1="150" x2="330" y2="40" stroke={GREEN} strokeWidth="2.5" strokeLinecap="round" />
-        <line x1={beX} y1={beY} x2={beX} y2="150" stroke={ROSE} strokeWidth="1" strokeDasharray="3 3" />
-        <circle cx={beX} cy={beY} r="4" fill={ROSE} stroke={SURFACE} strokeWidth="1.5" />
-        <text x={beX} y={beY - 8} textAnchor="middle" fontSize="9" fontWeight="700" fill={TXT}>Break-even</text>
-      </svg>
-      <div className="mt-1 flex items-center gap-4 text-[11px]" style={{ color: TXT_3 }}><span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: GREEN }} /> Revenue</span><span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: AMBER }} /> Total cost</span></div>
-    </div>
-  )
-}
-function AICard() {
-  return (
-    <div className="rounded-2xl overflow-hidden" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
-      <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: `1px solid ${LINE}` }}>
-        <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(84,185,138,0.14)", color: GREEN }}><Sparkles size={12} strokeWidth={2} /> AI commentary</span>
-        <span className="text-xs tabular-nums" style={{ color: TXT_3 }}>March 2026</span>
-      </div>
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div><div className="text-sm font-bold" style={{ color: TXT }}>6400 · Marketing &amp; Advertising</div><div className="text-xs mt-0.5" style={{ color: TXT_3 }}>Flux vs. February</div></div>
-          <div className="text-right shrink-0"><div className="text-lg font-bold tabular-nums" style={{ color: ROSE }}>+$14,200</div><div className="text-xs tabular-nums" style={{ color: TXT_3 }}>+38%</div></div>
-        </div>
-        <p className="mt-4 text-sm leading-relaxed" style={{ color: TXT_2 }}>Spend rose <span className="font-semibold" style={{ color: TXT }}>$14,200 (+38%)</span> over February across three Q1 campaign launches. All invoices match their POs; nothing unposted above threshold. Operational, not an error.</p>
-        <div className="mt-4 space-y-2">{["Ties to the general ledger", "Top 3 driving transactions reviewed", "No items over threshold"].map((c) => <div key={c} className="flex items-center gap-2 text-[13px]" style={{ color: TXT_2 }}><CheckCircle2 size={15} strokeWidth={2} style={{ color: GREEN }} /> {c}</div>)}</div>
-        <div className="mt-5 pt-4 flex items-center justify-between" style={{ borderTop: `1px solid ${LINE}` }}><span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(84,185,138,0.14)", color: GREEN }}>Confidence: High</span><span className="text-xs" style={{ color: TXT_3 }}>3 transactions cited</span></div>
-      </div>
-    </div>
-  )
-}
-function ExecReport() {
-  return (
-    <div className="rounded-2xl p-6" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
-      <div className="flex items-start justify-between">
-        <div><div className="text-[11px] uppercase tracking-[0.2em]" style={{ color: TXT_3 }}>Executive report</div><div className="mt-1 text-lg font-bold" style={{ color: TXT }}>Helio Logistics, Inc.</div><div className="text-xs" style={{ color: TXT_3 }}>Period ending March 31, 2026</div></div>
-        <span className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded" style={{ color: GREEN, border: `1px solid rgba(84,185,138,0.45)` }}>AI-narrated</span>
-      </div>
-      <div className="mt-5 space-y-1.5"><div className="h-2 rounded-full w-full" style={{ background: SURFACE2 }} /><div className="h-2 rounded-full w-[90%]" style={{ background: SURFACE2 }} /><div className="h-2 rounded-full w-[76%]" style={{ background: SURFACE2 }} /></div>
-      <div className="mt-5 flex items-end gap-2 h-20">{[40, 62, 52, 78, 70, 94].map((h, i) => <div key={i} className="flex-1 rounded-t-md" style={{ height: `${h}%`, background: i === 5 ? GREEN : "rgba(84,185,138,0.22)" }} />)}</div>
-      <div className="mt-4 flex items-center gap-2 text-xs" style={{ color: TXT_2 }}><FileCheck size={14} strokeWidth={2} style={{ color: GREEN }} /> Cover · summary · IS / BS / CF · charts · risks &amp; outlook</div>
-    </div>
-  )
-}
-function MiniPanel({ title, rows }: { title: string; rows: [string, string][] }) {
-  return (
-    <div className="rounded-2xl overflow-hidden" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
-      <div className="px-5 py-3 text-sm font-semibold" style={{ color: TXT, borderBottom: `1px solid ${LINE}` }}>{title}</div>
-      <div className="p-2">
-        {rows.map(([a, b]) => (
-          <div key={a} className="flex items-center justify-between px-3 py-2.5 text-sm" style={{ borderTop: `1px solid ${LINE}` }}>
-            <span style={{ color: TXT_2 }}>{a}</span>
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold tabular-nums" style={{ color: GREEN }}><CheckCircle2 size={13} strokeWidth={2} /> {b}</span>
-          </div>
         ))}
       </div>
-    </div>
-  )
-}
-
-// ─── Notion-style colored feature cards (product mockup anchored at bottom) ──
-// Solid, calm-but-present color blocks (dusty honey / clay / sage / slate /
-// lavender / sand) with a white product mockup peeking up from the bottom edge.
-const CARDS: { tag: string; title: string; color: string; wide?: boolean; visual: ReactNode }[] = [
-  { tag: "Reconciliations", title: "Tie out every account — AI prepares the whole set.", color: "#E9C97C", wide: true, visual: <ReconPaper /> },
-  { tag: "Flux analysis", title: "Every variance, explained.", color: "#DD9E86", visual: <AICard /> },
-  { tag: "Insights", title: "Cash runway & break-even, watched.", color: "#95C0A4", visual: <CashRunwayChart /> },
-  { tag: "Financial package", title: "A board-ready package, written by AI.", color: "#9EBAD3", visual: <ExecReport /> },
-  { tag: "Intercompany", title: "Consolidate across entities.", color: "#B5ABCE", visual: <MiniPanel title="Intercompany pairs · matched" rows={[["Due from Sub A ↔ Due to Parent", "$120,000"], ["Mgmt fee receivable ↔ payable", "$45,000"], ["IC loan ↔ IC borrowing", "$300,000"]]} /> },
-  { tag: "Schedules", title: "Amortize on autopilot.", color: "#E2CCA6", visual: <MiniPanel title="Amortization · this period" rows={[["Prepaid insurance — 12 mo", "$2,000"], ["Software prepaid — 24 mo", "$1,250"], ["Office lease — ROU amort.", "$8,400"]]} /> },
-]
-
-function FeatureCard({ tag, title, color, wide, visual }: (typeof CARDS)[number]) {
-  return (
-    <div className={`relative overflow-hidden rounded-3xl flex flex-col ${wide ? "md:col-span-2" : ""}`}
-      style={{ background: color, height: 452, boxShadow: "0 1px 2px rgba(14,17,18,0.05)" }}>
-      <div className="p-7 md:p-9 pb-3 shrink-0">
-        <div className="text-[11.5px] font-bold uppercase tracking-[0.14em]" style={{ color: "rgba(20,24,26,0.52)" }}>{tag}</div>
-        <div className="mt-2 flex items-start justify-between gap-4">
-          <h3 className="text-[21px] md:text-[25px] font-bold tracking-tight leading-[1.14]" style={{ color: "#14181A", maxWidth: wide ? 360 : 300 }}>{title}</h3>
-          <span className="shrink-0 h-9 w-9 rounded-full inline-flex items-center justify-center transition-transform hover:scale-105" style={{ background: "#14181A", color: "#fff" }}><ArrowRight size={16} strokeWidth={2.2} /></span>
-        </div>
-      </div>
-      {wide ? (
-        <div className="mt-auto px-7 md:px-10 grid md:grid-cols-5 gap-6 items-end">
-          <div className="hidden md:block md:col-span-2" />
-          <div className="md:col-span-3 translate-y-5 rounded-2xl" style={{ boxShadow: "0 18px 44px -22px rgba(14,17,18,0.32)" }}>{visual}</div>
-        </div>
-      ) : (
-        <div className="mt-auto px-6 md:px-7">
-          <div className="translate-y-5 rounded-2xl" style={{ boxShadow: "0 18px 44px -22px rgba(14,17,18,0.32)" }}>{visual}</div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function FeatureShowcase() {
-  return (
-    <section style={{ background: INK }}>
-      <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
-        <Reveal>
-          <div className="max-w-2xl mb-12 md:mb-16">
-            <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: GREEN_D }}>See it in action</span>
-            <h2 className="mt-3 text-3xl md:text-[40px] font-bold tracking-tight leading-[1.08]" style={{ color: TXT }}>Real output, not slideware.</h2>
-            <p className="mt-4 text-base md:text-lg leading-relaxed" style={{ color: TXT_2 }}>Each card is the actual artifact a module produces from your live QuickBooks data.</p>
-          </div>
-        </Reveal>
-        <Reveal>
-          <div className="grid md:grid-cols-2 gap-5 md:gap-6">
-            {CARDS.map((c) => <FeatureCard key={c.tag} {...c} />)}
-          </div>
-        </Reveal>
-      </div>
     </section>
   )
 }
 
-function CalmBanner() {
+// ─── Platform — three deep feature rows (cream) ──────────────────────────────
+function WindowCard({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div style={{ background: INK }}>
-      <div className="max-w-5xl mx-auto px-6 pt-8 md:pt-10">
-        <Reveal>
-          <div className="rounded-2xl px-6 py-5 md:px-8 md:py-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left"
-            style={{ background: "linear-gradient(120deg, #1E4736 0%, #2F7B57 100%)", boxShadow: "0 16px 40px -22px rgba(31,70,54,0.55)" }}>
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="shrink-0 inline-flex items-center justify-center h-9 w-9 rounded-xl" style={{ background: "rgba(255,255,255,0.14)" }}>
-                <Sparkles size={17} strokeWidth={2} className="text-white" />
+    <div className="rounded-2xl overflow-hidden" style={{ background: PAPER, border: `1px solid ${L_LINE2}`, boxShadow: "0 40px 90px -40px rgba(12,38,32,0.35)" }}>
+      <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: `1px solid ${L_LINE}` }}>
+        <div className="flex gap-1.5">{[0, 1, 2].map((i) => <span key={i} className="h-2 w-2 rounded-full" style={{ background: L_LINE2 }} />)}</div>
+        <span className="ml-1 text-[9px] tracking-[0.16em]" style={{ fontFamily: MONO, color: L_TXT3 }}>{title}</span>
+      </div>
+      {children}
+    </div>
+  )
+}
+function ReconMock() {
+  return (
+    <WindowCard title="PREPAID INSURANCE · 1400 · MARCH 2026">
+      <div className="grid grid-cols-2 text-[11px]">
+        <div className="p-4" style={{ borderRight: `1px solid ${L_LINE}` }}>
+          <div className="text-[8.5px] tracking-[0.16em] mb-2" style={{ fontFamily: MONO, color: GREEN }}>PER NORDAVIX SCHEDULE</div>
+          {[["D&O insurance 24-mo", "12,000", true], ["Office rent deposit", "8,000", true], ["Software licence", "13,000", false]].map(([a, b, ok]) => (
+            <div key={a as string} className="flex items-center justify-between py-1.5">
+              <span className="flex items-center gap-1.5" style={{ color: L_TXT2 }}>
+                {ok ? <CheckCircle2 size={11} strokeWidth={2.4} style={{ color: GREEN }} /> : <AlertTriangle size={11} strokeWidth={2.2} style={{ color: AMBER }} />}
+                {a}
               </span>
-              <div className="min-w-0">
-                <p className="text-[15px] md:text-base font-semibold text-white leading-snug">Nordavix is in private beta — built by a CPA, for CPAs.</p>
-                <p className="text-[12.5px] mt-0.5" style={{ color: "rgba(255,255,255,0.72)" }}>Limited spots, with a direct line to the founders.</p>
-              </div>
+              <span className="tabular-nums font-semibold" style={{ color: L_TXT }}>{b}</span>
             </div>
-            <Link to="/sign-up" className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-5 py-2.5 text-sm font-bold whitespace-nowrap transition-transform hover:scale-[1.03]" style={{ background: "#FFFFFF", color: "#1E4736" }}>
-              Request early access <ArrowRight size={15} strokeWidth={2.3} />
-            </Link>
+          ))}
+          <div className="flex justify-between pt-2 mt-1 font-bold" style={{ borderTop: `1px solid ${L_LINE2}`, color: L_TXT }}>
+            <span>Subledger</span><span className="tabular-nums">33,000</span>
           </div>
-        </Reveal>
+        </div>
+        <div className="p-4">
+          <div className="text-[8.5px] tracking-[0.16em] mb-2" style={{ fontFamily: MONO, color: "#3C5A76" }}>PER QUICKBOOKS GL</div>
+          {[["Opening balance", "—"], ["JE 1042 · Insurance", "12,000"], ["JE 1043 · Rent", "8,000"]].map(([a, b]) => (
+            <div key={a} className="flex items-center justify-between py-1.5">
+              <span style={{ color: L_TXT2 }}>{a}</span>
+              <span className="tabular-nums font-semibold" style={{ color: L_TXT }}>{b}</span>
+            </div>
+          ))}
+          <div className="flex justify-between pt-2 mt-1 font-bold" style={{ borderTop: `1px solid ${L_LINE2}`, color: L_TXT }}>
+            <span>GL balance</span><span className="tabular-nums">20,000</span>
+          </div>
+        </div>
       </div>
-    </div>
+      <div className="px-4 py-2.5 text-[10.5px] flex items-center gap-2"
+        style={{ background: "rgba(176,127,60,0.10)", color: "#7A5622", borderTop: `1px solid ${L_LINE}` }}>
+        <AlertTriangle size={12} strokeWidth={2.2} />
+        <span><b>Timing item:</b> Software licence $13,000 pending in QuickBooks — clears itself on re-sync.</span>
+      </div>
+    </WindowCard>
   )
 }
-
-// ─── Product explorer (cream section · dark card · interactive tabs) ─────────
-const MODULES = [
-  { key: "recon", name: "Reconciliations", tagline: "Tie out every account — on paper.", desc: "Reconcile each balance-sheet account to its subledger, then export an audit-ready working paper. Agentic Mode prepares the whole set in one click.", bullets: ["GL ⇄ subledger build-up with roll-forward openings", "One-click AI auto-prepare", "Evidence OCR matches your statement", "Maker-checker approval"], visual: <ReconPaper /> },
-  { key: "flux", name: "Flux analysis", tagline: "Explain every variance.", desc: "Compare any period to the prior and let AI write the narrative — grounded in the real transactions that moved the number, with a confidence score.", bullets: ["Period-over-period across P&L and balance sheet", "Commentary cites the driving transactions", "Confidence score on every explanation", "Sign-off gate before review"], visual: <AICard /> },
-  { key: "insights", name: "Insights", tagline: "Cash runway & break-even, watched for you.", desc: "A living analytics layer on the close — know how long the cash lasts and the volume you need to break even, refreshed every period.", bullets: ["Cash, net burn, and runway in months", "Break-even with margin of safety", "Liquidity, DSO/DPO, and aging", "Month-over-month expense movers"], visual: <div className="space-y-4"><CashRunwayChart /><BreakEvenChart /></div> },
-  { key: "financials", name: "Financial package", tagline: "A board-ready package, written by AI.", desc: "Income statement, balance sheet, and cash flow on screen and as a PDF — plus a multi-page executive report your AI drafts in seconds.", bullets: ["IS / BS / CF rendered live and exportable", "AI-narrated executive report", "Built from your synced ledger", "Hand it to a board as-is"], visual: <ExecReport /> },
-  { key: "intercompany", name: "Intercompany", tagline: "Consolidate across entities.", desc: "Auto-detects intercompany accounts, suggests counterparty pairs, and produces eliminations and a consolidated trial balance.", bullets: ["Auto-detect IC accounts", "Suggested counterparty pairs", "Eliminations entries", "Consolidated trial balance"], visual: <MiniPanel title="Intercompany pairs · matched" rows={[["Due from Sub A ↔ Due to Parent", "$120,000"], ["Mgmt fee receivable ↔ payable", "$45,000"], ["IC loan ↔ IC borrowing", "$300,000"]]} /> },
-  { key: "schedules", name: "Schedules", tagline: "Amortize on autopilot.", desc: "Prepaids, accruals, fixed assets, leases, and loans — amortized on schedule and auto-flowed into the right reconciliation.", bullets: ["Prepaids, accruals, FA, leases, loans", "Auto-amortization each period", "Auto-flow into reconciliations", "Renewal & reversal alerts"], visual: <MiniPanel title="Amortization · this period" rows={[["Prepaid insurance — 12 mo", "$2,000"], ["Software prepaid — 24 mo", "$1,250"], ["Office lease — ROU amort.", "$8,400"]]} /> },
-]
-function ProductExplorer() {
-  const [i, setI] = useState(0)
-  const m = MODULES[i]
+function FluxMock() {
   return (
-    <section id="explore" style={{ background: TINT_SAGE }}>
-      <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
-        <Reveal className="max-w-2xl mb-10">
-          <Eyebrow color={GREEN_D}>The product</Eyebrow>
-          <h2 className="mt-4 text-3xl md:text-5xl font-bold tracking-tight" style={{ color: ON_CREAM }}>Six tools. One source of truth.</h2>
-          <p className="mt-4 text-lg" style={{ color: ON_CREAM_2 }}>Pick a module — see the real output it generates from your live QuickBooks data.</p>
-        </Reveal>
-        <Reveal y={28}>
-          <div className="rounded-3xl overflow-hidden" style={{ background: SURFACE, border: `1px solid ${LINE}`, boxShadow: "0 24px 60px -40px rgba(14,17,18,0.18)" }}>
-            <div className="grid md:grid-cols-[230px_1fr]">
-              {/* left tabs (horizontal on mobile) */}
-              <div className="flex md:flex-col gap-1 p-3 overflow-x-auto md:overflow-visible" style={{ borderBottom: `1px solid ${LINE}`, borderRight: "none" }}>
-                {MODULES.map((mod, idx) => {
-                  const on = idx === i
-                  return (
-                    <button key={mod.key} onClick={() => setI(idx)}
-                      className="text-left whitespace-nowrap rounded-xl px-4 py-3 text-sm font-semibold transition-colors shrink-0"
-                      style={{ background: on ? "rgba(84,185,138,0.14)" : "transparent", color: on ? TXT : TXT_2, border: `1px solid ${on ? "rgba(84,185,138,0.30)" : "transparent"}` }}>
-                      {mod.name}
-                    </button>
-                  )
-                })}
-              </div>
-              {/* right content */}
-              <div className="p-6 md:p-8" style={{ borderLeft: `1px solid ${LINE}` }}>
-                <AnimatePresence mode="wait">
-                  <motion.div key={m.key}
-                    initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -14 }} transition={{ duration: 0.35, ease: EASE }}
-                    className="grid lg:grid-cols-2 gap-8 items-center">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-[0.16em]" style={{ color: GREEN }}>{m.name}</div>
-                      <h3 className="mt-2 text-2xl md:text-3xl font-bold tracking-tight" style={{ color: TXT }}>{m.tagline}</h3>
-                      <p className="mt-3 text-[15px] leading-relaxed" style={{ color: TXT_2 }}>{m.desc}</p>
-                      <ul className="mt-5 space-y-2.5">{m.bullets.map((b) => <li key={b} className="flex items-start gap-2.5 text-sm" style={{ color: TXT_2 }}><CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" style={{ color: GREEN }} /> {b}</li>)}</ul>
-                    </div>
-                    <div>{m.visual}</div>
-                  </motion.div>
-                </AnimatePresence>
-              </div>
-            </div>
+    <WindowCard title="FLUX ANALYSIS · 6400 MARKETING · MAR VS FEB">
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[13px] font-bold" style={{ color: L_TXT }}>Marketing &amp; Advertising</div>
+            <div className="text-[10px] mt-0.5" style={{ fontFamily: MONO, color: L_TXT3 }}>CONFIDENCE: HIGH · 3 TXNS CITED</div>
           </div>
+          <div className="text-right">
+            <div className="text-[17px] font-bold tabular-nums" style={{ color: RED }}>+$14,200</div>
+            <div className="text-[10px] tabular-nums" style={{ fontFamily: MONO, color: L_TXT3 }}>+38% MoM</div>
+          </div>
+        </div>
+        <p className="mt-3 text-[12px] leading-relaxed" style={{ color: L_TXT2 }}>
+          Spend rose <b style={{ color: L_TXT }}>$14,200</b> on three Q2 campaign launches. Each invoice
+          matches its PO; nothing unposted above threshold. <b style={{ color: GREEN }}>Operational — not an error.</b>
+        </p>
+        <div className="mt-3 rounded-lg overflow-hidden" style={{ border: `1px solid ${L_LINE}` }}>
+          {[["03/04", "Meta Platforms", "6,400"], ["03/11", "LinkedIn Ads", "4,300"], ["03/19", "Webflow Conf", "3,500"]].map(([d, v, amt]) => (
+            <div key={v} className="flex items-center justify-between px-3 py-[7px] text-[11px]" style={{ borderBottom: `1px solid ${L_LINE}` }}>
+              <span style={{ fontFamily: MONO, color: L_TXT3 }}>{d}</span>
+              <span className="flex-1 px-3 truncate" style={{ color: L_TXT2 }}>{v}</span>
+              <span className="tabular-nums font-semibold" style={{ color: L_TXT }}>{amt}</span>
+            </div>
+          ))}
+          <div className="px-3 py-[7px] text-[9.5px]" style={{ fontFamily: MONO, color: L_TXT3 }}>EVIDENCE PULLED LIVE FROM THE GENERAL LEDGER</div>
+        </div>
+      </div>
+    </WindowCard>
+  )
+}
+function AdjustMock() {
+  return (
+    <WindowCard title="PROPOSED ADJUSTING ENTRY · AJE-2026-03-114">
+      <div className="p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-[13px] font-bold" style={{ color: L_TXT }}>Record March insurance amortization</div>
+          <span className="inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-[9.5px] font-bold"
+            style={{ background: "rgba(46,122,85,0.12)", color: GREEN }}><CheckCircle2 size={10} strokeWidth={2.6} /> BALANCED</span>
+        </div>
+        <div className="mt-3 rounded-lg overflow-hidden text-[11.5px]" style={{ border: `1px solid ${L_LINE}` }}>
+          <div className="grid grid-cols-[1fr_auto_auto] gap-4 px-3 py-1.5 text-[8.5px] tracking-[0.14em]"
+            style={{ fontFamily: MONO, color: L_TXT3, borderBottom: `1px solid ${L_LINE}` }}>
+            <span>ACCOUNT</span><span className="text-right w-16">DEBIT</span><span className="text-right w-16">CREDIT</span>
+          </div>
+          {[["6450 · Insurance expense", "2,000", ""], ["1400 · Prepaid expenses", "", "2,000"]].map(([a, d, c]) => (
+            <div key={a} className="grid grid-cols-[1fr_auto_auto] gap-4 px-3 py-2" style={{ borderBottom: `1px solid ${L_LINE}` }}>
+              <span style={{ color: L_TXT2 }}>{a}</span>
+              <span className="text-right w-16 tabular-nums font-semibold" style={{ color: L_TXT }}>{d}</span>
+              <span className="text-right w-16 tabular-nums font-semibold" style={{ color: L_TXT }}>{c}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3.5 flex items-center gap-2">
+          <span className="rounded-full px-4 py-2 text-[11.5px] font-bold" style={{ background: PINE, color: LIME }}>Approve</span>
+          <span className="rounded-full px-4 py-2 text-[11.5px] font-semibold" style={{ color: L_TXT2, border: `1px solid ${L_LINE2}` }}>Export for QBO</span>
+          <span className="ml-auto text-[9px] tracking-[0.12em]" style={{ fontFamily: MONO, color: L_TXT3 }}>BATCH: 6 ENTRIES</span>
+        </div>
+      </div>
+    </WindowCard>
+  )
+}
+const PLATFORM_ROWS = [
+  {
+    kicker: "Reconciliations",
+    title: <>Every account, tied out to <em style={{ fontStyle: "italic" }}>its own evidence</em>.</>,
+    body: "Each balance-sheet account reconciles against an independent subledger — bank statements, AR/AP aging, or a Nordavix schedule. Side-by-side Nordavix-vs-QuickBooks matching shows exactly what's posted, what's pending, and what needs an entry.",
+    bullets: ["Schedule-backed subledgers auto-pull their balance", "Timing items surface — and clear themselves on re-sync", "Variance gate: nothing gets approved out of balance", "One-click Agentic Mode prepares the whole set"],
+    mock: <ReconMock />,
+  },
+  {
+    kicker: "Flux analysis",
+    title: <>Variances explained with <em style={{ fontStyle: "italic" }}>receipts</em>, not vibes.</>,
+    body: "Period-over-period movement across the P&L and balance sheet, narrated by AI that cites the actual transactions driving each number — with a confidence score and a sign-off workflow on every line.",
+    bullets: ["Commentary grounded in real GL transactions", "Confidence scoring on every explanation", "Open → Prepared → Approved review flow", "Bulk Agentic Mode across the whole variance table"],
+    mock: <FluxMock />,
+  },
+  {
+    kicker: "Adjustments",
+    title: <>From “found it” to <em style={{ fontStyle: "italic" }}>posted</em> in one motion.</>,
+    body: "When AI explains a difference, it also drafts the balanced journal entry that fixes it — mapped to your real chart of accounts. Review, approve, export for QuickBooks. Nordavix never writes to your books; your human posts the entry.",
+    bullets: ["Balanced server-side — an unbalanced JE can't exist", "Batch approval queue with QBO-ready CSV export", "Posting check: marks entries once they appear in the GL", "Every accept / dismiss / post is audit-logged"],
+    mock: <AdjustMock />,
+  },
+]
+function Platform() {
+  return (
+    <section id="platform" style={{ background: CREAM }}>
+      <div className="max-w-6xl mx-auto px-6 py-24 md:py-32">
+        <Reveal className="max-w-2xl">
+          <Kicker>The platform</Kicker>
+          <Display className="mt-5" size="clamp(2.1rem, 4.6vw, 3.6rem)">
+            Everything between <em style={{ fontStyle: "italic" }}>“the books are a mess”</em> and “the books are closed.”
+          </Display>
         </Reveal>
+        <div className="mt-16 md:mt-20 space-y-20 md:space-y-28">
+          {PLATFORM_ROWS.map((row, i) => (
+            <div key={row.kicker} className={`grid lg:grid-cols-2 gap-10 lg:gap-16 items-center`}>
+              <Reveal className={i % 2 === 1 ? "lg:order-2" : ""}>
+                <Kicker>{row.kicker}</Kicker>
+                <Display className="mt-4" size="clamp(1.7rem, 3vw, 2.4rem)">{row.title}</Display>
+                <p className="mt-4 text-[15px] leading-relaxed" style={{ color: L_TXT2 }}>{row.body}</p>
+                <ul className="mt-6 space-y-2.5">
+                  {row.bullets.map((b) => (
+                    <li key={b} className="flex items-start gap-2.5 text-[13.5px]" style={{ color: L_TXT2 }}>
+                      <CheckCircle2 size={15} strokeWidth={2.2} className="mt-0.5 shrink-0" style={{ color: GREEN }} /> {b}
+                    </li>
+                  ))}
+                </ul>
+              </Reveal>
+              <Reveal delay={0.08} y={30} className={i % 2 === 1 ? "lg:order-1" : ""}>{row.mock}</Reveal>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   )
 }
 
-// ─── Agentic spotlight ───────────────────────────────────────────────────────
-function AgenticSpotlight() {
-  const steps = [{ n: "01", t: "Pulls from QuickBooks", d: "Live balances and the transactions behind them." }, { n: "02", t: "Ties out the account", d: "Rolls the opening, matches items, finds the gap." }, { n: "03", t: "Writes the commentary", d: "A grounded narrative, risk flags, a confidence score." }, { n: "04", t: "Hands it to you", d: "Suggest-only. You review and approve — always." }]
-  // FloQast-style deep-green statement band — white text on brand green.
+// ─── Bento — the rest of the close ───────────────────────────────────────────
+function Ring() {
+  const r = 26, c = 2 * Math.PI * r
   return (
-    <section className="relative overflow-hidden" style={{ background: "linear-gradient(165deg, #15342A 0%, #1E4736 55%, #245540 100%)" }}>
+    <svg viewBox="0 0 64 64" className="h-16 w-16">
+      <circle cx="32" cy="32" r={r} fill="none" stroke={L_LINE2} strokeWidth="6" />
+      <circle cx="32" cy="32" r={r} fill="none" stroke={GREEN} strokeWidth="6" strokeLinecap="round"
+        strokeDasharray={`${c * 0.86} ${c}`} transform="rotate(-90 32 32)" />
+      <text x="32" y="36" textAnchor="middle" fontSize="13" fontWeight="800" fill={L_TXT}>86%</text>
+    </svg>
+  )
+}
+function Spark() {
+  return (
+    <svg viewBox="0 0 180 56" className="w-full h-12">
+      <polyline points="4,14 28,18 52,24 76,28 100,35 124,40 148,46 176,50" fill="none" stroke={GREEN} strokeWidth="2.4" strokeLinecap="round" />
+      <circle cx="176" cy="50" r="3" fill={AMBER} />
+    </svg>
+  )
+}
+function Bento() {
+  return (
+    <section style={{ background: CREAM }}>
+      <div className="max-w-6xl mx-auto px-6 pb-24 md:pb-32">
+        <Reveal className="max-w-2xl mb-12">
+          <Kicker>And the rest of the close</Kicker>
+          <Display className="mt-4">One subscription. The whole month-end.</Display>
+        </Reveal>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Schedules */}
+          <Reveal>
+            <div className="h-full rounded-2xl p-6" style={{ background: PAPER, border: `1px solid ${L_LINE}` }}>
+              <Layers size={18} strokeWidth={1.9} style={{ color: GREEN }} />
+              <h3 className="mt-3 text-[16px] font-bold" style={{ color: L_TXT }}>Schedules</h3>
+              <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: L_TXT2 }}>Prepaids, accruals, fixed assets, leases, loans — computed monthly, flowed into the right recon.</p>
+              <div className="mt-4 space-y-2">
+                {[["PREPAIDS", 64], ["FA DEPRECIATION", 41], ["LOAN PRINCIPAL", 78]].map(([l, w]) => (
+                  <div key={l as string}>
+                    <div className="flex justify-between text-[8.5px] tracking-[0.14em]" style={{ fontFamily: MONO, color: L_TXT3 }}><span>{l}</span><span>{w as number}%</span></div>
+                    <div className="mt-1 h-1.5 rounded-full" style={{ background: L_LINE }}><div className="h-full rounded-full" style={{ width: `${w}%`, background: GREEN }} /></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Reveal>
+          {/* Financial package */}
+          <Reveal delay={0.05}>
+            <div className="h-full rounded-2xl p-6" style={{ background: PAPER, border: `1px solid ${L_LINE}` }}>
+              <FileText size={18} strokeWidth={1.9} style={{ color: GREEN }} />
+              <h3 className="mt-3 text-[16px] font-bold" style={{ color: L_TXT }}>Financial package</h3>
+              <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: L_TXT2 }}>IS / BS / CF on screen and as a monochrome PDF — plus an AI-narrated executive report.</p>
+              <div className="mt-4 flex items-center gap-2">
+                {["IS", "BS", "CF", "EXEC"].map((d) => (
+                  <span key={d} className="rounded-md px-2.5 py-1.5 text-[9.5px] font-bold" style={{ fontFamily: MONO, background: "rgba(12,38,32,0.06)", color: L_TXT2, border: `1px solid ${L_LINE}` }}>{d}.PDF</span>
+                ))}
+              </div>
+            </div>
+          </Reveal>
+          {/* Insights */}
+          <Reveal delay={0.1}>
+            <div className="h-full rounded-2xl p-6" style={{ background: PAPER, border: `1px solid ${L_LINE}` }}>
+              <TrendingUp size={18} strokeWidth={1.9} style={{ color: GREEN }} />
+              <h3 className="mt-3 text-[16px] font-bold" style={{ color: L_TXT }}>Insights</h3>
+              <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: L_TXT2 }}>Runway, burn, break-even, liquidity — refreshed from the same synced ledger.</p>
+              <div className="mt-3"><Spark /></div>
+              <div className="text-[9px] tracking-[0.14em]" style={{ fontFamily: MONO, color: L_TXT3 }}>RUNWAY 14 MO · BURN $89K/MO</div>
+            </div>
+          </Reveal>
+          {/* Intercompany */}
+          <Reveal delay={0.05}>
+            <div className="h-full rounded-2xl p-6" style={{ background: PAPER, border: `1px solid ${L_LINE}` }}>
+              <Scale size={18} strokeWidth={1.9} style={{ color: GREEN }} />
+              <h3 className="mt-3 text-[16px] font-bold" style={{ color: L_TXT }}>Intercompany</h3>
+              <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: L_TXT2 }}>Auto-paired IC accounts, eliminations, and a consolidated trial balance across entities.</p>
+              <div className="mt-4 space-y-1.5 text-[11px]">
+                {[["Due from Sub A ⇄ Due to Parent", "120,000"], ["IC loan ⇄ IC borrowing", "300,000"]].map(([a, b]) => (
+                  <div key={a} className="flex justify-between rounded-md px-2.5 py-2" style={{ background: "rgba(12,38,32,0.04)" }}>
+                    <span className="truncate pr-2" style={{ color: L_TXT2 }}>{a}</span><span className="tabular-nums font-semibold shrink-0" style={{ color: GREEN }}>{b} ✓</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Reveal>
+          {/* Close tracker */}
+          <Reveal delay={0.1}>
+            <div className="h-full rounded-2xl p-6 flex items-start gap-4" style={{ background: PAPER, border: `1px solid ${L_LINE}` }}>
+              <div className="flex-1">
+                <BookCheck size={18} strokeWidth={1.9} style={{ color: GREEN }} />
+                <h3 className="mt-3 text-[16px] font-bold" style={{ color: L_TXT }}>Close tracker</h3>
+                <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: L_TXT2 }}>Sequential period locks — March can't close before February. Reopen is role-gated.</p>
+              </div>
+              <div className="shrink-0 mt-2"><Ring /></div>
+            </div>
+          </Reveal>
+          {/* Audit log */}
+          <Reveal delay={0.15}>
+            <div className="h-full rounded-2xl p-6" style={{ background: PINE, border: `1px solid ${L_LINE}` }}>
+              <ScrollText size={18} strokeWidth={1.9} style={{ color: LIME }} />
+              <h3 className="mt-3 text-[16px] font-bold" style={{ color: D_TXT }}>Audit log</h3>
+              <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: D_TXT2 }}>Every action, attributed and timestamped.</p>
+              <div className="mt-4 space-y-1.5 text-[9.5px]" style={{ fontFamily: MONO, color: D_TXT3 }}>
+                <div>09:14 <span style={{ color: SAGE }}>recon.approve</span> · 1100 · s.chen</div>
+                <div>09:12 <span style={{ color: SAGE }}>adjustment.post</span> · AJE-114 · m.ruiz</div>
+                <div>09:02 <span style={{ color: SAGE }}>period.lock</span> · FEB-2026 · admin</div>
+              </div>
+            </div>
+          </Reveal>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── AI band ─────────────────────────────────────────────────────────────────
+function AIBand() {
+  const principles = [
+    { Icon: UserCheck, t: "Suggest-only, always", d: "AI prepares, explains, and drafts. It cannot approve, post, or close anything — those clicks are human, by design." },
+    { Icon: ScrollText, t: "Shows its work", d: "Every explanation cites the actual ledger transactions behind it, with a confidence score you can challenge." },
+    { Icon: Lock, t: "Read-only on your books", d: "The QuickBooks connection is read-only OAuth. Nordavix physically cannot write to your GL." },
+  ]
+  return (
+    <section className="relative overflow-hidden" style={{ background: PINE }}>
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-24 right-0 h-[440px] w-[560px] rounded-full" style={{ background: "radial-gradient(closest-side, #54B98A, transparent)", opacity: 0.16, filter: "blur(60px)" }} />
-        <div className="absolute bottom-[-30%] left-[-10%] h-[440px] w-[560px] rounded-full" style={{ background: "radial-gradient(closest-side, #EAC97C, transparent)", opacity: 0.10, filter: "blur(70px)" }} />
-        <div className="absolute inset-0" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)", backgroundSize: "56px 56px", maskImage: "radial-gradient(120% 90% at 50% 0%, black, transparent 70%)", WebkitMaskImage: "radial-gradient(120% 90% at 50% 0%, black, transparent 70%)", opacity: 0.6 }} />
+        <div className="absolute -top-32 right-[-10%] h-[400px] w-[560px] rounded-full" style={{ background: "radial-gradient(closest-side, rgba(212,243,97,0.10), transparent)", filter: "blur(56px)" }} />
       </div>
       <div className="relative max-w-6xl mx-auto px-6 py-24 md:py-32">
-        <Reveal className="max-w-2xl">
-          <span className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold" style={{ background: "rgba(255,255,255,0.12)", color: "#FFFFFF" }}><Sparkles size={13} strokeWidth={2} /> Agentic Mode</span>
-          <h2 className="mt-5 text-3xl md:text-5xl font-bold tracking-tight text-white">Meet your AI staff accountant.</h2>
-          <p className="mt-4 text-lg leading-relaxed" style={{ color: "rgba(255,255,255,0.78)" }}>Click once and Nordavix runs the first pass across every open account — pulling, tying out, and writing the working paper. It never approves anything. You keep the judgment; it removes the grind.</p>
-          <div className="mt-7 flex flex-wrap gap-3">
-            <Link to="/sign-up" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-bold transition-transform hover:scale-[1.03]" style={{ background: "#FFFFFF", color: "#1E4736" }}>Start free <ArrowRight size={15} strokeWidth={2.3} /></Link>
-            <a href="#explore" className="inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition-colors" style={{ color: "#FFFFFF", background: "rgba(255,255,255,0.10)", border: "1px solid rgba(255,255,255,0.25)" }}>See it work</a>
-          </div>
-        </Reveal>
-        <div className="mt-14 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {steps.map(({ n, t, d }, idx) => (
-            <Reveal key={n} delay={idx * 0.08}>
-              <div className="h-full rounded-2xl p-6" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.14)" }}><div className="text-sm font-bold tabular-nums" style={{ color: "#7BD7AC" }}>{n}</div><h3 className="mt-3 text-base font-bold text-white">{t}</h3><p className="mt-1.5 text-sm leading-relaxed" style={{ color: "rgba(255,255,255,0.72)" }}>{d}</p></div>
+        <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-12 lg:gap-16 items-center">
+          <div>
+            <Reveal><Kicker dark>The AI stance</Kicker></Reveal>
+            <Reveal delay={0.05}>
+              <Display dark className="mt-5" size="clamp(2.1rem, 4.4vw, 3.4rem)">
+                AI with <em style={{ fontStyle: "italic", color: LIME }}>audit-grade</em> manners.
+              </Display>
             </Reveal>
-          ))}
+            <Reveal delay={0.1}>
+              <p className="mt-5 max-w-lg text-[15px] leading-relaxed" style={{ color: D_TXT2 }}>
+                Most AI accounting tools ask you to trust a black box. Nordavix is built the way
+                an auditor thinks: every number traced, every claim evidenced, every action attributed.
+              </p>
+            </Reveal>
+            <div className="mt-9 space-y-6">
+              {principles.map(({ Icon, t, d }, i) => (
+                <Reveal key={t} delay={0.12 + i * 0.06}>
+                  <div className="flex items-start gap-4">
+                    <span className="shrink-0 h-10 w-10 rounded-xl grid place-items-center" style={{ background: "rgba(212,243,97,0.12)", color: LIME }}><Icon size={17} strokeWidth={2} /></span>
+                    <div>
+                      <div className="text-[15px] font-bold" style={{ color: D_TXT }}>{t}</div>
+                      <p className="mt-1 text-[13.5px] leading-relaxed" style={{ color: D_TXT2 }}>{d}</p>
+                    </div>
+                  </div>
+                </Reveal>
+              ))}
+            </div>
+          </div>
+          <Reveal delay={0.1} y={30}>
+            {/* evidence terminal */}
+            <div className="rounded-2xl overflow-hidden" style={{ background: PINE_2, border: `1px solid ${D_LINE2}`, boxShadow: "0 50px 110px -40px rgba(0,0,0,0.6)" }}>
+              <div className="flex items-center justify-between px-4 py-2.5" style={{ borderBottom: `1px solid ${D_LINE}` }}>
+                <span className="text-[9px] tracking-[0.18em]" style={{ fontFamily: MONO, color: D_TXT3 }}>AGENTIC RUN · MARCH 2026</span>
+                <span className="inline-flex items-center gap-1.5 text-[9px] font-bold tracking-[0.14em]" style={{ fontFamily: MONO, color: LIME }}><Sparkles size={10} /> LIVE</span>
+              </div>
+              <div className="p-5 space-y-2.5 text-[11px] leading-relaxed" style={{ fontFamily: MONO }}>
+                {[
+                  ["→ pull", "trial balance + GL · 14 accounts", D_TXT2],
+                  ["→ tie", "1100 operating cash ⇄ bank stmt", D_TXT2],
+                  ["  ok", "variance $0.00 · 2 timing items cleared", SAGE],
+                  ["→ tie", "1400 prepaids ⇄ amortization schedule", D_TXT2],
+                  ["  ok", "schedule ties to GL · $33,000", SAGE],
+                  ["→ flux", "6400 marketing +38% · citing 3 txns", D_TXT2],
+                  ["→ draft", "AJE-114 · Dr 6450 / Cr 1400 · $2,000", D_TXT2],
+                  ["  halt", "awaiting human approval — 14 items ready", LIME],
+                ].map(([a, b, c], i) => (
+                  <div key={i} className="flex gap-3">
+                    <span className="w-14 shrink-0" style={{ color: c as string }}>{a}</span>
+                    <span style={{ color: c as string }}>{b}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="px-5 py-3 text-[10px] tracking-[0.14em]" style={{ fontFamily: MONO, color: D_TXT3, borderTop: `1px solid ${D_LINE}` }}>
+                0 WRITES TO QUICKBOOKS · 22 ACTIONS LOGGED · 1 HUMAN REQUIRED
+              </div>
+            </div>
+          </Reveal>
         </div>
       </div>
     </section>
   )
 }
 
-// ─── Control grid ────────────────────────────────────────────────────────────
-function ControlGrid() {
-  const items = [{ Icon: UserCheck, t: "Maker-checker enforced", d: "The person who enters a value can never approve it. Enforced server-side." }, { Icon: Workflow, t: "Sequential close gate", d: "You can't close March until February is locked. No skipping, no back-dating." }, { Icon: ScrollText, t: "Every action audited", d: "A complete, attributed trail of who did what, when — replayable for review." }, { Icon: Lock, t: "QuickBooks read-only", d: "Read-only OAuth scope. Nordavix never writes back to your books." }]
+// ─── Workflow ribbon ─────────────────────────────────────────────────────────
+const STEPS = [
+  { n: "01", Icon: Plug, t: "Sync", d: "Read-only QuickBooks pull — TB, GL, aging." },
+  { n: "02", Icon: GitCompareArrows, t: "Reconcile", d: "Every account vs its independent subledger." },
+  { n: "03", Icon: Sparkles, t: "Explain", d: "AI narrates variances with cited evidence." },
+  { n: "04", Icon: Receipt, t: "Adjust", d: "Balanced JEs drafted, approved, exported." },
+  { n: "05", Icon: UserCheck, t: "Review", d: "Maker-checker sign-off on every account." },
+  { n: "06", Icon: Lock, t: "Lock", d: "Sequential close — then the package ships." },
+]
+function Workflow() {
   return (
-    <section style={{ background: TINT_SLATE }}>
+    <section id="workflow" style={{ background: PINE, borderTop: `1px solid ${D_LINE}` }}>
       <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
-        <Reveal className="max-w-2xl mx-auto text-center mb-14"><Eyebrow>Trust &amp; control</Eyebrow><h2 className="mt-4 text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Control you can prove.</h2><p className="mt-4 text-lg" style={{ color: TXT_2 }}>The governance auditors ask for — built in, not bolted on.</p></Reveal>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {items.map(({ Icon, t, d }, idx) => <Reveal key={t} delay={idx * 0.06}><div className="h-full rounded-2xl p-6" style={{ background: SURFACE, border: `1px solid ${LINE}` }}><Icon size={22} strokeWidth={1.8} style={{ color: GREEN }} /><h3 className="mt-4 text-base font-bold" style={{ color: TXT }}>{t}</h3><p className="mt-1.5 text-sm leading-relaxed" style={{ color: TXT_2 }}>{d}</p></div></Reveal>)}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-// ─── Personas ────────────────────────────────────────────────────────────────
-function Personas() {
-  const cards = [{ Icon: ShieldCheck, role: "Controllers", pitch: "Run a tighter close.", bullets: ["Weeks down to days", "Every account reconciled & approved", "A defensible audit trail by default"] }, { Icon: TrendingUp, role: "Fractional CFOs", pitch: "More clients, same calendar.", bullets: ["One clean workspace per client", "AI handles the first pass", "Board-ready reporting in a click"] }, { Icon: Building2, role: "CPA firms", pitch: "Standardize every engagement.", bullets: ["Maker-checker on every file", "Consistent working papers", "Review faster across the book"] }]
-  return (
-    <section style={{ background: INK }}>
-      <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
-        <Reveal className="max-w-2xl mx-auto text-center mb-14"><Eyebrow>Who it&apos;s for</Eyebrow><h2 className="mt-4 text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Built for the people who own the close.</h2></Reveal>
-        <div className="grid md:grid-cols-3 gap-6">
-          {cards.map(({ Icon, role, pitch, bullets }, idx) => (
-            <Reveal key={role} delay={idx * 0.08}>
-              <div className="h-full rounded-2xl p-7" style={{ background: SURFACE, border: `1px solid ${LINE}` }}>
-                <div className="flex items-center gap-3"><div className="h-10 w-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(84,185,138,0.14)", color: GREEN }}><Icon size={19} strokeWidth={1.9} /></div><span className="text-sm font-semibold" style={{ color: TXT_3 }}>{role}</span></div>
-                <h3 className="mt-5 text-xl font-bold" style={{ color: TXT }}>{pitch}</h3>
-                <ul className="mt-4 space-y-2.5">{bullets.map((b) => <li key={b} className="flex items-start gap-2.5 text-sm" style={{ color: TXT_2 }}><CheckCircle2 size={16} strokeWidth={2} className="mt-0.5 shrink-0" style={{ color: GREEN }} /> {b}</li>)}</ul>
+        <Reveal className="max-w-2xl mb-14">
+          <Kicker dark>The workflow</Kicker>
+          <Display dark className="mt-4">Six steps. The same six, every month.</Display>
+        </Reveal>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-10">
+          {STEPS.map(({ n, Icon, t, d }, i) => (
+            <Reveal key={n} delay={i * 0.05}>
+              <div className="pt-5" style={{ borderTop: `2px solid ${i === 0 ? LIME : D_LINE2}` }}>
+                <div className="text-[10px] tracking-[0.2em]" style={{ fontFamily: MONO, color: i === 0 ? LIME : D_TXT3 }}>{n}</div>
+                <Icon size={18} strokeWidth={1.9} className="mt-3" style={{ color: SAGE }} />
+                <div className="mt-2.5 text-[15px] font-bold" style={{ color: D_TXT }}>{t}</div>
+                <p className="mt-1 text-[12px] leading-relaxed" style={{ color: D_TXT2 }}>{d}</p>
               </div>
             </Reveal>
           ))}
@@ -705,37 +793,102 @@ function Personas() {
   )
 }
 
-// ─── Founder note ────────────────────────────────────────────────────────────
-function FounderNote() {
+// ─── Security ────────────────────────────────────────────────────────────────
+function Security() {
+  const items = [
+    { Icon: Plug, t: "Read-only OAuth", d: "The QuickBooks scope can read reports — never write, never post, never delete." },
+    { Icon: Landmark, t: "Hard tenant isolation", d: "Every row is tenant-tagged and filtered at the ORM session layer. Cross-tenant reads are physically blocked." },
+    { Icon: UserCheck, t: "Maker-checker, server-side", d: "Whoever enters a number can't approve it. Enforced in the API, not just hidden in the UI." },
+    { Icon: ScrollText, t: "Total audit trail", d: "Sync, tick, approve, adjust, lock — every action attributed, timestamped, and replayable." },
+  ]
   return (
-    <section style={{ background: TINT_SAND }}>
-      <div className="max-w-4xl mx-auto px-6 py-24 md:py-28">
+    <section id="security" style={{ background: CREAM }}>
+      <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
+        <Reveal className="flex flex-wrap items-end justify-between gap-6 mb-12">
+          <div className="max-w-xl">
+            <Kicker>Security &amp; control</Kicker>
+            <Display className="mt-4">Built like the auditors are already here.</Display>
+          </div>
+          <Link to="/security" className="inline-flex items-center gap-1.5 text-[13px] font-bold rounded-full px-5 py-2.5"
+            style={{ color: L_TXT, border: `1px solid ${L_LINE2}` }}>Security details <ChevronRight size={14} /></Link>
+        </Reveal>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {items.map(({ Icon, t, d }, i) => (
+            <Reveal key={t} delay={i * 0.05}>
+              <div className="h-full rounded-2xl p-6" style={{ background: PAPER, border: `1px solid ${L_LINE}` }}>
+                <span className="inline-grid h-10 w-10 place-items-center rounded-xl" style={{ background: "rgba(46,122,85,0.10)", color: GREEN }}><Icon size={17} strokeWidth={2} /></span>
+                <h3 className="mt-4 text-[15px] font-bold" style={{ color: L_TXT }}>{t}</h3>
+                <p className="mt-1.5 text-[12.5px] leading-relaxed" style={{ color: L_TXT2 }}>{d}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Founder letter ──────────────────────────────────────────────────────────
+function FounderLetter() {
+  return (
+    <section style={{ background: CREAM }}>
+      <div className="max-w-3xl mx-auto px-6 pb-24 md:pb-32">
         <Reveal>
-          <figure className="rounded-3xl p-8 md:p-12" style={{ background: SURFACE, border: `1px solid ${LINE}`, borderLeft: `4px solid ${ROSE}` }}>
-            <blockquote className="text-xl md:text-2xl font-medium leading-relaxed" style={{ color: TXT }}>“I&apos;m a CPA. I&apos;ve lived the month-end grind — the 11&nbsp;pm tie-outs, the variance emails, the audit scramble. Nordavix is the tool I wished I had: AI does the first pass, you keep the judgment, and the close finally feels <GradWord>calm</GradWord>.”</blockquote>
-            <figcaption className="mt-6 text-sm font-semibold" style={{ color: TXT_3 }}>— The founding CPA</figcaption>
-          </figure>
+          <div className="rounded-3xl p-9 md:p-14" style={{ background: PAPER, border: `1px solid ${L_LINE}`, boxShadow: "0 30px 80px -50px rgba(12,38,32,0.3)" }}>
+            <div className="text-[10px] tracking-[0.2em]" style={{ fontFamily: MONO, color: L_TXT3 }}>A NOTE FROM THE FOUNDER</div>
+            <p className="mt-6 text-[19px] md:text-[23px] leading-[1.5]" style={{ fontFamily: SERIF, fontWeight: 460, color: L_TXT }}>
+              I'm a CPA. I've lived the 11&nbsp;pm tie-outs, the variance emails, the audit
+              scramble. Big companies survive month-end because they have controls and
+              headcount. Small teams just have the headcount problem.
+              <em style={{ fontStyle: "italic" }}> Nordavix is the controls, with the grind handled by AI</em> —
+              and the judgment kept exactly where it belongs: with you.
+            </p>
+            <div className="mt-8 flex items-center gap-3">
+              <span className="h-9 w-9 rounded-full grid place-items-center text-[13px] font-extrabold" style={{ background: PINE, color: LIME, fontFamily: MONO }}>n</span>
+              <div>
+                <div className="text-[13px] font-bold" style={{ color: L_TXT }}>The founding CPA</div>
+                <div className="text-[11px]" style={{ color: L_TXT3 }}>Nordavix</div>
+              </div>
+            </div>
+          </div>
         </Reveal>
       </div>
     </section>
   )
 }
 
-// ─── Early access ────────────────────────────────────────────────────────────
-function EarlyAccess() {
+// ─── Beta ────────────────────────────────────────────────────────────────────
+function Beta() {
   return (
-    <section id="beta" style={{ background: INK }}>
-      <div className="max-w-4xl mx-auto px-6 py-24 md:py-28 text-center">
-        <Reveal>
-          <Eyebrow>Pricing</Eyebrow>
-          <h2 className="mt-4 text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Pricing is on the way. Early access is open.</h2>
-          <p className="mt-4 mx-auto max-w-xl text-lg" style={{ color: TXT_2 }}>We&apos;re onboarding design partners now — the full feature set, no credit card, and a direct line to the founders.</p>
-          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">{["Full feature set", "No credit card", "Direct line to the founders"].map((p) => <span key={p} className="inline-flex items-center gap-1.5 text-sm font-medium px-3.5 py-1.5 rounded-full" style={{ background: SURFACE, border: `1px solid ${LINE}`, color: TXT_2 }}><CheckCircle2 size={14} strokeWidth={2} style={{ color: GREEN }} /> {p}</span>)}</div>
-          <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Link to="/sign-up" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>Request beta access <ArrowRight size={16} /></Link>
-            <Link to="/solutions" className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full text-sm font-semibold" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>Explore the product</Link>
+    <section id="beta" style={{ background: PINE }}>
+      <div className="max-w-6xl mx-auto px-6 py-24 md:py-28">
+        <div className="rounded-3xl overflow-hidden grid lg:grid-cols-2" style={{ border: `1px solid ${D_LINE2}` }}>
+          <div className="p-9 md:p-14" style={{ background: PINE_2 }}>
+            <Reveal>
+              <Kicker dark>Founding firms program</Kicker>
+              <Display dark className="mt-5" size="clamp(1.9rem, 3.6vw, 2.9rem)">
+                Free in beta. <em style={{ fontStyle: "italic", color: LIME }}>Priced like software,</em> never like headcount.
+              </Display>
+              <p className="mt-5 text-[14.5px] leading-relaxed max-w-md" style={{ color: D_TXT2 }}>
+                We're onboarding a limited set of design-partner firms. Full platform,
+                no credit card, and a direct line to the founding team while we shape v1 together.
+              </p>
+              <div className="mt-8"><LimeBtn to="/sign-up">Request access <ArrowRight size={15} strokeWidth={2.4} /></LimeBtn></div>
+            </Reveal>
           </div>
-        </Reveal>
+          <div className="p-9 md:p-14" style={{ background: PINE_3 }}>
+            <Reveal delay={0.08}>
+              <div className="text-[10px] tracking-[0.2em] mb-6" style={{ fontFamily: MONO, color: D_TXT3 }}>WHAT FOUNDING FIRMS GET</div>
+              <ul className="space-y-4">
+                {["Every module — recons, flux, schedules, adjustments, reporting", "Unlimited companies and team seats during beta", "White-glove onboarding of your chart of accounts", "Roadmap influence — your close shapes the product", "Founding pricing locked when plans launch"].map((b) => (
+                  <li key={b} className="flex items-start gap-3 text-[14px]" style={{ color: D_TXT }}>
+                    <CheckCircle2 size={16} strokeWidth={2.2} className="mt-0.5 shrink-0" style={{ color: LIME }} /> {b}
+                  </li>
+                ))}
+              </ul>
+            </Reveal>
+          </div>
+        </div>
       </div>
     </section>
   )
@@ -753,24 +906,34 @@ export const FAQ_QUESTIONS = [
 function FAQ() {
   const [openIdx, setOpenIdx] = useState<number | null>(0)
   return (
-    <section id="faq" style={{ background: INK }}>
+    <section id="faq" style={{ background: CREAM }}>
       <div className="max-w-3xl mx-auto px-6 py-24 md:py-28">
-        <Reveal className="text-center mb-12"><Eyebrow>FAQ</Eyebrow><h2 className="mt-4 text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Questions, answered.</h2></Reveal>
-        <div className="space-y-3">
+        <Reveal className="mb-12">
+          <Kicker>FAQ</Kicker>
+          <Display className="mt-4">The questions controllers ask.</Display>
+        </Reveal>
+        <div style={{ borderTop: `1px solid ${L_LINE2}` }}>
           {FAQ_QUESTIONS.map((item, idx) => {
             const isOpen = openIdx === idx
             return (
-              <Reveal key={item.q} delay={idx * 0.04}>
-                <div className="rounded-2xl overflow-hidden" style={{ background: SURFACE, border: `1px solid ${isOpen ? LINE_2 : LINE}` }}>
-                  <button onClick={() => setOpenIdx(isOpen ? null : idx)} className="w-full flex items-center justify-between gap-4 text-left px-5 py-4" aria-expanded={isOpen}>
-                    <span className="text-[15px] font-semibold" style={{ color: TXT }}>{item.q}</span>
-                    <span className="shrink-0 h-7 w-7 rounded-full flex items-center justify-center" style={{ background: isOpen ? "rgba(84,185,138,0.14)" : SURFACE2, color: isOpen ? GREEN : TXT_3 }}>{isOpen ? <Minus size={15} strokeWidth={2.2} /> : <Plus size={15} strokeWidth={2.2} />}</span>
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {isOpen && <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.28, ease: EASE }} className="overflow-hidden"><p className="px-5 pb-5 text-[15px] leading-relaxed" style={{ color: TXT_2 }}>{item.a}</p></motion.div>}
-                  </AnimatePresence>
-                </div>
-              </Reveal>
+              <div key={item.q} style={{ borderBottom: `1px solid ${L_LINE2}` }}>
+                <button onClick={() => setOpenIdx(isOpen ? null : idx)} aria-expanded={isOpen}
+                  className="w-full flex items-center justify-between gap-5 text-left py-5">
+                  <span className="text-[15.5px] font-semibold" style={{ color: L_TXT }}>{item.q}</span>
+                  <span className="shrink-0 h-7 w-7 rounded-full grid place-items-center"
+                    style={{ background: isOpen ? PINE : "transparent", color: isOpen ? LIME : L_TXT3, border: `1px solid ${isOpen ? PINE : L_LINE2}` }}>
+                    {isOpen ? <Minus size={14} strokeWidth={2.4} /> : <Plus size={14} strokeWidth={2.4} />}
+                  </span>
+                </button>
+                <AnimatePresence initial={false}>
+                  {isOpen && (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.28, ease: EASE }} className="overflow-hidden">
+                      <p className="pb-6 pr-12 text-[14px] leading-relaxed" style={{ color: L_TXT2 }}>{item.a}</p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             )
           })}
         </div>
@@ -783,23 +946,40 @@ function FAQ() {
 function FinalCTA() {
   const { isSignedIn } = useUser()
   return (
-    <section style={{ background: INK }}>
-      <div className="max-w-5xl mx-auto px-6 pb-28">
+    <section className="relative overflow-hidden" style={{ background: PINE }}>
+      <div aria-hidden className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0" style={{
+          backgroundImage: `linear-gradient(${D_LINE} 1px, transparent 1px), linear-gradient(90deg, ${D_LINE} 1px, transparent 1px)`,
+          backgroundSize: "64px 64px", opacity: 0.45,
+          maskImage: "radial-gradient(100% 80% at 50% 100%, black, transparent 75%)",
+          WebkitMaskImage: "radial-gradient(100% 80% at 50% 100%, black, transparent 75%)",
+        }} />
+        <div className="absolute -bottom-44 left-1/2 -translate-x-1/2 h-[420px] w-[760px] rounded-full"
+          style={{ background: "radial-gradient(closest-side, rgba(212,243,97,0.12), transparent)", filter: "blur(56px)" }} />
+      </div>
+      <div className="relative max-w-4xl mx-auto px-6 py-28 md:py-36 text-center">
         <Reveal>
-          <div className="relative overflow-hidden rounded-[2rem] px-8 py-16 md:py-20 text-center" style={{ background: `linear-gradient(160deg, ${TINT_SAGE} 0%, ${SURFACE} 62%)`, border: `1px solid ${LINE}`, boxShadow: "0 24px 60px -44px rgba(14,17,18,0.20)" }}>
-            <div aria-hidden className="pointer-events-none absolute inset-0">
-              <div className="absolute -top-24 left-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_SAGE}, transparent)`, opacity: 0.20, filter: "blur(46px)" }} />
-              <div className="absolute -bottom-24 right-1/4 h-72 w-[460px] rounded-full" style={{ background: `radial-gradient(closest-side, ${GLOW_WARM}, transparent)`, opacity: 0.15, filter: "blur(56px)" }} />
-            </div>
-            <div className="relative">
-              <h2 className="text-3xl md:text-5xl font-bold tracking-tight" style={{ color: TXT }}>Your next close, but <GradWord>calm</GradWord>.</h2>
-              <p className="mt-4 mx-auto max-w-xl text-lg" style={{ color: TXT_2 }}>Connect QuickBooks in a minute. Run your first AI reconciliation in five.</p>
-              <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-                <Link to={isSignedIn ? "/app" : "/sign-up"} className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5" style={{ color: "#06140D", background: GREEN, boxShadow: `0 14px 34px -10px ${GREEN}` }}>{isSignedIn ? "Open dashboard" : "Start free"} <ArrowRight size={16} /></Link>
-                <Link to="/solutions" className="inline-flex items-center justify-center gap-1.5 px-7 py-3.5 rounded-full text-sm font-semibold" style={{ color: TXT, background: "rgba(14,17,18,0.04)", border: `1px solid ${LINE_2}` }}>See the product <ChevronRight size={16} /></Link>
-              </div>
-            </div>
+          <Display dark size="clamp(2.4rem, 5.6vw, 4.2rem)">
+            Close like the company<br />you're <em style={{ fontStyle: "italic", color: LIME }}>about to become</em>.
+          </Display>
+        </Reveal>
+        <Reveal delay={0.08}>
+          <p className="mt-6 mx-auto max-w-md text-[15px] leading-relaxed" style={{ color: D_TXT2 }}>
+            Connect QuickBooks in two minutes. Run your first agentic reconciliation in five.
+          </p>
+        </Reveal>
+        <Reveal delay={0.14}>
+          <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <LimeBtn to={isSignedIn ? "/app" : "/sign-up"}>{isSignedIn ? "Open dashboard" : "Start free in beta"} <ArrowRight size={15} strokeWidth={2.4} /></LimeBtn>
+            <Link to="/solutions" className="inline-flex items-center justify-center gap-1.5 rounded-full px-6 py-3.5 text-sm font-semibold"
+              style={{ color: D_TXT, border: `1px solid ${D_LINE2}` }}>Explore solutions <ChevronRight size={15} /></Link>
           </div>
+        </Reveal>
+        <Reveal delay={0.2}>
+          <p className="mt-8 text-[10.5px] tracking-[0.16em] inline-flex items-center gap-2" style={{ fontFamily: MONO, color: D_TXT3 }}>
+            <ShieldCheck size={12} /> READ-ONLY QBO · MAKER-CHECKER · FULL AUDIT TRAIL
+            <RefreshCw size={12} className="hidden sm:block" /> <span className="hidden sm:inline">SYNC ANYTIME</span>
+          </p>
         </Reveal>
       </div>
     </section>
@@ -811,31 +991,30 @@ export function HomePage() {
   const faqSchemaObj = faqSchema(FAQ_QUESTIONS.map((q) => ({ question: q.q, answer: q.a })))
   const crumbs = breadcrumbSchema([{ name: "Home", path: "/" }])
   useEffect(() => {
-    // Marketing homepage is a light brand page — force the shared Navbar/Footer
-    // (which follow the theme tokens) to render light to match, then restore.
+    // The landing page paints its own fixed palette; force the shared
+    // theme-token components (MarketingFooter) to render light so the page
+    // reads identically for every visitor, then restore the user's theme.
     const html = document.documentElement
     const had = html.classList.contains("dark")
     html.classList.remove("dark")
     return () => { if (had) html.classList.add("dark") }
   }, [])
   return (
-    <div className="min-h-screen" style={{ background: INK, color: TXT }}>
+    <div className="min-h-screen" style={{ background: PINE, color: D_TXT, scrollBehavior: "smooth" }}>
       <SEO
         title="Nordavix — AI month-end close software for CPAs and controllers"
         description="Close your books in days, not weeks. AI-prepared reconciliations, flux analysis, cash-runway and break-even insights, intercompany consolidation, and an executive financial package — all on top of QuickBooks Online."
         path="/" bareTitle jsonLd={[faqSchemaObj, crumbs]} />
       <Navbar />
       <Hero />
-      <CalmBanner />
-      <FeatureShowcase />
-      <TrustStrip />
+      <MetricsBar />
+      <Platform />
       <Bento />
-      <ProductExplorer />
-      <AgenticSpotlight />
-      <ControlGrid />
-      <Personas />
-      <FounderNote />
-      <EarlyAccess />
+      <AIBand />
+      <Workflow />
+      <Security />
+      <FounderLetter />
+      <Beta />
       <FAQ />
       <FinalCTA />
       <MarketingFooter />
