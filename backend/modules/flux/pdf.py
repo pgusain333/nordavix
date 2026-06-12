@@ -43,7 +43,6 @@ from modules.recons.pdf import (
     GREY_MID,
     INK,
     RED,
-    WHITE,
     ZEBRA,
     _fmt_date,
     _fmt_money,
