@@ -122,31 +122,31 @@ export function SchedulesOverview() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      {/* Header */}
+      {/* Header — compact, sized to match the recon / flux close-workflow
+          pages (single-line blurb, h-[26px] date picker). */}
       <motion.div
         initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-        className="px-4 sm:px-8 pt-6 pb-5"
+        className="px-4 sm:px-8 pt-3 sm:pt-4 pb-3"
         style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1 lg:hidden">
-              <BookOpen size={20} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-              <h1 className="text-2xl font-bold text-theme" style={{ letterSpacing: "-0.01em" }}>
+            <div className="flex items-center gap-2 mb-0.5 lg:hidden">
+              <BookOpen size={18} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+              <h1 style={{ fontSize: "clamp(16px, 3vw, 20px)", fontWeight: 700, lineHeight: 1.15, letterSpacing: "-0.01em", color: "var(--text)", margin: 0 }}>
                 Schedules
               </h1>
             </div>
-            <p className="text-xs sm:text-sm max-w-2xl" style={{ color: "var(--text-muted)" }}>
-              Workpapers behind every balance-sheet account. Each schedule's ending
-              balance auto-populates the subledger on its GL account's reconciliation,
-              so you enter the data once and the recon stays in sync forever after.
+            <p className="text-[11px] mt-0.5 truncate max-w-2xl" style={{ color: "var(--text-muted)" }}>
+              Workpapers behind every balance-sheet account · each schedule's ending balance auto-feeds its reconciliation.
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] font-semibold uppercase tracking-wide"
-              style={{ color: "var(--text-muted)" }}>
-              Period end
-            </span>
-            <DatePicker value={periodEnd} onChange={setPeriodEnd} />
+          <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+            <DatePicker
+              value={periodEnd}
+              onChange={setPeriodEnd}
+              className="inline-block"
+              triggerClassName="inline-flex items-center gap-1.5 h-[26px] px-2.5 text-xs rounded-md outline-none transition-colors hover:bg-[var(--surface)]"
+            />
             <Button
               size="sm"
               onClick={() => { setHasLoaded(true); if (hasLoaded) refetch() }}
@@ -157,25 +157,6 @@ export function SchedulesOverview() {
             </Button>
           </div>
         </div>
-        {/* Sum across types */}
-        {data && (
-          <div className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs"
-            style={{
-              background: "var(--green-subtle)",
-              border: "1px solid var(--green)",
-              color: "var(--green)",
-            }}>
-            <Sparkles size={12} strokeWidth={2} />
-            <span>
-              Schedules cover{" "}
-              <span className="font-bold tabular-nums">
-                {fmtMoney(totalAcrossTypes.toString())}
-              </span>{" "}
-              across {data.types.reduce((s, t) => s + t.active_count, 0)} line items at{" "}
-              {periodEnd}.
-            </span>
-          </div>
-        )}
       </motion.div>
 
       {/* Grid */}
@@ -220,6 +201,24 @@ export function SchedulesOverview() {
           </div>
         ) : (
           <>
+            {/* Sum across types — moved out of the header so the top bar
+                stays the same height as the other modules. */}
+            <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs"
+              style={{
+                background: "var(--green-subtle)",
+                border: "1px solid var(--green)",
+                color: "var(--green)",
+              }}>
+              <Sparkles size={12} strokeWidth={2} />
+              <span>
+                Schedules cover{" "}
+                <span className="font-bold tabular-nums">
+                  {fmtMoney(totalAcrossTypes.toString())}
+                </span>{" "}
+                across {data.types.reduce((s, t) => s + t.active_count, 0)} line items at{" "}
+                {periodEnd}.
+              </span>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {data.types.map((t, idx) => (
                 <ScheduleCard

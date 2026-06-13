@@ -35,36 +35,42 @@ export function SchedulePageHeader({
   return (
     <motion.div
       initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-      className="px-4 sm:px-8 pt-6 pb-5"
+      className="px-4 sm:px-8 pt-3 sm:pt-4 pb-3"
       style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-      <Link
-        to="/app/schedules"
-        className="inline-flex items-center gap-1 text-[11px] font-medium mb-3 transition-opacity hover:opacity-70"
-        style={{ color: "var(--text-muted)" }}>
-        <ArrowLeft size={12} strokeWidth={2} />
-        Back to schedules
-      </Link>
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2.5 mb-1 lg:hidden">
-            <div className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
-              style={{ background: accent.bg, color: accent.fg }}>
-              {icon}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Icon-only back — same affordance + height as the recon / flux pages. */}
+          <Link
+            to="/app/schedules"
+            className="flex items-center justify-center h-7 w-7 rounded-md transition-colors hover:bg-[var(--surface-2)] shrink-0"
+            style={{ color: "var(--text-muted)" }}
+            title="Back to schedules"
+            aria-label="Back to schedules"
+          >
+            <ArrowLeft size={15} strokeWidth={1.8} />
+          </Link>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 lg:hidden">
+              <div className="h-7 w-7 rounded-md flex items-center justify-center shrink-0"
+                style={{ background: accent.bg, color: accent.fg }}>
+                {icon}
+              </div>
+              <h1 style={{ fontSize: "clamp(16px, 3vw, 20px)", fontWeight: 700, lineHeight: 1.15, letterSpacing: "-0.01em", color: "var(--text)", margin: 0 }}>
+                {SCHEDULE_HUMAN[type]}
+              </h1>
             </div>
-            <h1 className="text-2xl font-bold text-theme" style={{ letterSpacing: "-0.01em" }}>
-              {SCHEDULE_HUMAN[type]}
-            </h1>
+            <p className="text-[11px] mt-0.5 truncate max-w-2xl" style={{ color: "var(--text-muted)" }}>
+              {SCHEDULE_BLURB[type]}
+            </p>
           </div>
-          <p className="text-xs sm:text-sm max-w-2xl" style={{ color: "var(--text-muted)" }}>
-            {SCHEDULE_BLURB[type]}
-          </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="inline-flex items-center gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wide"
-              style={{ color: "var(--text-muted)" }}>Period end</span>
-            <DatePicker value={periodEnd} onChange={onPeriod} />
-          </div>
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+          <DatePicker
+            value={periodEnd}
+            onChange={onPeriod}
+            className="inline-block"
+            triggerClassName="inline-flex items-center gap-1.5 h-[26px] px-2.5 text-xs rounded-md outline-none transition-colors hover:bg-[var(--surface)]"
+          />
           {onExport && (
             <Button
               size="sm"
