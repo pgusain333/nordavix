@@ -71,6 +71,17 @@ def _count(pdf: bytes) -> int:
         return 0
 
 
+def _merge(pdfs: list[bytes]) -> bytes:
+    """Concatenate several per-item PDFs into one section."""
+    writer = PdfWriter()
+    for pdf in pdfs:
+        for page in PdfReader(io.BytesIO(pdf)).pages:
+            writer.add_page(page)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 def _fmt_dt(dt: datetime | None) -> str | None:
     if dt is None:
         return None
@@ -226,6 +237,87 @@ async def _render_audit(
     return buf.getvalue(), len(rows), window_label
 
 
+async def _render_recon_packets(
+    db: AsyncSession, tenant_id: uuid.UUID, period_end: date, company: str,
+    user_email: str,
+) -> tuple[bytes | None, int]:
+    """One reconciliation working paper per balance-sheet account in the
+    period, in the same packet style as the per-account download."""
+    try:
+        from modules.recons.pdf import build_account_pdf
+        from modules.recons.pdf_data import gather_account_pdf_data
+
+        ov = await read_overview_from_snapshots(db, period_end)
+        accts = sorted(
+            ov.get("accounts") or [],
+            key=lambda a: (a.get("account_number") or "", a.get("account_name") or ""),
+        )
+        pdfs: list[bytes] = []
+        for a in accts:
+            qid = a.get("qbo_id") or a.get("qbo_account_id")
+            if not qid:
+                continue
+            try:
+                data = await gather_account_pdf_data(
+                    db, tenant_id=tenant_id, qbo_account_id=str(qid),
+                    period_end=period_end, company=company, user_email=user_email)
+                if not data:
+                    continue
+                buf = io.BytesIO()
+                build_account_pdf(buf, data=data)
+                pdfs.append(buf.getvalue())
+            except Exception:
+                logger.debug("binder: recon packet failed for %s", qid, exc_info=True)
+        if not pdfs:
+            return None, 0
+        return _merge(pdfs), len(pdfs)
+    except Exception:
+        logger.warning("binder: recon packets section failed; skipping", exc_info=True)
+        return None, 0
+
+
+async def _render_flux_packets(
+    db: AsyncSession, tenant_id: uuid.UUID, period_end: date, company: str,
+    user_email: str,
+) -> tuple[bytes | None, int]:
+    """One flux working paper per MATERIAL variance whose trial balance closes
+    on this period — 'every material variance, explained'."""
+    try:
+        from models.account import Account
+        from models.trial_balance import TrialBalance
+        from models.variance import Variance
+        from modules.flux.pdf import build_variance_pdf
+        from modules.flux.pdf_data import gather_variance_pdf_data
+
+        rows = list((await db.execute(
+            select(Variance, Account, TrialBalance)
+            .join(Account, Variance.account_id == Account.id)
+            .join(TrialBalance, Account.trial_balance_id == TrialBalance.id)
+            .where(
+                TrialBalance.period_current == period_end,
+                Variance.is_material.is_(True),
+            )
+            .order_by(Account.account_number, Account.account_name)
+        )).all())
+
+        pdfs: list[bytes] = []
+        for var, acct, tb in rows:
+            try:
+                data = await gather_variance_pdf_data(
+                    db, tb=tb, acct=acct, var=var, company=company, user_email=user_email)
+                buf = io.BytesIO()
+                build_variance_pdf(buf, data=data)
+                pdfs.append(buf.getvalue())
+            except Exception:
+                logger.debug("binder: flux packet failed for %s", var.id, exc_info=True)
+        if not pdfs:
+            return None, 0
+        return _merge(pdfs), len(pdfs)
+    except Exception:
+        logger.warning("binder: flux packets section failed; skipping", exc_info=True)
+        return None, 0
+
+
 # ── Assembly ─────────────────────────────────────────────────────────────────
 def _render_front_matter(ctx: BinderContext, toc: list[TocEntry]) -> bytes:
     buf = io.BytesIO()
@@ -318,7 +410,19 @@ async def build_close_binder(
             "financials", "Financial statements",
             "Income statement · Balance sheet · Cash flow", fin, _count(fin)))
 
-    # Stage 2 will insert reconciliation + flux working-paper packets here.
+    recon_pdf, recon_n = await _render_recon_packets(
+        db, tenant_id, period_end, company, generated_by_name)
+    if recon_pdf:
+        sections.append(_Section(
+            "recons", "Reconciliation working papers",
+            f"{recon_n} account{'' if recon_n == 1 else 's'}", recon_pdf, _count(recon_pdf)))
+
+    flux_pdf, flux_n = await _render_flux_packets(
+        db, tenant_id, period_end, company, generated_by_name)
+    if flux_pdf:
+        sections.append(_Section(
+            "flux", "Flux analysis",
+            f"{flux_n} material variance{'' if flux_n == 1 else 's'}", flux_pdf, _count(flux_pdf)))
 
     audit_pdf, audit_n, _ = await _render_audit(db, tenant_id, ctx, period_end)
     sections.append(_Section(
