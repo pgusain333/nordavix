@@ -29,3 +29,8 @@ reportlab>=4.2.0
 # parser produces — downstream code (persist + auto-match) doesn't care
 # which format the user uploaded.
 pdfplumber>=0.11.0
+
+# PDF assembly for the Close Binder — merges the per-account recon packets,
+# flux working papers, and financial statements (each already produced by
+# reportlab) into one paginated, bookmarked audit binder. Pure Python.
+pypdf>=4.2.0

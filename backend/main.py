@@ -32,6 +32,7 @@ from modules.recons.router import router as recons_router
 from modules.review.router import router as review_router
 from modules.schedules.router import router as schedules_router
 from modules.tasks.router import router as tasks_router
+from modules.workpapers.router import router as workpapers_router
 from modules.workspace.router import router as workspace_router
 
 if settings.sentry_dsn:
@@ -130,6 +131,7 @@ app.include_router(pbc_public_router,     prefix="/api/pbc-public",   tags=["pbc
 app.include_router(autopilot_router,      prefix="/api/autopilot",    tags=["autopilot"])
 app.include_router(review_router,         prefix="/api/review",       tags=["review"])
 app.include_router(advisory_router,       prefix="/api/advisory",     tags=["advisory"])
+app.include_router(workpapers_router,      prefix="/api/workpapers",   tags=["workpapers"])
 
 
 @app.get("/api/health", tags=["system"])

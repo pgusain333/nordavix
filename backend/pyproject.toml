@@ -56,6 +56,12 @@ dependencies = [
     # statements). reportlab is pure Python — no system libs needed,
     # which keeps the Fly image tiny and the deploy reliable.
     "reportlab>=4.2.0",
+
+    # PDF parsing (bank statements) + assembly (Close Binder). Both pure
+    # Python — pdfplumber reads uploaded statements; pypdf merges the
+    # per-section reconciliation/flux/financial PDFs into one audit binder.
+    "pdfplumber>=0.11.0",
+    "pypdf>=4.2.0",
 ]
 
 [project.optional-dependencies]
