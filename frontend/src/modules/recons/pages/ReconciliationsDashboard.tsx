@@ -1008,7 +1008,7 @@ export function ReconciliationsDashboard() {
             />
             <Button
               size="sm"
-              variant="green"
+              variant="greenOutline"
               icon={<RefreshCw size={14} strokeWidth={1.8} className={syncMut.isPending ? "animate-spin" : undefined} />}
               onClick={handleSync}
               disabled={!qbo || syncMut.isPending}
@@ -1024,7 +1024,7 @@ export function ReconciliationsDashboard() {
                 have to pick it twice. */}
             <Button
               size="sm"
-              variant="green"
+              variant="greenOutline"
               icon={<Download size={14} strokeWidth={1.8} />}
               loading={exportPeriodMut.isPending}
               onClick={() => exportPeriodMut.mutate()}
@@ -1046,7 +1046,7 @@ export function ReconciliationsDashboard() {
             {hasAgenticWork && !isClosed && (
               <Button
                 size="sm"
-                variant="green"
+                variant="greenOutline"
                 icon={<RotateCcw size={14} strokeWidth={1.8} className={resetAgenticMut.isPending ? "animate-spin" : undefined} />}
                 onClick={handleAgenticReset}
                 disabled={resetAgenticMut.isPending}
@@ -1061,7 +1061,7 @@ export function ReconciliationsDashboard() {
                 where to go. */}
             <Button
               size="sm"
-              variant="green"
+              variant="greenOutline"
               icon={<ShieldCheck size={14} strokeWidth={1.8} />}
               onClick={() => navigate("/app/reconciliations/overrides")}
               title="Review every manual subledger value entered for any account"
@@ -1070,7 +1070,7 @@ export function ReconciliationsDashboard() {
             </Button>
             <Button
               size="sm"
-              variant="destructive"
+              variant="dangerOutline"
               icon={<Trash2 size={14} strokeWidth={1.8} />}
               onClick={() => confirmClear ? clearMut.mutate() : setConfirmClear(true)}
               loading={clearMut.isPending}
@@ -4378,7 +4378,7 @@ function AgenticModeToggle({ running, disabled, onClick }: {
       onClick={onClick}
       disabled={disabled || running}
       title={title}
-      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all"
+      className="agentic-pill relative inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all"
       style={{
         background: running ? "var(--green)" : disabled ? "var(--surface-2)" : "var(--surface)",
         color:      running ? "#ffffff" : disabled ? "var(--text-muted)" : "var(--green)",
@@ -4390,9 +4390,18 @@ function AgenticModeToggle({ running, disabled, onClick }: {
     >
       <Sparkles
         size={12} strokeWidth={2}
-        className={running ? "animate-pulse" : undefined}
+        className={running ? "animate-pulse" : "agx-icon"}
       />
       {label}
+      {/* Gold stars twinkle around the button on hover (idle = invisible). */}
+      {!disabled && !running && (
+        <>
+          <Sparkles size={11} aria-hidden className="agx-star" style={{ position: "absolute", top: -7, left: 12, color: "#E8B84B" }} />
+          <Sparkles size={8}  aria-hidden className="agx-star" style={{ position: "absolute", top: -3, right: 16, color: "#E8B84B", animationDelay: "0.3s" }} />
+          <Sparkles size={9}  aria-hidden className="agx-star" style={{ position: "absolute", bottom: -6, left: 36, color: "#E8B84B", animationDelay: "0.6s" }} />
+          <Sparkles size={7}  aria-hidden className="agx-star" style={{ position: "absolute", top: "45%", right: -6, color: "#E8B84B", animationDelay: "0.45s" }} />
+        </>
+      )}
     </button>
   )
 }

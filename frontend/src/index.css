@@ -274,6 +274,23 @@
   animation: skeleton-pulse 1.4s ease-in-out infinite;
 }
 
+/* ── Agentic Mode star sparkle ─────────────────────────────────────────────
+   Little gold stars twinkle around the Agentic Mode button on hover, and the
+   leading icon gives a gentle twinkle. Stars are hidden at rest; the hover
+   animation is the only thing that reveals them, so it never distracts while
+   idle. Shared rule → every Agentic Mode button in the app behaves the same. */
+@keyframes agx-pop {
+  0%, 100% { opacity: 0; transform: scale(0.2) rotate(0deg); }
+  45%      { opacity: 1; transform: scale(1)   rotate(25deg); }
+}
+@keyframes agx-twinkle {
+  0%, 100% { transform: scale(1)    rotate(0deg); }
+  50%      { transform: scale(1.18) rotate(16deg); }
+}
+.agx-star { opacity: 0; pointer-events: none; }
+.agentic-pill:hover .agx-star { animation: agx-pop 1.2s ease-in-out infinite; }
+.agentic-pill:hover .agx-icon { animation: agx-twinkle 1.4s ease-in-out infinite; }
+
 /* ── Clerk auth form overrides ─────────────────────────────────────────
    Why these live in CSS and not in the appearance prop:
    Clerk applies its default styles last in the cascade, so Tailwind
