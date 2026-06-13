@@ -17,11 +17,12 @@ import { useOrganization } from "@clerk/clerk-react"
 import { motion } from "framer-motion"
 import {
   Calendar, ClipboardList, Building2, Home, Banknote,
-  ArrowRight, CheckCircle2, Sparkles, BookOpen, RefreshCw,
+  ArrowRight, CheckCircle2, Sparkles, RefreshCw,
 } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { PageHeader } from "@/core/ui/PageHeader"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import {
@@ -122,31 +123,15 @@ export function SchedulesOverview() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      {/* Header — compact, sized to match the recon / flux close-workflow
-          pages (single-line blurb, h-[26px] date picker). */}
-      <motion.div
-        initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-        className="px-4 sm:px-8 pt-3 sm:pt-4 pb-3"
-        style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-0.5 lg:hidden">
-              <BookOpen size={18} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-              <h1 style={{ fontSize: "clamp(16px, 3vw, 20px)", fontWeight: 700, lineHeight: 1.15, letterSpacing: "-0.01em", color: "var(--text)", margin: 0 }}>
-                Schedules
-              </h1>
-            </div>
-            <p className="text-[11px] mt-0.5 truncate max-w-2xl" style={{ color: "var(--text-muted)" }}>
-              Workpapers behind every balance-sheet account · each schedule's ending balance auto-feeds its reconciliation.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
-            <DatePicker
-              value={periodEnd}
-              onChange={setPeriodEnd}
-              className="inline-block"
-              triggerClassName="inline-flex items-center gap-1.5 h-[26px] px-2.5 text-xs rounded-md outline-none transition-colors hover:bg-[var(--surface)]"
-            />
+      {/* Header — shared PageHeader so the module name is ALWAYS shown,
+          identical chrome + height to every other module. */}
+      <PageHeader
+        title="Schedules"
+        subtitle="Workpapers behind every balance-sheet account · each schedule's ending balance auto-feeds its reconciliation."
+        backTo="/app"
+        actions={
+          <>
+            <DatePicker value={periodEnd} onChange={setPeriodEnd} />
             <Button
               size="sm"
               onClick={() => { setHasLoaded(true); if (hasLoaded) refetch() }}
@@ -155,9 +140,9 @@ export function SchedulesOverview() {
             >
               {hasLoaded ? "Refresh" : "Load schedules"}
             </Button>
-          </div>
-        </div>
-      </motion.div>
+          </>
+        }
+      />
 
       {/* Grid */}
       <div className="flex-1 px-4 sm:px-8 py-6 max-w-6xl w-full mx-auto">
