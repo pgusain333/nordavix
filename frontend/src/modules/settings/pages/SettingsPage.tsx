@@ -35,6 +35,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { AutopilotSection } from "@/modules/autopilot/AutopilotSection"
+import { ErrorBoundary } from "@/core/ui/ErrorBoundary"
 import { Spinner } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -131,7 +132,11 @@ export function SettingsPage() {
                 className="space-y-5"
               >
                 {active === "company"       && <CompanySection />}
-                {active === "autopilot"     && <AutopilotSection />}
+                {active === "autopilot"     && (
+                  <ErrorBoundary label="Close Autopilot">
+                    <AutopilotSection />
+                  </ErrorBoundary>
+                )}
                 {active === "profile"       && <ProfileSection />}
                 {active === "workspaces"    && <WorkspacesSection />}
                 {active === "team"          && <TeamSection />}

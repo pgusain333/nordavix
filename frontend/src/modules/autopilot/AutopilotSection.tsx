@@ -69,7 +69,7 @@ export function AutopilotSection() {
   })
   const isAdmin = me?.role === "admin"
 
-  const { data: state, isLoading } = useQuery({
+  const { data: state, isLoading, isError } = useQuery({
     queryKey: ["autopilot"],
     queryFn:  autopilotApi.getState,
     enabled:  !!organization,
@@ -182,16 +182,24 @@ export function AutopilotSection() {
   if (!organization) {
     return (
       <Card>
-        <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-          Select a workspace to set up Close Autopilot.
-        </p>
+        <div className="p-6">
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            Select a workspace to set up Close Autopilot.
+          </p>
+        </div>
       </Card>
     )
   }
-  if (isLoading) {
+  // Only block on the very first load (no data yet AND not errored). If the
+  // request fails, fall through and render the setup UI with an inline notice
+  // rather than hanging on a spinner.
+  if (isLoading && !state && !isError) {
     return (
       <Card>
-        <Spinner className="h-6 w-6" />
+        <div className="p-6 flex items-center gap-3">
+          <Spinner className="h-5 w-5" />
+          <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading Close Autopilot…</span>
+        </div>
       </Card>
     )
   }
@@ -205,6 +213,18 @@ export function AutopilotSection() {
 
   return (
     <div className="space-y-5">
+      {isError && (
+        <div className="rounded-xl px-4 py-3 text-[12px] flex items-start gap-2"
+          style={{ background: "var(--warn-subtle)", color: "var(--warn)", border: "1px solid var(--warn-border)" }}>
+          <AlertTriangle size={14} strokeWidth={2} className="mt-0.5 shrink-0" />
+          <span>
+            Couldn't load your saved Autopilot settings — the Autopilot service may still be
+            finishing its deploy (database migration <strong>045</strong>). You can review the setup
+            below; once the service is reachable, your saved configuration and run history will appear.
+          </span>
+        </div>
+      )}
+
       {/* ── 1 · HERO ────────────────────────────────────────────────── */}
       <div
         className="relative overflow-hidden rounded-2xl"
