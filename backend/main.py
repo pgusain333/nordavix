@@ -10,6 +10,7 @@ from core.db.base import DemoReadOnlyError
 from core.security.crypto import encryption_configured
 from core.tenancy.middleware import TenantMiddleware
 from modules.adjustments.router import router as adjustments_router
+from modules.advisory.router import router as advisory_router
 from modules.audit.router import router as audit_router
 from modules.autopilot.router import router as autopilot_router
 from modules.comments.router import router as comments_router
@@ -128,6 +129,7 @@ app.include_router(pbc_router,            prefix="/api/pbc",          tags=["pbc
 app.include_router(pbc_public_router,     prefix="/api/pbc-public",   tags=["pbc-public"])
 app.include_router(autopilot_router,      prefix="/api/autopilot",    tags=["autopilot"])
 app.include_router(review_router,         prefix="/api/review",       tags=["review"])
+app.include_router(advisory_router,       prefix="/api/advisory",     tags=["advisory"])
 
 
 @app.get("/api/health", tags=["system"])

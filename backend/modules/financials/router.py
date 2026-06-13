@@ -855,6 +855,23 @@ async def export_executive_report(
 
         data = await gather_report_data(tenant_id=tenant_id, db=db, period_end=pe, audience=aud)
 
+        # Persist the board recommendations as trackable advisory items (the
+        # internal edition is canonical; the client edition reuses the same
+        # data so we don't double-write). Best-effort — never break the export.
+        if aud == "internal":
+            try:
+                from modules.advisory.service import persist_exec_recommendations
+                await persist_exec_recommendations(db, tenant_id, pe, data.ai.recommendations)
+            except Exception:
+                logger.warning("Could not persist exec recommendations for tenant=%s period=%s", tenant_id, pe)
+                # A failed flush (e.g. read-only demo tenant) leaves the session
+                # in a needs-rollback state — clear it so the rest of the request
+                # (and session teardown) stays healthy.
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+
         buf = io.BytesIO()
         build_executive_pdf(buf, data=data, audience=aud)
         buf.seek(0)

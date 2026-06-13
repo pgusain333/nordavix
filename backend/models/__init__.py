@@ -2,6 +2,7 @@
 # before Alembic generates or runs migrations.
 from models.account import Account
 from models.account_review_status import AccountReviewStatus
+from models.advisory import KpiTarget, TrackedRecommendation
 from models.ai_usage import AIUsage
 from models.audit_log import AuditLog
 from models.autopilot import AutopilotConfig, AutopilotRun
@@ -42,6 +43,8 @@ __all__ = [
     "Account",
     "AccountReviewStatus",
     "AIUsage",
+    "KpiTarget",
+    "TrackedRecommendation",
     "AuditLog",
     "BankStatement",
     "CloseReview",

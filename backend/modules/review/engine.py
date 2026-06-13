@@ -123,11 +123,17 @@ def _classify_je(je: dict, period_end: date) -> dict | None:
     dict, or None when nothing trips. QBO has no 'manual JE' flag — the
     JournalEntry entity itself is the manual-entry proxy."""
     debit = Decimal("0")
+    credit = Decimal("0")
     for line in je.get("Line", []) or []:
         d = line.get("JournalEntryLineDetail") or {}
+        line_amt = _dec(line.get("Amount"))
         if d.get("PostingType") == "Debit":
-            debit += _dec(line.get("Amount"))
-    amt = debit
+            debit += line_amt
+        elif d.get("PostingType") == "Credit":
+            credit += line_amt
+    # Balanced JE: debits == credits. Take the larger so a credit-only or
+    # PostingType-less line set still yields the right entry magnitude.
+    amt = max(debit, credit)
     try:
         txn_date: date | None = date.fromisoformat(str(je.get("TxnDate"))[:10])
     except Exception:
@@ -380,7 +386,7 @@ async def run_close_review(
 
     high = review_n = info = 0
     for f in findings:
-        key = _stable_key(f["code"], f["qbo_account_id"])
+        key = _stable_key(f["code"], f["qbo_account_id"], f["entity_ref"], f["category"])
         if key in kept_keys:
             continue  # the reviewer already decided on this exact issue
         db.add(CloseReviewFinding(
