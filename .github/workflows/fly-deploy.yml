@@ -1,0 +1,46 @@
+name: Deploy backend (Fly.io)
+
+# The frontend auto-deploys via Vercel on every push to main. This gives the
+# backend the same treatment: on a push that touches backend code or the Fly
+# config, deploy to Fly.io. Fly's release_command (alembic upgrade head) then
+# applies every pending migration in one shot before the new image serves — so
+# you never run `fly deploy` by hand again.
+#
+# Requires a FLY_API_TOKEN repo secret (Settings → Secrets and variables →
+# Actions). Generate it with `fly tokens create deploy`. If it's unset the job
+# logs a note and exits green (never a red X).
+
+on:
+  push:
+    branches: [main]
+    # Only deploy when something the backend image cares about changed. A
+    # frontend-only push is handled by Vercel and skips this entirely.
+    paths:
+      - "backend/**"
+      - "fly.toml"
+      - ".github/workflows/fly-deploy.yml"
+  workflow_dispatch: {}   # allow a manual deploy from the Actions tab
+
+# Never run two deploys at once, and never cancel one mid-flight — a release
+# command (the Alembic migration) must finish cleanly.
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy to Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "FLY_API_TOKEN not set — add it under Settings → Secrets and"
+            echo "variables → Actions (generate with: fly tokens create deploy)."
+            echo "Skipping automatic deploy."
+            exit 0
+          fi
+          flyctl deploy --remote-only
