@@ -35,7 +35,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit.log import write_audit_event
-from core.auth.dependencies import CurrentTenantId, CurrentUser
+from core.auth.dependencies import CurrentTenantId, CurrentUser, require_capability
 from core.config import settings
 from core.db.session import get_db
 from core.email.sender import send_email
@@ -166,7 +166,7 @@ def _serialize(req: EvidenceRequest) -> dict:
     }
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_capability("pbc"))])
 async def create_request(
     body: RequestCreate,
     tenant_id: CurrentTenantId,
@@ -240,7 +240,7 @@ async def list_requests(
     return {"requests": [_serialize(r) for r in rows]}
 
 
-@router.post("/{request_id}/remind")
+@router.post("/{request_id}/remind", dependencies=[Depends(require_capability("pbc"))])
 async def remind_request(
     request_id: uuid.UUID,
     tenant_id: CurrentTenantId,

@@ -22,7 +22,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit.log import write_audit_event
-from core.auth.dependencies import CurrentTenantId, require_role
+from core.auth.dependencies import CurrentTenantId, require_capability
 from core.db.session import get_db
 from models.autopilot import AutopilotConfig, AutopilotRun
 from models.closed_period import ClosedPeriod
@@ -102,7 +102,7 @@ class ConfigBody(BaseModel):
 async def put_config(
     body: ConfigBody,
     tenant_id: CurrentTenantId,
-    user: User = Depends(require_role("admin")),
+    user: User = Depends(require_capability("autopilot")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     if body.send_pbc_requests and not (body.pbc_recipient_email or "").strip():
@@ -160,7 +160,7 @@ async def _run_in_background(tenant_id: uuid.UUID, period_end: date, user_id: uu
 async def run_now(
     tenant_id: CurrentTenantId,
     background_tasks: BackgroundTasks,
-    user: User = Depends(require_role("admin")),
+    user: User = Depends(require_capability("autopilot")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     tenant = (await db.execute(

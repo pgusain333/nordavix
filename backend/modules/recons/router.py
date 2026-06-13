@@ -43,7 +43,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.ai.guard import enforce_ai_limits
 from core.audit.log import write_audit_event
 from core.auth.clerk_users import _format_display_name, get_clerk_user
-from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, require_role
+from core.auth.dependencies import (
+    ROLE_ORDER,
+    CurrentTenantId,
+    CurrentUser,
+    require_capability,
+    require_role,
+)
 from core.db.base import current_request_readonly
 from core.db.session import get_db
 from core.storage import r2 as r2_storage
@@ -1790,7 +1796,7 @@ async def list_closed_periods(
     }
 
 
-@router.post("/admin/close-period", dependencies=[Depends(require_role("admin"))])
+@router.post("/admin/close-period", dependencies=[Depends(require_capability("period_lock"))])
 async def close_period(
     body: dict,
     tenant_id: CurrentTenantId,
@@ -2012,7 +2018,7 @@ async def close_period(
     }
 
 
-@router.post("/admin/reopen-period", dependencies=[Depends(require_role("admin"))])
+@router.post("/admin/reopen-period", dependencies=[Depends(require_capability("period_lock"))])
 async def reopen_period(
     body: dict,
     tenant_id: CurrentTenantId,

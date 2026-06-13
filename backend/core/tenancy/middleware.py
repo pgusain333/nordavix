@@ -327,6 +327,15 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": str(rl.retry_after)},
             )
 
+        # Suspended members are view-only: flag the whole request read-only so
+        # the DB session blocks every write (same hard guarantee as the demo
+        # tenant). Cleared before flush_usage so legitimate system writes
+        # (AIUsage) still land — a suspended user can't trigger AI anyway.
+        ro_token = (
+            current_request_readonly.set(True)
+            if getattr(user, "suspended", False) else None
+        )
+
         # Capture AI usage for this request, flush it (to AIUsage) afterward.
         # try/finally so usage is recorded even if the handler raised after some
         # AI calls. Background-task AI (flux narratives) flushes itself.
@@ -334,4 +343,6 @@ class TenantMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         finally:
+            if ro_token is not None:
+                current_request_readonly.reset(ro_token)
             await flush_usage(tenant.id)

@@ -94,6 +94,8 @@ async def list_members(
             "image_url":     m.get("image_url"),
             "clerk_role":    m.get("role"),     # Clerk's org role (org:admin / org:member)
             "role":          u.role if u else "preparer",  # Nordavix role
+            "delegated_powers": list(u.delegated_powers or []) if u else [],
+            "suspended":     bool(u.suspended) if u else False,
         })
     return {"members": members}
 
@@ -178,6 +180,8 @@ async def get_me(
         "clerk_user_id": me_row.clerk_user_id,
         "email":         me_row.email,
         "role":          me_row.role or "preparer",
+        "delegated_powers": list(me_row.delegated_powers or []),
+        "suspended":     bool(me_row.suspended),
     }
 
 
@@ -235,6 +239,109 @@ async def set_member_role(
     )
     await db.commit()
     return {"id": str(target.id), "role": target.role}
+
+
+@router.put("/members/{member_id}/capabilities", dependencies=[Depends(require_role("admin"))])
+async def set_member_capabilities(
+    member_id: uuid.UUID,
+    body: dict,
+    tenant_id: CurrentTenantId,
+    current_user: RequireAdmin,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Admin-only: set the delegated admin-powers for a non-admin member.
+    Body: { powers: ["autopilot", "pbc", "period_lock", "qbo"] } (any subset).
+
+    The role still governs prepare vs approve (segregation of duties); these are
+    the cross-cutting admin actions an admin hands out without granting full
+    admin. Unknown power keys are silently dropped.
+    """
+    from core.auth.dependencies import DELEGATABLE_POWERS
+
+    raw = body.get("powers")
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="powers must be a list of power keys.")
+    powers = sorted({str(p) for p in raw} & DELEGATABLE_POWERS)
+
+    target = (await db.execute(
+        select(User).where(User.id == member_id)
+    )).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+
+    target.delegated_powers = powers
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=current_user.id,
+        action="workspace.capabilities_changed",
+        entity_type="user", entity_id=target.id,
+        metadata={
+            "summary": f"Set delegated powers for {target.email}: {', '.join(powers) or 'none'}",
+            "powers":  powers,
+        },
+    )
+    await db.commit()
+    return {"id": str(target.id), "delegated_powers": powers}
+
+
+async def _set_suspended(
+    member_id: uuid.UUID, *, suspended: bool, tenant_id, current_user, db,
+) -> dict:
+    target = (await db.execute(
+        select(User).where(User.id == member_id)
+    )).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+    if suspended and target.id == current_user.id:
+        raise HTTPException(status_code=409, detail="You can't suspend your own access.")
+    # Never suspend the last active admin — keeps the workspace operable.
+    if suspended and target.role == "admin":
+        active_admins = (await db.execute(
+            select(User).where(
+                User.role == "admin", User.suspended.is_(False),
+            )
+        )).scalars().all()
+        if len([a for a in active_admins if a.id != target.id]) == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot suspend the last active admin. Promote or restore another admin first.",
+            )
+
+    target.suspended = suspended
+    from core.audit.log import write_audit_event
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=current_user.id,
+        action="workspace.member_suspended" if suspended else "workspace.member_restored",
+        entity_type="user", entity_id=target.id,
+        metadata={"summary": f"{'Suspended (view-only)' if suspended else 'Restored'} {target.email}"},
+    )
+    await db.commit()
+    return {"id": str(target.id), "suspended": target.suspended}
+
+
+@router.post("/members/{member_id}/suspend", dependencies=[Depends(require_role("admin"))])
+async def suspend_member(
+    member_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    current_user: RequireAdmin,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only: make a member view-only (they can see the close, not act)."""
+    return await _set_suspended(
+        member_id, suspended=True, tenant_id=tenant_id, current_user=current_user, db=db)
+
+
+@router.post("/members/{member_id}/restore", dependencies=[Depends(require_role("admin"))])
+async def restore_member(
+    member_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    current_user: RequireAdmin,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only: restore a suspended member's normal access."""
+    return await _set_suspended(
+        member_id, suspended=False, tenant_id=tenant_id, current_user=current_user, db=db)
 
 
 @router.get("/invitations")

@@ -56,6 +56,37 @@ def require_role(min_role: str):
     return _check
 
 
+# Admin-powers an admin can delegate to a non-admin member, beyond their role.
+# The role (preparer/reviewer) still governs prepare vs approve (segregation of
+# duties); these are the cross-cutting governance actions that are admin-only by
+# default but can be handed out one at a time on the Team access panel.
+DELEGATABLE_POWERS = {"autopilot", "pbc", "period_lock", "qbo"}
+
+
+def require_capability(power: str):
+    """
+    Build a dependency that 403s unless the user can perform `power`.
+
+    Admins always pass (master access). Any other member passes only if `power`
+    is in their delegated_powers grant. Role-based prepare/approve gates are
+    unaffected — this layers on top for the delegatable admin-powers.
+    """
+    def _check(user: User = Depends(get_current_user)) -> User:
+        if (user.role or "preparer") == "admin":
+            return user
+        if power in (getattr(user, "delegated_powers", None) or []):
+            return user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You don't have permission for this action. Ask an admin to grant "
+                f"you the '{power}' power on the Team page."
+            ),
+        )
+
+    return _check
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentTenantId = Annotated[uuid.UUID, Depends(get_current_tenant_id)]
 RequireAdmin    = Annotated[User, Depends(require_role("admin"))]

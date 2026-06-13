@@ -27,7 +27,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.auth.dependencies import CurrentTenantId, RequireAdmin, require_role
+from core.auth.dependencies import CurrentTenantId, CurrentUser, require_capability
 from core.config import settings
 from core.db.base import current_tenant_id as _current_tenant_id
 from core.db.session import AsyncSessionLocal, get_db
@@ -87,7 +87,7 @@ def _decode_state(state: str) -> uuid.UUID | None:
 
 # ── OAuth flow ─────────────────────────────────────────────────────────────────
 
-@oauth_router.get("/connect", dependencies=[Depends(require_role("admin"))])
+@oauth_router.get("/connect", dependencies=[Depends(require_capability("qbo"))])
 async def qbo_connect(
     tenant_id: CurrentTenantId,
 ) -> RedirectResponse:
@@ -229,7 +229,7 @@ async def qbo_callback(
 
 # ── QBO API endpoints (auth required) ─────────────────────────────────────────
 
-@qbo_router.get("/connect-url", dependencies=[Depends(require_role("admin"))])
+@qbo_router.get("/connect-url", dependencies=[Depends(require_capability("qbo"))])
 async def get_qbo_connect_url(
     tenant_id: CurrentTenantId,
 ) -> dict:
@@ -407,10 +407,10 @@ async def revoke_qbo_token(conn: QboConnection) -> bool:
         return False
 
 
-@qbo_router.delete("/connection", dependencies=[Depends(require_role("admin"))])
+@qbo_router.delete("/connection", dependencies=[Depends(require_capability("qbo"))])
 async def disconnect_qbo(
     tenant_id: CurrentTenantId,
-    current_user: RequireAdmin,
+    current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """

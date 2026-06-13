@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, String, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.db.base import TenantBase
@@ -43,3 +43,18 @@ class User(TimestampMixin, TenantBase):
     # Set the first time the user reaches /workspace/me — gates the one-time
     # welcome email so we never send it twice.
     welcomed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Delegated admin-powers granted to a non-admin member, beyond their role.
+    # Subset of core.auth.dependencies.DELEGATABLE_POWERS (e.g. "autopilot",
+    # "pbc", "period_lock", "qbo"). Admin always has all; others only what's
+    # listed here. The role (preparer/reviewer) still governs prepare vs approve
+    # — these are the cross-cutting admin actions an admin can hand out.
+    delegated_powers: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"),
+    )
+    # View-only suspension. When true the tenant middleware flags the whole
+    # request read-only (DB writes blocked), so the member can see the close
+    # but can't act — used to off-board a departing staffer or scope an
+    # external reviewer without deleting their record/history.
+    suspended: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false"),
+    )
