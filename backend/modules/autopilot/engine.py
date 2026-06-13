@@ -285,6 +285,15 @@ async def _step_pbc(db: AsyncSession, tenant_id: uuid.UUID, actor: User,
     results["pbc_sent"] = sent
 
 
+async def _step_review(db: AsyncSession, tenant_id: uuid.UUID, actor: User, pe: date, results: dict) -> None:
+    """AI reviewing-partner pass over the freshly prepared close. Snapshot-based
+    deterministic checks + a bounded, cap-aware AI narrative."""
+    from modules.review.engine import run_close_review
+    review = await run_close_review(db, tenant_id, pe, generated_by=actor.id, use_ai=True)
+    results["review_exceptions"] = review.high_count + review.review_count
+    results["review_high"] = review.high_count
+
+
 def _digest_lines(results: dict, pe: date) -> tuple[str, str]:
     """(title, body) for the in-app notification + email."""
     label = pe.strftime("%B %Y")
@@ -301,6 +310,10 @@ def _digest_lines(results: dict, pe: date) -> tuple[str, str]:
         bits.append(f"AI commentary on {results['flux_ai_queued']} variances")
     if results.get("pbc_sent"):
         bits.append(f"requested {results['pbc_sent']} statements from your client")
+    if results.get("review_exceptions"):
+        hi = results.get("review_high") or 0
+        suffix = f" ({hi} high-priority)" if hi else ""
+        bits.append(f"flagged {results['review_exceptions']} review exception{'s' if results['review_exceptions'] != 1 else ''}{suffix}")
     summary = "; ".join(bits) if bits else "nothing needed doing"
     errs = results.get("errors") or []
     title = f"Autopilot ran your {label} close"
@@ -389,6 +402,13 @@ async def run_autopilot_for_tenant(
                 logger.exception("Autopilot PBC failed for %s", tenant.id)
                 results["errors"].append(f"Evidence requests failed: {type(exc).__name__}")
 
+        # 4b — CLOSE REVIEW: the AI reviewing-partner pass over everything above.
+        try:
+            await _step_review(db, tenant.id, actor, period_end, results)
+        except Exception as exc:
+            logger.exception("Autopilot review failed for %s", tenant.id)
+            results["errors"].append(f"Close review failed: {type(exc).__name__}")
+
         # 5 — DIGEST: branded email to every member with email on.
         title, body = _digest_lines(results, period_end)
         try:
@@ -450,6 +470,8 @@ def _digest_email_html(*, company: str, title: str, body: str, results: dict,
         row("Variances with AI commentary", str(results["flux_ai_queued"]))
     if results.get("pbc_sent"):
         row("Statements requested from client", str(results["pbc_sent"]))
+    if results.get("review_exceptions") is not None:
+        row("Close-review exceptions", str(results.get("review_exceptions", 0)))
     errs = results.get("errors") or []
     err_block = ""
     if errs:

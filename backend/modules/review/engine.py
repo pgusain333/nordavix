@@ -1,0 +1,309 @@
+"""
+Close Review engine — runs the check battery + AI narrative for one
+(workspace, period), then persists the review and its findings.
+
+Snapshot-first: every check reads persisted Nordavix data (recon overview, GL
+snapshots, flux, schedules, adjustments) — NO live QuickBooks calls — so a
+review is fast and safe to run repeatedly. Re-running refreshes the open
+findings but keeps the reviewer's cleared / actioned / accepted decisions.
+"""
+import asyncio
+import hashlib
+import logging
+import uuid
+from collections import defaultdict
+from datetime import UTC, date, datetime
+from decimal import Decimal
+
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.account import Account
+from models.account_review_status import AccountReviewStatus
+from models.close_review import CloseReview, CloseReviewFinding
+from models.gl_balance_snapshot import GlBalanceSnapshot
+from models.narrative import Narrative
+from models.period_sync import PeriodSync
+from models.proposed_entry import ProposedEntry
+from models.schedule import ScheduleLease, ScheduleLoan
+from models.trial_balance import TrialBalance
+from models.variance import Variance
+from modules.review.checks import ReviewContext, run_all_checks
+
+logger = logging.getLogger(__name__)
+
+_TIE = Decimal("1.00")
+_MAX_PRIOR_PERIODS = 3   # for dropped-recurring / new-account comparisons
+
+
+def _dec(v) -> Decimal:
+    try:
+        return Decimal(str(v))
+    except Exception:
+        return Decimal("0")
+
+
+def _stable_key(code: str, qbo_account_id) -> tuple:
+    # Deliberately (code, account) only — NOT entity_ref. A flux variance id is
+    # regenerated on every flux re-run, so keying on it would resurrect a
+    # reviewer-cleared flux finding as "open". Every check emits at most one
+    # finding per (code, account), so this is a stable, sufficient identity.
+    return (code, qbo_account_id or "")
+
+
+async def _load_schedule_gaps(db: AsyncSession, tenant_id: uuid.UUID, period_end: date,
+                              cur: dict) -> list[dict]:
+    """Active loan/lease schedules whose implied period interest doesn't appear
+    to have hit the GL (schedule subledger vs GL balance gap)."""
+    from modules.recons.agentic import _schedule_backed_subledger
+    from modules.schedules.calc import lease_interest_in_period, loan_interest_in_period
+
+    p_start = period_end.replace(day=1)
+    gaps: list[dict] = []
+
+    loans = list((await db.execute(
+        select(ScheduleLoan).where(ScheduleLoan.is_active == True)  # noqa: E712
+    )).scalars().all())
+    leases = list((await db.execute(
+        select(ScheduleLease).where(ScheduleLease.is_active == True)  # noqa: E712
+    )).scalars().all())
+
+    plan: list[tuple] = (
+        [("loan", it, loan_interest_in_period) for it in loans]
+        + [("lease", it, lease_interest_in_period) for it in leases]
+    )
+    for kind, item, implied_fn in plan:
+        try:
+            implied = _dec(implied_fn(item, p_start, period_end))
+            if implied <= 0:
+                continue
+            sb = await _schedule_backed_subledger(db, tenant_id, item.qbo_account_id, period_end)
+            if not sb:
+                continue
+            sl_signed = _dec(sb.get("sl_signed"))
+            snap = cur.get(item.qbo_account_id)
+            if snap is None:
+                continue
+            gl_bal = _dec(getattr(snap, "balance", 0))
+            gap = gl_bal - sl_signed
+            if abs(gap) > _TIE:
+                label = (
+                    f"{getattr(snap, 'account_number', '') or ''} {getattr(snap, 'account_name', '') or ''}".strip()
+                    or getattr(item, "description", None) or "(schedule account)"
+                )
+                gaps.append({
+                    "schedule_type": kind, "qbo_account_id": item.qbo_account_id,
+                    "account_label": label, "schedule_id": str(getattr(item, "id", "")),
+                    "implied": str(implied), "gap": str(gap),
+                    "gl": str(gl_bal), "sl": str(sl_signed),
+                })
+        except Exception:
+            logger.exception("Close Review schedule gap check failed for %s", getattr(item, "id", "?"))
+    return gaps
+
+
+async def _build_context(db: AsyncSession, tenant_id: uuid.UUID, period_end: date) -> ReviewContext:
+    from modules.recons.overview import read_overview_from_snapshots
+
+    overview = await read_overview_from_snapshots(db, period_end)
+
+    # AccountReviewStatus (approval trail not exposed on the overview dict).
+    ars = list((await db.execute(
+        select(AccountReviewStatus).where(AccountReviewStatus.period_end == period_end)
+    )).scalars().all())
+    review_status = {
+        r.qbo_account_id: {
+            "approved_at": r.approved_at,
+            "subledger_entered_at": r.subledger_entered_at,
+            "status": r.status,
+        }
+        for r in ars
+    }
+
+    ps = (await db.execute(
+        select(PeriodSync).where(PeriodSync.period_end == period_end)
+    )).scalar_one_or_none()
+    tb_balanced = ps.tb_balanced if ps else None
+    tb_diff = _dec(ps.tb_diff) if (ps and ps.tb_diff is not None) else None
+
+    # Snapshots: current + the most-recent prior periods (one round trip).
+    all_periods = list((await db.execute(
+        select(GlBalanceSnapshot.period_end).distinct().order_by(GlBalanceSnapshot.period_end.desc())
+    )).scalars().all())
+    priors = [p for p in all_periods if p < period_end][:_MAX_PRIOR_PERIODS]
+    to_load = [period_end, *priors]
+    snap_rows = list((await db.execute(
+        select(GlBalanceSnapshot).where(GlBalanceSnapshot.period_end.in_(to_load))
+    )).scalars().all())
+    by_period: dict[date, dict] = defaultdict(dict)
+    for r in snap_rows:
+        by_period[r.period_end][r.qbo_account_id] = r
+    cur = dict(by_period.get(period_end, {}))
+    prior_month = dict(by_period.get(priors[0], {})) if priors else {}
+    prior_id_sets = [set(by_period.get(p, {}).keys()) for p in priors]
+
+    # Flux: latest trial balance for the period + material/explanation state.
+    tb = (await db.execute(
+        select(TrialBalance).where(TrialBalance.period_current == period_end)
+        .order_by(TrialBalance.created_at.desc())
+    )).scalars().first()
+    flux: list = []
+    if tb is not None:
+        rows = (await db.execute(
+            select(Variance, Account, Narrative)
+            .join(Account, Variance.account_id == Account.id)
+            .outerjoin(Narrative, Narrative.variance_id == Variance.id)
+            .where(Account.trial_balance_id == tb.id)
+        )).all()
+        for var, acct, narr in rows:
+            has_expl = (narr is not None) or (var.ai_commentary is not None)
+            flux.append((var, acct, has_expl))
+
+    open_adj = (await db.execute(
+        select(ProposedEntry).where(
+            ProposedEntry.period_end == period_end, ProposedEntry.status == "open",
+        )
+    )).scalars().all()
+
+    schedule_gaps = await _load_schedule_gaps(db, tenant_id, period_end, cur)
+
+    return ReviewContext(
+        period_end=period_end, overview=overview, review_status=review_status,
+        tb_balanced=tb_balanced, tb_diff=tb_diff, cur=cur, prior_month=prior_month,
+        prior_id_sets=prior_id_sets, flux=flux, schedule_gaps=schedule_gaps,
+        open_adjustments=len(open_adj),
+    )
+
+
+def _deterministic_summary(findings: list[dict], passed: list[str], period_label: str) -> str:
+    highs = [f for f in findings if f["severity"] == "high"]
+    reviews = [f for f in findings if f["severity"] == "review"]
+    if not findings:
+        return f"The {period_label} close looks clean — no exceptions surfaced across the review checks."
+    bits = []
+    if highs:
+        bits.append(f"{len(highs)} high-priority item{'s' if len(highs) != 1 else ''} need attention before sign-off")
+    if reviews:
+        bits.append(f"{len(reviews)} item{'s' if len(reviews) != 1 else ''} to review")
+    lead = "; ".join(bits) if bits else "a few informational notes"
+    top = highs[0] if highs else (reviews[0] if reviews else findings[0])
+    return f"Close review found {lead}. Most notable: {top['title']}."
+
+
+async def _ai_summary(findings: list[dict], passed: list[str], period_label: str,
+                      tenant_id: uuid.UUID) -> str | None:
+    from core.ai.client import generate_narrative
+    from core.ai.guard import enforce_ai_limits
+    try:
+        await enforce_ai_limits(tenant_id)
+    except Exception:
+        return None
+    ranked = sorted(findings, key=lambda f: {"high": 0, "review": 1, "info": 2}[f["severity"]])
+    lines = [f"- [{f['severity']}] {f['title']}: {f['detail']}" for f in ranked[:12]]
+    findings_block = "\n".join(lines) if lines else "(no exceptions found)"
+    passed_block = ", ".join(passed) if passed else "(none recorded)"
+    system = (
+        "You are a senior reviewing partner at a CPA firm performing the final "
+        "analytical review of a client's monthly close. Write 2-3 concise, "
+        "professional sentences: state whether the books look broadly reasonable, "
+        "then name the one or two items that most deserve attention before sign-off. "
+        "Only reference what you are given — never invent issues. No preamble."
+    )
+    user = (
+        f"Period: {period_label}\n"
+        f"Checks that passed: {passed_block}\n"
+        f"Exceptions found:\n{findings_block}\n\n"
+        "Write the partner's review summary."
+    )
+    key = hashlib.sha256(f"close_review|{period_label}|{findings_block}".encode()).hexdigest()
+    try:
+        resp = await asyncio.to_thread(
+            generate_narrative, system, user, key, 220, 3, "close_review",
+        )
+        text = (resp.content or "").strip()
+        return text or None
+    except Exception:
+        logger.exception("Close Review AI summary failed")
+        return None
+
+
+async def run_close_review(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    period_end: date,
+    *,
+    generated_by: uuid.UUID | None,
+    use_ai: bool = True,
+) -> CloseReview:
+    """Run the review for (tenant, period) and persist it. Tenant scope must
+    already be set on the current_tenant_id ContextVar by the caller (request
+    middleware or the Autopilot engine)."""
+    period_label = period_end.strftime("%B %Y")
+    ctx = await _build_context(db, tenant_id, period_end)
+    findings, passed, checks_run = run_all_checks(ctx)
+
+    summary = _deterministic_summary(findings, passed, period_label)
+    if use_ai:
+        ai = await _ai_summary(findings, passed, period_label, tenant_id)
+        if ai:
+            summary = ai
+
+    # Upsert the review row (one per tenant+period).
+    review = (await db.execute(
+        select(CloseReview).where(CloseReview.period_end == period_end)
+    )).scalar_one_or_none()
+    if review is None:
+        review = CloseReview(id=uuid.uuid4(), tenant_id=tenant_id, period_end=period_end)
+        db.add(review)
+        await db.flush()
+
+    # Keep human-decided findings; replace only the open (auto) ones.
+    existing = list((await db.execute(
+        select(CloseReviewFinding).where(CloseReviewFinding.review_id == review.id)
+    )).scalars().all())
+    kept = [f for f in existing if f.status != "open"]
+    kept_keys = {_stable_key(f.code, f.qbo_account_id) for f in kept}
+    await db.execute(
+        delete(CloseReviewFinding).where(
+            CloseReviewFinding.review_id == review.id,
+            CloseReviewFinding.tenant_id == tenant_id,
+            CloseReviewFinding.status == "open",
+        )
+    )
+
+    high = review_n = info = 0
+    for f in findings:
+        key = _stable_key(f["code"], f["qbo_account_id"])
+        if key in kept_keys:
+            continue  # the reviewer already decided on this exact issue
+        db.add(CloseReviewFinding(
+            id=uuid.uuid4(), tenant_id=tenant_id, review_id=review.id, period_end=period_end,
+            code=f["code"], category=f["category"], severity=f["severity"],
+            title=f["title"][:300], detail=(f["detail"] or "")[:1000],
+            recommended_action=(f["recommended_action"] or None),
+            qbo_account_id=f["qbo_account_id"], account_label=f["account_label"],
+            entity_ref=f["entity_ref"], link_hint=f["link_hint"], status="open",
+        ))
+        if f["severity"] == "high":
+            high += 1
+        elif f["severity"] == "review":
+            review_n += 1
+        else:
+            info += 1
+
+    review.high_count = high
+    review.review_count = review_n
+    review.info_count = info
+    review.cleared_count = len(kept)   # actual resolved rows (matches router _recount)
+    review.checks_run = checks_run
+    review.passed = passed
+    review.summary = summary
+    review.generated_by = generated_by
+    review.generated_at = datetime.now(UTC)
+    review.status = "open"            # a fresh run needs fresh sign-off
+    review.signed_off_by = None
+    review.signed_off_at = None
+
+    await db.commit()
+    await db.refresh(review)
+    return review

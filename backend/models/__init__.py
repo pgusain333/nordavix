@@ -6,6 +6,7 @@ from models.ai_usage import AIUsage
 from models.audit_log import AuditLog
 from models.autopilot import AutopilotConfig, AutopilotRun
 from models.bank_statement import BankStatement
+from models.close_review import CloseReview, CloseReviewFinding
 from models.closed_period import ClosedPeriod
 from models.comment import Comment
 from models.evidence_request import EvidenceRequest
@@ -43,6 +44,8 @@ __all__ = [
     "AIUsage",
     "AuditLog",
     "BankStatement",
+    "CloseReview",
+    "CloseReviewFinding",
     "ClosedPeriod",
     "Comment",
     "Feedback",

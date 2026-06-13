@@ -41,6 +41,7 @@ const IntercompanyPage        = lazy(() => import("@/modules/intercompany/pages/
 const FinancialsPage          = lazy(() => import("@/modules/financials/pages/FinancialsPage").then(m => ({ default: m.FinancialsPage })))
 const InsightsPage            = lazy(() => import("@/modules/insights/pages/InsightsPage").then(m => ({ default: m.InsightsPage })))
 const AdjustmentsPage         = lazy(() => import("@/modules/adjustments/pages/AdjustmentsPage").then(m => ({ default: m.AdjustmentsPage })))
+const CloseReviewPage         = lazy(() => import("@/modules/review/pages/CloseReviewPage").then(m => ({ default: m.CloseReviewPage })))
 const SchedulesOverview       = lazy(() => import("@/modules/schedules/pages/SchedulesOverview").then(m => ({ default: m.SchedulesOverview })))
 const PrepaidsPage            = lazy(() => import("@/modules/schedules/pages/PrepaidsPage").then(m => ({ default: m.PrepaidsPage })))
 const AccrualsPage            = lazy(() => import("@/modules/schedules/pages/AccrualsPage").then(m => ({ default: m.AccrualsPage })))
@@ -123,6 +124,7 @@ function AppRoutes() {
             <Route path="financials"   element={<FinancialsPage />} />
             <Route path="insights"     element={<InsightsPage />} />
             <Route path="adjustments"  element={<AdjustmentsPage />} />
+            <Route path="review"       element={<CloseReviewPage />} />
             {/* Schedules — overview + 5 type-specific detail pages. Each
                 schedule's ending balance auto-populates the subledger on
                 its GL account's reconciliation via the committed snapshot. */}

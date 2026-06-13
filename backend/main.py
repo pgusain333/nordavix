@@ -28,6 +28,7 @@ from modules.pbc.router import router as pbc_router
 from modules.qbo.router import oauth_router as qbo_oauth_router
 from modules.qbo.router import qbo_router
 from modules.recons.router import router as recons_router
+from modules.review.router import router as review_router
 from modules.schedules.router import router as schedules_router
 from modules.tasks.router import router as tasks_router
 from modules.workspace.router import router as workspace_router
@@ -126,6 +127,7 @@ app.include_router(adjustments_router,    prefix="/api/adjustments",  tags=["adj
 app.include_router(pbc_router,            prefix="/api/pbc",          tags=["pbc"])
 app.include_router(pbc_public_router,     prefix="/api/pbc-public",   tags=["pbc-public"])
 app.include_router(autopilot_router,      prefix="/api/autopilot",    tags=["autopilot"])
+app.include_router(review_router,         prefix="/api/review",       tags=["review"])
 
 
 @app.get("/api/health", tags=["system"])
