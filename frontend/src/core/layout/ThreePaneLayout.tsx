@@ -9,6 +9,7 @@ import { NotificationsPanel } from "@/modules/notifications/NotificationsPanel"
 import { NotificationToaster } from "@/modules/notifications/NotificationToaster"
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
 import { DemoModeProvider, DemoBanner } from "@/core/demo/DemoModeProvider"
+import { BrandSplash } from "@/core/brand/BrandSplash"
 
 interface ThreePaneLayoutProps {
   children: ReactNode
@@ -30,6 +31,7 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
     <DemoModeProvider>
     <div className="flex h-screen overflow-hidden bg-theme">
       <ClerkApiWirer />
+      <BrandSplash />
       <CommandPalette />
       <NotificationsPanel />
       <NotificationToaster />
