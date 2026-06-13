@@ -1008,7 +1008,7 @@ export function ReconciliationsDashboard() {
             />
             <Button
               size="sm"
-              variant="outline"
+              variant="green"
               icon={<RefreshCw size={14} strokeWidth={1.8} className={syncMut.isPending ? "animate-spin" : undefined} />}
               onClick={handleSync}
               disabled={!qbo || syncMut.isPending}
@@ -1024,7 +1024,7 @@ export function ReconciliationsDashboard() {
                 have to pick it twice. */}
             <Button
               size="sm"
-              variant="outline"
+              variant="green"
               icon={<Download size={14} strokeWidth={1.8} />}
               loading={exportPeriodMut.isPending}
               onClick={() => exportPeriodMut.mutate()}
@@ -1046,12 +1046,11 @@ export function ReconciliationsDashboard() {
             {hasAgenticWork && !isClosed && (
               <Button
                 size="sm"
-                variant="outline"
+                variant="green"
                 icon={<RotateCcw size={14} strokeWidth={1.8} className={resetAgenticMut.isPending ? "animate-spin" : undefined} />}
                 onClick={handleAgenticReset}
                 disabled={resetAgenticMut.isPending}
                 title="Clear all AI-prepared subledger values, items, and commentary for this period — switches back to manual reconciliation"
-                style={{ borderColor: "#8a6326", color: "#8a6326" }}
               >
                 <span className="hidden sm:inline">{resetAgenticMut.isPending ? "Resetting…" : "Reset AI"}</span>
               </Button>
@@ -1062,7 +1061,7 @@ export function ReconciliationsDashboard() {
                 where to go. */}
             <Button
               size="sm"
-              variant="outline"
+              variant="green"
               icon={<ShieldCheck size={14} strokeWidth={1.8} />}
               onClick={() => navigate("/app/reconciliations/overrides")}
               title="Review every manual subledger value entered for any account"
@@ -1071,11 +1070,10 @@ export function ReconciliationsDashboard() {
             </Button>
             <Button
               size="sm"
-              variant="outline"
+              variant="destructive"
               icon={<Trash2 size={14} strokeWidth={1.8} />}
               onClick={() => confirmClear ? clearMut.mutate() : setConfirmClear(true)}
               loading={clearMut.isPending}
-              style={confirmClear ? { borderColor: "#9b3d37", color: "#9b3d37" } : undefined}
               title="Wipe all cached reconciliation data (the QBO connection stays)"
             >
               <span className="hidden sm:inline">
