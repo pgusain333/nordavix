@@ -13,7 +13,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   Search, LayoutDashboard, CheckSquare, Plug, ClipboardList, BarChart3,
   ArrowLeftRight, Scale, Lightbulb, BookOpen, Users, Settings, LifeBuoy,
-  Building2, type LucideIcon,
+  Building2, Rocket, type LucideIcon,
 } from "lucide-react"
 
 export const CMDK_EVENT = "nordavix:open-command-palette"
@@ -31,6 +31,7 @@ interface Command {
 const COMMANDS: Command[] = [
   // ── Go to ──
   { id: "nav-dashboard",   group: "Go to", label: "Dashboard",          icon: LayoutDashboard, run: (n) => n("/app") },
+  { id: "nav-autopilot",   group: "Go to", label: "Close Autopilot",    icon: Rocket, keywords: "automate schedule run close", run: (n) => n("/app/autopilot") },
   { id: "nav-tasks",       group: "Go to", label: "Close Tasks",        icon: CheckSquare,     run: (n) => n("/app/tasks") },
   { id: "nav-connections", group: "Go to", label: "Connections",        icon: Plug,            run: (n) => n("/app/connections") },
   { id: "nav-schedules",   group: "Go to", label: "Schedules",          icon: ClipboardList,   run: (n) => n("/app/schedules") },
@@ -43,6 +44,7 @@ const COMMANDS: Command[] = [
   { id: "nav-settings",    group: "Go to", label: "Settings",           icon: Settings,        run: (n) => n("/app/settings") },
   { id: "nav-help",        group: "Go to", label: "Help",               icon: LifeBuoy,        run: (n) => n("/app/help") },
   // ── Actions ──
+  { id: "act-autopilot",  group: "Actions", label: "Run the close on autopilot", hint: "Sync, prepare, flux + digest — unattended", icon: Rocket, keywords: "automate schedule agentic", run: (n) => n("/app/autopilot") },
   { id: "act-flux",       group: "Actions", label: "Run a flux analysis",     hint: "Explain P&L movements",          icon: BarChart3, keywords: "variance", run: (n) => n("/app/flux") },
   { id: "act-recon",      group: "Actions", label: "Reconcile accounts",      hint: "Tie out the balance sheet",      icon: Scale,                            run: (n) => n("/app/reconciliations") },
   { id: "act-financials", group: "Actions", label: "Export financial statements", hint: "IS / BS / Cash flow + schedules", icon: BookOpen, keywords: "excel pdf statements package", run: (n) => n("/app/financials") },

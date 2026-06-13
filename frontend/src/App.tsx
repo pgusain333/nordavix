@@ -41,6 +41,7 @@ const IntercompanyPage        = lazy(() => import("@/modules/intercompany/pages/
 const FinancialsPage          = lazy(() => import("@/modules/financials/pages/FinancialsPage").then(m => ({ default: m.FinancialsPage })))
 const InsightsPage            = lazy(() => import("@/modules/insights/pages/InsightsPage").then(m => ({ default: m.InsightsPage })))
 const AdjustmentsPage         = lazy(() => import("@/modules/adjustments/pages/AdjustmentsPage").then(m => ({ default: m.AdjustmentsPage })))
+const AutopilotPage           = lazy(() => import("@/modules/autopilot/pages/AutopilotPage").then(m => ({ default: m.AutopilotPage })))
 const CloseReviewPage         = lazy(() => import("@/modules/review/pages/CloseReviewPage").then(m => ({ default: m.CloseReviewPage })))
 const AdvisoryPage            = lazy(() => import("@/modules/advisory/pages/AdvisoryPage").then(m => ({ default: m.AdvisoryPage })))
 const SchedulesOverview       = lazy(() => import("@/modules/schedules/pages/SchedulesOverview").then(m => ({ default: m.SchedulesOverview })))
@@ -125,6 +126,7 @@ function AppRoutes() {
             <Route path="financials"   element={<FinancialsPage />} />
             <Route path="insights"     element={<InsightsPage />} />
             <Route path="adjustments"  element={<AdjustmentsPage />} />
+            <Route path="autopilot"    element={<AutopilotPage />} />
             <Route path="review"       element={<CloseReviewPage />} />
             <Route path="advisory"     element={<AdvisoryPage />} />
             {/* Schedules — overview + 5 type-specific detail pages. Each

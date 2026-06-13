@@ -61,6 +61,7 @@ import { icApi } from "@/modules/intercompany/api"
 import { adjustmentsApi } from "@/modules/adjustments/api"
 import { tasksApi } from "@/modules/tasks/api"
 import { OnboardingChecklist } from "@/modules/onboarding/OnboardingChecklist"
+import { AutopilotStrip } from "@/modules/autopilot/AutopilotStrip"
 import { useBooksStatus } from "@/modules/recons/hooks"
 import { workspaceApi, hasPower } from "@/modules/workspace/api"
 import { financialsApi } from "@/modules/financials/api"
@@ -582,6 +583,11 @@ export function DashboardHome() {
 
         {/* Onboarding checklist — backend-derived, hides when complete. */}
         <OnboardingChecklist />
+
+        {/* Close Autopilot — flagship entry strip. At-a-glance state (Off /
+            On · next close / Running) with a one-click way into the full
+            Autopilot page. Renders itself null until its state resolves. */}
+        <AutopilotStrip />
 
         {/* ── Month-end close tracker — always shown ─────────────────
             When books haven't been set up, the section explains why no
