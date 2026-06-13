@@ -18,6 +18,7 @@ import {
 import { PageHeader } from "@/core/ui/PageHeader"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Spinner } from "@/core/ui/components"
+import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { formatDate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import {
@@ -46,7 +47,9 @@ const REC_STATUS_META: Record<RecStatus, { bg: string; fg: string }> = {
 
 export function AdvisoryPage() {
   const qc = useQueryClient()
-  const [period, setPeriod] = useState<string>(defaultPeriod)
+  // Default to the month being closed — shared with the dashboard + every
+  // other module via the selected-period store; last month is the fallback.
+  const [period, setPeriod] = useSelectedPeriod(defaultPeriod())
 
   const { data: me } = useQuery({ queryKey: ["workspace-me"], queryFn: workspaceApi.getMe, staleTime: 60_000 })
   const canEdit = me?.role === "admin" || me?.role === "reviewer"

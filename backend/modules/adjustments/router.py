@@ -220,13 +220,14 @@ async def mark_posted(
 async def edit_proposal(
     entry_id: str,
     tenant_id: CurrentTenantId,
-    user: User = Depends(require_role("reviewer")),
+    user: User = Depends(require_role("preparer")),
     payload: dict = Body(...),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Edit a still-open draft — typically to pick the right offset account or
     tweak the memo before accepting. Re-validates that the lines balance.
-    Reviewer+ — edits feed straight into accept, so they share its gate."""
+    Preparer+ — preparers build the entry (select accounts) and the edit
+    auto-saves for the reviewer; approval stays a separate reviewer-only gate."""
     entry = await _load(db, entry_id)
     if entry.status != "open":
         raise HTTPException(

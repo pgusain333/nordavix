@@ -256,7 +256,7 @@ export function FinancialsPage() {
           the Export PDF dropdown opens behind the income-statement card
           because the sibling tab bar's stacking context lands above it. */}
       <PageHeader
-        title="Financial Package"
+        title="Financial Statements"
         subtitle="Audit-ready Income Statement, Balance Sheet, and Statement of Cash Flows — from your synced books or QuickBooks live."
         className="relative z-30"
         actions={
@@ -1143,7 +1143,7 @@ function ExportButton({ isClosed, onExport, loading }: {
                 <Layers size={15} strokeWidth={1.8} />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-theme">Full financial package</p>
+                <p className="text-sm font-semibold text-theme">Full financial statements</p>
                 <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
                   All 3 statements bundled into one PDF
                 </p>

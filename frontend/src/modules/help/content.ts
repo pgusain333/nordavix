@@ -100,7 +100,7 @@ export const HELP_SECTIONS: Section[] = [
               ["Reconciliations",   "Tick-and-tie every balance-sheet account; capture subledger composition; attach evidence",          "Preparer + Reviewer"],
               ["Flux Analysis",     "Variance analysis between current and prior period; AI explains material movements",                 "Preparer + Reviewer"],
               ["Intercompany",      "Surfaces IC accounts and auto-suggests counterparty pairs",                                          "Reviewer + Admin"],
-              ["Financial Package", "Income Statement, Balance Sheet, Cash Flow + audit-ready PDF",                                       "Reviewer + Admin"],
+              ["Financial Statements", "Income Statement, Balance Sheet, Cash Flow + audit-ready PDF",                                    "Reviewer + Admin"],
               ["Insights",          "Liquidity, profitability, AR/AP, expense monitor — KPI dashboards with trends",                      "Reviewer + Admin"],
               ["Executive Report",  "AI-narrated 10+ page board deliverable (closed periods only)",                                       "Admin"],
             ],
@@ -463,11 +463,11 @@ export const HELP_SECTIONS: Section[] = [
     ],
   },
 
-  // ── 6. Financial Package ────────────────────────────────────────────────
+  // ── 6. Financial Statements ─────────────────────────────────────────────
   {
     id: "financials",
     number: "6",
-    title: "Financial Package",
+    title: "Financial Statements",
     summary: "IS / BS / CF + audit-ready PDF",
     subSections: [
       {
@@ -528,7 +528,7 @@ export const HELP_SECTIONS: Section[] = [
         blocks: [
           { kind: "p", text:
             "Once books are closed, the Executive Report card appears at the top of the " +
-            "Financial Package page (and on the Dashboard's books-closed banner). Click " +
+            "Financial Statements page (and on the Dashboard's books-closed banner). Click " +
             "\"Generate report\" to produce a 10+ page AI-narrated PDF that bundles:",
           },
           { kind: "bullets", items: [

@@ -122,7 +122,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Close Review",       path: "/app/review",          icon: ShieldCheck,     available: true  },
   { label: "Insights",           path: "/app/insights",        icon: Lightbulb,       available: true  },
   { label: "Advisory",           path: "/app/advisory",        icon: Target,          available: true  },
-  { label: "Financial Package",  path: "/app/financials",      icon: BookOpen,        available: true  },
+  { label: "Financial Statements", path: "/app/financials",     icon: BookOpen,        available: true  },
   { label: "Team",               path: "/app/team",            icon: Users,           available: true  },
   { label: "Workpapers",         path: "/app/workpapers",      icon: FileText,        available: false },
 ]

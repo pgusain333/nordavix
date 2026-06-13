@@ -624,7 +624,7 @@ function Bento() {
           <Reveal delay={0.05}>
             <div className="h-full rounded-2xl p-6" style={{ background: PAPER, border: `1px solid ${L_LINE}` }}>
               <FileText size={18} strokeWidth={1.9} style={{ color: GREEN }} />
-              <h3 className="mt-3 text-[16px] font-bold" style={{ color: L_TXT }}>Financial package</h3>
+              <h3 className="mt-3 text-[16px] font-bold" style={{ color: L_TXT }}>Financial statements</h3>
               <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: L_TXT2 }}>IS / BS / CF on screen and as a monochrome PDF — plus an AI-narrated executive report.</p>
               <div className="mt-4 flex items-center gap-2">
                 {["IS", "BS", "CF", "EXEC"].map((d) => (

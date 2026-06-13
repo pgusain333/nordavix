@@ -38,6 +38,9 @@ export function ProposedEntriesInline({
     staleTime: 60_000,
   })
   const canReview = me?.role === "admin" || me?.role === "reviewer"
+  // Any workspace member (incl. preparer) can build the JE — pick accounts;
+  // it auto-saves for the reviewer. Approval is gated separately by canReview.
+  const canEdit = !!me?.role
 
   const { data } = useQuery({
     queryKey: ["adjustments", source, sourceRef, periodEnd],
@@ -58,7 +61,7 @@ export function ProposedEntriesInline({
         </p>
       )}
       {items.map((e) => (
-        <ProposedEntryCard key={e.id} entry={e} canReview={canReview} readOnly={readOnly} />
+        <ProposedEntryCard key={e.id} entry={e} canReview={canReview} canEdit={canEdit} readOnly={readOnly} />
       ))}
     </div>
   )

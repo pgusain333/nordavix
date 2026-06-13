@@ -26,7 +26,7 @@ const PAGE_TITLES: [string, string][] = [
   ["/app/flux",            "Flux Analysis"],
   ["/app/schedules",       "Schedules"],
   ["/app/intercompany",    "Intercompany"],
-  ["/app/financials",      "Financial Package"],
+  ["/app/financials",      "Financial Statements"],
   ["/app/insights",        "Insights"],
   ["/app/connections",     "Connections"],
   ["/app/tasks",           "Close Tasks"],

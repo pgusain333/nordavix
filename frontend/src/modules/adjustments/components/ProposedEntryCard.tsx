@@ -51,11 +51,12 @@ const STATUS_BADGE: Record<string, { label: string; bg: string; color: string }>
 
 interface Props {
   entry:      ProposedEntry
-  canReview?: boolean
+  canReview?: boolean   // reviewer+ — Approve / Dismiss
+  canEdit?:   boolean   // preparer+ — select accounts on the JE lines
   readOnly?:  boolean
 }
 
-export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
+export function ProposedEntryCard({ entry, canReview, canEdit, readOnly }: Props) {
   const qc = useQueryClient()
   const [copied, setCopied] = useState(false)
 
@@ -86,9 +87,11 @@ export function ProposedEntryCard({ entry, canReview, readOnly }: Props) {
   // Open drafts let the user re-point any line to a different GL account — the
   // chart for the entry's period feeds the per-line dropdown. Re-pointing keeps
   // the amounts (so the entry still balances); the backend re-validates anyway.
-  // Reviewer+ only: editing feeds straight into accept (and the backend now
-  // gates PATCH the same way), so preparers see the lines read-only.
-  const editable = entry.status === "open" && !readOnly && !!canReview
+  // Preparer+ can edit (build the entry); the change auto-saves for the
+  // reviewer. Approval stays reviewer-only. Falls back to canReview when an
+  // older caller hasn't passed canEdit yet.
+  const allowEdit = canEdit ?? canReview
+  const editable = entry.status === "open" && !readOnly && !!allowEdit
   const { data: accounts } = useQuery({
     queryKey: ["adjustments", "accounts", entry.period_end],
     queryFn:  () => adjustmentsApi.accounts(entry.period_end),

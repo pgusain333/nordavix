@@ -611,7 +611,7 @@ function PreviewIntercompany() {
 
 function PreviewFinancials() {
   return (
-    <MockShell title="Financial Package" badge="PDF">
+    <MockShell title="Financial Statements" badge="PDF">
       <p className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: "var(--text-muted)" }}>
         Income Statement · April 2026
       </p>
@@ -845,7 +845,7 @@ export function SolutionsPage() {
 
       <DeepDive
         id="financials"
-        eyebrow="Financial Package"
+        eyebrow="Financial Statements"
         title="GAAP-clean IS & BS — instant"
         blurb="Built from your synced GL snapshot. On-screen review with proper subtotals. One-click Big-4-style PDF export with cover page, footnotes, and signatures block."
         flip

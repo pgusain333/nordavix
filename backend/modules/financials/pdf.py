@@ -161,7 +161,7 @@ def _make_doc(buffer: BinaryIO, company: str, *, is_draft: bool) -> tuple[BaseDo
     doc = BaseDocTemplate(
         buffer, pagesize=LETTER, leftMargin=margin, rightMargin=margin,
         topMargin=margin, bottomMargin=margin,
-        title=f"Financial Package — {company}", author=company,
+        title=f"Financial Statements — {company}", author=company,
     )
     doc.addPageTemplates([cover_tpl, body_tpl])
     return doc, []
@@ -190,7 +190,7 @@ def _cover_page(story: list, styles: dict, *, company: str, period_end: date,
     story.append(Paragraph(f"Generated {datetime.now().strftime('%B %d, %Y')}",
                             styles["cover_meta"]))
     story.append(Spacer(1, 0.05 * inch))
-    story.append(Paragraph("Nordavix · Financial Package", styles["cover_meta"]))
+    story.append(Paragraph("Nordavix · Financial Statements", styles["cover_meta"]))
 
 
 # ── Per-statement masthead + table ─────────────────────────────────────────

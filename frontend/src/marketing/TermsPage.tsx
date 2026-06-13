@@ -97,7 +97,7 @@ const SECTIONS: LegalSection[] = [
             and generating AI commentary that explains drivers using transaction-level evidence.
           </li>
           <li>
-            <strong>Financial Package, Insights, Tasks, Intercompany</strong> — additional
+            <strong>Financial Statements, Insights, Tasks, Intercompany</strong> — additional
             workflow surfaces that derive from the same close data.
           </li>
         </ul>

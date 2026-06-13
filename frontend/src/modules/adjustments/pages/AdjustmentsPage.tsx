@@ -45,6 +45,8 @@ export function AdjustmentsPage() {
     staleTime: 60_000,
   })
   const canReview = me?.role === "admin" || me?.role === "reviewer"
+  // Preparers (and up) can select accounts on a JE; it auto-saves for review.
+  const canEdit = !!me?.role
 
   // Fetch the full set once (all statuses, all periods) — drives both the
   // tab counts and the filtered view, so switching tabs is instant.
@@ -356,7 +358,7 @@ export function AdjustmentsPage() {
                         style={{ color: "var(--text-muted)" }}>
                         <span>Period {formatDate(e.period_end)}</span>
                       </div>
-                      <ProposedEntryCard entry={e} canReview={canReview} />
+                      <ProposedEntryCard entry={e} canReview={canReview} canEdit={canEdit} />
                     </div>
                   ))}
                 </div>

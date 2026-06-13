@@ -125,6 +125,10 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
     selected ? { y: selected.y, m: selected.m } : { y: todayTriple.y, m: todayTriple.m },
   )
   const [open, setOpen] = useState(false)
+  // Flip the popover to right-align when a left-aligned 252px calendar would
+  // overflow the right viewport edge (e.g. the picker sits in a right-aligned
+  // page header). Measured on open so it's always fully visible.
+  const [alignRight, setAlignRight] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   // Re-anchor view to the selected date whenever the picker opens (and
@@ -133,6 +137,14 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
     if (open && selected) setView({ y: selected.y, m: selected.m })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, value])
+
+  // Measure on open: if a left-aligned calendar would run past the right
+  // viewport edge, anchor it to the trigger's right edge instead.
+  useEffect(() => {
+    if (!open || !ref.current) return
+    const rect = ref.current.getBoundingClientRect()
+    setAlignRight(rect.left + 260 > window.innerWidth - 8)
+  }, [open])
 
   // Outside-click + Escape close
   useEffect(() => {
@@ -318,7 +330,7 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
             animate={{ opacity: 1, y: 0,  scale: 1 }}
             exit={{ opacity: 0, y: -4, scale: 0.96 }}
             transition={{ duration: 0.12, ease: "easeOut" }}
-            className="absolute top-full left-0 mt-1.5 z-30 rounded-xl p-2.5 origin-top-left"
+            className={`absolute top-full mt-1.5 z-30 rounded-xl p-2.5 ${alignRight ? "right-0 origin-top-right" : "left-0 origin-top-left"}`}
             style={{
               background: "var(--surface)",
               border: "1px solid var(--border-strong)",

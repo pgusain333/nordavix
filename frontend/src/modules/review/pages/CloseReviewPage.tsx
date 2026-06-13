@@ -18,6 +18,7 @@ import {
 import { PageHeader } from "@/core/ui/PageHeader"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Spinner } from "@/core/ui/components"
+import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { formatDateTime } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import { reviewApi, type ReviewFinding, type ReviewState, type Severity } from "../api"
@@ -52,7 +53,10 @@ function defaultPeriod(): string {
 export function CloseReviewPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const [period, setPeriod] = useState<string>(defaultPeriod)
+  // Default to the month being closed — shared with the dashboard + every
+  // other module via the workspace-scoped selected-period store. Falls back
+  // to last month only when nothing has been selected yet.
+  const [period, setPeriod] = useSelectedPeriod(defaultPeriod())
   const [err, setErr] = useState<string | null>(null)
 
   const { data: me } = useQuery({
