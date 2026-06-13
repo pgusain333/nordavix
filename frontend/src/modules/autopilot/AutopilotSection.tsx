@@ -61,6 +61,24 @@ export function AutopilotSection() {
   const { organization } = useOrganization()
   const qc = useQueryClient()
 
+  // Form + UI state — declared BEFORE the queries on purpose. The autopilot
+  // query's refetchInterval closure reads `pollUntil`, and React Query can
+  // evaluate that closure during query setup (synchronously, this render), so
+  // the binding must already exist — otherwise it's a temporal-dead-zone crash
+  // ("Cannot access 'pollUntil' before initialization") on every render.
+  const [enabled, setEnabled]   = useState(false)
+  const [runDay,  setRunDay]    = useState(1)
+  const [runFlux, setRunFlux]   = useState(true)
+  const [sendPbc, setSendPbc]   = useState(false)
+  const [pbcEmail, setPbcEmail] = useState("")
+  const [savedAt, setSavedAt]   = useState<number | null>(null)
+  const [formErr, setFormErr]   = useState<string | null>(null)
+  const [runErr,  setRunErr]    = useState<string | null>(null)
+  // Bridges the window between "Run now" returning and the background task
+  // inserting the running row, so the live poll starts even before the GET
+  // reports running=true. Epoch-ms; polling stays on while now < pollUntil.
+  const [pollUntil, setPollUntil] = useState(0)
+
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
@@ -78,20 +96,8 @@ export function AutopilotSection() {
     refetchInterval: (q) => ((q.state.data?.running || pollUntil > Date.now()) ? 2500 : false),
   })
 
-  // ── Local form state, seeded from the saved config (re-seeds on save). ──
+  // Saved config from the server (drives the form seed below).
   const cfg = state?.config
-  const [enabled, setEnabled]   = useState(false)
-  const [runDay,  setRunDay]    = useState(1)
-  const [runFlux, setRunFlux]   = useState(true)
-  const [sendPbc, setSendPbc]   = useState(false)
-  const [pbcEmail, setPbcEmail] = useState("")
-  const [savedAt, setSavedAt]   = useState<number | null>(null)
-  const [formErr, setFormErr]   = useState<string | null>(null)
-  const [runErr,  setRunErr]    = useState<string | null>(null)
-  // Bridges the window between "Run now" returning and the background task
-  // inserting the running row, so the live poll starts even before the GET
-  // reports running=true. Epoch-ms; polling stays on while now < pollUntil.
-  const [pollUntil, setPollUntil] = useState(0)
 
   const dirty = useMemo(() => {
     if (!cfg) return enabled || sendPbc || runFlux !== true || runDay !== 1 || pbcEmail !== ""
