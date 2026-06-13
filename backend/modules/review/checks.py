@@ -60,6 +60,8 @@ class ReviewContext:
     flux: list = field(default_factory=list)        # [(Variance, Account, has_explanation: bool)]
     schedule_gaps: list = field(default_factory=list)  # precomputed schedule interest/amort gaps
     open_adjustments: int = 0               # count of open ProposedEntry for the period
+    je_anomalies: list = field(default_factory=list)   # precomputed manual-JE anomalies (live QBO)
+    je_scanned: bool = False                # True when the live JE scan actually ran
     is_signed: dict = field(default_factory=dict)   # helper not currently used
 
 
@@ -284,6 +286,36 @@ def check_balance_anomalies(ctx: ReviewContext) -> list[dict]:
     return out
 
 
+# ── Anomaly (live QBO journal-entry scan) ─────────────────────────────────────
+
+def check_je_anomalies(ctx: ReviewContext) -> list[dict]:
+    """Manual journal entries that look unusual — large, round-dollar,
+    backdated, or weekend-dated. Precomputed in the engine from a live QBO
+    pull (QBO has no 'manual JE' flag; the JournalEntry entity IS the proxy)."""
+    out: list[dict] = []
+    for a in ctx.je_anomalies:
+        sev = HIGH if a.get("severity") == "high" else REVIEW
+        doc = a.get("doc") or a.get("je_id") or "?"
+        amt = _dec(a.get("amount"))
+        flags = a.get("flags") or []
+        bits = [f"${abs(amt):,.2f}"]
+        if a.get("poster"):
+            bits.append(f"last touched by {a['poster']}")
+        if a.get("txn_date"):
+            bits.append(f"dated {a['txn_date']}")
+        detail = "; ".join(bits) + "."
+        if flags:
+            detail += " Flagged: " + ", ".join(flags) + "."
+        out.append(_f(
+            "anomaly.manual_je", "anomaly", sev,
+            f"Unusual journal entry — JE {doc}",
+            detail[:1000],
+            action="Open the entry in QuickBooks and confirm it's expected.",
+            entity_ref=str(a.get("je_id") or "") or None,
+        ))
+    return out
+
+
 # ── Hygiene ───────────────────────────────────────────────────────────────────
 
 def check_suspense(ctx: ReviewContext) -> list[dict]:
@@ -317,6 +349,7 @@ _CHECKS = [
     check_open_adjustments,
     check_flux_unexplained,
     check_balance_anomalies,
+    check_je_anomalies,
     check_suspense,
 ]
 
@@ -344,5 +377,7 @@ def run_all_checks(ctx: ReviewContext) -> tuple[list[dict], list[str], int]:
         passed.append("Schedules booked")
     if "hygiene.suspense_balance" not in codes:
         passed.append("No stray suspense balances")
+    if ctx.je_scanned and "anomaly.manual_je" not in codes:
+        passed.append("No unusual journal entries")
 
     return findings, passed, len(_CHECKS)

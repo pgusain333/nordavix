@@ -43,11 +43,15 @@ def _dec(v) -> Decimal:
         return Decimal("0")
 
 
-def _stable_key(code: str, qbo_account_id) -> tuple:
-    # Deliberately (code, account) only — NOT entity_ref. A flux variance id is
-    # regenerated on every flux re-run, so keying on it would resurrect a
-    # reviewer-cleared flux finding as "open". Every check emits at most one
-    # finding per (code, account), so this is a stable, sufficient identity.
+def _stable_key(code: str, qbo_account_id, entity_ref, category) -> tuple:
+    # Anomaly findings are per-journal-entry, and the QBO JE id (entity_ref) is
+    # STABLE across review re-runs — so include it, letting each JE be cleared
+    # independently. Everything else keys on (code, account) only: a flux
+    # variance id is regenerated each flux run, so keying on it would resurrect
+    # a reviewer-cleared finding. Every non-anomaly check emits at most one
+    # finding per (code, account), so that's a sufficient, stable identity.
+    if category == "anomaly":
+        return (code, qbo_account_id or "", entity_ref or "")
     return (code, qbo_account_id or "")
 
 
@@ -100,6 +104,108 @@ async def _load_schedule_gaps(db: AsyncSession, tenant_id: uuid.UUID, period_end
         except Exception:
             logger.exception("Close Review schedule gap check failed for %s", getattr(item, "id", "?"))
     return gaps
+
+
+_JE_LARGE = Decimal("50000")
+_JE_VERY_LARGE = Decimal("250000")
+_JE_ROUND_STEP = Decimal("1000")
+
+
+def _parse_qbo_dt(s) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(s))
+    except Exception:
+        return None
+
+
+def _classify_je(je: dict, period_end: date) -> dict | None:
+    """Flag a single QBO JournalEntry if it looks unusual. Returns the anomaly
+    dict, or None when nothing trips. QBO has no 'manual JE' flag — the
+    JournalEntry entity itself is the manual-entry proxy."""
+    debit = Decimal("0")
+    for line in je.get("Line", []) or []:
+        d = line.get("JournalEntryLineDetail") or {}
+        if d.get("PostingType") == "Debit":
+            debit += _dec(line.get("Amount"))
+    amt = debit
+    try:
+        txn_date: date | None = date.fromisoformat(str(je.get("TxnDate"))[:10])
+    except Exception:
+        txn_date = None
+    meta = je.get("MetaData") or {}
+    create_dt = _parse_qbo_dt(meta.get("CreateTime"))
+    ref = meta.get("LastModifiedByRef") or {}
+    poster = ref.get("name") or ref.get("value")
+
+    flags: list[str] = []
+    severity = "review"
+    if amt and abs(amt) >= _JE_VERY_LARGE:
+        flags.append("very large amount"); severity = "high"
+    elif amt and abs(amt) >= _JE_LARGE:
+        flags.append("large amount")
+    if amt and abs(amt) >= _JE_ROUND_STEP and abs(amt) % _JE_ROUND_STEP == 0:
+        flags.append("round-dollar amount")
+    if txn_date and txn_date.weekday() >= 5:
+        flags.append("weekend transaction date")
+    if create_dt and txn_date and create_dt.date() > txn_date:
+        if (create_dt.year, create_dt.month) > (txn_date.year, txn_date.month):
+            flags.append("backdated into a prior month"); severity = "high"
+        else:
+            flags.append("entered after its transaction date")
+    if not flags:
+        return None
+    return {
+        "je_id":    str(je.get("Id") or ""),
+        "doc":      str(je.get("DocNumber") or je.get("Id") or ""),
+        "txn_date": txn_date.isoformat() if txn_date else None,
+        "amount":   str(amt),
+        "poster":   poster,
+        "memo":     je.get("PrivateNote"),
+        "flags":    flags,
+        "severity": severity,
+    }
+
+
+async def _load_je_anomalies(db: AsyncSession, tenant_id: uuid.UUID, period_end: date) -> tuple[list, bool]:
+    """Live QBO scan of journal entries dated in the period for manual-JE
+    anomalies. Returns (anomalies, scanned). Best-effort: any QBO failure or a
+    disconnected workspace yields ([], False) so the snapshot-based review still
+    runs — this is the one live call in an otherwise snapshot-only engine."""
+    from models.qbo_connection import QboConnection
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if conn is None:
+        return [], False
+
+    from modules.recons.service import _qbo_get
+    p_start = period_end.replace(day=1)
+    out: list[dict] = []
+    start_pos, page, seen = 1, 1000, 0
+    try:
+        while seen < 5000:                       # safety ceiling on a runaway period
+            q = (
+                f"SELECT * FROM JournalEntry "
+                f"WHERE TxnDate >= '{p_start.isoformat()}' AND TxnDate <= '{period_end.isoformat()}' "
+                f"MAXRESULTS {page} STARTPOSITION {start_pos}"
+            )
+            data = await _qbo_get(conn, db, "/query", params={"query": q, "minorversion": "65"})
+            jes = (data.get("QueryResponse", {}) or {}).get("JournalEntry", []) or []
+            if not jes:
+                break
+            for je in jes:
+                a = _classify_je(je, period_end)
+                if a:
+                    out.append(a)
+            seen += len(jes)
+            if len(jes) < page:
+                break
+            start_pos += page
+        return out, True
+    except Exception:
+        logger.exception("Close Review JE anomaly scan failed for tenant %s", tenant_id)
+        return [], False
 
 
 async def _build_context(db: AsyncSession, tenant_id: uuid.UUID, period_end: date) -> ReviewContext:
@@ -166,12 +272,13 @@ async def _build_context(db: AsyncSession, tenant_id: uuid.UUID, period_end: dat
     )).scalars().all()
 
     schedule_gaps = await _load_schedule_gaps(db, tenant_id, period_end, cur)
+    je_anomalies, je_scanned = await _load_je_anomalies(db, tenant_id, period_end)
 
     return ReviewContext(
         period_end=period_end, overview=overview, review_status=review_status,
         tb_balanced=tb_balanced, tb_diff=tb_diff, cur=cur, prior_month=prior_month,
         prior_id_sets=prior_id_sets, flux=flux, schedule_gaps=schedule_gaps,
-        open_adjustments=len(open_adj),
+        open_adjustments=len(open_adj), je_anomalies=je_anomalies, je_scanned=je_scanned,
     )
 
 
@@ -262,7 +369,7 @@ async def run_close_review(
         select(CloseReviewFinding).where(CloseReviewFinding.review_id == review.id)
     )).scalars().all())
     kept = [f for f in existing if f.status != "open"]
-    kept_keys = {_stable_key(f.code, f.qbo_account_id) for f in kept}
+    kept_keys = {_stable_key(f.code, f.qbo_account_id, f.entity_ref, f.category) for f in kept}
     await db.execute(
         delete(CloseReviewFinding).where(
             CloseReviewFinding.review_id == review.id,
