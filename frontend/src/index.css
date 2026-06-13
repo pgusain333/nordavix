@@ -290,6 +290,14 @@
 .agx-star { opacity: 0; pointer-events: none; }
 .agentic-pill:hover .agx-star { animation: agx-pop 1.2s ease-in-out infinite; }
 .agentic-pill:hover .agx-icon { animation: agx-twinkle 1.4s ease-in-out infinite; }
+/* On hover (when not running/disabled) the pill fills left-nav pine with white
+   text — the gold stars are set inline so they stay gold against the dark fill.
+   !important overrides the component's inline idle colours. */
+.agentic-pill:hover:not(:disabled) {
+  background: var(--nav-bg) !important;
+  color: #fff !important;
+  border-color: var(--nav-bg) !important;
+}
 
 /* ── Clerk auth form overrides ─────────────────────────────────────────
    Why these live in CSS and not in the appearance prop:

@@ -23,9 +23,10 @@ const buttonVariants = cva(
         // Primary — green bg, white text (brand standard for all CTAs)
         default:     "bg-[var(--green)] text-white hover:opacity-90 active:opacity-80 shadow-sm",
         green:       "bg-[var(--green)] text-white hover:opacity-90 active:opacity-80 shadow-sm",
-        // Module action-bar standard: green outline at rest, fills solid green
-        // with white text on hover. Quiet until you reach for it.
-        greenOutline: "border border-[var(--green)] text-[var(--green)] bg-transparent hover:bg-[var(--green)] hover:text-white active:opacity-90",
+        // Module action-bar standard: left-nav deep-pine outline + text at rest
+        // (transparent), fills solid pine with white text on hover. Quiet until
+        // you reach for it. (Name kept greenOutline — pine is the brand green.)
+        greenOutline: "border border-[var(--nav-bg)] text-[var(--nav-bg)] bg-transparent hover:bg-[var(--nav-bg)] hover:text-white active:opacity-90",
         // Destructive sibling of greenOutline — red outline that fills red on hover.
         dangerOutline: "border border-[#9b3d37] text-[#9b3d37] bg-transparent hover:bg-[#9b3d37] hover:text-white active:opacity-90",
         // Outline — visible in both light and dark mode

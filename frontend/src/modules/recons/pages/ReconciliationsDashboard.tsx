@@ -4380,9 +4380,9 @@ function AgenticModeToggle({ running, disabled, onClick }: {
       title={title}
       className="agentic-pill relative inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all"
       style={{
-        background: running ? "var(--green)" : disabled ? "var(--surface-2)" : "var(--surface)",
-        color:      running ? "#ffffff" : disabled ? "var(--text-muted)" : "var(--green)",
-        border:     `1.5px solid ${running ? "var(--green)" : disabled ? "var(--border-strong)" : "var(--green)"}`,
+        background: running ? "var(--nav-bg)" : disabled ? "var(--surface-2)" : "var(--surface)",
+        color:      running ? "#ffffff" : disabled ? "var(--text-muted)" : "var(--nav-bg)",
+        border:     `1.5px solid ${running ? "var(--nav-bg)" : disabled ? "var(--border-strong)" : "var(--nav-bg)"}`,
         opacity:    disabled && !running ? 0.55 : 1,
         cursor:     disabled || running ? "not-allowed" : "pointer",
         boxShadow:  running ? "0 0 0 3px rgba(94, 176, 137, 0.15)" : "none",
@@ -4396,10 +4396,10 @@ function AgenticModeToggle({ running, disabled, onClick }: {
       {/* Gold stars twinkle around the button on hover (idle = invisible). */}
       {!disabled && !running && (
         <>
-          <Sparkles size={11} aria-hidden className="agx-star" style={{ position: "absolute", top: -7, left: 12, color: "#E8B84B" }} />
-          <Sparkles size={8}  aria-hidden className="agx-star" style={{ position: "absolute", top: -3, right: 16, color: "#E8B84B", animationDelay: "0.3s" }} />
-          <Sparkles size={9}  aria-hidden className="agx-star" style={{ position: "absolute", bottom: -6, left: 36, color: "#E8B84B", animationDelay: "0.6s" }} />
-          <Sparkles size={7}  aria-hidden className="agx-star" style={{ position: "absolute", top: "45%", right: -6, color: "#E8B84B", animationDelay: "0.45s" }} />
+          <Sparkles size={11} aria-hidden className="agx-star" style={{ position: "absolute", top: -7, left: 12, color: "#FFD24A" }} />
+          <Sparkles size={8}  aria-hidden className="agx-star" style={{ position: "absolute", top: -3, right: 16, color: "#FFD24A", animationDelay: "0.3s" }} />
+          <Sparkles size={9}  aria-hidden className="agx-star" style={{ position: "absolute", bottom: -6, left: 36, color: "#FFD24A", animationDelay: "0.6s" }} />
+          <Sparkles size={7}  aria-hidden className="agx-star" style={{ position: "absolute", top: "45%", right: -6, color: "#FFD24A", animationDelay: "0.45s" }} />
         </>
       )}
     </button>
