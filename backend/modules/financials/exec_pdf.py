@@ -440,12 +440,19 @@ def _make_doc(buffer: BinaryIO, company: str, period_end: date) -> tuple[BaseDoc
 # ── Cover page ──────────────────────────────────────────────────────────────
 
 
-def _cover(story: list, styles: dict, data: ExecReportData) -> None:
+def _cover(story: list, styles: dict, data: ExecReportData, audience: str = "internal") -> None:
+    is_client = audience == "client"
     story.append(Spacer(1, 1.3 * inch))
-    story.append(Paragraph("CONFIDENTIAL · BOARD MATERIAL", styles["cover_kicker"]))
+    story.append(Paragraph(
+        "FOR YOUR REVIEW" if is_client else "CONFIDENTIAL · BOARD MATERIAL",
+        styles["cover_kicker"],
+    ))
     story.append(Paragraph(data.company, styles["cover_company"]))
     story.append(Spacer(1, 0.10 * inch))
-    story.append(Paragraph("Executive Financial Report", styles["cover_title"]))
+    story.append(Paragraph(
+        "Monthly Business Review" if is_client else "Executive Financial Report",
+        styles["cover_title"],
+    ))
     story.append(Paragraph(f"For the period ended {data.period_end.strftime('%B %d, %Y')}",
                             styles["cover_period"]))
     story.append(Spacer(1, 1.0 * inch))
@@ -977,26 +984,34 @@ def _notes_section(story: list, styles: dict, data: ExecReportData) -> None:
 # ── Public entry point ─────────────────────────────────────────────────────
 
 
-def build_executive_pdf(buffer: BinaryIO, *, data: ExecReportData) -> None:
-    """Render the executive report PDF into `buffer`."""
+def build_executive_pdf(buffer: BinaryIO, *, data: ExecReportData, audience: str = "internal") -> None:
+    """Render the executive report PDF into `buffer`.
+
+    audience='client' produces a slimmer "Monthly Business Review" for the
+    business owner: cover + the plain-language summary + the insight
+    charts/KPIs + the advisory section. It drops the raw GAAP statement tables
+    and the reconciliation / flux operational detail — those are the firm's
+    internal working papers, not client-facing material."""
+    is_client = audience == "client"
     styles = _styles()
     doc, story = _make_doc(buffer, data.company, data.period_end)
 
     # ── Cover ───────────────────────────────────────────────────────
-    _cover(story, styles, data)
+    _cover(story, styles, data, audience)
 
     # ── Executive Summary ──────────────────────────────────────────
     story.append(PageBreak())
     _executive_summary(story, styles, data)
 
-    # ── Financial Statements ───────────────────────────────────────
-    for stmt in [data.income_statement, data.balance_sheet, data.cash_flow]:
-        if stmt is None:
-            continue
-        story.append(PageBreak())
-        _statement_section(story, styles, stmt)
+    # ── Financial Statements (internal/board package only) ─────────
+    if not is_client:
+        for stmt in [data.income_statement, data.balance_sheet, data.cash_flow]:
+            if stmt is None:
+                continue
+            story.append(PageBreak())
+            _statement_section(story, styles, stmt)
 
-    # ── Insights ───────────────────────────────────────────────────
+    # ── Insights (both editions) ───────────────────────────────────
     story.append(PageBreak())
     _liquidity_section(story, styles, data)
     story.append(Spacer(1, 0.25 * inch))
@@ -1007,14 +1022,15 @@ def build_executive_pdf(buffer: BinaryIO, *, data: ExecReportData) -> None:
     story.append(Spacer(1, 0.25 * inch))
     _expenses_section(story, styles, data)
 
-    # ── Reconciliations + Flux ─────────────────────────────────────
-    story.append(PageBreak())
-    _recons_section(story, styles, data)
+    # ── Reconciliations + Flux (internal working papers only) ──────
+    if not is_client:
+        story.append(PageBreak())
+        _recons_section(story, styles, data)
 
-    story.append(PageBreak())
-    _flux_section(story, styles, data)
+        story.append(PageBreak())
+        _flux_section(story, styles, data)
 
-    # ── AI insights (the meat) ─────────────────────────────────────
+    # ── AI insights (the meat — both editions) ─────────────────────
     story.append(PageBreak())
     _ai_insights_section(story, styles, data)
 

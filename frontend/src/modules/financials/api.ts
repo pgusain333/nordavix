@@ -148,10 +148,12 @@ async function exportPdf(
  * Error handling mirrors `exportPdf` — axios with blob responseType
  * returns errors as a Blob, so we read the JSON body back manually.
  */
-async function exportExecutiveReport(periodEnd: string): Promise<void> {
+export type ReportAudience = "internal" | "client"
+
+async function exportExecutiveReport(periodEnd: string, audience: ReportAudience = "internal"): Promise<void> {
   try {
     const resp = await apiClient.get("/api/financials/executive-report", {
-      params:       { period_end: periodEnd },
+      params:       { period_end: periodEnd, audience },
       responseType: "blob",
       timeout:      5 * 60_000,   // AI + multi-call backend; generous ceiling.
     })
@@ -165,7 +167,7 @@ async function exportExecutiveReport(periodEnd: string): Promise<void> {
     // ExecutiveReport_{company}_{month}-{year}.pdf pattern).
     const cd = resp.headers["content-disposition"] as string | undefined
     const match = cd?.match(/filename="?([^";]+)/)
-    a.download = match?.[1] ?? `ExecutiveReport-${periodEnd}.pdf`
+    a.download = match?.[1] ?? `${audience === "client" ? "BusinessReview" : "ExecutiveReport"}-${periodEnd}.pdf`
     document.body.appendChild(a); a.click()
     a.remove()
     URL.revokeObjectURL(url)
@@ -186,6 +188,25 @@ async function exportExecutiveReport(periodEnd: string): Promise<void> {
     }
     throw new Error(err.message ?? "Executive report failed — check your network and try again.")
   }
+}
+
+/**
+ * Email the report (client edition by default) to a client as a PDF
+ * attachment. Books must be closed. The firm user triggers it; the backend
+ * records it in the audit trail.
+ */
+async function sendExecutiveReportToClient(
+  periodEnd: string,
+  recipientEmail: string,
+  recipientName?: string,
+  audience: ReportAudience = "client",
+): Promise<{ sent: boolean; recipient: string; period_label: string }> {
+  const { data } = await apiClient.post(
+    "/api/financials/executive-report/send",
+    { recipient_email: recipientEmail, recipient_name: recipientName ?? null, audience },
+    { params: { period_end: periodEnd }, timeout: 5 * 60_000 },
+  )
+  return data as { sent: boolean; recipient: string; period_label: string }
 }
 
 // ── Excel exports ─────────────────────────────────────────────────────────────
@@ -284,6 +305,7 @@ export const financialsApi = {
   getCashFlow,
   exportPdf,
   exportExecutiveReport,
+  sendExecutiveReportToClient,
   exportFinancialsExcel,
   exportScheduleExcel,
 }

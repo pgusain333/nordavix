@@ -328,6 +328,31 @@ Do not invent numbers — only cite what's in the data.
 """
 
 
+_AI_CLIENT_SYSTEM_PROMPT = """\
+You are a trusted advisor writing a monthly business review FOR THE BUSINESS OWNER — a smart, busy non-accountant.
+
+Write in plain, warm, confident English. NO accounting jargon: if you reference a
+metric, translate it to everyday terms — say "you have about 7 months of cash at
+the current spend rate" not "runway is 7.0 months"; "customers take ~45 days to
+pay" not "DSO is 45". Never use GAAP, accrual, reconciliation, flux, DSO, DPO, or
+COGS without explaining them in plain words. Focus on what it means for THEIR
+business and what to do next. Be encouraging but honest.
+
+You return ONE JSON object with this exact shape and nothing else:
+
+{
+  "executive_summary": "2-4 warm, plain-English sentences a busy owner reads in 15 seconds",
+  "key_highlights": ["3-6 plain-English wins or facts about the month"],
+  "risks": ["2-4 things to keep an eye on, everyday language, most important first"],
+  "recommendations": ["3-5 concrete, doable next steps, most impactful first"],
+  "outlook": "2-3 plain-English sentences on what the next month or two could look like"
+}
+
+Each bullet is one sentence, ≤ 30 words. No markdown. No leading dash or number.
+Use real numbers from the data but round to what an owner cares about. Do not invent numbers.
+"""
+
+
 def _serialize_for_ai(data: dict) -> str:
     """Convert Decimals to floats / dates to strings so json.dumps works."""
     def conv(v: Any) -> Any:
@@ -522,23 +547,28 @@ def generate_ai_commentary(
     *, company: str, period_label: str, period_end: date,
     income_stmt, balance_sheet, cash_flow,
     insights: dict, recons: ReconSummary, flux: list[FluxHighlight],
+    audience: str = "internal",
 ) -> AIReportNarrative:
-    """One Claude call. Parse JSON or fall back to a deterministic narrative."""
+    """One Claude call. Parse JSON or fall back to a deterministic narrative.
+    audience='client' switches to a plain-language, jargon-free tone for the
+    business owner; 'internal' is the controller/board voice."""
     user_prompt = _build_ai_user_prompt(
         company=company, period_label=period_label, period_end=period_end,
         income_stmt=income_stmt, balance_sheet=balance_sheet, cash_flow=cash_flow,
         insights=insights, recons=recons, flux=flux,
     )
-    # Cache key: hash the prompt — deterministic on the data, so re-
-    # generating the same period gives the same narrative (and avoids
-    # billing).
-    cache_key = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest()
+    is_client = audience == "client"
+    system_prompt = _AI_CLIENT_SYSTEM_PROMPT if is_client else _AI_SYSTEM_PROMPT
+    # Cache key folds in the audience — the two editions share the same data /
+    # user_prompt, so without this the client + internal narratives collide.
+    cache_key = hashlib.sha256(f"{audience}|{user_prompt}".encode()).hexdigest()
     try:
         response = generate_narrative(
-            system_prompt=_AI_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             cache_key=cache_key,
             max_tokens=1500,
+            operation="exec_report_client" if is_client else "exec_report",
         )
         raw = response.content.strip()
         # Be liberal about extra prose before/after the JSON block.
@@ -566,11 +596,12 @@ def generate_ai_commentary(
 
 
 async def gather_report_data(
-    *, tenant_id, db: AsyncSession, period_end: date,
+    *, tenant_id, db: AsyncSession, period_end: date, audience: str = "internal",
 ) -> ExecReportData:
     """Pull every section of the executive report and call the AI.
     Returns a fully populated ExecReportData ready to hand to
-    exec_pdf.build_executive_pdf."""
+    exec_pdf.build_executive_pdf. audience='client' yields a plain-language
+    narrative for the business owner."""
     # ── Closed-period metadata ──────────────────────────────────────
     cp = (await db.execute(
         select(ClosedPeriod).where(ClosedPeriod.period_end == period_end)
@@ -635,7 +666,7 @@ async def gather_report_data(
     ai = generate_ai_commentary(
         company=company, period_label=period_label, period_end=period_end,
         income_stmt=income_stmt, balance_sheet=balance_sheet, cash_flow=cash_flow,
-        insights=insights, recons=recons, flux=flux,
+        insights=insights, recons=recons, flux=flux, audience=audience,
     )
 
     return ExecReportData(

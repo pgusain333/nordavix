@@ -25,8 +25,10 @@ Design:
     Equivalents", "Total Assets") via the GAAP_LABEL_MAP. Keeps the
     statements reading like an audited package.
 """
+import base64
 import io
 import logging
+import re
 from calendar import monthrange
 from datetime import date
 from decimal import Decimal
@@ -38,8 +40,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ai.guard import enforce_ai_limits
+from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
+from core.email.sender import send_email
 from models.closed_period import ClosedPeriod
 from models.qbo_connection import QboConnection
 from models.tenant import Tenant
@@ -811,6 +815,7 @@ async def export_executive_report(
     tenant_id: CurrentTenantId,
     user: CurrentUser,           # noqa: ARG001 — currently unused, here for auth + future audit log
     period_end: str = Query(..., description="Period end YYYY-MM-DD (books must be closed)"),
+    audience: str = Query("internal", description="internal (board package) | client (plain-language business review)"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -829,6 +834,7 @@ async def export_executive_report(
     download the report. The audit trail is on the *close* action; the
     report itself is read-only.
     """
+    aud = "client" if audience == "client" else "internal"
     try: pe = date.fromisoformat(period_end)
     except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
 
@@ -842,19 +848,20 @@ async def export_executive_report(
             ),
         )
 
-    logger.info("Executive report build start: tenant=%s period=%s", tenant_id, pe)
+    logger.info("Executive report build start: tenant=%s period=%s audience=%s", tenant_id, pe, aud)
     try:
         from modules.financials.exec_pdf import build_executive_pdf
         from modules.financials.exec_report import gather_report_data
 
-        data = await gather_report_data(tenant_id=tenant_id, db=db, period_end=pe)
+        data = await gather_report_data(tenant_id=tenant_id, db=db, period_end=pe, audience=aud)
 
         buf = io.BytesIO()
-        build_executive_pdf(buf, data=data)
+        build_executive_pdf(buf, data=data, audience=aud)
         buf.seek(0)
         # Clean filename: ExecutiveReport_Acme-Corp_April-2026.pdf
         safe_co = "".join(c if c.isalnum() else "-" for c in data.company)[:40].strip("-") or "Company"
-        fname = f"ExecutiveReport_{safe_co}_{pe.strftime('%B-%Y')}.pdf"
+        kind = "BusinessReview" if aud == "client" else "ExecutiveReport"
+        fname = f"{kind}_{safe_co}_{pe.strftime('%B-%Y')}.pdf"
         logger.info("Executive report done: %d bytes for tenant=%s period=%s",
                     buf.getbuffer().nbytes, tenant_id, pe)
         return StreamingResponse(
@@ -869,3 +876,97 @@ async def export_executive_report(
             status_code=500,
             detail=f"Executive report failed: {type(exc).__name__}: {str(exc)[:240]}",
         ) from exc
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class SendReportBody(BaseModel):
+    recipient_email: str
+    recipient_name: str | None = None
+    audience: str = "client"
+
+
+def _send_report_html(*, company: str, period_label: str, recipient_name: str | None) -> str:
+    greeting = f"Hi {recipient_name}," if recipient_name else "Hi,"
+    return f"""\
+<div style="background:#F4F1E9;padding:32px 16px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:14px;border:1px solid #E6E4DF;overflow:hidden;">
+    <div style="background:#0C2620;padding:18px 28px;">
+      <span style="color:#F4F1E9;font-size:15px;font-weight:700;">nordavix<span style="color:#9CC4AD;">.</span></span>
+      <span style="float:right;color:#9CC4AD;font-size:10px;letter-spacing:0.16em;font-weight:700;">BUSINESS REVIEW</span>
+    </div>
+    <div style="padding:28px;">
+      <p style="margin:0 0 6px;color:#8A8F98;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">{company} · {period_label}</p>
+      <h1 style="margin:0 0 10px;color:#14181A;font-size:20px;line-height:1.3;">Your {period_label} business review</h1>
+      <p style="margin:0 0 14px;color:#3C4146;font-size:13.5px;line-height:1.6;">{greeting}</p>
+      <p style="margin:0 0 14px;color:#3C4146;font-size:13.5px;line-height:1.6;">
+        Your monthly business review for <strong>{company}</strong> is attached as a PDF —
+        a plain-English look at how the month went, what's working, what to watch, and what we'd suggest next.
+      </p>
+      <p style="margin:0;color:#8A8F98;font-size:12px;line-height:1.6;">Prepared with Nordavix.</p>
+    </div>
+  </div>
+</div>"""
+
+
+@router.post("/executive-report/send", dependencies=[Depends(enforce_ai_limits)])
+async def send_executive_report(
+    body: SendReportBody,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD (books must be closed)"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Email the report (client edition by default) to a client as a PDF
+    attachment. Books must be closed. Outward-facing — the firm user triggers
+    it; we record it in the audit trail."""
+    recipient = (body.recipient_email or "").strip()
+    if not _EMAIL_RE.match(recipient):
+        raise HTTPException(status_code=422, detail="Enter a valid recipient email address.")
+    aud = "internal" if body.audience == "internal" else "client"
+    try: pe = date.fromisoformat(period_end)
+    except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
+
+    if await _is_period_closed(db, pe) is None:
+        raise HTTPException(status_code=403, detail="Close the books for this period before sending the report.")
+
+    from modules.financials.exec_pdf import build_executive_pdf
+    from modules.financials.exec_report import gather_report_data
+    try:
+        data = await gather_report_data(tenant_id=tenant_id, db=db, period_end=pe, audience=aud)
+        buf = io.BytesIO()
+        build_executive_pdf(buf, data=data, audience=aud)
+        pdf_bytes = buf.getvalue()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Send-report build failed tenant=%s period=%s", tenant_id, pe)
+        raise HTTPException(status_code=500, detail=f"Could not build the report: {type(exc).__name__}") from exc
+
+    safe_co = "".join(c if c.isalnum() else "-" for c in data.company)[:40].strip("-") or "Company"
+    kind = "BusinessReview" if aud == "client" else "ExecutiveReport"
+    fname = f"{kind}_{safe_co}_{pe.strftime('%B-%Y')}.pdf"
+    sent = await send_email(
+        to=recipient,
+        subject=f"{data.company} — {data.period_label} business review",
+        html=_send_report_html(company=data.company, period_label=data.period_label,
+                               recipient_name=body.recipient_name),
+        text=(f"{('Hi ' + body.recipient_name) if body.recipient_name else 'Hi'},\n\n"
+              f"Your {data.period_label} business review for {data.company} is attached.\n\n"
+              f"Prepared with Nordavix."),
+        attachments=[{
+            "filename": fname,
+            "content": base64.b64encode(pdf_bytes).decode("ascii"),
+            "content_type": "application/pdf",
+        }],
+    )
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="financials.report_sent", entity_type="period", entity_id=None,
+        metadata={"summary": f"Emailed the {data.period_label} {aud} report to {recipient}"},
+    )
+    await db.commit()
+    if not sent:
+        raise HTTPException(status_code=502, detail="Email isn't configured, or the send failed. Check email settings.")
+    return {"sent": True, "recipient": recipient, "period_label": data.period_label}

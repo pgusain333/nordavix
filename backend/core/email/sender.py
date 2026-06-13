@@ -37,10 +37,12 @@ async def send_email(
     reply_to: str | None = None,
     from_email: str | None = None,
     headers: dict[str, str] | None = None,
+    attachments: list[dict] | None = None,
 ) -> bool:
     """Send one email. Returns True on success. No-op (False) if email is
     disabled. Never raises. `headers` sets extra SMTP headers (e.g.
-    List-Unsubscribe) on the Resend payload."""
+    List-Unsubscribe) on the Resend payload. `attachments` follows Resend's
+    shape: [{"filename": str, "content": <base64 str>, "content_type"?: str}]."""
     if not settings.email_enabled:
         return False
     recipients = [to] if isinstance(to, str) else list(to)
@@ -59,6 +61,8 @@ async def send_email(
         payload["reply_to"] = reply_to
     if headers:
         payload["headers"] = headers
+    if attachments:
+        payload["attachments"] = attachments
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.post(_RESEND_URL, headers=_headers(), json=payload)

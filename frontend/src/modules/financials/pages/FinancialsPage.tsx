@@ -38,6 +38,7 @@ import {
   CheckCircle2,
   Briefcase,
   Table2,
+  Send,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -221,9 +222,20 @@ export function FinancialsPage() {
   // the user clicks Load. The user had no way to find this — it
   // was buried inside the post-Load tab area.
   const execReportMut = useMutation({
-    mutationFn: () => financialsApi.exportExecutiveReport(periodEnd),
+    mutationFn: (audience: "internal" | "client") => financialsApi.exportExecutiveReport(periodEnd, audience),
     onMutate: () => setExecError(null),
     onError: (e: Error) => setExecError(e.message),
+  })
+
+  // Send the plain-language client edition to a client by email (PDF attached).
+  const [recipientEmail, setRecipientEmail] = useState("")
+  const [sendOk, setSendOk]       = useState<string | null>(null)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const sendReportMut = useMutation({
+    mutationFn: (email: string) => financialsApi.sendExecutiveReportToClient(periodEnd, email),
+    onMutate: () => { setSendError(null); setSendOk(null) },
+    onSuccess: (r) => { setSendOk(`Sent to ${r.recipient}`); setRecipientEmail("") },
+    onError: (e: Error) => setSendError(e.message),
   })
 
   // Closed-periods feed — drives the Exec Report card visibility
@@ -442,10 +454,17 @@ export function FinancialsPage() {
               try { return new Date(periodEnd + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }) }
               catch { return periodEnd }
             })()}
-            onGenerate={() => execReportMut.mutate()}
+            onGenerate={() => execReportMut.mutate("internal")}
+            onGenerateClient={() => execReportMut.mutate("client")}
             loading={execReportMut.isPending}
             error={execError}
             onDismissError={() => setExecError(null)}
+            recipientEmail={recipientEmail}
+            onRecipientChange={setRecipientEmail}
+            onSend={() => sendReportMut.mutate(recipientEmail)}
+            sending={sendReportMut.isPending}
+            sendOk={sendOk}
+            sendError={sendError}
           />
         )}
 
@@ -568,13 +587,21 @@ export function FinancialsPage() {
 // errors inline with a dismiss action.
 
 function ExecutiveReportCard({
-  periodLabel, onGenerate, loading, error, onDismissError,
+  periodLabel, onGenerate, onGenerateClient, loading, error, onDismissError,
+  recipientEmail, onRecipientChange, onSend, sending, sendOk, sendError,
 }: {
   periodLabel: string
   onGenerate: () => void
+  onGenerateClient: () => void
   loading: boolean
   error: string | null
   onDismissError: () => void
+  recipientEmail: string
+  onRecipientChange: (v: string) => void
+  onSend: () => void
+  sending: boolean
+  sendOk: string | null
+  sendError: string | null
 }) {
   return (
     <motion.div
@@ -637,10 +664,20 @@ function ExecutiveReportCard({
             icon={<Download size={14} strokeWidth={1.8} />}
             loading={loading}
             onClick={onGenerate}
-            title="Generate the executive report PDF — typically takes 10–30 seconds"
+            title="Generate the internal board package PDF — typically takes 10–30 seconds"
           >
-            {loading ? "Generating…" : "Generate report"}
+            {loading ? "Generating…" : "Board report"}
           </Button>
+          <button
+            type="button"
+            onClick={onGenerateClient}
+            disabled={loading}
+            className="inline-flex items-center gap-1 text-[11px] font-semibold disabled:opacity-50"
+            style={{ color: "var(--green)" }}
+            title="Plain-language client edition — drops the GAAP statement tables, keeps the story, charts, and advice"
+          >
+            <Download size={11} strokeWidth={1.8} /> Client edition
+          </button>
           {loading && (
             <p className="text-[10px] italic max-w-[180px] text-right"
               style={{ color: "var(--text-muted)" }}>
@@ -659,6 +696,42 @@ function ExecutiveReportCard({
           Books are closed for {periodLabel} — final report available
           (executive reports are only generated for closed periods).
         </span>
+      </div>
+
+      {/* Send the plain-language client edition straight to the client. */}
+      <div className="px-5 sm:px-6 py-3 flex items-center gap-2 flex-wrap"
+        style={{ borderTop: "1px solid var(--border)" }}>
+        <Send size={13} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+        <span className="text-[12px] font-medium shrink-0" style={{ color: "var(--text-2)" }}>
+          Email the client edition:
+        </span>
+        <input
+          type="email"
+          value={recipientEmail}
+          onChange={(e) => onRecipientChange(e.target.value)}
+          placeholder="client@company.com"
+          aria-label="Client email address"
+          className="flex-1 min-w-[160px] rounded-md px-2.5 py-1.5 text-sm outline-none"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+        />
+        <button
+          type="button"
+          onClick={onSend}
+          disabled={sending || !recipientEmail.trim()}
+          className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          style={{ background: "var(--green)" }}
+        >
+          {sending ? <Spinner className="h-3.5 w-3.5" /> : <Send size={12} strokeWidth={2} />}
+          {sending ? "Sending…" : "Send"}
+        </button>
+        {sendOk && (
+          <span className="text-[11px] inline-flex items-center gap-1 shrink-0" style={{ color: "var(--green)" }}>
+            <CheckCircle2 size={12} strokeWidth={2.4} /> {sendOk}
+          </span>
+        )}
+        {sendError && (
+          <span className="text-[11px] shrink-0" style={{ color: "#9b3d37" }}>{sendError}</span>
+        )}
       </div>
 
       {/* Error banner — sits inside the card so it's clearly tied to
