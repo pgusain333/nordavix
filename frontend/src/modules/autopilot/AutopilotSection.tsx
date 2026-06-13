@@ -26,7 +26,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
-import { workspaceApi } from "@/modules/workspace/api"
+import { workspaceApi, hasPower } from "@/modules/workspace/api"
 import {
   autopilotApi, type AutopilotRun, type AutopilotRunResults, type AutopilotState,
 } from "@/modules/autopilot/api"
@@ -85,7 +85,10 @@ export function AutopilotSection() {
     staleTime: 10 * 60_000,
     enabled:  !!organization,
   })
-  const isAdmin = me?.role === "admin"
+  // Admins, or anyone an admin has granted the "Run Close Autopilot" power,
+  // can configure + run it. (Name kept as isAdmin since that's what the
+  // controls below gate on — it now means "can operate autopilot".)
+  const isAdmin = me?.role === "admin" || hasPower(me, "autopilot")
 
   const { data: state, isLoading, isError } = useQuery({
     queryKey: ["autopilot"],

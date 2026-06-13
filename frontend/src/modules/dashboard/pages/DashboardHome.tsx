@@ -62,7 +62,7 @@ import { adjustmentsApi } from "@/modules/adjustments/api"
 import { tasksApi } from "@/modules/tasks/api"
 import { OnboardingChecklist } from "@/modules/onboarding/OnboardingChecklist"
 import { useBooksStatus } from "@/modules/recons/hooks"
-import { workspaceApi } from "@/modules/workspace/api"
+import { workspaceApi, hasPower } from "@/modules/workspace/api"
 import { financialsApi } from "@/modules/financials/api"
 import { Button, Spinner } from "@/core/ui/components"
 import { cn, humanize } from "@/core/ui/utils"
@@ -153,6 +153,8 @@ export function DashboardHome() {
     staleTime: 5 * 60_000,
   })
   const isAdmin = me?.role === "admin"
+  // Closing/reopening the period is an admin power that can be delegated.
+  const canLockPeriod = isAdmin || hasPower(me, "period_lock")
   const closeTargetDays = useCloseTargetDays()
 
   // QBO connection — uses the localStorage-cached hook so refreshes
@@ -870,7 +872,7 @@ export function DashboardHome() {
           period={period}
           trackerEntry={trackerEntry}
           onOpen={() => navigate(`/app/reconciliations/period/${period}`)}
-          isAdmin={isAdmin}
+          isAdmin={canLockPeriod}
           blocker={blockedBy.get(period) ?? null}
           onCloseBooks={handleCloseBooks}
           closing={closeMut.isPending}

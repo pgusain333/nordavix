@@ -2,6 +2,19 @@ import { apiClient } from "@/core/api/client"
 
 export type NordavixRole = "admin" | "reviewer" | "preparer"
 
+/** Admin-powers an admin can delegate to a non-admin (must match the backend
+ *  DELEGATABLE_POWERS set). The role still governs prepare vs approve. */
+export type MemberPower = "autopilot" | "pbc" | "period_lock" | "qbo"
+
+export interface PowerDef { key: MemberPower; label: string; description: string }
+
+export const POWER_CATALOG: PowerDef[] = [
+  { key: "autopilot",   label: "Run Close Autopilot",     description: "Configure and trigger the unattended auto-close." },
+  { key: "pbc",         label: "Send client doc requests", description: "Email clients magic-link evidence requests." },
+  { key: "period_lock", label: "Lock / reopen the period", description: "Close the books for a period and reopen them." },
+  { key: "qbo",         label: "Manage QuickBooks",        description: "Connect or disconnect the QuickBooks data source." },
+]
+
 export interface WorkspaceMember {
   id:            string | null   // our internal user UUID (null if never signed in)
   clerk_user_id: string
@@ -12,6 +25,8 @@ export interface WorkspaceMember {
   image_url:     string | null
   clerk_role:    string | null   // Clerk's org role ('org:admin' / 'org:member')
   role:          NordavixRole    // Our 3-tier role
+  delegated_powers: MemberPower[]
+  suspended:     boolean
 }
 
 export interface MeResponse {
@@ -19,6 +34,16 @@ export interface MeResponse {
   clerk_user_id: string
   email:         string
   role:          NordavixRole
+  delegated_powers: MemberPower[]
+  suspended:     boolean
+}
+
+/** True if the user can perform `power` — admins always can; others need the
+ *  explicit grant. Mirrors the backend require_capability. */
+export function hasPower(me: MeResponse | null | undefined, power: MemberPower): boolean {
+  if (!me) return false
+  if (me.role === "admin") return true
+  return (me.delegated_powers ?? []).includes(power)
 }
 
 export interface Invitation {
@@ -59,6 +84,21 @@ async function getMe(): Promise<MeResponse> {
 
 async function setMemberRole(memberId: string, role: NordavixRole): Promise<{ id: string; role: NordavixRole }> {
   const { data } = await apiClient.post(`/api/workspace/members/${memberId}/role`, { role })
+  return data
+}
+
+async function setMemberCapabilities(
+  memberId: string, powers: MemberPower[],
+): Promise<{ id: string; delegated_powers: MemberPower[] }> {
+  const { data } = await apiClient.put(`/api/workspace/members/${memberId}/capabilities`, { powers })
+  return data
+}
+
+async function setMemberSuspended(
+  memberId: string, suspended: boolean,
+): Promise<{ id: string; suspended: boolean }> {
+  const action = suspended ? "suspend" : "restore"
+  const { data } = await apiClient.post(`/api/workspace/members/${memberId}/${action}`)
   return data
 }
 
@@ -115,6 +155,8 @@ export const workspaceApi = {
   lookupUsers,
   getMe,
   setMemberRole,
+  setMemberCapabilities,
+  setMemberSuspended,
   listInvitations,
   createInvitation,
   revokeInvitation,

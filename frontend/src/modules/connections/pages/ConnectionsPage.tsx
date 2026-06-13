@@ -29,7 +29,7 @@ import { api, type TrialBalance } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
 import { Button, Spinner } from "@/core/ui/components"
-import { workspaceApi } from "@/modules/workspace/api"
+import { workspaceApi, hasPower } from "@/modules/workspace/api"
 
 export function ConnectionsPage() {
   const navigate = useNavigate()
@@ -52,7 +52,9 @@ export function ConnectionsPage() {
     queryFn:  workspaceApi.getMe,
     staleTime: 60_000,
   })
-  const isAdmin = me?.role === "admin"
+  // Admins, or anyone granted the "Manage QuickBooks" power, can connect/
+  // disconnect. (Gate var keeps the isAdmin name the buttons below read.)
+  const isAdmin = me?.role === "admin" || hasPower(me, "qbo")
 
   // The admins list — surfaced in the non-admin "ask your admin" callout so
   // the user knows exactly who to ping in Slack/email. Only loaded for

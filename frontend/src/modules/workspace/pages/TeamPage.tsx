@@ -15,7 +15,7 @@ import {
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
-import { workspaceApi, type NordavixRole } from "@/modules/workspace/api"
+import { workspaceApi, POWER_CATALOG, type MemberPower, type NordavixRole } from "@/modules/workspace/api"
 
 const ROLE_LABELS: Record<NordavixRole, { label: string; icon: React.ReactNode; bg: string; fg: string; help: string }> = {
   admin:    {
@@ -120,6 +120,32 @@ export function TeamPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["workspace-invitations"] }),
   })
 
+  const capMut = useMutation({
+    mutationFn: (v: { memberId: string; powers: MemberPower[] }) =>
+      workspaceApi.setMemberCapabilities(v.memberId, v.powers),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workspace-members"] }),
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      alert(ex.response?.data?.detail ?? ex.message ?? "Could not update powers.")
+    },
+  })
+
+  const suspendMut = useMutation({
+    mutationFn: (v: { memberId: string; suspended: boolean }) =>
+      workspaceApi.setMemberSuspended(v.memberId, v.suspended),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workspace-members"] }),
+    onError: (err: unknown) => {
+      const ex = err as { response?: { data?: { detail?: string } }; message?: string }
+      alert(ex.response?.data?.detail ?? ex.message ?? "Could not update access.")
+    },
+  })
+
+  function togglePower(memberId: string, powers: MemberPower[], key: MemberPower, on: boolean) {
+    const next = new Set(powers)
+    if (on) next.delete(key); else next.add(key)
+    capMut.mutate({ memberId, powers: [...next] })
+  }
+
   const sortedMembers = useMemo(() => {
     const order = { admin: 0, reviewer: 1, preparer: 2 } as Record<NordavixRole, number>
     return [...(members ?? [])].sort((a, b) => order[a.role] - order[b.role])
@@ -136,8 +162,13 @@ export function TeamPage() {
           Team
         </h1>
         <p className="text-xs sm:text-sm mt-1.5" style={{ color: "var(--text-muted)" }}>
-          Manage who has access to this workspace and what they can do.
-          Admins invite members and assign roles; reviewers approve work; preparers enter and edit.
+          Manage who has access and what they can do. Each member is one role —
+          <span className="font-medium" style={{ color: "var(--text-2)" }}> Preparer</span> (enters/edits),
+          <span className="font-medium" style={{ color: "var(--text-2)" }}> Reviewer</span> (approves), or
+          <span className="font-medium" style={{ color: "var(--text-2)" }}> Admin</span> — so the same person
+          can't both prepare and approve (segregation of duties). Admins can also grant individual
+          powers (run Autopilot, send client requests, lock the period, manage QuickBooks) or set a
+          member to view-only.
         </p>
       </div>
 
@@ -273,7 +304,11 @@ export function TeamPage() {
                   <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wide"
                     style={{ color: "var(--text-muted)" }}>Email</th>
                   <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wide"
-                    style={{ color: "var(--text-muted)", width: 200 }}>Role</th>
+                    style={{ color: "var(--text-muted)", width: 170 }}>Role</th>
+                  <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wide"
+                    style={{ color: "var(--text-muted)" }}>Delegated powers</th>
+                  <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wide"
+                    style={{ color: "var(--text-muted)", width: 120 }}>Access</th>
                 </tr>
               </thead>
               <tbody>
@@ -306,6 +341,80 @@ export function TeamPage() {
                             style={{ background: meta.bg, color: meta.fg }}>
                             {meta.icon} {meta.label}
                           </span>
+                        )}
+                      </td>
+                      {/* Delegated powers — admins implicitly have all; an admin
+                          can toggle each for a non-admin. Read-only chips show a
+                          non-admin viewer what they/others hold. */}
+                      <td className="px-3 py-2">
+                        {m.role === "admin" ? (
+                          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                            All powers (admin)
+                          </span>
+                        ) : isAdmin && m.id ? (
+                          <div className="flex flex-wrap gap-1">
+                            {POWER_CATALOG.map((p) => {
+                              const on = (m.delegated_powers ?? []).includes(p.key)
+                              return (
+                                <button
+                                  key={p.key}
+                                  type="button"
+                                  title={p.description}
+                                  disabled={capMut.isPending || m.suspended}
+                                  onClick={() => togglePower(m.id!, m.delegated_powers ?? [], p.key, on)}
+                                  className="rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors"
+                                  style={{
+                                    background: on ? "var(--green-subtle)" : "var(--surface-2)",
+                                    color: on ? "var(--green)" : "var(--text-muted)",
+                                    border: `1px solid ${on ? "var(--green)" : "var(--border)"}`,
+                                    opacity: m.suspended ? 0.5 : 1,
+                                  }}
+                                >
+                                  {p.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        ) : (m.delegated_powers ?? []).length ? (
+                          <div className="flex flex-wrap gap-1">
+                            {POWER_CATALOG.filter((p) => (m.delegated_powers ?? []).includes(p.key)).map((p) => (
+                              <span key={p.key} className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                                {p.label}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>—</span>
+                        )}
+                      </td>
+                      {/* Access — view-only suspend toggle (admin only; never self) */}
+                      <td className="px-3 py-2">
+                        {m.suspended ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                              style={{ background: "rgba(155, 61, 55, 0.10)", color: "#9b3d37" }}>
+                              View-only
+                            </span>
+                            {isAdmin && m.id && (
+                              <button type="button" disabled={suspendMut.isPending}
+                                onClick={() => suspendMut.mutate({ memberId: m.id!, suspended: false })}
+                                className="text-[10px] underline" style={{ color: "var(--green)" }}>
+                                Restore
+                              </button>
+                            )}
+                          </div>
+                        ) : isAdmin && m.id && !isMe ? (
+                          <button type="button" disabled={suspendMut.isPending}
+                            onClick={() => {
+                              if (confirm(`Suspend ${m.display_name} to view-only? They can still sign in and see the close, but can't make changes.`))
+                                suspendMut.mutate({ memberId: m.id!, suspended: true })
+                            }}
+                            className="text-[11px] underline" style={{ color: "var(--text-muted)" }}>
+                            Suspend
+                          </button>
+                        ) : (
+                          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Active</span>
                         )}
                       </td>
                     </tr>
