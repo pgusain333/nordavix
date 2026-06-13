@@ -1,0 +1,32 @@
+name: Close Autopilot
+
+# Daily sweep: kicks off the close for every workspace whose Autopilot is
+# enabled and whose run_day matches today. All logic + safety gates live in
+# the backend (idempotent per period, demo tenants excluded, AI caps
+# respected, PBC emails only with explicit opt-in) — this just pings the
+# internal endpoint once a day.
+#
+# If INTERNAL_TASK_SECRET isn't set as a repo Actions secret, this logs a
+# note and exits green (never red-X's).
+
+on:
+  schedule:
+    - cron: "30 11 * * *"   # 11:30 UTC daily (~6:30-7:30am US Eastern — done before the workday)
+  workflow_dispatch: {}      # allow manual runs from the Actions tab
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Autopilot sweep
+        env:
+          INTERNAL_TASK_SECRET: ${{ secrets.INTERNAL_TASK_SECRET }}
+        run: |
+          if [ -z "$INTERNAL_TASK_SECRET" ]; then
+            echo "INTERNAL_TASK_SECRET not set — add it under Settings -> Secrets"
+            echo "and variables -> Actions to enable Autopilot. Skipping."
+            exit 0
+          fi
+          curl -fsS -X POST "https://nordavix-api.fly.dev/api/internal/run-autopilot" \
+            -H "X-Internal-Secret: $INTERNAL_TASK_SECRET" \
+            --max-time 590

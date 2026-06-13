@@ -11,6 +11,7 @@ from core.security.crypto import encryption_configured
 from core.tenancy.middleware import TenantMiddleware
 from modules.adjustments.router import router as adjustments_router
 from modules.audit.router import router as audit_router
+from modules.autopilot.router import router as autopilot_router
 from modules.comments.router import router as comments_router
 from modules.email.router import router as email_router
 from modules.exports.router import router as exports_router
@@ -124,6 +125,7 @@ app.include_router(comments_router,      prefix="/api/comments",     tags=["comm
 app.include_router(adjustments_router,    prefix="/api/adjustments",  tags=["adjustments"])
 app.include_router(pbc_router,            prefix="/api/pbc",          tags=["pbc"])
 app.include_router(pbc_public_router,     prefix="/api/pbc-public",   tags=["pbc-public"])
+app.include_router(autopilot_router,      prefix="/api/autopilot",    tags=["autopilot"])
 
 
 @app.get("/api/health", tags=["system"])

@@ -31,9 +31,10 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   Building2, User, Briefcase, Users as UsersIcon, Bell, Sparkles,
   Palette, Download, Info, ArrowRight, Plus, Mail, ExternalLink,
-  CheckCircle2, FileDown, AlertTriangle, ShieldCheck, BookOpen,
+  CheckCircle2, FileDown, AlertTriangle, ShieldCheck, BookOpen, Rocket,
   type LucideIcon,
 } from "lucide-react"
+import { AutopilotSection } from "@/modules/autopilot/AutopilotSection"
 import { Spinner } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -47,7 +48,7 @@ import {
 // ── Section registry ─────────────────────────────────────────────────────────
 
 type SectionKey =
-  | "company" | "profile" | "workspaces" | "team"
+  | "company" | "autopilot" | "profile" | "workspaces" | "team"
   | "notifications" | "ai" | "appearance" | "data" | "about"
 
 interface SectionDef {
@@ -59,6 +60,7 @@ interface SectionDef {
 
 const SECTIONS: SectionDef[] = [
   { key: "company",       label: "Company",         icon: Building2,  hint: "Profile, address, tax, accounting" },
+  { key: "autopilot",     label: "Close Autopilot", icon: Rocket,     hint: "Run your month-end close on its own" },
   { key: "profile",       label: "Profile",         icon: User,       hint: "Your account info" },
   { key: "workspaces",    label: "Workspaces",      icon: Briefcase,  hint: "Switch or create company" },
   { key: "team",          label: "Team",            icon: UsersIcon,  hint: "Members and roles" },
@@ -129,6 +131,7 @@ export function SettingsPage() {
                 className="space-y-5"
               >
                 {active === "company"       && <CompanySection />}
+                {active === "autopilot"     && <AutopilotSection />}
                 {active === "profile"       && <ProfileSection />}
                 {active === "workspaces"    && <WorkspacesSection />}
                 {active === "team"          && <TeamSection />}

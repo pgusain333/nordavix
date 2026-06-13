@@ -4,6 +4,7 @@ from models.account import Account
 from models.account_review_status import AccountReviewStatus
 from models.ai_usage import AIUsage
 from models.audit_log import AuditLog
+from models.autopilot import AutopilotConfig, AutopilotRun
 from models.bank_statement import BankStatement
 from models.closed_period import ClosedPeriod
 from models.comment import Comment
@@ -35,6 +36,8 @@ from models.user import User
 from models.variance import Variance
 
 __all__ = [
+    "AutopilotConfig",
+    "AutopilotRun",
     "Account",
     "AccountReviewStatus",
     "AIUsage",
