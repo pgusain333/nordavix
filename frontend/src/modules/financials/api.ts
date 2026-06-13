@@ -269,6 +269,41 @@ async function exportScheduleExcel(
   await downloadXlsx(`/api/exports/financials/${slug}`, params, `${slug}-${periodEnd}.xlsx`)
 }
 
+/** Audit-ready Close Binder PDF — the whole close as one signed document.
+ *  Only available for a closed period (the server returns 409 otherwise). */
+async function downloadCloseBinder(periodEnd: string): Promise<void> {
+  try {
+    const resp = await apiClient.get("/api/workpapers/binder", {
+      params: { period_end: periodEnd }, responseType: "blob", timeout: 5 * 60_000,
+    })
+    if (!resp.data || (resp.data as Blob).size === 0) {
+      throw new Error("Server returned an empty file. Try again.")
+    }
+    const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }))
+    const a   = document.createElement("a")
+    a.href    = url
+    const cd  = resp.headers["content-disposition"] as string | undefined
+    const m   = cd?.match(/filename="?([^";]+)/)
+    a.download = m?.[1] ?? `close-binder-${periodEnd}.pdf`
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: Blob; status?: number }; message?: string; code?: string }
+    if (err.code === "ECONNABORTED") throw new Error("Binder generation timed out — please try again.")
+    if (err.response?.data instanceof Blob) {
+      try {
+        const txt = await err.response.data.text()
+        const parsed = JSON.parse(txt) as { detail?: string }
+        throw new Error(parsed.detail ?? `HTTP ${err.response.status}`)
+      } catch (pe) {
+        if (pe instanceof Error && pe.message.startsWith("HTTP")) throw pe
+        throw new Error(err.message ?? "Binder download failed")
+      }
+    }
+    throw new Error(err.message ?? "Binder download failed — check your network and try again.")
+  }
+}
+
 // ── Schedule catalog (presentational — drives the "Schedules & exports" card) ──
 
 export interface ScheduleDef {
@@ -308,4 +343,5 @@ export const financialsApi = {
   sendExecutiveReportToClient,
   exportFinancialsExcel,
   exportScheduleExcel,
+  downloadCloseBinder,
 }

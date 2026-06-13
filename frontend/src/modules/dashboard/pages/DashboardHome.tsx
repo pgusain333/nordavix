@@ -52,6 +52,7 @@ import {
   ClipboardList,
   ArrowLeftRight,
   Sparkles,
+  FileText,
 } from "lucide-react"
 import { api as fluxApi } from "@/modules/flux/api"
 import { useQboConnection } from "@/modules/flux/hooks"
@@ -62,6 +63,7 @@ import { tasksApi } from "@/modules/tasks/api"
 import { OnboardingChecklist } from "@/modules/onboarding/OnboardingChecklist"
 import { useBooksStatus } from "@/modules/recons/hooks"
 import { workspaceApi } from "@/modules/workspace/api"
+import { financialsApi } from "@/modules/financials/api"
 import { Button, Spinner } from "@/core/ui/components"
 import { cn, humanize } from "@/core/ui/utils"
 import { BooksClosedCelebration } from "@/modules/dashboard/components/BooksClosedCelebration"
@@ -1656,7 +1658,7 @@ function CloseProgressCard({
 // the user couldn't find it.
 
 function ClosedStateCard({
-  monthLabel, closedAt, approvedCount, total, onOpen,
+  monthLabel, period, closedAt, approvedCount, total, onOpen,
   isAdmin, onReopenBooks, reopening, fluxTotal,
 }: {
   monthLabel: string
@@ -1674,6 +1676,23 @@ function ClosedStateCard({
    *  summary line alongside the accounts count. */
   fluxTotal: number
 }) {
+  // The signed Close Binder is the headline payoff of a finished close —
+  // one audit-ready PDF (certificate + statements + working papers + audit
+  // trail). Only offered once the period is closed, which is exactly this
+  // card's state, so the server gate and the UI gate agree.
+  const [binderBusy, setBinderBusy] = useState(false)
+  const [binderErr, setBinderErr] = useState<string | null>(null)
+  const handleBinder = async () => {
+    setBinderErr(null)
+    setBinderBusy(true)
+    try {
+      await financialsApi.downloadCloseBinder(period)
+    } catch (e) {
+      setBinderErr(e instanceof Error ? e.message : "Couldn't generate the binder.")
+    } finally {
+      setBinderBusy(false)
+    }
+  }
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "var(--green-subtle)", border: "1px solid var(--green)", boxShadow: "var(--card-shadow)" }}>
@@ -1705,6 +1724,19 @@ function ClosedStateCard({
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* The signed close binder — the headline deliverable of a
+              finished close. Primary action because it's what a reviewer
+              or auditor actually wants once the books are locked. */}
+          <Button
+            size="sm"
+            variant="green"
+            icon={<FileText size={13} strokeWidth={1.8} />}
+            loading={binderBusy}
+            onClick={handleBinder}
+            title="Download the signed, audit-ready close binder (PDF)"
+          >
+            {binderBusy ? "Preparing binder…" : "Close binder"}
+          </Button>
           <Button size="sm" variant="outline" onClick={onOpen}>
             View
           </Button>
@@ -1727,6 +1759,11 @@ function ClosedStateCard({
           )}
         </div>
       </div>
+      {binderErr && (
+        <div className="px-5 pb-3 -mt-1">
+          <p className="text-xs" style={{ color: "var(--danger)" }}>{binderErr}</p>
+        </div>
+      )}
     </div>
   )
 }
