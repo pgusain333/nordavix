@@ -351,6 +351,60 @@ def parse_accounts_from_file(
     return accounts
 
 
+def _account_key(qbo_account_id: str | None, account_number: str | None) -> str:
+    """Stable cross-period key for an account: QBO id if present (canonical),
+    else the account number. Lets us line an account up across past closes."""
+    return (qbo_account_id or "").strip() or (account_number or "").strip()
+
+
+async def _expectation_history(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    current_pe,
+    *,
+    lookback: int = 6,
+) -> dict[str, list[Decimal]]:
+    """Map each account key → its most-recent (up to `lookback`) current
+    balances from PRIOR trial balances of this tenant (period_current <
+    current_pe), newest first. The basis for a trailing run-rate expectation.
+
+    SELECT is tenant-auto-filtered by TenantBase; the explicit tenant_id WHERE
+    is belt-and-suspenders and keeps intent obvious."""
+    rows = (await session.execute(
+        select(
+            Account.qbo_account_id,
+            Account.account_number,
+            Account.current_balance,
+        )
+        .join(TrialBalance, Account.trial_balance_id == TrialBalance.id)
+        .where(
+            TrialBalance.tenant_id == tenant_id,
+            TrialBalance.period_current < current_pe,
+        )
+        .order_by(TrialBalance.period_current.desc())
+    )).all()
+    hist: dict[str, list[Decimal]] = {}
+    for qbo_id, acct_num, bal in rows:
+        key = _account_key(qbo_id, acct_num)
+        if not key or bal is None:
+            continue
+        bucket = hist.setdefault(key, [])
+        if len(bucket) < lookback:
+            bucket.append(bal)
+    return hist
+
+
+def _expected_from_history(balances: list[Decimal]) -> tuple[Decimal | None, str | None]:
+    """Trailing run-rate expectation: average of the recent closes. Requires at
+    least 2 prior closes so a single noisy month can't masquerade as a baseline.
+    Returns (expected_value, human-readable basis) or (None, None)."""
+    n = len(balances)
+    if n < 2:
+        return None, None
+    avg = (sum(balances) / Decimal(n)).quantize(Decimal("0.01"))
+    return avg, f"Run-rate: average of the last {n} closes"
+
+
 async def create_accounts_and_variances(
     session: AsyncSession,
     trial_balance: TrialBalance,
@@ -360,10 +414,19 @@ async def create_accounts_and_variances(
     """
     Persist Account and Variance rows from parsed account data.
     Returns (accounts_created, variances_created, material_count).
+
+    Alongside the actual-vs-prior variance, computes an actual-vs-EXPECTED
+    variance per account, where "expected" is a trailing run-rate of the
+    account's recent closes. Both deltas are stored; the UI toggles which lens
+    it shows. Materiality + default behavior stay anchored on the prior delta,
+    so nothing changes for analyses viewed in the (default) prior mode.
     """
     accounts_created  = 0
     variances_created = 0
     material_count    = 0
+
+    # One history pass for the whole chart (avoids a query per account).
+    hist = await _expectation_history(session, tenant_id, trial_balance.period_current)
 
     for ad in account_dicts:
         account = Account(
@@ -385,6 +448,17 @@ async def create_accounts_and_variances(
         is_material = abs(dollar) >= trial_balance.materiality_threshold
         flags = detect_anomalies(ad["current_balance"], ad["prior_balance"], dollar, pct)
 
+        # Actual-vs-expected lens. Expected = trailing run-rate of recent closes.
+        # SLICE-2 HOOK: a confirmed client-memory expectation rule for this
+        # account would override (expected, basis) here before the delta is
+        # computed — that's where captured judgment plugs in.
+        key = _account_key(ad.get("qbo_account_id"), ad.get("account_number"))
+        expected, basis = _expected_from_history(hist.get(key, []))
+        if expected is not None:
+            d_exp, p_exp = compute_variance(ad["current_balance"], expected)
+        else:
+            d_exp, p_exp = None, None
+
         variance = Variance(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -394,6 +468,10 @@ async def create_accounts_and_variances(
             is_material=is_material,
             anomaly_flags=flags,
             status="pending",
+            expected_value=expected,
+            expected_basis=basis,
+            dollar_variance_expected=d_exp,
+            pct_variance_expected=p_exp,
         )
         session.add(variance)
         variances_created += 1

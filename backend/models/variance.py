@@ -30,6 +30,22 @@ class Variance(TenantBase):
     is_material: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     anomaly_flags: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    # ── Expectation Engine (actual-vs-expected lens) ──────────────────────────
+    # expected_value is what NDVX expected this account's balance to be, from a
+    # trailing run-rate of recent closes (or, later, a confirmed client-memory
+    # rule). expected_basis is the human-readable "why" (e.g. "Run-rate: avg of
+    # last 4 closes"). The _expected deltas mirror dollar_/pct_variance but
+    # measure actual-vs-expected instead of actual-vs-prior. All NULL on older
+    # analyses and whenever there isn't enough history to form an expectation.
+    expected_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    expected_basis: Mapped[str | None] = mapped_column(String(200))
+    dollar_variance_expected: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    pct_variance_expected: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    # True once a confirmed expectation rule explains this variance up-front
+    # (set by the captured-judgment loop — Slice 2). Default False.
+    pre_explained: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
     # Per-line sign-off: which user approved this specific variance, and when
     approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

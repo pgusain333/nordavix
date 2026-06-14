@@ -696,11 +696,34 @@ function SummaryTab({ row }: { row: VarianceRow }) {
     large_pct_change:    "Large % change",
     dormant_reactivated: "Reactivated",
   }
+  const fmtUsd = (s: string | null | undefined): string => {
+    if (s == null) return "—"
+    const n = Number(s)
+    if (Number.isNaN(n)) return "—"
+    const abs = `$${Math.abs(Math.round(n)).toLocaleString()}`
+    return n < 0 ? `(${abs})` : abs
+  }
   return (
     <div className="space-y-4">
       {/* The actionable layer first — one tickable list compiled from the
           AI's verdict/bridge/recommendations — then the evidence below. */}
       <FluxReviewChecklist row={row} />
+
+      {/* Expectation — shown when NDVX formed a run-rate expectation for this
+          account (the actual-vs-expected lens). Mode-independent context. */}
+      {row.expected_value != null && (
+        <Card title="Expectation" icon={<FileText size={13} strokeWidth={1.8} />}>
+          <p className="text-[12px]" style={{ color: "var(--text)" }}>
+            Expected <strong>{fmtUsd(row.expected_value)}</strong>
+            {row.dollar_variance_expected != null && (
+              <> · actual is <strong>{fmtUsd(row.dollar_variance_expected)}</strong> vs expected</>
+            )}
+          </p>
+          {row.expected_basis && (
+            <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{row.expected_basis}</p>
+          )}
+        </Card>
+      )}
 
       {/* AI verdict + bridge + actions */}
       {row.ai_commentary ? (

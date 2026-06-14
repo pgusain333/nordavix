@@ -32,6 +32,8 @@ class TrialBalanceResponse(BaseModel):
     created_at: datetime
     approved_by: uuid.UUID | None = None
     approved_at: datetime | None = None
+    # "prior" (actual vs same month last year) | "expected" (actual vs run-rate)
+    comparison_mode: str = "prior"
 
 
 class UploadPreview(BaseModel):
@@ -79,6 +81,12 @@ class VarianceResponse(BaseModel):
     is_material: bool
     anomaly_flags: list[str]
     status: str
+    # ── Expectation Engine (actual-vs-expected lens) ──────────────────────────
+    expected_value: Decimal | None = None
+    expected_basis: str | None = None
+    dollar_variance_expected: Decimal | None = None
+    pct_variance_expected: Decimal | None = None
+    pre_explained: bool = False
     fs_category: str | None
     narrative: str | None
     confidence_score: Decimal | None
@@ -90,13 +98,21 @@ class VarianceResponse(BaseModel):
     ai_commentary: dict | None = None
 
     @field_serializer("dollar_variance", "current_balance", "prior_balance",
-                      "pct_variance", "confidence_score")
+                      "pct_variance", "confidence_score",
+                      "expected_value", "dollar_variance_expected", "pct_variance_expected")
     def serialize_decimal(self, v: Decimal | None) -> str | None:
         return str(v) if v is not None else None
 
     @field_serializer("materiality_threshold", mode="plain", check_fields=False)
     def _ignore(self, v: object) -> object:
         return v
+
+
+class ComparisonModeBody(BaseModel):
+    """Body for POST /trial-balances/{id}/comparison-mode — flips the flux lens
+    between 'prior' (actual vs same month last year) and 'expected' (actual vs
+    NDVX's trailing run-rate). Persisted on the analysis."""
+    mode: str
 
 
 class NarrativeUpdate(BaseModel):

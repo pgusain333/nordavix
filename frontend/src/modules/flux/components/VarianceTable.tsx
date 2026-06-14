@@ -10,7 +10,7 @@
  *   - Edit inline saves custom narrative
  *   - Material rows show amber badge
  */
-import { useState, useMemo, Fragment } from "react"
+import { useState, useMemo, useEffect, Fragment } from "react"
 import {
   useReactTable,
   getCoreRowModel,
@@ -72,6 +72,10 @@ interface Props {
    * lock-down on closed periods.
    */
   readOnly?:    boolean
+  /** Lens the analysis is viewed through (from the TrialBalance). "prior"
+   *  (default) = actual vs same month last year; "expected" = actual vs
+   *  NDVX's trailing run-rate. The header toggle persists the choice. */
+  comparisonMode?: "prior" | "expected"
 }
 
 function _formatHeaderDate(iso?: string, suffix?: string): string {
@@ -95,8 +99,27 @@ const STATUS_ORDER: Record<string, number> = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, periodPrior, onMessage, readOnly = false }: Props) {
+export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, periodPrior, onMessage, readOnly = false, comparisonMode }: Props) {
   const qc = useQueryClient()
+
+  // ── Comparison lens (Actual vs Prior | Actual vs Expected) ────────────────
+  // Local mirror of the analysis's persisted comparison_mode for instant
+  // toggle feedback; the mutation persists it in the background. Only offered
+  // when the analysis actually has expectation data (≥2 prior closes).
+  const [mode, setMode] = useState<"prior" | "expected">(comparisonMode ?? "prior")
+  useEffect(() => { setMode(comparisonMode ?? "prior") }, [comparisonMode])
+  const hasExpected = useMemo(() => rows.some((r) => r.expected_value != null), [rows])
+  const modeMut = useMutation({
+    mutationFn: (m: "prior" | "expected") => api.setComparisonMode(tbId, m),
+    onError: () => setMode(comparisonMode ?? "prior"),   // revert on failure
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["trial-balances"] }) },
+  })
+  function pickMode(m: "prior" | "expected") {
+    if (m === mode) return
+    setMode(m)
+    modeMut.mutate(m)
+  }
+  const expectedView = mode === "expected" && hasExpected
   // Role-aware approve buttons. Backend now 403s preparers on the
   // /approve endpoints, so we hide the buttons here too — clicking
   // a button only to be told "you can't" is a worse experience than
@@ -538,25 +561,37 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       ),
     }),
     col.accessor("prior_balance", {
-      header: _formatHeaderDate(periodPrior, "PY"),
+      // In the expected lens this column shows NDVX's expected balance (with
+      // its basis on hover) instead of the prior-year balance.
+      header: expectedView ? "Expected" : _formatHeaderDate(periodPrior, "PY"),
       size:   140,
-      cell: (c) => (
-        <span className="tabular-nums text-sm text-right block" style={{ color: "var(--text-muted)" }}>
-          {formatAccounting(c.getValue(), 0)}
-        </span>
-      ),
+      cell: (c) => {
+        const r = c.row.original
+        const val = expectedView ? r.expected_value : c.getValue()
+        return (
+          <span className="tabular-nums text-sm text-right block" style={{ color: "var(--text-muted)" }}
+            title={expectedView ? (r.expected_basis ?? undefined) : undefined}>
+            {val != null ? formatAccounting(val, 0) : "—"}
+          </span>
+        )
+      },
     }),
     col.accessor("dollar_variance", {
       header: "$ Change",
       size:   110,
       cell: (c) => {
-        const v = parseFloat(c.getValue())
+        const r = c.row.original
+        const raw = expectedView ? r.dollar_variance_expected : c.getValue()
+        if (raw == null) {
+          return <span className="tabular-nums text-sm text-right block" style={{ color: "var(--text-muted)" }}>—</span>
+        }
+        const v = parseFloat(raw)
         return (
           <span
             className="tabular-nums text-sm font-medium text-right block"
             style={{ color: v > 0 ? "var(--green)" : v < 0 ? "#9b3d37" : "var(--text-muted)" }}
           >
-            {formatAccounting(c.getValue(), 0)}
+            {formatAccounting(raw, 0)}
           </span>
         )
       },
@@ -565,13 +600,15 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       header: "% Change",
       size:   80,
       cell: (c) => {
-        const v = c.getValue() ? parseFloat(c.getValue()!) : null
+        const r = c.row.original
+        const raw = expectedView ? r.pct_variance_expected : c.getValue()
+        const v = raw ? parseFloat(raw) : null
         return (
           <span
             className="tabular-nums text-sm text-right block"
             style={{ color: v && v > 0 ? "var(--green)" : v && v < 0 ? "#9b3d37" : "var(--text-muted)" }}
           >
-            {formatPct(c.getValue())}
+            {formatPct(raw ?? null)}
           </span>
         )
       },
@@ -693,7 +730,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   // change. allChecked / someChecked are derived from selected +
   // visibleIds so listing those covers them.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [approve, tbId, periodCurrent, periodPrior, selected, filter, rows])
+  ], [approve, tbId, periodCurrent, periodPrior, selected, filter, rows, expectedView])
 
   const table = useReactTable({
     data:               filtered,
@@ -772,6 +809,30 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* Comparison lens — only when this analysis has expectation data
+              (≥2 prior closes). Default Prior; Expected = trailing run-rate. */}
+          {hasExpected && (
+            <div className="flex items-center gap-1 rounded-lg p-1"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+              title="Compare actuals against the same month last year (Prior), or against NDVX's trailing run-rate expectation (Expected)">
+              {([["prior", "vs Prior"], ["expected", "vs Expected"]] as const).map(([m, label]) => {
+                const active = mode === m
+                return (
+                  <button
+                    key={m}
+                    onClick={() => pickMode(m)}
+                    className="inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium transition-all"
+                    style={{
+                      background: active ? "var(--green-subtle)" : "transparent",
+                      color:      active ? "var(--green)" : "var(--text-muted)",
+                    }}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           <Button
             variant="outline"
             size="sm"

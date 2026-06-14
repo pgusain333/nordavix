@@ -20,6 +20,9 @@ export interface TrialBalance {
   materiality_threshold:string   // Decimal as string
   error_detail:         string | null
   created_at:           string
+  // Which lens this analysis is viewed through. "prior" (default) = actual vs
+  // same month last year; "expected" = actual vs NDVX's trailing run-rate.
+  comparison_mode?:     "prior" | "expected"
 }
 
 export interface TrialBalanceCreate {
@@ -102,6 +105,16 @@ export interface VarianceRow {
   is_material:      boolean
   anomaly_flags:    string[]
   status:           string   // pending | generating | generated | approved | edited | flagged
+  // ── Expectation Engine (actual-vs-expected lens) ──────────────────────────
+  // NDVX's expected balance for this account + the human-readable basis, and
+  // the actual-vs-expected deltas. All null on older analyses / when there
+  // isn't enough history to form an expectation. pre_explained is set once a
+  // confirmed expectation rule explains the variance up front (Slice 2).
+  expected_value?:            string | null
+  expected_basis?:            string | null
+  dollar_variance_expected?:  string | null
+  pct_variance_expected?:     string | null
+  pre_explained?:             boolean
   fs_category:      string | null
   narrative:        string | null
   confidence_score: string | null
@@ -155,6 +168,16 @@ async function deleteTrialBalance(id: string): Promise<void> {
 
 async function approveTrialBalance(id: string): Promise<TrialBalance> {
   const { data } = await apiClient.post<TrialBalance>(`/api/flux/trial-balances/${id}/approve`)
+  return data
+}
+
+/** Flip the analysis lens between actual-vs-prior and actual-vs-expected.
+ *  Persisted on the analysis so the choice sticks for everyone. */
+async function setComparisonMode(id: string, mode: "prior" | "expected"): Promise<TrialBalance> {
+  const { data } = await apiClient.post<TrialBalance>(
+    `/api/flux/trial-balances/${id}/comparison-mode`,
+    { mode },
+  )
   return data
 }
 
@@ -446,6 +469,7 @@ export const api = {
   resetTrialBalance,
   deleteTrialBalance,
   approveTrialBalance,
+  setComparisonMode,
   // Upload & Parse
   uploadFile,
   parseColumns,

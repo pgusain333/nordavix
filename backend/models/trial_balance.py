@@ -27,6 +27,12 @@ class TrialBalance(TimestampMixin, TenantBase):
     period_prior: Mapped[date] = mapped_column(Date, nullable=False)
     # pending | processing | parsed | ready_for_review | generating | complete | error
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    # Which lens this analysis is viewed through: "prior" = actual vs same month
+    # last year (the long-standing default), "expected" = actual vs NDVX's
+    # trailing run-rate expectation. Persisted per analysis so the choice sticks.
+    comparison_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="prior", server_default="prior",
+    )
     # R2 object key for the original uploaded file; null until upload completes
     r2_key: Mapped[str | None] = mapped_column(String(500))
     # Dollar threshold for materiality — variances above this are flagged for AI generation

@@ -788,6 +788,7 @@ export function FluxDashboard() {
                 onExport={handleExport}
                 periodCurrent={selectedTb?.period_current}
                 periodPrior={selectedTb?.period_prior}
+                comparisonMode={selectedTb?.comparison_mode}
                 onMessage={setRunMsg}
                 readOnly={isClosed}
               />

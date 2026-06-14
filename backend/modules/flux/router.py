@@ -38,6 +38,7 @@ from models.variance import Variance
 from models.variance_transaction import VarianceTransaction
 from modules.flux.schemas import (
     ColumnMappingBody,
+    ComparisonModeBody,
     FluxRunResponse,
     NarrativeUpdate,
     ParseResult,
@@ -263,6 +264,28 @@ async def get_trial_balance(
     tb = result.scalar_one_or_none()
     if tb is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trial balance not found")
+    return tb
+
+
+@router.post("/trial-balances/{tb_id}/comparison-mode", response_model=TrialBalanceResponse)
+async def set_comparison_mode(
+    tb_id: uuid.UUID,
+    body: ComparisonModeBody,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> TrialBalance:
+    """Flip a flux analysis between the actual-vs-prior and actual-vs-expected
+    lens. Persisted on the analysis so the choice sticks for everyone viewing it.
+    Pure view preference — no role gate beyond workspace membership."""
+    if body.mode not in ("prior", "expected"):
+        raise HTTPException(status_code=400, detail="mode must be 'prior' or 'expected'")
+    result = await db.execute(select(TrialBalance).where(TrialBalance.id == tb_id))
+    tb = result.scalar_one_or_none()
+    if tb is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trial balance not found")
+    tb.comparison_mode = body.mode
+    await db.commit()
+    await db.refresh(tb)
     return tb
 
 
@@ -531,6 +554,11 @@ async def list_variances(
                 is_material=var.is_material,
                 anomaly_flags=var.anomaly_flags or [],
                 status=var.status,
+                expected_value=var.expected_value,
+                expected_basis=var.expected_basis,
+                dollar_variance_expected=var.dollar_variance_expected,
+                pct_variance_expected=var.pct_variance_expected,
+                pre_explained=var.pre_explained,
                 fs_category=acct.fs_category,
                 narrative=narr.content if narr else None,
                 confidence_score=narr.confidence_score if narr else None,
