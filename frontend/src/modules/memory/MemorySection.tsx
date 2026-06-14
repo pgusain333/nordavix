@@ -53,14 +53,22 @@ export function MemorySection() {
   const [actionErr, setActionErr] = useState<string | null>(null)
   const onActionError = () =>
     setActionErr("Couldn't update — you may not have permission, or the connection hiccuped. Try again.")
+  // Confirming/dismissing changes what the flux + recon "What Nordavix knows"
+  // notes show, so refresh the account-context cache too (not just this list) —
+  // a just-dismissed convention must stop reading as "known" right away.
+  const afterAction = () => {
+    setActionErr(null)
+    qc.invalidateQueries({ queryKey: ["memory-facts"] })
+    qc.invalidateQueries({ queryKey: ["memory", "account-context"] })
+  }
   const confirm = useMutation({
     mutationFn: (id: string) => memoryApi.confirmFact(id),
-    onSuccess: () => { setActionErr(null); qc.invalidateQueries({ queryKey: ["memory-facts"] }) },
+    onSuccess: afterAction,
     onError: onActionError,
   })
   const dismiss = useMutation({
     mutationFn: (id: string) => memoryApi.dismissFact(id),
-    onSuccess: () => { setActionErr(null); qc.invalidateQueries({ queryKey: ["memory-facts"] }) },
+    onSuccess: afterAction,
     onError: onActionError,
   })
   // Only the row whose action is in flight is disabled — not every row.

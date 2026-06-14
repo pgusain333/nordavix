@@ -23,6 +23,7 @@ from models.client_memory import ClientMemoryFact, ClientMemorySignal
 from models.user import User
 from modules.memory.service import (
     VALID_FACT_STATUSES,
+    account_memory_context,
     active_schedule_default,
     serialize_fact,
 )
@@ -130,6 +131,23 @@ async def schedule_default(
         "default": (fact.value if fact else None),
         "fact_id": (str(fact.id) if fact else None),
     }
+
+
+@router.get("/account-context")
+async def account_context(
+    tenant_id: CurrentTenantId,
+    qbo_account_id: str | None = Query(None),
+    account_number: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Confirmed conventions Nordavix has learned about ONE account — the
+    "What Nordavix knows" note shown in the flux + recon detail drawers. Any
+    member may read it; only `active` facts surface (confirm-first); the SELECT is
+    tenant-scoped. Read-only — these notes are context, never a computed result."""
+    notes = await account_memory_context(
+        db, qbo_account_id=qbo_account_id, account_number=account_number,
+    )
+    return {"notes": notes}
 
 
 @router.get("/facts/{fact_id}/evidence")

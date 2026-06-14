@@ -41,6 +41,7 @@ import {
 import { api as fluxApi, type VarianceRow, type AICommentary } from "@/modules/flux/api"
 import { formatDateTime } from "@/core/lib/dates"
 import { CommentThread } from "@/modules/comments/CommentThread"
+import { MemoryContextNote } from "@/modules/memory/MemoryContextNote"
 
 const TABS = [
   { id: "summary",      label: "Summary",      icon: Sparkles },
@@ -813,6 +814,10 @@ function SummaryTab({ row, tbId, readOnly }: { row: VarianceRow; tbId?: string; 
       {/* The actionable layer first — one tickable list compiled from the
           AI's verdict/bridge/recommendations — then the evidence below. */}
       <FluxReviewChecklist row={row} />
+
+      {/* What Nordavix knows about this account — confirmed conventions learned
+          elsewhere (schedules, adjustments) surfaced here. Context only. */}
+      <MemoryContextNote qboAccountId={row.qbo_account_id} accountNumber={row.account_number} />
 
       {/* Expectation — shown when NDVX formed an expectation for this account
           (run-rate, or a confirmed recurring rule). Mode-independent context. */}

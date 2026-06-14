@@ -773,6 +773,139 @@ async def close_prefill(db: AsyncSession, period_end: date) -> dict[str, Any]:
     }
 
 
+# ── Account memory context (Slice B — knowledge follows the account) ───────────
+#
+# Surface every CONFIRMED fact that concerns an account wherever that account
+# appears (flux variance, recon detail). STRICTLY ADDITIVE: these notes are
+# informational only — they never change a computed number and never pre-explain
+# a variance. The amount-aware variance_expectation engine remains the only thing
+# that can mark a flux movement pre_explained.
+
+
+def _offset_target_label(v: dict[str, Any]) -> str:
+    num = (v.get("to_account_number") or "").strip()
+    name = (v.get("to_account_name") or "").strip()
+    return f"{num} · {name}".strip(" ·") if num else name
+
+
+def _schedule_brief(v: dict[str, Any]) -> str:
+    """Short 'how it's set up' phrase, e.g. '12-mo straight-line prepaid'."""
+    stype = (v.get("schedule_type") or "schedule").replace("_", " ")
+    term = v.get("term_months")
+    method = ""
+    if v.get("schedule_type") == "prepaid":
+        method = {"straight_line": "straight-line", "daily_rate": "daily-rate"}.get(
+            (v.get("amortization_method") or "").strip(), ""
+        )
+    bits = [b for b in (f"{term}-mo" if term else "", method, stype) if b]
+    return " ".join(bits) or stype
+
+
+def _expectation_note(v: dict[str, Any]) -> str:
+    import calendar
+    rec = v.get("recurrence")
+    when = "every month"
+    if rec == "annual":
+        try:
+            m = int(v.get("month"))
+            when = f"each {calendar.month_name[m]}" if 1 <= m <= 12 else "each year"
+        except (TypeError, ValueError):
+            when = "each year"
+    base = f"Expected ~{_usd(v.get('expected_balance'))} {when}"
+    expl = str(v.get("explanation") or "").strip()
+    reason = expl.splitlines()[0] if expl else ""
+    if reason:
+        base += f" — {reason[:80]}"
+    return base[:200]
+
+
+def _fact_note_for_account(
+    fact: ClientMemoryFact, qbo_id: str | None, acct_num: str | None,
+) -> dict[str, Any] | None:
+    """PURE. If this confirmed fact concerns the given account, return a read-only
+    display note {kind, module, text, fact_id}; else None.
+
+    Matching is by EXACT, NON-EMPTY id/number equality only — an empty id never
+    matches an empty id — so a fact can never bleed onto an unrelated account.
+    The note is informational: it never changes a number or pre-explains anything.
+    """
+    v = fact.value or {}
+    qid = (qbo_id or "").strip()
+    num = (acct_num or "").strip()
+
+    def matches(cand_id: Any, cand_num: Any = None) -> bool:
+        """ID-preferred, mirroring _account_key: when both sides carry a canonical
+        QBO id, compare ONLY those — so an id that happens to equal some other
+        account's number can never cross-match. Fall back to account number only
+        when an id isn't available on both sides."""
+        cid = str(cand_id or "").strip()
+        cnum = str(cand_num or "").strip()
+        if qid and cid:
+            return qid == cid
+        if num and cnum:
+            return num == cnum
+        return False
+
+    if fact.kind == "variance_expectation":
+        if matches(v.get("qbo_account_id"), v.get("account_number")):
+            return {"kind": fact.kind, "module": "flux",
+                    "text": _expectation_note(v), "fact_id": str(fact.id)}
+        return None
+
+    if fact.kind == "offset_account":
+        # account_ref is the account the offset applies to — a raw QBO account id
+        # (recon/bank/flux capture all store the account's qbo id). Match id-first;
+        # only fall back to number when this account has no id, so an id-shaped ref
+        # can't collide with another account's number.
+        ref = str(v.get("account_ref") or "").strip()
+        hit = bool(ref) and ((bool(qid) and ref == qid) or (not qid and bool(num) and ref == num))
+        if hit:
+            label = _offset_target_label(v)
+            if label:
+                return {"kind": fact.kind, "module": "adjustments",
+                        "text": f"Adjustments here are usually booked to {label}.",
+                        "fact_id": str(fact.id)}
+        return None
+
+    if fact.kind == "vendor_schedule":
+        vendor = (v.get("vendor") or "This vendor").strip() or "This vendor"
+        stype = (v.get("schedule_type") or "schedule").replace("_", " ")
+        # The balance-sheet account the schedule sits on.
+        if matches(v.get("qbo_account_id")):
+            return {"kind": fact.kind, "module": "schedules",
+                    "text": f"{vendor}: {_schedule_brief(v)} set up on this account.",
+                    "fact_id": str(fact.id)}
+        # The expense/offset account it posts into.
+        off = str(v.get("offset_qbo_account_id") or "").strip()
+        if off and bool(qid) and off == qid:
+            return {"kind": fact.kind, "module": "schedules",
+                    "text": f"{vendor}'s {stype} posts into this account.",
+                    "fact_id": str(fact.id)}
+        return None
+
+    return None
+
+
+async def account_memory_context(
+    db: AsyncSession, *, qbo_account_id: str | None = None, account_number: str | None = None,
+) -> list[dict[str, Any]]:
+    """Read-only: confirmed (active) facts that concern ONE account, as display
+    notes for the 'What Nordavix knows' surfaces in flux + recon. Additive
+    context only — never changes a computed number. SELECT is tenant-auto-filtered,
+    so one workspace can never read another's conventions."""
+    if not (qbo_account_id or "").strip() and not (account_number or "").strip():
+        return []
+    facts = (await db.execute(
+        select(ClientMemoryFact).where(ClientMemoryFact.status == "active")
+    )).scalars().all()
+    notes: list[dict[str, Any]] = []
+    for f in facts:
+        note = _fact_note_for_account(f, qbo_account_id, account_number)
+        if note:
+            notes.append(note)
+    return notes
+
+
 def serialize_fact(f: ClientMemoryFact) -> dict[str, Any]:
     return {
         "id": str(f.id),

@@ -26,6 +26,26 @@ export interface MemoryEvidenceSignal {
   created_at: string | null
 }
 
+/** A read-only "what Nordavix knows about this account" note, surfaced wherever
+ *  the account appears (flux variance / recon detail). Context only — never
+ *  changes a computed figure. */
+export interface MemoryContextItem {
+  kind:    string
+  module:  string
+  text:    string
+  fact_id: string
+}
+
+async function getAccountContext(
+  qboAccountId?: string | null, accountNumber?: string | null,
+): Promise<{ notes: MemoryContextItem[] }> {
+  const { data } = await apiClient.get<{ notes: MemoryContextItem[] }>(
+    "/api/memory/account-context",
+    { params: { qbo_account_id: qboAccountId || undefined, account_number: accountNumber || undefined } },
+  )
+  return data
+}
+
 async function listFacts(status?: MemoryStatus): Promise<{ items: MemoryFact[]; suggested_count: number }> {
   const { data } = await apiClient.get<{ items: MemoryFact[]; suggested_count: number }>(
     "/api/memory/facts", { params: status ? { status } : undefined },
@@ -83,4 +103,4 @@ async function scheduleDefault(
   return data
 }
 
-export const memoryApi = { listFacts, confirmFact, dismissFact, getEvidence, scheduleDefault }
+export const memoryApi = { listFacts, confirmFact, dismissFact, getEvidence, scheduleDefault, getAccountContext }

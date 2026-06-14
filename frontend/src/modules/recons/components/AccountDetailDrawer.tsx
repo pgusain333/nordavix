@@ -46,6 +46,7 @@ import { formatDateTime } from "@/core/lib/dates"
 import { schedulesApi } from "@/modules/schedules/api"
 import { CommentThread } from "@/modules/comments/CommentThread"
 import { ProposedEntriesInline } from "@/modules/adjustments/components/ProposedEntriesInline"
+import { MemoryContextNote } from "@/modules/memory/MemoryContextNote"
 
 const TABS = [
   { id: "summary",     label: "Summary",     icon: Sparkles },
@@ -773,6 +774,11 @@ function SummaryTab({ account, periodEnd, readOnly }: { account: OverviewAccount
 
   return (
     <div className="space-y-4">
+      {/* What Nordavix knows about this account — confirmed conventions learned
+          elsewhere (schedules, flux expectations, adjustments) surfaced here.
+          Context only; never changes a balance or variance. */}
+      <MemoryContextNote qboAccountId={account.qbo_id} accountNumber={account.account_number} />
+
       {/* AI verdict snapshot */}
       {account.ai_commentary ? (
         <Card title="AI verdict" icon={<Brain size={13} strokeWidth={1.8} />}>
