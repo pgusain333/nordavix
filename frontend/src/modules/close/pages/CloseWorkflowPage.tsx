@@ -1,25 +1,28 @@
 /**
- * Close Workflow — the milestone checklist for a period.
+ * Close Workflow — the milestone checklist for a period, split-view.
  *
- * Sits ABOVE the granular Close Tasks list: one ordered step per close
- * milestone (sync → reconcile → schedules → adjustments → flux → financials →
- * review → close). LINKED steps auto-reflect the underlying module's status for
- * the period (you can't tick them by hand — they go green when the work is
- * actually done); MANUAL steps are ticked here.
+ * LEFT  — this month's close as a connected vertical timeline. LINKED steps
+ *         (sync / recon / schedule / flux / close) auto-reflect the underlying
+ *         module's status for the period; MANUAL steps are ticked here. A step
+ *         is "blocked" until its prerequisite is done. Admins tailor the
+ *         checklist from the template editor below the timeline.
+ * RIGHT — a sticky insights rail: a "This close" summary (progress ring, days
+ *         open, blocked, up-next) for the selected period, and "Cycle-time"
+ *         analytics across every period (avg days to close, on-time %, a
+ *         days-to-close sparkline, and the bottleneck step).
  *
- * Slice 2 adds: dependency gating (a step is "blocked" until its prerequisite
- * is done), per-step owners (admin-assigned, with an "assigned to you"
- * notification), and editable due dates with an overdue flag. Admins tailor the
- * checklist — including each step's prerequisite — from the template editor.
+ * Motion is tasteful and respects prefers-reduced-motion: the timeline staggers
+ * in, the progress ring sweeps, KPI numbers count up, and switching months
+ * cross-fades the timeline.
  */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useOrganization } from "@clerk/clerk-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AnimatePresence, motion } from "framer-motion"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import {
   RefreshCw, Scale, ClipboardList, Sparkles, BarChart3, BookOpen,
-  ShieldCheck, Lock, ListChecks, CheckCircle2, Circle, Clock,
+  ShieldCheck, Lock, ListChecks, CheckCircle2, Circle, Clock, Check,
   ChevronRight, Pencil, Trash2, Plus, ArrowUp, ArrowDown, UserPlus,
   Timer, TrendingUp, AlertTriangle, type LucideIcon,
 } from "lucide-react"
@@ -33,8 +36,6 @@ const CAT_ICON: Record<string, LucideIcon> = {
   flux: BarChart3, financials: BookOpen, review: ShieldCheck, close: Lock, custom: ListChecks,
 }
 
-/** Where a step's "View" / "Open" button takes the user, by linked module
- *  (or category for manual steps that still map to a screen). */
 function deepLink(step: CloseStep, periodEnd: string): string | null {
   const m = step.linked_module || step.category
   switch (m) {
@@ -50,7 +51,6 @@ function deepLink(step: CloseStep, periodEnd: string): string | null {
   }
 }
 
-/** Past due and not yet done. due is a date-only string → anchor at local midnight. */
 function isOverdue(due: string | null, done: boolean): boolean {
   if (!due || done) return false
   const d = new Date(due + "T00:00:00")
@@ -58,10 +58,42 @@ function isOverdue(due: string | null, done: boolean): boolean {
   return d.getTime() < today.getTime()
 }
 
+function daysSince(iso: string): number {
+  const d = new Date(iso + "T00:00:00")
+  const t = new Date(); t.setHours(0, 0, 0, 0)
+  return Math.max(0, Math.round((t.getTime() - d.getTime()) / 86_400_000))
+}
+
+// Animated count toward a target — eased, rAF, reduced-motion aware. Eases from
+// the CURRENTLY displayed value (not 0), so a refetch that changes the metric
+// glides instead of snapping back to zero.
+function useCountUp(value: number, enabled: boolean, duration = 700): number {
+  const [n, setN] = useState(enabled ? 0 : value)
+  const nRef = useRef<number>(enabled ? 0 : value)
+  useEffect(() => {
+    if (!enabled) { nRef.current = value; setN(value); return }
+    let raf = 0
+    const from = nRef.current
+    const start = performance.now()
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / duration)
+      const eased = 1 - Math.pow(1 - p, 3)
+      const v = from + (value - from) * eased
+      nRef.current = v
+      setN(v)
+      if (p < 1) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [value, enabled, duration])
+  return n
+}
+
 export function CloseWorkflowPage() {
   const { organization } = useOrganization()
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const reduce = !!useReducedMotion()
 
   const { data: me } = useQuery({
     queryKey: ["workspace-me"], queryFn: workspaceApi.getMe,
@@ -69,7 +101,6 @@ export function CloseWorkflowPage() {
   })
   const isAdmin = me?.role === "admin"
 
-  // Members — for the owner dropdown + resolving assignee names.
   const { data: members } = useQuery({
     queryKey: ["workspace-members"], queryFn: workspaceApi.listMembers,
     staleTime: 5 * 60_000, enabled: !!organization,
@@ -88,12 +119,13 @@ export function CloseWorkflowPage() {
   })
 
   const [period, setPeriod] = useState<string>("")
-  // Default to the focus period (oldest open month) once periods load.
   useEffect(() => {
     if (!period && periodsResp) {
       setPeriod(periodsResp.focus || periodsResp.periods[0]?.period_end || "")
     }
   }, [periodsResp, period])
+
+  const periodLabel = periodsResp?.periods.find((p) => p.period_end === period)?.label ?? ""
 
   const { data: checklist, isLoading: checklistLoading } = useQuery({
     queryKey: ["close", "checklist", period],
@@ -121,6 +153,8 @@ export function CloseWorkflowPage() {
   }
 
   const booksReady = periodsResp?.books_start_date && (periodsResp?.periods.length ?? 0) > 0
+  const steps = checklist?.steps ?? []
+  const upNextKey = steps.find((s) => s.status !== "done" && !s.blocked)?.step_key ?? null
 
   return (
     <Shell>
@@ -134,14 +168,14 @@ export function CloseWorkflowPage() {
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-theme leading-tight">Close Workflow</h1>
             <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-              The month-end checklist — steps go green automatically as the work gets done.
+              Work the close on the left — track how you're trending on the right.
             </p>
           </div>
         </div>
         {booksReady && (
           <select
             value={period} onChange={(e) => setPeriod(e.target.value)}
-            className="rounded-lg px-3 py-2 text-sm outline-none"
+            className="rounded-lg px-3 py-2 text-sm outline-none transition-colors"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
           >
             {periodsResp!.periods.map((p) => (
@@ -170,75 +204,77 @@ export function CloseWorkflowPage() {
             Finish books setup to start tracking your monthly close here.</p>
         </div></Card>
       ) : (
-        <>
-          {/* Progress summary */}
-          {checklist && (
-            <div className="rounded-2xl p-5 mb-5"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-semibold text-theme">
-                  {checklist.summary.done} of {checklist.summary.total} steps done
-                  {checklist.closed && (
-                    <span className="ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
-                      style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-                      <Lock size={10} strokeWidth={2.4} /> Closed
-                    </span>
-                  )}
-                </p>
-                <span className="text-sm font-bold tabular-nums" style={{ color: "var(--green)" }}>
-                  {checklist.summary.pct}%
-                </span>
-              </div>
-              <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
-                <div className="h-full rounded-full transition-[width] duration-500"
-                  style={{ width: `${checklist.summary.pct}%`, background: "var(--green)" }} />
-              </div>
-            </div>
-          )}
+        <div className="flex flex-col lg:flex-row gap-5 lg:items-start">
+          {/* LEFT — timeline + template editor */}
+          <div className="flex-1 min-w-0">
+            {checklistLoading && !checklist ? (
+              <Card><div className="p-6 flex items-center gap-3"><Spinner className="h-5 w-5" />
+                <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading checklist…</span></div></Card>
+            ) : (
+              <AnimatePresence mode="wait">
+                <motion.div key={period}
+                  initial={reduce ? false : { opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={reduce ? undefined : { opacity: 0, y: -6 }}
+                  transition={{ duration: 0.2 }}>
+                  {steps.map((step, i) => (
+                    <motion.div key={step.step_key}
+                      initial={reduce ? false : { opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.25, delay: reduce ? 0 : i * 0.035 }}>
+                      <TimelineStep
+                        step={step} periodEnd={period} isAdmin={!!isAdmin}
+                        members={members ?? []} memberName={memberName} reduce={reduce}
+                        upNext={step.step_key === upNextKey} isLast={i === steps.length - 1}
+                        busy={stepMut.isPending && stepMut.variables?.step_key === step.step_key}
+                        onOpen={(href) => navigate(href)}
+                        onToggle={(status) => stepMut.mutate({ period_end: period, step_key: step.step_key, status })}
+                        onAssign={(uid) => stepMut.mutate(uid
+                          ? { period_end: period, step_key: step.step_key, assignee_id: uid }
+                          : { period_end: period, step_key: step.step_key, clear_assignee: true })}
+                        onDue={(d) => stepMut.mutate(d
+                          ? { period_end: period, step_key: step.step_key, due_date: d }
+                          : { period_end: period, step_key: step.step_key, clear_due: true })}
+                      />
+                    </motion.div>
+                  ))}
+                </motion.div>
+              </AnimatePresence>
+            )}
 
-          {/* Checklist */}
-          {checklistLoading && !checklist ? (
-            <Card><div className="p-6 flex items-center gap-3"><Spinner className="h-5 w-5" />
-              <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading checklist…</span></div></Card>
-          ) : (
-            <div className="space-y-2.5">
-              {checklist?.steps.map((step) => (
-                <StepRow
-                  key={step.step_key} step={step} periodEnd={period}
-                  isAdmin={!!isAdmin} members={members ?? []} memberName={memberName}
-                  busy={stepMut.isPending && stepMut.variables?.step_key === step.step_key}
-                  onOpen={(href) => navigate(href)}
-                  onToggle={(status) => stepMut.mutate({ period_end: period, step_key: step.step_key, status })}
-                  onAssign={(uid) => stepMut.mutate(uid
-                    ? { period_end: period, step_key: step.step_key, assignee_id: uid }
-                    : { period_end: period, step_key: step.step_key, clear_assignee: true })}
-                  onDue={(d) => stepMut.mutate(d
-                    ? { period_end: period, step_key: step.step_key, due_date: d }
-                    : { period_end: period, step_key: step.step_key, clear_due: true })}
-                />
-              ))}
-            </div>
-          )}
+            {isAdmin && <TemplateEditor />}
+          </div>
 
-          {/* Cycle-time analytics (workspace-wide, all members) */}
-          <AnalyticsSection />
-
-          {/* Admin: template editor */}
-          {isAdmin && <TemplateEditor />}
-        </>
+          {/* RIGHT — sticky insights rail */}
+          <aside className="w-full lg:w-[300px] shrink-0 lg:sticky lg:top-4 space-y-4">
+            {checklist && (
+              <ThisCloseCard
+                label={periodLabel} periodEnd={period} closed={checklist.closed}
+                done={checklist.summary.done} total={checklist.summary.total} pct={checklist.summary.pct}
+                blocked={steps.filter((s) => s.blocked && s.status !== "done").length}
+                upNextTitle={steps.find((s) => s.step_key === upNextKey)?.title ?? null}
+                reduce={reduce}
+              />
+            )}
+            <CycleTimeCard reduce={reduce} />
+          </aside>
+        </div>
       )}
     </Shell>
   )
 }
 
-// ── Step row ────────────────────────────────────────────────────────────────
+// ── Timeline step ─────────────────────────────────────────────────────────
 
-function StepRow({ step, periodEnd, isAdmin, members, memberName, busy, onOpen, onToggle, onAssign, onDue }: {
+function TimelineStep({ step, periodEnd, isAdmin, members, memberName, reduce, upNext, isLast, busy, onOpen, onToggle, onAssign, onDue }: {
   step: CloseStep
   periodEnd: string
   isAdmin: boolean
   members: WorkspaceMember[]
   memberName: (id: string | null) => string | null
+  reduce: boolean
+  upNext: boolean
+  isLast: boolean
   busy: boolean
   onOpen: (href: string) => void
   onToggle: (status: "done" | "pending") => void
@@ -249,8 +285,16 @@ function StepRow({ step, periodEnd, isAdmin, members, memberName, busy, onOpen, 
   const href = deepLink(step, periodEnd)
   const done = step.status === "done"
   const inProgress = step.status === "in_progress"
-  const blocked = step.blocked
+  const blocked = step.blocked && !done
   const overdue = isOverdue(step.due_date, done)
+
+  const node = done
+    ? { bg: "var(--green)", fg: "#fff", border: "var(--green)", NodeIcon: Check }
+    : blocked
+      ? { bg: "var(--surface-2)", fg: "var(--text-muted)", border: "var(--border)", NodeIcon: Lock }
+      : inProgress
+        ? { bg: "var(--surface)", fg: "#a9762a", border: "#d8b070", NodeIcon: Icon }
+        : { bg: "var(--surface)", fg: "var(--text-muted)", border: "var(--border-strong)", NodeIcon: Icon }
 
   const statusMeta = done
     ? { label: "Done", bg: "var(--green-subtle)", fg: "var(--green)", Dot: CheckCircle2 }
@@ -259,80 +303,99 @@ function StepRow({ step, periodEnd, isAdmin, members, memberName, busy, onOpen, 
       : { label: "Pending", bg: "var(--surface-2)", fg: "var(--text-muted)", Dot: Circle }
 
   return (
-    <div className="rounded-xl flex items-start gap-3 p-4"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)",
-               opacity: blocked && !done ? 0.72 : 1 }}>
-      <span className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
-        style={{ background: done ? "var(--green-subtle)" : "var(--surface-2)",
-                 color: done ? "var(--green)" : "var(--text-muted)" }}>
-        <Icon size={17} strokeWidth={1.8} />
-      </span>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-sm font-semibold text-theme">{step.title}</p>
-          <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
-            style={{ background: statusMeta.bg, color: statusMeta.fg }}>
-            <statusMeta.Dot size={10} strokeWidth={2.4} /> {statusMeta.label}
-          </span>
-          {blocked && !done && (
-            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
-              style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}
-              title={`Blocked until “${step.blocked_by}” is done`}>
-              <Lock size={10} strokeWidth={2.4} /> Blocked
-            </span>
-          )}
-          {step.linked && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded" title="Updates automatically from its module"
-              style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>auto</span>
+    <div className="flex gap-3.5">
+      {/* Rail: node + connector down to the next step */}
+      <div className="flex flex-col items-center shrink-0" style={{ width: 30 }}>
+        <div className="relative flex items-center justify-center rounded-full shrink-0"
+          style={{ width: 30, height: 30, background: node.bg, border: `2px solid ${node.border}`,
+                   boxShadow: upNext ? "0 0 0 2px var(--green)" : "none",
+                   transition: reduce ? "none" : "box-shadow .2s ease" }}>
+          <node.NodeIcon size={14} strokeWidth={2.2} style={{ color: node.fg }} />
+          {inProgress && !reduce && (
+            <span className="absolute inset-0 rounded-full animate-ping"
+              style={{ border: "2px solid #d8b070", opacity: 0.4 }} />
           )}
         </div>
-        {step.description && (
-          <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{step.description}</p>
+        {!isLast && (
+          <div className="w-px flex-1" style={{ minHeight: 20, marginTop: 4, marginBottom: 2,
+            background: done ? "var(--green)" : "var(--border)" }} />
         )}
-        {blocked && !done && step.blocked_by && (
-          <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
-            Waiting on <span className="font-medium">{step.blocked_by}</span>.
-          </p>
-        )}
-
-        {/* Meta: due · owner · completed */}
-        <div className="flex items-center gap-x-3 gap-y-1 mt-1.5 text-[11px] flex-wrap" style={{ color: "var(--text-muted)" }}>
-          <DueCell due={step.due_date} overdue={overdue} isAdmin={isAdmin} onDue={onDue} />
-          <span className="inline-flex items-center gap-1">
-            Owner: <OwnerControl assigneeId={step.assignee_id} name={memberName(step.assignee_id)}
-              isAdmin={isAdmin} members={members} onAssign={onAssign} />
-          </span>
-          {done && step.completed_at && <span>· Completed {formatDate(step.completed_at)}</span>}
-        </div>
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0">
-        {href && (
-          <button onClick={() => onOpen(href)}
-            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition-colors hover:bg-[var(--surface-2)]"
-            style={{ border: "1px solid var(--border)", color: "var(--text-2)" }}>
-            Open <ChevronRight size={13} strokeWidth={2} />
-          </button>
-        )}
-        {/* Manual steps are ticked here; linked steps update on their own. */}
-        {!step.linked && (
-          done ? (
-            <button onClick={() => onToggle("pending")} disabled={busy}
-              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition-colors hover:bg-[var(--surface-2)] disabled:opacity-50"
-              style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-              Undo
-            </button>
-          ) : (
-            <button onClick={() => onToggle("done")} disabled={busy || blocked}
-              title={blocked ? `Complete “${step.blocked_by}” first` : undefined}
-              className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ background: blocked ? "var(--text-muted)" : "var(--green)" }}>
-              {busy ? <Spinner className="h-3.5 w-3.5" /> : blocked ? <Lock size={13} strokeWidth={2.4} /> : <CheckCircle2 size={13} strokeWidth={2.4} />}
-              Mark done
-            </button>
-          )
-        )}
+      {/* Card */}
+      <div className="flex-1 min-w-0 pb-4">
+        <div className="rounded-xl p-3.5 flex items-start gap-3"
+          style={{ background: "var(--surface)",
+                   border: `1px solid ${upNext ? "var(--green)" : "var(--border)"}`,
+                   boxShadow: "var(--card-shadow)", opacity: blocked ? 0.82 : 1 }}>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-semibold text-theme">{step.title}</p>
+              {upNext && (
+                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                  style={{ background: "var(--green-subtle)", color: "var(--green)" }}>Up next</span>
+              )}
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                style={{ background: statusMeta.bg, color: statusMeta.fg }}>
+                <statusMeta.Dot size={10} strokeWidth={2.4} /> {statusMeta.label}
+              </span>
+              {blocked && (
+                <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                  style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}
+                  title={`Blocked until “${step.blocked_by}” is done`}>
+                  <Lock size={10} strokeWidth={2.4} /> Blocked
+                </span>
+              )}
+              {step.linked && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded" title="Updates automatically from its module"
+                  style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>auto</span>
+              )}
+            </div>
+            {step.description && (
+              <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{step.description}</p>
+            )}
+            {blocked && step.blocked_by && (
+              <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                Waiting on <span className="font-medium">{step.blocked_by}</span>.
+              </p>
+            )}
+            <div className="flex items-center gap-x-3 gap-y-1 mt-1.5 text-[11px] flex-wrap" style={{ color: "var(--text-muted)" }}>
+              <DueCell due={step.due_date} overdue={overdue} isAdmin={isAdmin} onDue={onDue} />
+              <span className="inline-flex items-center gap-1">
+                Owner: <OwnerControl assigneeId={step.assignee_id} name={memberName(step.assignee_id)}
+                  isAdmin={isAdmin} members={members} onAssign={onAssign} />
+              </span>
+              {done && step.completed_at && <span>· Completed {formatDate(step.completed_at)}</span>}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {href && (
+              <button onClick={() => onOpen(href)}
+                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition-colors hover:bg-[var(--surface-2)]"
+                style={{ border: "1px solid var(--border)", color: "var(--text-2)" }}>
+                Open <ChevronRight size={13} strokeWidth={2} />
+              </button>
+            )}
+            {!step.linked && (
+              done ? (
+                <button onClick={() => onToggle("pending")} disabled={busy}
+                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition-colors hover:bg-[var(--surface-2)] disabled:opacity-50"
+                  style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                  Undo
+                </button>
+              ) : (
+                <button onClick={() => onToggle("done")} disabled={busy || blocked}
+                  title={blocked ? `Complete “${step.blocked_by}” first` : undefined}
+                  className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ background: blocked ? "var(--text-muted)" : "var(--green)" }}>
+                  {busy ? <Spinner className="h-3.5 w-3.5" /> : blocked ? <Lock size={13} strokeWidth={2.4} /> : <CheckCircle2 size={13} strokeWidth={2.4} />}
+                  Mark done
+                </button>
+              )
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -403,9 +466,187 @@ function DueCell({ due, overdue, isAdmin, onDue }: {
     <span className={isAdmin ? "cursor-pointer hover:underline" : ""}
       onClick={() => isAdmin && setEditing(true)}
       title={isAdmin ? "Click to set the due date" : undefined}
-      style={{ color: overdue ? "#9b3d37" : "var(--text-muted)", fontWeight: overdue ? 600 : 400 }}>
+      style={{ color: overdue ? "var(--danger)" : "var(--text-muted)", fontWeight: overdue ? 600 : 400 }}>
       {due ? `Due ${formatDate(due)}` : (isAdmin ? "Set due date" : "No due date")}{overdue ? " · overdue" : ""}
     </span>
+  )
+}
+
+// ── Right rail: This close ────────────────────────────────────────────────
+
+function ThisCloseCard({ label, periodEnd, closed, done, total, pct, blocked, upNextTitle, reduce }: {
+  label: string
+  periodEnd: string
+  closed: boolean
+  done: number
+  total: number
+  pct: number
+  blocked: number
+  upNextTitle: string | null
+  reduce: boolean
+}) {
+  return (
+    <div className="rounded-2xl p-5"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+          This close
+        </p>
+        {closed ? (
+          <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+            <Lock size={10} strokeWidth={2.4} /> Closed
+          </span>
+        ) : (
+          <span className="text-[11px] font-semibold text-theme">{label}</span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-4">
+        <ProgressRing pct={pct} reduce={reduce} />
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-theme">{done} / {total} steps</p>
+          <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+            {closed ? "Books locked" : `${daysSince(periodEnd)} days since month-end`}
+          </p>
+          {blocked > 0 && (
+            <p className="text-[12px] mt-0.5 inline-flex items-center gap-1" style={{ color: "var(--danger)" }}>
+              <Lock size={11} strokeWidth={2.2} /> {blocked} blocked
+            </p>
+          )}
+        </div>
+      </div>
+
+      {!closed && upNextTitle && (
+        <div className="mt-3 rounded-lg px-3 py-2 text-[12px]"
+          style={{ background: "var(--green-subtle)", color: "var(--text)" }}>
+          <span style={{ color: "var(--green)" }} className="font-semibold">Up next:</span> {upNextTitle}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ProgressRing({ pct, size = 76, stroke = 7, reduce }: { pct: number; size?: number; stroke?: number; reduce: boolean }) {
+  const r = (size - stroke) / 2
+  const c = 2 * Math.PI * r
+  const clamped = Math.max(0, Math.min(100, pct))
+  const off = c * (1 - clamped / 100)
+  return (
+    <svg width={size} height={size} className="shrink-0" role="img" aria-label={`${clamped}% complete`}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--surface-2)" strokeWidth={stroke} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--green)" strokeWidth={stroke}
+        strokeLinecap="round" strokeDasharray={c} strokeDashoffset={off}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        style={{ transition: reduce ? "none" : "stroke-dashoffset .8s cubic-bezier(0.22,1,0.36,1)" }} />
+      <text x="50%" y="50%" dominantBaseline="central" textAnchor="middle" aria-hidden="true"
+        style={{ fontSize: 17, fontWeight: 700, fill: "var(--text)" }}>{clamped}%</text>
+    </svg>
+  )
+}
+
+// ── Right rail: Cycle-time analytics ──────────────────────────────────────
+
+function CycleTimeCard({ reduce }: { reduce: boolean }) {
+  const { organization } = useOrganization()
+  const { data, isLoading } = useQuery({
+    queryKey: ["close", "analytics"], queryFn: closeApi.getAnalytics, enabled: !!organization,
+  })
+
+  const hasData = !!data && (data.periods_closed > 0 || data.steps.length > 0)
+  const bottleneck = data?.steps.find((s) => s.step_key === data.bottleneck_step_key) ?? null
+
+  const avg = useCountUp(data?.avg_days_to_close ?? 0, !reduce && hasData)
+  const ontime = useCountUp(data?.on_time_pct ?? 0, !reduce && hasData)
+
+  return (
+    <div className="rounded-2xl p-5"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="flex items-center gap-2 mb-3">
+        <TrendingUp size={14} strokeWidth={2} style={{ color: "var(--text-muted)" }} />
+        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+          Cycle time · all periods
+        </p>
+      </div>
+
+      {isLoading && !data ? (
+        <div className="flex items-center gap-2 py-2"><Spinner className="h-4 w-4" />
+          <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>Loading…</span></div>
+      ) : !hasData ? (
+        <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+          Close a couple of months and your days-to-close trend and per-step timing appear here.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <Stat icon={Timer} label="Avg days to close"
+              value={data!.avg_days_to_close != null ? (reduce ? `${data!.avg_days_to_close}` : avg.toFixed(1)) : "—"} />
+            <Stat icon={CheckCircle2} label="On-time steps"
+              value={data!.on_time_pct != null ? `${reduce ? data!.on_time_pct : Math.round(ontime)}%` : "—"} />
+          </div>
+
+          {data!.days_to_close_trend.length > 0 && (
+            <div className="mt-4">
+              <p className="text-[10px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-muted)" }}>
+                Days to close · last {Math.min(12, data!.days_to_close_trend.length)}
+              </p>
+              <Sparkline values={data!.days_to_close_trend.slice(-12).map((t) => t.days)} reduce={reduce} />
+            </div>
+          )}
+
+          {bottleneck && (
+            <div className="mt-4 rounded-lg px-3 py-2 flex items-start gap-2"
+              style={{ background: "var(--danger-subtle)", border: "1px solid var(--danger-border)" }}>
+              <AlertTriangle size={13} strokeWidth={2.2} className="mt-0.5 shrink-0" style={{ color: "var(--danger)" }} />
+              <p className="text-[12px]" style={{ color: "var(--text-2)" }}>
+                <span className="font-semibold" style={{ color: "var(--danger)" }}>Bottleneck:</span> {bottleneck.title}
+                <span style={{ color: "var(--text-muted)" }}> · avg {bottleneck.avg_days}d</span>
+              </p>
+            </div>
+          )}
+
+          <div className="mt-3 text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+            {data!.periods_closed} period{data!.periods_closed === 1 ? "" : "s"} closed
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function Stat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
+  return (
+    <div className="rounded-xl p-2.5" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <div className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide mb-0.5"
+        style={{ color: "var(--text-muted)" }}>
+        <Icon size={11} strokeWidth={2} /> {label}
+      </div>
+      <p className="text-lg font-bold tabular-nums text-theme leading-tight">{value}</p>
+    </div>
+  )
+}
+
+function Sparkline({ values, width = 252, height = 40, reduce }: { values: number[]; width?: number; height?: number; reduce: boolean }) {
+  if (values.length === 0) return null
+  const pts = values.length === 1 ? [values[0], values[0]] : values
+  const max = Math.max(1, ...pts)
+  const stepX = pts.length > 1 ? width / (pts.length - 1) : 0
+  const coords = pts.map((v, i) => {
+    const x = i * stepX
+    const y = height - (v / max) * (height - 6) - 3
+    return [x, y] as const
+  })
+  const line = coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")
+  const [lx, ly] = coords[coords.length - 1]
+  const lineLen = width * 1.3
+  return (
+    <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      <polyline points={line} fill="none" stroke="var(--green)" strokeWidth={2}
+        strokeLinecap="round" strokeLinejoin="round"
+        style={reduce ? undefined : { strokeDasharray: lineLen, strokeDashoffset: lineLen, animation: "ndvx-draw .9s ease forwards" }} />
+      <circle cx={lx} cy={ly} r={3} fill="var(--green)" />
+      <style>{"@keyframes ndvx-draw{to{stroke-dashoffset:0}}"}</style>
+    </svg>
   )
 }
 
@@ -427,6 +668,7 @@ function TemplateEditor() {
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["close", "template"] })
     qc.invalidateQueries({ queryKey: ["close", "checklist"] })
+    qc.invalidateQueries({ queryKey: ["close", "analytics"] })
   }
   const addMut    = useMutation({ mutationFn: closeApi.addStep, onSuccess: ok, onError: fail })
   const editMut   = useMutation({ mutationFn: (v: { id: string; body: Parameters<typeof closeApi.editStep>[1] }) => closeApi.editStep(v.id, v.body), onSuccess: ok, onError: fail })
@@ -448,7 +690,7 @@ function TemplateEditor() {
   }
 
   return (
-    <div className="mt-6 rounded-2xl"
+    <div className="mt-4 rounded-2xl"
       style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
       <button onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center justify-between px-5 py-4">
@@ -494,7 +736,6 @@ function TemplateEditor() {
                 </div>
               )}
 
-              {/* Add custom step */}
               <div className="flex items-center gap-2 mt-3">
                 <input
                   value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
@@ -528,7 +769,6 @@ function TemplateRow({ step, allSteps, first, last, onMove, onEdit, onDelete }: 
   const [title, setTitle] = useState(step.title)
   const isCustom = step.key.startsWith("custom-")
   const Icon = CAT_ICON[step.category] || ListChecks
-  // Candidate prerequisites: any other step (by key); exclude self.
   const prereqOptions = allSteps.filter((s) => s.key !== step.key)
 
   return (
@@ -582,12 +822,11 @@ function TemplateRow({ step, allSteps, first, last, onMove, onEdit, onDelete }: 
         {isCustom && (
           <button onClick={onDelete} title="Delete custom step"
             className="p-1 rounded hover:bg-[var(--surface)]">
-            <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
+            <Trash2 size={13} strokeWidth={1.8} style={{ color: "var(--danger)" }} />
           </button>
         )}
       </div>
 
-      {/* Prerequisite picker */}
       <div className="flex items-center gap-2 mt-1.5 pl-[26px] text-[11px]" style={{ color: "var(--text-muted)" }}>
         <span>Prerequisite:</span>
         <select
@@ -611,147 +850,12 @@ function TemplateRow({ step, allSteps, first, last, onMove, onEdit, onDelete }: 
   )
 }
 
-// ── Cycle-time analytics ──────────────────────────────────────────────────
-
-function AnalyticsSection() {
-  const { organization } = useOrganization()
-  const { data, isLoading } = useQuery({
-    queryKey: ["close", "analytics"], queryFn: closeApi.getAnalytics, enabled: !!organization,
-  })
-
-  if (isLoading && !data) {
-    return (
-      <div className="mt-6 rounded-2xl p-5 flex items-center gap-3"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-        <Spinner className="h-4 w-4" />
-        <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>Loading analytics…</span>
-      </div>
-    )
-  }
-  if (!data) return null
-
-  const hasData = data.periods_closed > 0 || data.steps.length > 0
-  if (!hasData) {
-    return (
-      <div className="mt-6 rounded-2xl p-6 text-center"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-        <TrendingUp size={22} strokeWidth={1.6} className="mx-auto mb-2" style={{ color: "var(--text-muted)" }} />
-        <p className="text-sm font-semibold text-theme">No cycle-time data yet</p>
-        <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>
-          Close a couple of months and your days-to-close trend and per-step timing will appear here.
-        </p>
-      </div>
-    )
-  }
-
-  // Scale the trend bars to the SAME window we render (last 12), so a tall older
-  // outlier outside the window can't flatten the visible chart.
-  const recentTrend = data.days_to_close_trend.slice(-12)
-  const maxDays = Math.max(1, ...recentTrend.map((t) => t.days))
-  const maxStepAvg = Math.max(1, ...data.steps.map((s) => s.avg_days))
-
-  return (
-    <div className="mt-6 rounded-2xl overflow-hidden"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-      <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
-        <TrendingUp size={15} strokeWidth={1.9} style={{ color: "var(--text-muted)" }} />
-        <span className="text-sm font-semibold text-theme">Cycle-time analytics</span>
-        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>· across all periods</span>
-      </div>
-
-      <div className="p-5 space-y-5">
-        {/* KPI tiles */}
-        <div className="grid grid-cols-3 gap-3">
-          <Kpi icon={Timer} label="Avg days to close"
-            value={data.avg_days_to_close != null ? `${data.avg_days_to_close}` : "—"} />
-          <Kpi icon={CheckCircle2} label="On-time steps"
-            value={data.on_time_pct != null ? `${data.on_time_pct}%` : "—"} />
-          <Kpi icon={Lock} label="Periods closed" value={`${data.periods_closed}`} />
-        </div>
-
-        {/* Days-to-close trend */}
-        {recentTrend.length > 0 && (
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
-              Days to close by period
-            </p>
-            <div className="flex items-end gap-2 h-28">
-              {recentTrend.map((t) => (
-                <div key={t.period_end} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-                  <span className="text-[10px] tabular-nums" style={{ color: "var(--text-2)" }}>{t.days}</span>
-                  <div className="w-full rounded-t" title={`${t.label}: ${t.days} day${t.days === 1 ? "" : "s"}`}
-                    style={{ height: `${Math.max(4, (t.days / maxDays) * 92)}px`, background: "var(--green)" }} />
-                  <span className="text-[9px] truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
-                    {t.label.replace(" ", " ")}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Per-step timing */}
-        {data.steps.length > 0 && (
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
-              Average time per step (days after month-end)
-            </p>
-            <div className="space-y-1.5">
-              {data.steps.map((s) => {
-                const Icon = CAT_ICON[s.category] || ListChecks
-                const isBottleneck = s.step_key === data.bottleneck_step_key
-                return (
-                  <div key={s.step_key} className="flex items-center gap-3">
-                    <Icon size={14} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
-                    <span className="text-[12px] text-theme w-40 shrink-0 truncate">{s.title}</span>
-                    <div className="flex-1 h-2.5 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
-                      <div className="h-full rounded-full"
-                        style={{ width: `${(s.avg_days / maxStepAvg) * 100}%`,
-                                 background: isBottleneck ? "#9b3d37" : "var(--green)" }} />
-                    </div>
-                    <span className="text-[11px] tabular-nums w-10 text-right" style={{ color: "var(--text-2)" }}>
-                      {s.avg_days}d
-                    </span>
-                    {s.on_time_pct != null && (
-                      <span className="text-[10px] tabular-nums w-16 text-right" style={{ color: "var(--text-muted)" }}>
-                        {s.on_time_pct}% on-time
-                      </span>
-                    )}
-                    {isBottleneck && (
-                      <span className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide shrink-0"
-                        style={{ background: "rgba(155,61,55,0.12)", color: "#9b3d37" }}>
-                        <AlertTriangle size={9} strokeWidth={2.4} /> Bottleneck
-                      </span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function Kpi({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
-  return (
-    <div className="rounded-xl p-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide mb-1"
-        style={{ color: "var(--text-muted)" }}>
-        <Icon size={12} strokeWidth={2} /> {label}
-      </div>
-      <p className="text-xl font-bold tabular-nums text-theme">{value}</p>
-    </div>
-  )
-}
-
 // ── Shell / Card ──────────────────────────────────────────────────────────
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-4xl w-full mx-auto">{children}</div>
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto">{children}</div>
     </div>
   )
 }
