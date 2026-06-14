@@ -55,6 +55,24 @@ export interface TemplateStep {
   is_active:     boolean
 }
 
+export interface PrefillItem {
+  fact_id:             string
+  kind:                string
+  module:              string
+  title:               string
+  what_it_does:        string
+  applies_this_period: boolean
+  confidence:          number
+  last_seen_at:        string | null
+  confirmed_at:        string | null
+}
+
+export interface PrefillResponse {
+  period_end:      string
+  applying:        PrefillItem[]
+  suggested_count: number
+}
+
 export interface CloseAnalytics {
   periods_closed:      number
   avg_days_to_close:   number | null
@@ -85,6 +103,13 @@ async function getAnalytics(): Promise<CloseAnalytics> {
 async function getChecklist(periodEnd: string): Promise<ChecklistResponse> {
   const { data } = await apiClient.get<ChecklistResponse>(
     "/api/close/checklist", { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
+async function getPrefill(periodEnd: string): Promise<PrefillResponse> {
+  const { data } = await apiClient.get<PrefillResponse>(
+    "/api/close/prefill", { params: { period_end: periodEnd } },
   )
   return data
 }
@@ -146,6 +171,6 @@ async function reorder(orderedIds: string[]): Promise<{ steps: TemplateStep[] }>
 }
 
 export const closeApi = {
-  getPeriods, getAnalytics, getChecklist, updateStep,
+  getPeriods, getAnalytics, getChecklist, getPrefill, updateStep,
   getTemplate, addStep, editStep, deleteStep, reorder,
 }

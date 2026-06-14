@@ -32,6 +32,7 @@ from models.closed_period import ClosedPeriod
 from models.tenant import Tenant
 from models.user import User
 from modules.close_workflow import service
+from modules.memory import service as memory_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -98,6 +99,21 @@ async def get_checklist(
         "summary":    {"total": total, "done": done,
                        "pct": round(done / total * 100) if total else 0},
     }
+
+
+@router.get("/prefill")
+async def get_prefill(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(...),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """What Client Memory will pre-fill for THIS close (read-only): every
+    confirmed convention relevant to the period — flux expectations firing this
+    month, learned offsets, vendor schedule setups — plus a count of suggestions
+    still awaiting confirmation. Surfaces existing intelligence; writes nothing."""
+    pe = _parse_period(period_end)
+    return await memory_service.close_prefill(db, pe)
 
 
 @router.get("/analytics")

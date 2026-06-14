@@ -12,7 +12,7 @@ fast unit tests.
 from datetime import date
 from decimal import Decimal
 
-from modules.memory.service import evaluate_expectation
+from modules.memory.service import _expectation_fires, evaluate_expectation
 
 
 def _rule(**over):
@@ -157,3 +157,25 @@ def test_non_finite_expected_balance_does_not_fire():
     # run-rate), never poison the tolerance math or the <= compare.
     assert evaluate_expectation(_rule(expected_balance="Infinity"), date(2026, 3, 31), Decimal("1000")) is None
     assert evaluate_expectation(_rule(expected_balance="NaN"), date(2026, 3, 31), Decimal("1000")) is None
+
+
+# ── Shared recurrence gate (close prefill rail must agree with the apply path) ──
+
+def test_expectation_fires_matches_recurrence():
+    assert _expectation_fires({"recurrence": "monthly"}, date(2026, 3, 31)) is True
+    assert _expectation_fires({"recurrence": "annual", "month": 3}, date(2026, 3, 31)) is True
+    assert _expectation_fires({"recurrence": "annual", "month": 4}, date(2026, 3, 31)) is False
+    assert _expectation_fires({"recurrence": "annual", "month": None}, date(2026, 3, 31)) is False
+    assert _expectation_fires({"recurrence": "annual", "month": "oops"}, date(2026, 3, 31)) is False
+    assert _expectation_fires({"recurrence": "weekly"}, date(2026, 3, 31)) is False
+    assert _expectation_fires(None, date(2026, 3, 31)) is False
+
+
+def test_fires_and_apply_agree():
+    # The rail must never claim a rule fires when the flux apply path wouldn't.
+    rule = _rule(recurrence="annual", month=6)
+    for m in range(1, 13):
+        pe = date(2026, m, 28)
+        fires = _expectation_fires(rule, pe)
+        applied = evaluate_expectation(rule, pe, Decimal("1000"))
+        assert fires == (applied is not None), f"disagreement in month {m}"

@@ -24,12 +24,12 @@ import {
   RefreshCw, Scale, ClipboardList, Sparkles, BarChart3, BookOpen,
   ShieldCheck, Lock, ListChecks, CheckCircle2, Circle, Clock, Check,
   ChevronRight, Pencil, Trash2, Plus, ArrowUp, ArrowDown, UserPlus,
-  Timer, TrendingUp, AlertTriangle, type LucideIcon,
+  Timer, TrendingUp, AlertTriangle, Brain, type LucideIcon,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
 import { workspaceApi, type WorkspaceMember } from "@/modules/workspace/api"
-import { closeApi, type CloseStep, type TemplateStep } from "@/modules/close/api"
+import { closeApi, type CloseStep, type TemplateStep, type PrefillItem } from "@/modules/close/api"
 
 const CAT_ICON: Record<string, LucideIcon> = {
   sync: RefreshCw, recon: Scale, schedule: ClipboardList, adjustments: Sparkles,
@@ -256,6 +256,7 @@ export function CloseWorkflowPage() {
                 reduce={reduce}
               />
             )}
+            <PrefillCard period={period} onOpen={(href) => navigate(href)} />
             <CycleTimeCard reduce={reduce} />
           </aside>
         </div>
@@ -542,6 +543,127 @@ function ProgressRing({ pct, size = 76, stroke = 7, reduce }: { pct: number; siz
       <text x="50%" y="50%" dominantBaseline="central" textAnchor="middle" aria-hidden="true"
         style={{ fontSize: 17, fontWeight: 700, fill: "var(--text)" }}>{clamped}%</text>
     </svg>
+  )
+}
+
+// ── Right rail: Prefilled by Nordavix (Client Memory) ─────────────────────
+
+const PREFILL_MODULE: Record<string, { label: string; href: string; icon: LucideIcon }> = {
+  flux:        { label: "Flux",        href: "/app/flux",        icon: BarChart3 },
+  schedules:   { label: "Schedules",   href: "/app/schedules",   icon: ClipboardList },
+  adjustments: { label: "Adjustments", href: "/app/adjustments", icon: Sparkles },
+}
+
+const PREFILL_MAX_ROWS = 6
+
+// Surfaces the confirmed Client Memory conventions Nordavix will pre-fill for
+// THIS close (read-only — confirming still happens in Settings → Memory).
+function PrefillCard({ period, onOpen }: { period: string; onOpen: (href: string) => void }) {
+  const { organization } = useOrganization()
+  const navigate = useNavigate()
+  const { data, isLoading } = useQuery({
+    queryKey: ["close", "prefill", period],
+    queryFn:  () => closeApi.getPrefill(period),
+    enabled:  !!organization && !!period,
+  })
+
+  const items = data?.applying ?? []
+  const now = items.filter((i) => i.applies_this_period)
+  const later = items.length - now.length
+  const suggested = data?.suggested_count ?? 0
+  const hasAny = items.length > 0 || suggested > 0
+  const shown = now.slice(0, PREFILL_MAX_ROWS)
+  const overflow = now.length - shown.length
+
+  return (
+    <div className="rounded-2xl p-5"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Brain size={14} strokeWidth={2} style={{ color: "var(--green)" }} />
+          <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+            Prefilled by Nordavix
+          </p>
+        </div>
+        {now.length > 0 && (
+          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+            {now.length} applying
+          </span>
+        )}
+      </div>
+
+      {isLoading && !data ? (
+        <div className="flex items-center gap-2 py-2"><Spinner className="h-4 w-4" />
+          <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>Loading…</span></div>
+      ) : !hasAny ? (
+        <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+          Nordavix is still learning this client. As you explain variances and set up schedules,
+          confirmed conventions appear here and pre-fill your close.
+        </p>
+      ) : (
+        <>
+          {now.length > 0 ? (
+            <div className="space-y-1.5">
+              {shown.map((it) => <PrefillRow key={it.fact_id} item={it} onOpen={onOpen} />)}
+              {overflow > 0 && (
+                <p className="text-[11px] pt-0.5" style={{ color: "var(--text-muted)" }}>
+                  + {overflow} more applying this close
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+              No confirmed conventions apply to this month yet.
+            </p>
+          )}
+
+          {later > 0 && (
+            <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
+              + {later} confirmed rule{later === 1 ? "" : "s"} not applying this month.
+            </p>
+          )}
+
+          {suggested > 0 && (
+            <button onClick={() => navigate("/app/settings?tab=memory")}
+              className="mt-3 w-full inline-flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors hover:bg-[var(--surface-2)]"
+              style={{ border: "1px solid var(--border)", color: "var(--text-2)" }}>
+              <span className="inline-flex items-center gap-1.5">
+                <Sparkles size={12} strokeWidth={2} style={{ color: "var(--green)" }} />
+                {suggested} suggestion{suggested === 1 ? "" : "s"} waiting
+              </span>
+              <span className="inline-flex items-center gap-0.5" style={{ color: "var(--text-muted)" }}>
+                Review <ChevronRight size={13} strokeWidth={2} />
+              </span>
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function PrefillRow({ item, onOpen }: { item: PrefillItem; onOpen: (href: string) => void }) {
+  const mod = PREFILL_MODULE[item.module]
+  const Icon = mod?.icon ?? Sparkles
+  const clickable = !!mod?.href
+  const seen = item.confidence > 0 ? `Seen ${item.confidence}×` : null
+  return (
+    <div
+      onClick={() => clickable && onOpen(mod!.href)}
+      className={`rounded-lg px-3 py-2 ${clickable ? "cursor-pointer hover:bg-[var(--surface)]" : ""}`}
+      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+      title={clickable ? `Open ${mod!.label}` : undefined}
+    >
+      <div className="flex items-center gap-2">
+        <Icon size={13} strokeWidth={1.9} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+        <span className="text-[12px] font-semibold text-theme truncate flex-1">{item.title}</span>
+        {clickable && <ChevronRight size={13} strokeWidth={2} className="shrink-0" style={{ color: "var(--text-muted)" }} />}
+      </div>
+      <p className="text-[11px] mt-0.5 pl-[21px]" style={{ color: "var(--text-muted)" }}>
+        {item.what_it_does}{seen ? ` · ${seen}` : ""}
+      </p>
+    </div>
   )
 }
 

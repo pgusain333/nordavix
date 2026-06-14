@@ -526,6 +526,26 @@ def expectation_title(account_name: str, recurrence: str, month: int | None,
     return base[:400]
 
 
+def _expectation_fires(value: dict[str, Any] | None, period_end: date) -> bool:
+    """Whether a confirmed expectation rule applies THIS period, by recurrence:
+    monthly fires every period; annual fires only in its stored month. This is
+    the single source of truth shared by the flux apply path (evaluate_expectation)
+    and the close prefill rollup (close_prefill), so the rail can never claim a
+    rule fires when flux wouldn't actually apply it."""
+    if not value:
+        return False
+    recurrence = value.get("recurrence")
+    if recurrence == "monthly":
+        return True
+    if recurrence == "annual":
+        month = value.get("month")
+        try:
+            return bool(month) and period_end.month == int(month)
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 def evaluate_expectation(
     value: dict[str, Any] | None,
     period_end: date,
@@ -545,15 +565,7 @@ def evaluate_expectation(
     """
     if not value:
         return None
-    recurrence = value.get("recurrence")
-    if recurrence == "annual":
-        month = value.get("month")
-        try:
-            if not month or period_end.month != int(month):
-                return None
-        except (TypeError, ValueError):
-            return None
-    elif recurrence != "monthly":
+    if not _expectation_fires(value, period_end):
         return None
 
     try:
@@ -698,6 +710,67 @@ async def active_expectation_facts_map(db: AsyncSession) -> dict[str, dict[str, 
         if key:
             out[key] = f.value or {}
     return out
+
+
+# ── Close prefill rollup (Slice A — make learned conventions visible) ──────────
+#
+# kind → (module the fact pre-fills, short human "what it does"). Drives the
+# "Prefilled by Nordavix" rail on the close workspace. Unknown kinds are skipped
+# so the rail never shows a mystery row.
+_PREFILL_META: dict[str, tuple[str, str]] = {
+    "variance_expectation": ("flux", "Pre-explains this account's variance when it lands within your confirmed tolerance"),
+    "offset_account": ("adjustments", "Pre-selects your learned offset account for this account's adjustments"),
+    "vendor_schedule": ("schedules", "Pre-fills this vendor's amortization setup on a new schedule"),
+}
+
+
+async def close_prefill(db: AsyncSession, period_end: date) -> dict[str, Any]:
+    """Read-only rollup for the close workspace: every CONFIRMED (active) memory
+    convention that pre-fills part of THIS period's close, plus a count of
+    suggestions still awaiting confirmation. Pure aggregation — it surfaces what
+    memory already does; it never writes and never applies anything new.
+
+    A variance_expectation is flagged `applies_this_period` only when its
+    recurrence fires this month (shared `_expectation_fires`, identical to the
+    flux apply path). Standing conventions (offsets, vendor setups) apply whenever
+    their data appears, so they're always relevant. SELECTs are tenant-auto-
+    filtered by TenantBase — one workspace can never see another's memory."""
+    facts = (await db.execute(
+        select(ClientMemoryFact).where(ClientMemoryFact.status == "active")
+    )).scalars().all()
+    applying: list[dict[str, Any]] = []
+    for f in facts:
+        meta = _PREFILL_META.get(f.kind)
+        if meta is None:
+            continue
+        module, what = meta
+        fires = _expectation_fires(f.value or {}, period_end) if f.kind == "variance_expectation" else True
+        applying.append({
+            "fact_id": str(f.id),
+            "kind": f.kind,
+            "module": module,
+            "title": f.title,
+            "what_it_does": what,
+            "applies_this_period": fires,
+            "confidence": f.confidence,
+            "last_seen_at": f.last_seen_at.isoformat() if f.last_seen_at else None,
+            "confirmed_at": f.confirmed_at.isoformat() if f.confirmed_at else None,
+        })
+    # Relevant-now first, then most-recently reinforced. Two stable passes.
+    applying.sort(key=lambda r: r["last_seen_at"] or "", reverse=True)
+    applying.sort(key=lambda r: not r["applies_this_period"])
+
+    # Entity select (not a column-only select) so it matches every other
+    # tenant-scoped fact query in this module — leaves zero doubt that the
+    # TenantBase auto-filter applies and one workspace can't count another's.
+    suggested = (await db.execute(
+        select(ClientMemoryFact).where(ClientMemoryFact.status == "suggested")
+    )).scalars().all()
+    return {
+        "period_end": period_end.isoformat(),
+        "applying": applying,
+        "suggested_count": len(suggested),
+    }
 
 
 def serialize_fact(f: ClientMemoryFact) -> dict[str, Any]:
