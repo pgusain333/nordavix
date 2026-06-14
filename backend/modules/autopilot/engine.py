@@ -403,11 +403,12 @@ async def run_autopilot_for_tenant(
                 results["errors"].append(f"Evidence requests failed: {type(exc).__name__}")
 
         # 4b — CLOSE REVIEW: the AI reviewing-partner pass over everything above.
-        try:
-            await _step_review(db, tenant.id, actor, period_end, results)
-        except Exception as exc:
-            logger.exception("Autopilot review failed for %s", tenant.id)
-            results["errors"].append(f"Close review failed: {type(exc).__name__}")
+        if config.run_review:
+            try:
+                await _step_review(db, tenant.id, actor, period_end, results)
+            except Exception as exc:
+                logger.exception("Autopilot review failed for %s", tenant.id)
+                results["errors"].append(f"Close review failed: {type(exc).__name__}")
 
         # 5 — DIGEST: branded email to every member with email on.
         title, body = _digest_lines(results, period_end)
@@ -422,15 +423,36 @@ async def run_autopilot_for_tenant(
             if recipients:
                 from core.config import settings
                 link = f"{settings.web_url}/app/reconciliations"
+                company = tenant.name if tenant.name and not tenant.name.startswith("org_") else "Your company"
+                # Optionally attach the Financial Package PDF (IS/BS/CF from the
+                # synced snapshot). Fully fenced — a render failure degrades the
+                # digest to no-attachment, never crashes the run.
+                attachments = None
+                if config.attach_reports:
+                    try:
+                        import base64
+
+                        from modules.workpapers.binder import _render_financials
+                        pdf = await _render_financials(db, tenant.id, period_end, company)
+                        if pdf:
+                            attachments = [{
+                                "filename": f"financial-package-{period_end.isoformat()}.pdf",
+                                "content": base64.b64encode(pdf).decode(),
+                            }]
+                            results["reports_attached"] = True
+                    except Exception:
+                        logger.exception("Autopilot report attachment failed for %s", tenant.id)
+                        results["errors"].append("Financial Package attachment failed.")
                 await send_email(
                     to=recipients,
                     subject=f"✦ {title}",
                     html=_digest_email_html(
-                        company=tenant.name if tenant.name and not tenant.name.startswith("org_") else "Your company",
+                        company=company,
                         title=title, body=body, results=results,
                         period_label=period_end.strftime("%B %Y"), link=link,
                     ),
                     text=f"{title}\n\n{body}\n\nOpen Nordavix: {link}",
+                    attachments=attachments,
                 )
         except Exception:
             logger.exception("Autopilot digest email failed for %s", tenant.id)
@@ -472,6 +494,8 @@ def _digest_email_html(*, company: str, title: str, body: str, results: dict,
         row("Statements requested from client", str(results["pbc_sent"]))
     if results.get("review_exceptions") is not None:
         row("Close-review exceptions", str(results.get("review_exceptions", 0)))
+    if results.get("reports_attached"):
+        row("Financial Package", "Attached (PDF)")
     errs = results.get("errors") or []
     err_block = ""
     if errs:

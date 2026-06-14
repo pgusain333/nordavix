@@ -32,13 +32,6 @@ import {
   autopilotApi, type AutopilotRun, type AutopilotRunResults, type AutopilotState,
 } from "@/modules/autopilot/api"
 
-// Brand pine — the fixed dark band used in the digest email + marketing AI
-// strip. Stays constant across light/dark so it reads as a brand moment.
-const PINE   = "#0C2620"
-const PINE_2 = "#103028"
-const CREAM  = "#F4F1E9"
-const SAGE   = "#9CC4AD"
-
 function ordinal(n: number): string {
   const s = ["th", "st", "nd", "rd"]
   const v = n % 100
@@ -71,6 +64,8 @@ export function AutopilotSection() {
   const [enabled, setEnabled]   = useState(false)
   const [runDay,  setRunDay]    = useState(1)
   const [runFlux, setRunFlux]   = useState(true)
+  const [runReview, setRunReview]     = useState(true)
+  const [attachReports, setAttachReports] = useState(false)
   const [sendPbc, setSendPbc]   = useState(false)
   const [pbcEmail, setPbcEmail] = useState("")
   const [savedAt, setSavedAt]   = useState<number | null>(null)
@@ -112,15 +107,17 @@ export function AutopilotSection() {
   const cfg = state?.config
 
   const dirty = useMemo(() => {
-    if (!cfg) return enabled || sendPbc || runFlux !== true || runDay !== 1 || pbcEmail !== ""
+    if (!cfg) return enabled || sendPbc || runFlux !== true || runReview !== true || attachReports || runDay !== 1 || pbcEmail !== ""
     return (
       enabled !== cfg.enabled ||
       runDay !== cfg.run_day ||
       runFlux !== cfg.run_flux ||
+      runReview !== cfg.run_review ||
+      attachReports !== cfg.attach_reports ||
       sendPbc !== cfg.send_pbc_requests ||
       pbcEmail.trim() !== (cfg.pbc_recipient_email ?? "")
     )
-  }, [cfg, enabled, runDay, runFlux, sendPbc, pbcEmail])
+  }, [cfg, enabled, runDay, runFlux, runReview, attachReports, sendPbc, pbcEmail])
 
   // Seed the form from the saved config. First appearance always seeds; after
   // that we only adopt a NEW server version when the form has no unsaved edits,
@@ -134,6 +131,8 @@ export function AutopilotSection() {
       setEnabled(cfg.enabled)
       setRunDay(cfg.run_day)
       setRunFlux(cfg.run_flux)
+      setRunReview(cfg.run_review)
+      setAttachReports(cfg.attach_reports)
       setSendPbc(cfg.send_pbc_requests)
       setPbcEmail(cfg.pbc_recipient_email ?? "")
       seededRef.current = stamp
@@ -158,6 +157,8 @@ export function AutopilotSection() {
         enabled,
         run_day: runDay,
         run_flux: runFlux,
+        run_review: runReview,
+        attach_reports: attachReports,
         send_pbc_requests: sendPbc,
         pbc_recipient_email: sendPbc ? pbcEmail.trim() : null,
       }),
@@ -243,33 +244,26 @@ export function AutopilotSection() {
         </div>
       )}
 
-      {/* ── 1 · HERO ────────────────────────────────────────────────── */}
-      <div
-        className="relative overflow-hidden rounded-2xl"
-        style={{ background: `linear-gradient(135deg, ${PINE} 0%, ${PINE_2} 100%)`, boxShadow: "var(--card-shadow)" }}
-      >
-        {/* soft sage glow */}
-        <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full"
-          style={{ background: "radial-gradient(circle, rgba(156,196,173,0.22) 0%, transparent 70%)" }} />
-        <div className="relative p-6 sm:p-7">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="flex items-start gap-3.5 min-w-0">
-              <span className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0"
-                style={{ background: "rgba(156,196,173,0.16)", border: "1px solid rgba(156,196,173,0.3)" }}>
-                <Rocket size={20} strokeWidth={1.8} style={{ color: SAGE }} />
+      {/* ── 1 · HEADER — compact, light module bar (matches other modules) ── */}
+      <div className="rounded-2xl"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+        <div className="p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex items-start gap-3 min-w-0">
+              <span className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                <Rocket size={17} strokeWidth={1.8} />
               </span>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-lg sm:text-xl font-bold leading-tight" style={{ color: CREAM }}>
-                    Close Autopilot
-                  </h2>
+                  <h2 className="text-base sm:text-lg font-bold leading-tight text-theme">Close Autopilot</h2>
                   <StatusPill on={isOn} running={running} />
                 </div>
-                <p className="text-[13px] mt-1.5 leading-relaxed max-w-md" style={{ color: "rgba(244,241,233,0.78)" }}>
+                <p className="text-[12px] mt-1 leading-relaxed max-w-xl" style={{ color: "var(--text-muted)" }}>
                   {running
-                    ? "Autopilot is running your close right now — syncing, preparing, and analysing. You'll get a digest the moment it finishes."
+                    ? "Running your close right now — syncing, preparing, and analysing. A digest lands the moment it finishes."
                     : isOn
-                      ? <>Each month, Autopilot syncs QuickBooks, prepares every reconciliation, runs flux{cfg?.send_pbc_requests ? ", emails your client for missing statements," : ""} and sends you a digest — unattended.</>
+                      ? <>Each month Autopilot syncs QuickBooks, prepares every reconciliation, runs flux{cfg?.send_pbc_requests ? ", emails your client for missing statements," : ""} and sends you a digest — unattended.</>
                       : "Turn one switch on and your month-end close runs itself — sync, AI preparation, flux, and a digest in your inbox. Set it up once below."}
                 </p>
               </div>
@@ -282,47 +276,48 @@ export function AutopilotSection() {
                 onClick={() => run.mutate()}
                 disabled={running || starting || !qboConnected}
                 title={!qboConnected ? "Connect QuickBooks first — Autopilot syncs the period from QBO." : undefined}
-                className="shrink-0 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                className="shrink-0 inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] font-bold transition-all disabled:cursor-not-allowed"
                 style={{
-                  background: (running || starting || !qboConnected) ? "rgba(156,196,173,0.28)" : SAGE,
-                  color: (running || starting || !qboConnected) ? CREAM : PINE,
+                  background: (running || starting || !qboConnected) ? "var(--surface-2)" : "var(--green)",
+                  color: (running || starting || !qboConnected) ? "var(--text-muted)" : "#fff",
+                  border: (running || starting || !qboConnected) ? "1px solid var(--border)" : "1px solid transparent",
                 }}
               >
-                {(running || starting) ? <Spinner className="h-4 w-4" /> : <Play size={15} strokeWidth={2.4} />}
+                {(running || starting) ? <Spinner className="h-4 w-4" /> : <Play size={14} strokeWidth={2.4} />}
                 {running ? "Running…" : starting ? "Starting…" : "Run now"}
               </button>
             )}
           </div>
 
           {/* live status strip */}
-          <div className="mt-5 flex items-center gap-4 flex-wrap text-[12px]" style={{ color: "rgba(244,241,233,0.7)" }}>
+          <div className="mt-3.5 flex items-center gap-x-4 gap-y-1.5 flex-wrap text-[12px]" style={{ color: "var(--text-muted)" }}>
             {isOn && cfg && (
               <span className="inline-flex items-center gap-1.5">
-                <Clock size={13} strokeWidth={1.8} style={{ color: SAGE }} />
-                Runs on the <strong style={{ color: CREAM }}>{ordinal(cfg.run_day)}</strong> of each month
+                <Clock size={13} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                Runs on the <strong style={{ color: "var(--text)" }}>{ordinal(cfg.run_day)}</strong> of each month
               </span>
             )}
             {nextLabel ? (
               <span className="inline-flex items-center gap-1.5">
-                <Zap size={13} strokeWidth={1.8} style={{ color: SAGE }} />
-                Next close: <strong style={{ color: CREAM }}>{nextLabel}</strong>
+                <Zap size={13} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                Next close: <strong style={{ color: "var(--text)" }}>{nextLabel}</strong>
               </span>
             ) : isOn ? (
               <span className="inline-flex items-center gap-1.5">
-                <CheckCircle2 size={13} strokeWidth={1.8} style={{ color: SAGE }} />
+                <CheckCircle2 size={13} strokeWidth={1.8} style={{ color: "var(--green)" }} />
                 Every finished month is closed — nothing pending
               </span>
             ) : null}
             {lastRun && (
               <span className="inline-flex items-center gap-1.5">
-                Last run: <strong style={{ color: CREAM }}>{lastRun.period_label}</strong> · {fmtRunTime(lastRun.finished_at ?? lastRun.started_at)}
+                Last run: <strong style={{ color: "var(--text)" }}>{lastRun.period_label}</strong> · {fmtRunTime(lastRun.finished_at ?? lastRun.started_at)}
               </span>
             )}
           </div>
 
           {runErr && (
-            <div className="mt-4 rounded-lg px-3 py-2 text-[12px] inline-flex items-start gap-1.5"
-              style={{ background: "rgba(255,255,255,0.08)", color: "#f4d6cf" }}>
+            <div className="mt-3.5 rounded-lg px-3 py-2 text-[12px] inline-flex items-start gap-1.5"
+              style={{ background: "var(--danger-subtle)", color: "var(--danger)", border: "1px solid var(--danger-border)" }}>
               <AlertTriangle size={13} strokeWidth={2} className="mt-0.5 shrink-0" />
               {runErr}
             </div>
@@ -331,11 +326,11 @@ export function AutopilotSection() {
           {/* QBO precondition — explains the disabled "Run now" button. Only for
               operators (the button is theirs) and only once we know it's absent. */}
           {isAdmin && !qboConnected && (
-            <div className="mt-4 rounded-lg px-3 py-2 text-[12px] flex items-start gap-1.5"
-              style={{ background: "rgba(255,255,255,0.08)", color: SAGE }}>
+            <div className="mt-3.5 rounded-lg px-3 py-2 text-[12px] flex items-start gap-1.5"
+              style={{ background: "var(--warn-subtle)", color: "var(--warn)", border: "1px solid var(--warn-border)" }}>
               <AlertTriangle size={13} strokeWidth={2} className="mt-0.5 shrink-0" />
-              <span style={{ color: "rgba(244,241,233,0.85)" }}>
-                Connect QuickBooks from the <strong style={{ color: CREAM }}>Connections</strong> page before
+              <span>
+                Connect QuickBooks from the <strong>Connections</strong> page before
                 running — Autopilot starts by syncing the period from QuickBooks.
               </span>
             </div>
@@ -348,12 +343,12 @@ export function AutopilotSection() {
                 transition={reduce ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
                 className="overflow-hidden"
               >
-                <div className="mt-4 h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.12)" }}>
+                <div className="mt-3.5 h-1 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
                   {/* Indeterminate progress sweep — respects prefers-reduced-motion:
                       reduced-motion users get a static partial bar, not an infinite loop. */}
                   <motion.div
                     className="h-full rounded-full"
-                    style={{ background: SAGE, width: "40%" }}
+                    style={{ background: "var(--green)", width: "40%" }}
                     animate={reduce ? { x: "80%" } : { x: ["-100%", "260%"] }}
                     transition={reduce ? { duration: 0 } : { repeat: Infinity, duration: 1.6, ease: "easeInOut" }}
                   />
@@ -372,7 +367,7 @@ export function AutopilotSection() {
           desc="Autopilot chains the same engines you use by hand — in order, every month, with no clicks."
         />
         <div className="px-6 pb-2">
-          <Stepper sendPbc={sendPbc} runFlux={runFlux} />
+          <Stepper sendPbc={sendPbc} runFlux={runFlux} runReview={runReview} />
         </div>
 
         <div className="px-6 pb-6 pt-2 space-y-5" style={{ borderTop: "1px solid var(--border)" }}>
@@ -433,13 +428,20 @@ export function AutopilotSection() {
                     </div>
                   </FieldGroup>
 
-                  {/* Flux */}
+                  {/* Flux + AI Close Review */}
                   <FieldGroup title="What to include">
                     <SetupToggle
                       label="Run flux analysis"
                       hint="Build the month's flux (vs. same month last year) and AI-comment the material variances."
                       value={runFlux}
                       onChange={setRunFlux}
+                      disabled={!isAdmin}
+                    />
+                    <SetupToggle
+                      label="Run AI Close Review"
+                      hint="After flux, the AI reviewing-partner checks reconciliation hygiene, completeness and anomalies — exceptions land in your digest."
+                      value={runReview}
+                      onChange={setRunReview}
                       disabled={!isAdmin}
                     />
                   </FieldGroup>
@@ -502,6 +504,17 @@ export function AutopilotSection() {
                         )}
                       </AnimatePresence>
                     </div>
+                  </FieldGroup>
+
+                  {/* Digest extras */}
+                  <FieldGroup title="Digest">
+                    <SetupToggle
+                      label="Attach Financial Package PDF"
+                      hint="Attach the period's Income Statement, Balance Sheet and Cash Flow (from the synced books) to the digest email your team receives."
+                      value={attachReports}
+                      onChange={setAttachReports}
+                      disabled={!isAdmin}
+                    />
                   </FieldGroup>
                 </div>
               </motion.div>
@@ -574,10 +587,10 @@ function StatusPill({ on, running }: { on: boolean; running: boolean }) {
   if (running) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-        style={{ background: "rgba(156,196,173,0.18)", color: SAGE }}>
+        style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
         <span className="relative flex h-1.5 w-1.5">
-          <span className="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping" style={{ background: SAGE }} />
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: SAGE }} />
+          <span className="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping" style={{ background: "var(--green)" }} />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: "var(--green)" }} />
         </span>
         Running
       </span>
@@ -585,53 +598,56 @@ function StatusPill({ on, running }: { on: boolean; running: boolean }) {
   }
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-      style={{ background: on ? "rgba(156,196,173,0.18)" : "rgba(244,241,233,0.1)", color: on ? SAGE : "rgba(244,241,233,0.6)" }}>
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: on ? SAGE : "rgba(244,241,233,0.5)" }} />
+      style={{ background: on ? "var(--green-subtle)" : "var(--surface-2)", color: on ? "var(--green)" : "var(--text-muted)" }}>
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: on ? "var(--green)" : "var(--text-muted)" }} />
       {on ? "On" : "Off"}
     </span>
   )
 }
 
-// The 5-step "what happens" visual. Steps dim when not part of the run.
-function Stepper({ sendPbc, runFlux }: { sendPbc: boolean; runFlux: boolean }) {
-  const steps: { icon: LucideIcon; label: string; sub: string; active: boolean }[] = [
-    { icon: RefreshCw,  label: "Sync",     sub: "QuickBooks balances & aging",        active: true },
-    { icon: Bot,        label: "Prepare",  sub: "AI agentic preparer on every account", active: true },
-    { icon: TrendingUp, label: "Flux",     sub: "Variance analysis + AI commentary",   active: runFlux },
-    { icon: Mail,       label: "Evidence", sub: "Email client for missing statements",  active: sendPbc },
-    { icon: Send,       label: "Digest",   sub: "Summary email to your team",           active: true },
+// The "what happens" visual. Steps dim when not part of the run; optional
+// steps that are off show a "Not included" badge.
+function Stepper({ sendPbc, runFlux, runReview }: { sendPbc: boolean; runFlux: boolean; runReview: boolean }) {
+  const steps: { icon: LucideIcon; label: string; sub: string; active: boolean; optional?: boolean }[] = [
+    { icon: RefreshCw,   label: "Sync",     sub: "QuickBooks balances & aging",          active: true },
+    { icon: Bot,         label: "Prepare",  sub: "AI agentic preparer on every account", active: true },
+    { icon: TrendingUp,  label: "Flux",     sub: "Variance analysis + AI commentary",    active: runFlux,   optional: true },
+    { icon: ShieldCheck, label: "Review",   sub: "AI reviewing-partner checks",          active: runReview, optional: true },
+    { icon: Mail,        label: "Evidence", sub: "Email client for missing statements",  active: sendPbc,   optional: true },
+    { icon: Send,        label: "Digest",   sub: "Summary email to your team",           active: true },
   ]
   return (
-    <div className="flex items-stretch gap-1.5 sm:gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+    // Mobile: a 2-column grid so all five steps are fully visible at once
+    // (the old single horizontal-scroll row cut the later cards off-screen).
+    // sm+: the original horizontal row, scrollable if it overflows.
+    <div className="grid grid-cols-2 gap-2 sm:flex sm:items-stretch sm:overflow-x-auto sm:pb-1" style={{ scrollbarWidth: "none" }}>
       {steps.map((s, i) => {
         const Icon = s.icon
         return (
-          <div key={s.label} className="flex items-stretch gap-1.5 sm:gap-2 min-w-0">
-            <div className="rounded-xl p-3 min-w-[124px] sm:min-w-[140px] flex-1"
-              style={{
-                background: s.active ? "var(--green-subtle)" : "var(--surface-2)",
-                border: `1px solid ${s.active ? "var(--green)" : "var(--border)"}`,
-                opacity: s.active ? 1 : 0.55,
-                transition: "all .2s",
-              }}>
-              <div className="flex items-center gap-2">
-                <span className="h-7 w-7 rounded-lg flex items-center justify-center shrink-0"
-                  style={{ background: "var(--surface)", color: s.active ? "var(--green)" : "var(--text-muted)" }}>
-                  <Icon size={14} strokeWidth={1.8} />
-                </span>
-                <span className="text-[10px] font-bold uppercase tracking-wider"
-                  style={{ color: s.active ? "var(--green)" : "var(--text-muted)" }}>
-                  {i + 1} · {s.label}
-                </span>
-              </div>
-              <p className="text-[11px] mt-1.5 leading-snug" style={{ color: "var(--text-muted)" }}>{s.sub}</p>
-              {!s.active && (i === 2 || i === 3) && (
-                <span className="inline-flex items-center mt-1.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
-                  style={{ border: "1px solid var(--border-strong)", color: "var(--text-muted)" }}>
-                  Not included
-                </span>
-              )}
+          <div key={s.label} className="rounded-xl p-3 sm:min-w-[140px] sm:flex-1"
+            style={{
+              background: s.active ? "var(--green-subtle)" : "var(--surface-2)",
+              border: `1px solid ${s.active ? "var(--green)" : "var(--border)"}`,
+              opacity: s.active ? 1 : 0.6,
+              transition: "all .2s",
+            }}>
+            <div className="flex items-center gap-2">
+              <span className="h-7 w-7 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: "var(--surface)", color: s.active ? "var(--green)" : "var(--text-muted)" }}>
+                <Icon size={14} strokeWidth={1.8} />
+              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider"
+                style={{ color: s.active ? "var(--green)" : "var(--text-muted)" }}>
+                {i + 1} · {s.label}
+              </span>
             </div>
+            <p className="text-[11px] mt-1.5 leading-snug" style={{ color: "var(--text-muted)" }}>{s.sub}</p>
+            {!s.active && s.optional && (
+              <span className="inline-flex items-center mt-1.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+                style={{ border: "1px solid var(--border-strong)", color: "var(--text-muted)" }}>
+                Not included
+              </span>
+            )}
           </div>
         )
       })}
@@ -656,6 +672,8 @@ function resultChips(r: AutopilotRunResults): string[] {
   if (r.flux_created && r.flux_material != null) out.push(`${r.flux_material} material flux variances`)
   if (r.flux_ai_queued) out.push(`${r.flux_ai_queued} variance commentary`)
   if (r.pbc_sent) out.push(`${r.pbc_sent} statements requested`)
+  if (r.review_exceptions != null) out.push(`${r.review_exceptions} review exception${r.review_exceptions === 1 ? "" : "s"}`)
+  if (r.reports_attached) out.push("Financial Package attached")
   return out
 }
 

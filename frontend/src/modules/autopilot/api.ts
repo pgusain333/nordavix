@@ -7,6 +7,8 @@ export interface AutopilotConfig {
   run_flux: boolean
   send_pbc_requests: boolean
   pbc_recipient_email: string | null
+  run_review: boolean
+  attach_reports: boolean
   updated_at: string | null
 }
 
@@ -21,6 +23,9 @@ export interface AutopilotRunResults {
   flux_material?: number
   flux_ai_queued?: number
   pbc_sent?: number
+  review_exceptions?: number
+  review_high?: number
+  reports_attached?: boolean
   errors?: string[]
 }
 

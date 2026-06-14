@@ -45,6 +45,8 @@ def _serialize_config(c: AutopilotConfig | None) -> dict | None:
         "run_flux":            c.run_flux,
         "send_pbc_requests":   c.send_pbc_requests,
         "pbc_recipient_email": c.pbc_recipient_email,
+        "run_review":          c.run_review,
+        "attach_reports":      c.attach_reports,
         "updated_at":          c.updated_at.isoformat() if c.updated_at else None,
     }
 
@@ -97,6 +99,8 @@ class ConfigBody(BaseModel):
     run_flux: bool = True
     send_pbc_requests: bool = False
     pbc_recipient_email: str | None = Field(default=None, max_length=255)
+    run_review: bool = True
+    attach_reports: bool = False
 
 
 @router.put("/config")
@@ -120,6 +124,8 @@ async def put_config(
     config.run_flux            = body.run_flux
     config.send_pbc_requests   = body.send_pbc_requests
     config.pbc_recipient_email = (body.pbc_recipient_email or "").strip().lower() or None
+    config.run_review          = body.run_review
+    config.attach_reports      = body.attach_reports
     config.updated_by          = user.id
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,

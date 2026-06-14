@@ -34,6 +34,18 @@ class AutopilotConfig(TenantBase):
     run_flux: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     send_pbc_requests: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     pbc_recipient_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # AI reviewing-partner (Close Review) pass after flux/evidence — surfaces
+    # reconciliation-hygiene / completeness / anomaly exceptions in the digest.
+    # On by default (read-only analysis); the run already performs it, this just
+    # makes it controllable + visible.
+    run_review: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true",
+    )
+    # Attach the Financial Package PDF (IS / BS / CF from the synced snapshot)
+    # to the digest email. Off by default — keeps the digest light unless asked.
+    attach_reports: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
 
     updated_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
