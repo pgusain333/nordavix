@@ -846,11 +846,33 @@ async def build_variance_commentary(
     except Exception:
         logger.exception("Loading chart for proposed entries failed (acct=%s)", qid)
 
+    # Client Memory (apply step): if the firm has CONFIRMED an offset convention
+    # for this account, tell the model to honour it. Confirm-first — only active
+    # facts reach here; suggested/dismissed ones never influence output.
+    memory_hint = None
+    try:
+        from modules.memory.service import active_offset_fact
+        fact = await active_offset_fact(db, source="recon", source_ref=qid)
+        if fact:
+            v = fact.value or {}
+            num = v.get("to_account_number") or ""
+            nm = v.get("to_account_name") or ""
+            label = f"{num} · {nm}".strip(" ·") if num else nm
+            if label:
+                memory_hint = (
+                    f"Firm convention for this account (confirmed by the reviewer): when an "
+                    f"adjusting entry is warranted, book the offset to {label}. Use that account "
+                    f"for the offset line unless the evidence clearly points elsewhere."
+                )
+    except Exception:
+        logger.exception("memory hint lookup failed (acct=%s)", qid)
+
     actions = _generate_recon_actions(
         account_name=account_name, account_number=account_number,
         account_type=account_type, period_end=period_end,
         opening=opening, gl_balance=gl_balance, target=gl_balance,
         items=candidate_items, tied_out=False, accounts=accounts, variance=variance,
+        memory_hint=memory_hint,
     )
     await _persist_recon_proposals(
         db, tenant_id=conn.tenant_id, qid=qid, period_end=period_end,
@@ -1185,6 +1207,7 @@ def _generate_recon_actions(
     tied_out: bool,
     accounts: list[dict[str, Any]] | None = None,
     variance: Decimal | None = None,
+    memory_hint: str | None = None,
 ) -> dict[str, Any]:
     """The ACTIONABLE layer of recon commentary. One Claude call, grounded
     in the actual reconciling items, that thinks like a reviewing
@@ -1286,13 +1309,15 @@ def _generate_recon_actions(
             f"{items_block}\n\n"
             f"Chart of accounts (use these for any proposed_entries lines):\n"
             f"{chart_block}\n\n"
-            "Review and return the JSON."
+            + (f"{memory_hint}\n\n" if memory_hint else "")
+            + "Review and return the JSON."
         )
         key = compute_cache_key(
             account_number or account_name, str(gl_balance), str(target),
-            # v2 = output now includes proposed_entries; bump so we don't serve
-            # a pre-feature cached response that lacks them.
-            f"recon-actions-v2-{period_end.isoformat()}-{len(items)}",
+            # v3 = prompt may now carry a confirmed Client Memory hint; the
+            # 'mem' suffix keeps a memory-influenced run from serving (or
+            # poisoning) the memoryless cached answer. v2 added proposed_entries.
+            f"recon-actions-v3-{period_end.isoformat()}-{len(items)}-{'mem' if memory_hint else ''}",
         )
         resp = generate_narrative(system_prompt, user_prompt, key, max_tokens=1100)
         raw = resp.content.strip()

@@ -31,9 +31,10 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   Building2, User, Briefcase, Users as UsersIcon, Bell, Sparkles,
   Palette, Download, Info, ArrowRight, Plus, Mail, ExternalLink,
-  CheckCircle2, FileDown, AlertTriangle, ShieldCheck, BookOpen,
+  CheckCircle2, FileDown, AlertTriangle, ShieldCheck, BookOpen, Brain,
   type LucideIcon,
 } from "lucide-react"
+import { MemorySection } from "@/modules/memory/MemorySection"
 import { Spinner } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -48,7 +49,7 @@ import {
 
 type SectionKey =
   | "company" | "profile" | "workspaces" | "team"
-  | "notifications" | "ai" | "appearance" | "data" | "about"
+  | "notifications" | "ai" | "memory" | "appearance" | "data" | "about"
 
 interface SectionDef {
   key:   SectionKey
@@ -64,6 +65,7 @@ const SECTIONS: SectionDef[] = [
   { key: "team",          label: "Team",            icon: UsersIcon,  hint: "Members and roles" },
   { key: "notifications", label: "Notifications",   icon: Bell,       hint: "Email and in-app alerts" },
   { key: "ai",            label: "AI preferences",  icon: Sparkles,   hint: "Agentic, materiality, tone" },
+  { key: "memory",        label: "Client memory",   icon: Brain,      hint: "What the AI has learned" },
   { key: "appearance",    label: "Appearance",      icon: Palette,    hint: "Theme and density" },
   { key: "data",          label: "Data & export",   icon: Download,   hint: "Audit log, exports" },
   { key: "about",         label: "About",           icon: Info,       hint: "Version, docs, support" },
@@ -134,6 +136,7 @@ export function SettingsPage() {
                 {active === "team"          && <TeamSection />}
                 {active === "notifications" && <NotificationsSection />}
                 {active === "ai"            && <AIPreferencesSection />}
+                {active === "memory"        && <MemorySection />}
                 {active === "appearance"    && <AppearanceSection />}
                 {active === "data"          && <DataExportSection />}
                 {active === "about"         && <AboutSection />}

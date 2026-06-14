@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
+from core.db.base import current_request_readonly
 from core.db.session import get_db
 from models.account_review_status import AccountReviewStatus
 from models.closed_period import ClosedPeriod
@@ -38,6 +39,7 @@ from modules.adjustments.service import (
     period_accounts,
     serialize,
 )
+from modules.memory import service as memory
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -237,6 +239,10 @@ async def edit_proposal(
     if await _is_closed(db, tenant_id, entry.period_end):
         raise HTTPException(status_code=423, detail="Books are closed for this period.")
 
+    # Snapshot the AI's original lines before we overwrite them — the diff is
+    # what Client Memory learns from (which offset account the human prefers).
+    before_lines = list(entry.lines or [])
+
     if "lines" in payload:
         lines = normalize_lines(payload.get("lines"))
         if not lines_balanced(lines):
@@ -249,6 +255,34 @@ async def edit_proposal(
         entry.description = str(payload["description"]).strip()[:500]
     if "memo" in payload:
         entry.memo = (str(payload["memo"]).strip()[:500] or None) if payload["memo"] else None
+
+    # ── Client Memory: learn from this correction (best-effort) ──────────
+    # If the human re-pointed the offset account, record the AI-original ->
+    # human-final swap and let the distiller decide whether it's now a
+    # repeatable convention worth suggesting. Must NEVER block or undo the edit.
+    #
+    # Skip for read-only requests (demo / suspended members): the edit itself
+    # is rejected at commit, so we never attempt a write here. The capture runs
+    # in a SAVEPOINT so a failure (e.g. a concurrent-insert unique race) rolls
+    # back only the memory writes, leaving the edit's transaction clean.
+    if not current_request_readonly.get():
+        try:
+            swap = memory.detect_offset_swap(before_lines, entry.lines)
+            if swap:
+                async with db.begin_nested():
+                    await memory.record_signal(
+                        db, tenant_id=tenant_id, signal_type="account_swap",
+                        source=entry.source, source_ref=entry.source_ref,
+                        period_end=entry.period_end, account_key=entry.source_ref,
+                        proposed_entry_id=entry.id, before=swap["from"], after=swap["to"],
+                        created_by=user.id,
+                    )
+                    await memory.distill_offset_swap(
+                        db, tenant_id=tenant_id, source=entry.source,
+                        source_ref=entry.source_ref, swap=swap,
+                    )
+        except Exception:
+            logger.exception("client-memory capture failed (entry=%s)", entry.id)
 
     await write_audit_event(
         db,

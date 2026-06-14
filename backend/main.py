@@ -22,6 +22,7 @@ from modules.flux.router import router as flux_router
 from modules.insights.router import router as insights_router
 from modules.intercompany.router import router as intercompany_router
 from modules.internal.router import router as internal_router
+from modules.memory.router import router as memory_router
 from modules.notifications.router import router as notifications_router
 from modules.onboarding.router import router as onboarding_router
 from modules.pbc.router import public_router as pbc_public_router
@@ -131,6 +132,7 @@ app.include_router(pbc_public_router,     prefix="/api/pbc-public",   tags=["pbc
 app.include_router(autopilot_router,      prefix="/api/autopilot",    tags=["autopilot"])
 app.include_router(review_router,         prefix="/api/review",       tags=["review"])
 app.include_router(advisory_router,       prefix="/api/advisory",     tags=["advisory"])
+app.include_router(memory_router,         prefix="/api/memory",       tags=["memory"])
 app.include_router(workpapers_router,      prefix="/api/workpapers",   tags=["workpapers"])
 
 

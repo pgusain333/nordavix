@@ -7,6 +7,7 @@ from models.ai_usage import AIUsage
 from models.audit_log import AuditLog
 from models.autopilot import AutopilotConfig, AutopilotRun
 from models.bank_statement import BankStatement
+from models.client_memory import ClientMemoryFact, ClientMemorySignal
 from models.close_review import CloseReview, CloseReviewFinding
 from models.closed_period import ClosedPeriod
 from models.comment import Comment
@@ -47,6 +48,8 @@ __all__ = [
     "TrackedRecommendation",
     "AuditLog",
     "BankStatement",
+    "ClientMemoryFact",
+    "ClientMemorySignal",
     "CloseReview",
     "CloseReviewFinding",
     "ClosedPeriod",
