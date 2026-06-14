@@ -13,6 +13,7 @@ from modules.adjustments.router import router as adjustments_router
 from modules.advisory.router import router as advisory_router
 from modules.audit.router import router as audit_router
 from modules.autopilot.router import router as autopilot_router
+from modules.close_workflow.router import router as close_workflow_router
 from modules.comments.router import router as comments_router
 from modules.email.router import router as email_router
 from modules.exports.router import router as exports_router
@@ -134,6 +135,7 @@ app.include_router(review_router,         prefix="/api/review",       tags=["rev
 app.include_router(advisory_router,       prefix="/api/advisory",     tags=["advisory"])
 app.include_router(memory_router,         prefix="/api/memory",       tags=["memory"])
 app.include_router(workpapers_router,      prefix="/api/workpapers",   tags=["workpapers"])
+app.include_router(close_workflow_router,  prefix="/api/close",        tags=["close"])
 
 
 @app.get("/api/health", tags=["system"])

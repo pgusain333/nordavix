@@ -9,6 +9,7 @@ from models.autopilot import AutopilotConfig, AutopilotRun
 from models.bank_statement import BankStatement
 from models.client_memory import ClientMemoryFact, ClientMemorySignal
 from models.close_review import CloseReview, CloseReviewFinding
+from models.close_step import CloseStepInstance, CloseTemplateStep
 from models.closed_period import ClosedPeriod
 from models.comment import Comment
 from models.evidence_request import EvidenceRequest
@@ -52,6 +53,8 @@ __all__ = [
     "ClientMemorySignal",
     "CloseReview",
     "CloseReviewFinding",
+    "CloseStepInstance",
+    "CloseTemplateStep",
     "ClosedPeriod",
     "Comment",
     "Feedback",

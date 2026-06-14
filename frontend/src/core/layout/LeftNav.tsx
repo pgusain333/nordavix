@@ -15,7 +15,7 @@ import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
   MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList, Search,
-  PanelLeft, PanelLeftClose, Sparkles, ShieldCheck, Target, Rocket,
+  PanelLeft, PanelLeftClose, Sparkles, ShieldCheck, Target, Rocket, ListChecks,
   type LucideIcon,
 } from "lucide-react"
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
@@ -55,6 +55,7 @@ function prefetchRoute(path: string): void {
   switch (p) {
     case "":               return // Dashboard is eager
     case "autopilot":      void import("@/modules/autopilot/pages/AutopilotPage");          return
+    case "close":          void import("@/modules/close/pages/CloseWorkflowPage");          return
     case "tasks":          void import("@/modules/tasks/pages/TasksPage");                  return
     case "connections":    void import("@/modules/connections/pages/ConnectionsPage");      return
     case "flux":           void import("@/modules/flux/pages/FluxMonthIndex");              return
@@ -114,6 +115,7 @@ function prefetchData(qc: QueryClient, path: string): void {
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard",          path: "/app",                 icon: LayoutDashboard, available: true  },
   { label: "Close Autopilot",    path: "/app/autopilot",       icon: Rocket,          available: true  },
+  { label: "Close Workflow",     path: "/app/close",           icon: ListChecks,      available: true  },
   { label: "Close Tasks",        path: "/app/tasks",           icon: CheckSquare,     available: true  },
   { label: "Connections",        path: "/app/connections",     icon: Plug,            available: true  },
   { label: "Schedules",          path: "/app/schedules",       icon: ClipboardList,   available: true  },
