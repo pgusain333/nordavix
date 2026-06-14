@@ -268,8 +268,28 @@ async def replace_open_proposals(
 # ── Bank: deterministic generation ────────────────────────────────────────
 
 
+def _pick_bank_offset(
+    *, is_deposit: bool, accounts: list[dict], preferred: dict | None,
+) -> dict | None:
+    """Choose the offset account for a bank-only item. Prefer the firm's
+    CONFIRMED offset (Client Memory) when its account TYPE matches the
+    direction — an income account for a deposit, an expense account for a
+    withdrawal — so a learned fee account is never put on a deposit (or
+    vice versa). Falls back to the keyword heuristic otherwise."""
+    if preferred:
+        ptype = (preferred.get("account_type") or "").lower()
+        if is_deposit and any(t in ptype for t in ("income", "revenue")):
+            return preferred
+        if (not is_deposit) and ("expense" in ptype):
+            return preferred
+    if is_deposit:
+        return _find_account(accounts, types=("income", "revenue"), keywords=_INTEREST_KEYWORDS)
+    return _find_account(accounts, types=("expense",), keywords=_FEE_KEYWORDS)
+
+
 def build_bank_entries(
-    *, bank_account: dict | None, bank_only: list[dict], accounts: list[dict]
+    *, bank_account: dict | None, bank_only: list[dict], accounts: list[dict],
+    preferred_offset: dict | None = None,
 ) -> list[dict]:
     """Draft one balanced JE per bank-only item.
 
@@ -278,6 +298,8 @@ def build_bank_entries(
       * withdrawal (amount < 0): Dr Bank Fees / Service Charges, Cr [bank/cash]
     When the chart already has a matching offset account, we propose the real
     one (with its qbo_account_id); otherwise a free-text label the user edits.
+    `preferred_offset` (a confirmed Client Memory convention for this bank
+    account) overrides the heuristic when its type fits the direction.
     """
     bank_name = (bank_account or {}).get("account_name") or "Cash / Bank"
     bank_qid = (bank_account or {}).get("qbo_account_id")
@@ -299,7 +321,7 @@ def build_bank_entries(
         }
 
         if is_deposit:
-            offset = _find_account(accounts, types=("income", "revenue"), keywords=_INTEREST_KEYWORDS)
+            offset = _pick_bank_offset(is_deposit=True, accounts=accounts, preferred=preferred_offset)
             offset_name = offset["account_name"] if offset else "Interest / Other Income"
             lines = [
                 {**bank_line, "debit": str(mag), "credit": "0.00"},
@@ -314,7 +336,7 @@ def build_bank_entries(
             kind = "interest / deposit"
             direction = "deposit"
         else:
-            offset = _find_account(accounts, types=("expense",), keywords=_FEE_KEYWORDS)
+            offset = _pick_bank_offset(is_deposit=False, accounts=accounts, preferred=preferred_offset)
             offset_name = offset["account_name"] if offset else "Bank Fees / Service Charges"
             lines = [
                 {
@@ -358,8 +380,30 @@ async def generate_bank_proposals(
     account+period from its bank-only items. Idempotent; caller commits."""
     accounts = await period_accounts(db, tenant_id, period_end)
     bank_account = next((a for a in accounts if a["qbo_account_id"] == qbo_account_id), None)
+
+    # Client Memory (apply): if the firm has CONFIRMED an offset for this bank
+    # account's adjustments, resolve it against the live chart (for its type +
+    # ids) and let it override the keyword heuristic. Confirm-first — only
+    # active facts are returned; best-effort so it never blocks generation.
+    preferred_offset = None
+    try:
+        from modules.memory.service import active_offset_fact
+        fact = await active_offset_fact(db, source="bank", source_ref=qbo_account_id)
+        if fact:
+            v = fact.value or {}
+            tnum = (v.get("to_account_number") or "").strip()
+            tqid = (v.get("to_account_qbo_id") or "")
+            preferred_offset = next(
+                (a for a in accounts if (tqid and a["qbo_account_id"] == tqid)
+                 or (tnum and (a.get("account_number") or "") == tnum)),
+                None,
+            )
+    except Exception:
+        logger.exception("bank offset memory lookup failed for acct=%s", qbo_account_id)
+
     entries = build_bank_entries(
-        bank_account=bank_account, bank_only=bank_only, accounts=accounts
+        bank_account=bank_account, bank_only=bank_only, accounts=accounts,
+        preferred_offset=preferred_offset,
     )
     return await replace_open_proposals(
         db,

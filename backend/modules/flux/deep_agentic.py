@@ -190,6 +190,7 @@ def _build_user_prompt(
     acct: Account, tb: TrialBalance, var: Variance,
     txns: list[VarianceTransaction],
     chart: list[dict[str, Any]] | None = None,
+    memory_hint: str | None = None,
 ) -> str:
     """Concatenate the variance + transaction evidence into one prompt."""
     pct_str = (
@@ -247,6 +248,8 @@ def _build_user_prompt(
             + chart_lines
         )
 
+    memory_block = f"\n\n{memory_hint}" if memory_hint else ""
+
     return (
         f"Analyze this variance.\n\n"
         f"Account:            {acct.account_number} - {acct.account_name}\n"
@@ -257,6 +260,7 @@ def _build_user_prompt(
         f"Percent change:     {pct_str}{anomaly_desc}"
         f"{txn_block}"
         f"{chart_block}"
+        f"{memory_block}"
     )
 
 
@@ -390,11 +394,38 @@ async def run_deep_agentic_for_variance(
     except Exception:
         logger.exception("Loading chart for flux proposed entries failed (variance %s)", variance_id)
 
-    user_prompt = _build_user_prompt(acct=acct, tb=tb, var=var, txns=txns, chart=chart)
+    # Client Memory (apply): a CONFIRMED offset convention for THIS account
+    # (keyed on the variance's GL account, not the ephemeral variance id) is
+    # injected into the prompt so flux adjusting entries honour the firm's
+    # preferred offset. Confirm-first; best-effort.
+    memory_hint = None
+    try:
+        from modules.memory.service import active_offset_fact
+        if acct.qbo_account_id:
+            fact = await active_offset_fact(db, source="flux", source_ref=acct.qbo_account_id)
+            if fact:
+                v = fact.value or {}
+                num = (v.get("to_account_number") or "").strip()
+                nm = (v.get("to_account_name") or "").strip()
+                label = f"{num} · {nm}".strip(" ·") if num else nm
+                if label:
+                    memory_hint = (
+                        f"Firm convention for this account (confirmed by the reviewer): when an "
+                        f"adjusting entry is warranted, book the offset to {label}. Use that account "
+                        f"for the offset line unless the evidence clearly points elsewhere."
+                    )
+    except Exception:
+        logger.exception("flux memory hint lookup failed (variance %s)", variance_id)
+
+    user_prompt = _build_user_prompt(
+        acct=acct, tb=tb, var=var, txns=txns, chart=chart, memory_hint=memory_hint
+    )
     # v3 = output now also includes proposed_entries (balanced adjusting JEs).
-    # The version tag busts any cached v2 responses that lack the new field.
+    # The version tag busts any cached v2 responses that lack the new field; the
+    # 'mem' suffix keeps a memory-influenced run from colliding with a memoryless
+    # cached one.
     cache_key = hashlib.sha256(
-        f"deep|v3|{var.id}|{len(txns)}|{var.dollar_variance}".encode()
+        f"deep|v3|{var.id}|{len(txns)}|{var.dollar_variance}|{'mem' if memory_hint else ''}".encode()
     ).hexdigest()
 
     try:

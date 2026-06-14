@@ -279,18 +279,39 @@ async def edit_proposal(
         try:
             swap = memory.detect_offset_swap(before_lines, entry.lines)
             if swap:
-                await memory.record_signal(
-                    db, tenant_id=tenant_id, signal_type="account_swap",
-                    source=entry.source, source_ref=entry.source_ref,
-                    period_end=entry.period_end, account_key=entry.source_ref,
-                    proposed_entry_id=entry.id, before=swap["from"], after=swap["to"],
-                    created_by=user.id,
-                )
-                await memory.distill_offset_swap(
-                    db, tenant_id=tenant_id, source=entry.source,
-                    source_ref=entry.source_ref, swap=swap,
-                )
-                await db.commit()
+                # The memory key must be a STABLE account id so the convention
+                # recurs. recon/bank already use source_ref = qbo_account_id;
+                # flux's source_ref is the ephemeral variance id, so resolve the
+                # variance's GL account (matching the flux apply lookup). If it
+                # can't be resolved, skip flux capture rather than key on an id
+                # that never repeats.
+                mem_ref: str | None = entry.source_ref
+                if entry.source == "flux":
+                    mem_ref = None
+                    try:
+                        from models.account import Account
+                        from models.variance import Variance
+                        vid = uuid.UUID(entry.source_ref)
+                        mem_ref = (await db.execute(
+                            select(Account.qbo_account_id)
+                            .join(Variance, Variance.account_id == Account.id)
+                            .where(Variance.id == vid)
+                        )).scalar_one_or_none()
+                    except Exception:
+                        mem_ref = None
+                if mem_ref:
+                    await memory.record_signal(
+                        db, tenant_id=tenant_id, signal_type="account_swap",
+                        source=entry.source, source_ref=mem_ref,
+                        period_end=entry.period_end, account_key=mem_ref,
+                        proposed_entry_id=entry.id, before=swap["from"], after=swap["to"],
+                        created_by=user.id,
+                    )
+                    await memory.distill_offset_swap(
+                        db, tenant_id=tenant_id, source=entry.source,
+                        source_ref=mem_ref, swap=swap,
+                    )
+                    await db.commit()
         except Exception:
             logger.exception("client-memory capture failed (entry=%s)", entry.id)
             await db.rollback()
