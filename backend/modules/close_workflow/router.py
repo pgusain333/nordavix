@@ -18,7 +18,7 @@ import logging
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -102,6 +102,7 @@ async def get_checklist(
 @router.post("/step")
 async def update_step(
     tenant_id: CurrentTenantId,
+    background_tasks: BackgroundTasks,
     user: User = Depends(require_role("preparer")),
     db: AsyncSession = Depends(get_db),
     period_end: str = Body(...),
@@ -129,6 +130,14 @@ async def update_step(
             )
         if status not in service.VALID_STATUS:
             raise HTTPException(status_code=400, detail="Invalid status.")
+        # Dependency gate: can't complete a step while its prerequisite is open.
+        if status == "done":
+            blocked, prereq_title = await service.blocked_for(db, pe, step_key)
+            if blocked:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Complete “{prereq_title}” first — this step is blocked until then.",
+                )
         inst.status = status
         now = service.utcnow()
         if status == "done":
@@ -141,6 +150,7 @@ async def update_step(
             inst.started_at = now
 
     # Assign / due — admin only (matches the Tasks rules).
+    notify_assignee: uuid.UUID | None = None
     if assignee_id is not None or clear_assignee or due_date is not None or clear_due:
         if not is_admin:
             raise HTTPException(status_code=403, detail="Only an admin can assign owners or set due dates.")
@@ -148,9 +158,22 @@ async def update_step(
             inst.assignee_id = None
         elif assignee_id is not None:
             try:
-                inst.assignee_id = uuid.UUID(assignee_id)
+                new_uid = uuid.UUID(assignee_id)
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid assignee_id.")
+            # The assignee must be a member of THIS workspace — the User SELECT is
+            # tenant-auto-filtered, so this rejects cross-tenant / garbage UUIDs
+            # (and prevents an orphan notification to a non-member).
+            member = (await db.execute(
+                select(User.id).where(User.id == new_uid)
+            )).scalar_one_or_none()
+            if member is None:
+                raise HTTPException(status_code=400, detail="Assignee is not a member of this workspace.")
+            # Notify the new owner — but not when re-assigning to the same person
+            # or assigning the step to yourself.
+            if new_uid != inst.assignee_id and new_uid != user.id:
+                notify_assignee = new_uid
+            inst.assignee_id = new_uid
         if clear_due:
             inst.due_date = None
         elif due_date is not None:
@@ -164,8 +187,27 @@ async def update_step(
         entity_type="close_step_instance", entity_id=inst.id,
         metadata={"step_key": step_key, "period_end": pe.isoformat(), "status": inst.status},
     )
+    step_title = inst.title
     await db.commit()
     await db.refresh(inst)
+
+    # Best-effort "assigned to you" notification — after the commit, never blocks
+    # the assignment if it fails.
+    if notify_assignee is not None:
+        try:
+            from modules.notifications.emails import notify_and_email_users
+            await notify_and_email_users(
+                db, background_tasks, tenant_id=tenant_id, recipient_ids=[notify_assignee],
+                type="close_step_assigned",
+                title=f"Close step assigned: {step_title}",
+                body=f"{user.email} assigned you “{step_title}” for {pe.strftime('%b %Y')}.",
+                link="/app/close",
+                entity_type="close_step_instance", entity_id=str(inst.id),
+                actor_name=user.email,
+            )
+        except Exception:
+            logger.warning("close step assignment notification failed", exc_info=True)
+
     # Re-derive live status for linked steps so the response is accurate.
     linked = inst.linked_module in service.VALID_LINKED
     if linked:
@@ -192,6 +234,35 @@ async def get_template(
                       sorted(steps, key=lambda s: s.order_index)]}
 
 
+async def _resolve_dependency(db: AsyncSession, step_key: str, dep_key: str | None) -> str | None:
+    """Validate a prerequisite key for `step_key`: must exist, not be itself, and
+    not create a cycle. Returns the normalized key or None. The SELECT is
+    tenant-auto-filtered, so cross-tenant keys are invisible."""
+    dep = (dep_key or "").strip()
+    if not dep:
+        return None
+    if dep == step_key:
+        raise HTTPException(status_code=400, detail="A step can't depend on itself.")
+    rows = list((await db.execute(select(CloseTemplateStep))).scalars().all())
+    by_key = {r.key: r for r in rows}
+    if dep not in by_key:
+        raise HTTPException(status_code=400, detail="Prerequisite step not found.")
+    if not by_key[dep].is_active:
+        raise HTTPException(status_code=400, detail="A hidden step can't be a prerequisite.")
+    # Walk the chain from dep — if it leads back to step_key, it's circular.
+    seen: set[str] = set()
+    cur: str | None = dep
+    while cur:
+        if cur == step_key:
+            raise HTTPException(status_code=400, detail="That would create a circular dependency.")
+        if cur in seen:
+            break
+        seen.add(cur)
+        nxt = by_key.get(cur)
+        cur = nxt.depends_on_key if nxt else None
+    return dep
+
+
 @router.post("/template")
 async def add_step(
     tenant_id: CurrentTenantId,
@@ -202,6 +273,7 @@ async def add_step(
     category: str = Body("custom"),
     due_offset_days: int | None = Body(None),
     default_assignee_role: str | None = Body(None),
+    depends_on_key: str | None = Body(None),
 ) -> dict:
     if not title.strip():
         raise HTTPException(status_code=400, detail="Title is required.")
@@ -210,11 +282,14 @@ async def add_step(
     # Ensure the default template exists first, then append the custom step.
     existing = await service.get_or_seed_template(db, tenant_id, user.id)
     max_order = max((s.order_index for s in existing), default=-1)
+    new_key = f"custom-{uuid.uuid4().hex[:8]}"
+    dep = await _resolve_dependency(db, new_key, depends_on_key)
     step = CloseTemplateStep(
-        id=uuid.uuid4(), tenant_id=tenant_id, key=f"custom-{uuid.uuid4().hex[:8]}",
+        id=uuid.uuid4(), tenant_id=tenant_id, key=new_key,
         order_index=max_order + 1, title=title.strip(), description=(description or None),
         category=category, linked_module=None, due_offset_days=due_offset_days,
-        default_assignee_role=default_assignee_role, is_active=True, created_by=user.id,
+        default_assignee_role=default_assignee_role, depends_on_key=dep,
+        is_active=True, created_by=user.id,
     )
     db.add(step)
     await db.commit()
@@ -235,6 +310,8 @@ async def edit_step(
     default_assignee_role: str | None = Body(None),
     is_active: bool | None = Body(None),
     order_index: int | None = Body(None),
+    depends_on_key: str | None = Body(None),
+    clear_depends_on: bool = Body(False),
 ) -> dict:
     try:
         sid = uuid.UUID(step_id)
@@ -262,6 +339,10 @@ async def edit_step(
         step.is_active = is_active
     if order_index is not None:
         step.order_index = order_index
+    if clear_depends_on:
+        step.depends_on_key = None
+    elif depends_on_key is not None:
+        step.depends_on_key = await _resolve_dependency(db, step.key, depends_on_key)
 
     await db.commit()
     await db.refresh(step)

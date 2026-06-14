@@ -48,6 +48,9 @@ VALID_CATEGORIES = {
 # linked_module values that auto-derive status from a real module.
 VALID_LINKED = {"sync", "recon", "schedule", "flux", "close"}
 VALID_STATUS = {"pending", "in_progress", "done", "skipped"}
+# A prerequisite is satisfied (doesn't block its dependents) when it's done OR
+# explicitly skipped ("not applicable") — so a skipped step never dead-ends a chain.
+DEP_SATISFIED = ("done", "skipped")
 
 _SCHEDULE_MODELS = (
     SchedulePrepaid, ScheduleAccrual, ScheduleFixedAsset, ScheduleLease, ScheduleLoan,
@@ -60,35 +63,35 @@ DEFAULT_STEPS: list[dict[str, Any]] = [
     {"key": "sync", "title": "Sync QuickBooks",
      "description": "Pull the latest trial balance and balances from QuickBooks for the period.",
      "category": "sync", "linked_module": "sync", "due_offset_days": 3,
-     "default_assignee_role": "preparer"},
+     "default_assignee_role": "preparer", "depends_on_key": None},
     {"key": "recon", "title": "Reconcile balance-sheet accounts",
      "description": "Prepare and approve every balance-sheet reconciliation for the period.",
      "category": "recon", "linked_module": "recon", "due_offset_days": 10,
-     "default_assignee_role": "preparer"},
+     "default_assignee_role": "preparer", "depends_on_key": "sync"},
     {"key": "schedule", "title": "Update supporting schedules",
      "description": "Roll forward prepaids, accruals, fixed assets, leases and loans, and commit the snapshots.",
      "category": "schedule", "linked_module": "schedule", "due_offset_days": 10,
-     "default_assignee_role": "preparer"},
+     "default_assignee_role": "preparer", "depends_on_key": "sync"},
     {"key": "adjustments", "title": "Post adjusting entries",
      "description": "Review the proposed adjusting entries and book the approved ones in QuickBooks.",
      "category": "adjustments", "linked_module": None, "due_offset_days": 12,
-     "default_assignee_role": "preparer"},
+     "default_assignee_role": "preparer", "depends_on_key": "recon"},
     {"key": "flux", "title": "Flux / variance analysis",
      "description": "Run flux analysis and approve the commentary for material variances.",
      "category": "flux", "linked_module": "flux", "due_offset_days": 12,
-     "default_assignee_role": "preparer"},
+     "default_assignee_role": "preparer", "depends_on_key": "recon"},
     {"key": "financials", "title": "Review financial statements",
      "description": "Generate the financial package and review the statements for the period.",
      "category": "financials", "linked_module": None, "due_offset_days": 13,
-     "default_assignee_role": "reviewer"},
+     "default_assignee_role": "reviewer", "depends_on_key": "flux"},
     {"key": "review", "title": "Manager review",
      "description": "Final manager review of the close before locking the books.",
      "category": "review", "linked_module": None, "due_offset_days": 14,
-     "default_assignee_role": "reviewer"},
+     "default_assignee_role": "reviewer", "depends_on_key": "financials"},
     {"key": "close", "title": "Close the books",
      "description": "Lock the period once every reconciliation and flux analysis is approved.",
      "category": "close", "linked_module": "close", "due_offset_days": 15,
-     "default_assignee_role": "admin"},
+     "default_assignee_role": "admin", "depends_on_key": "review"},
 ]
 
 
@@ -123,7 +126,8 @@ async def get_or_seed_template(
                 id=uuid.uuid4(), tenant_id=tenant_id, key=s["key"], order_index=i,
                 title=s["title"], description=s["description"], category=s["category"],
                 linked_module=s["linked_module"], due_offset_days=s["due_offset_days"],
-                default_assignee_role=s["default_assignee_role"], is_active=True,
+                default_assignee_role=s["default_assignee_role"],
+                depends_on_key=s["depends_on_key"], is_active=True,
             )
             for i, s in enumerate(DEFAULT_STEPS)
         ]
@@ -134,7 +138,8 @@ async def get_or_seed_template(
             id=uuid.uuid4(), tenant_id=tenant_id, key=s["key"], order_index=i,
             title=s["title"], description=s["description"], category=s["category"],
             linked_module=s["linked_module"], due_offset_days=s["due_offset_days"],
-            default_assignee_role=s["default_assignee_role"], is_active=True,
+            default_assignee_role=s["default_assignee_role"],
+            depends_on_key=s["depends_on_key"], is_active=True,
             created_by=actor_id,
         )
         db.add(row)
@@ -323,6 +328,22 @@ async def build_checklist(
 
         out.append(_serialize_instance(inst, linked=linked))
 
+    # Dependency gating: a step is "blocked" until its prerequisite (by key, and
+    # only when that prerequisite is itself an active step) is done. Derived from
+    # the effective statuses just resolved — order-independent, no extra queries.
+    status_by_key = {o["step_key"]: o["status"] for o in out}
+    dep_by_key = {s.key: s.depends_on_key for s in active_steps}
+    title_by_key = {s.key: s.title for s in active_steps}
+    for o in out:
+        dep = dep_by_key.get(o["step_key"])
+        # Only an ACTIVE prerequisite (one present in status_by_key) can gate a
+        # step; a hidden/deleted prereq neither blocks nor is advertised here.
+        active_dep = dep if dep in status_by_key else None
+        blocked = bool(active_dep and status_by_key[active_dep] not in DEP_SATISFIED)
+        o["depends_on_key"] = active_dep
+        o["blocked"] = blocked
+        o["blocked_by"] = title_by_key.get(active_dep) if blocked else None
+
     if not readonly:
         await db.flush()
 
@@ -367,8 +388,44 @@ def serialize_template_step(s: CloseTemplateStep) -> dict[str, Any]:
         "linked_module": s.linked_module,
         "due_offset_days": s.due_offset_days,
         "default_assignee_role": s.default_assignee_role,
+        "depends_on_key": s.depends_on_key,
         "is_active":     s.is_active,
     }
+
+
+async def _effective_status_of(db: AsyncSession, step: CloseTemplateStep, pe: date) -> str:
+    """The status that gates dependents: live module status for linked steps,
+    else the stored instance status (pending if no instance yet)."""
+    if step.linked_module in VALID_LINKED:
+        live, _ = await linked_status(db, step.linked_module, pe)
+        return live
+    inst = (await db.execute(
+        select(CloseStepInstance).where(
+            CloseStepInstance.period_end == pe,
+            CloseStepInstance.step_key == step.key,
+        )
+    )).scalar_one_or_none()
+    return inst.status if inst else "pending"
+
+
+async def blocked_for(
+    db: AsyncSession, pe: date, step_key: str,
+) -> tuple[bool, str | None]:
+    """(blocked, prerequisite_title) for a step in this period. Blocked when the
+    step's prerequisite is an active step that isn't done yet. Used to gate
+    'mark done' on the server (the checklist computes the same thing for display)."""
+    step = (await db.execute(
+        select(CloseTemplateStep).where(CloseTemplateStep.key == step_key)
+    )).scalar_one_or_none()
+    if step is None or not step.depends_on_key:
+        return False, None
+    prereq = (await db.execute(
+        select(CloseTemplateStep).where(CloseTemplateStep.key == step.depends_on_key)
+    )).scalar_one_or_none()
+    if prereq is None or not prereq.is_active:
+        return False, None
+    status = await _effective_status_of(db, prereq, pe)
+    return (status not in DEP_SATISFIED), prereq.title
 
 
 async def get_or_create_instance(

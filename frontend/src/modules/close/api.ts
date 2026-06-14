@@ -4,19 +4,22 @@ import { apiClient } from "@/core/api/client"
 export type CloseStepStatus = "pending" | "in_progress" | "done" | "skipped"
 
 export interface CloseStep {
-  step_key:      string
-  order_index:   number
-  title:         string
-  description:   string | null
-  category:      string
-  linked_module: string | null
-  linked:        boolean
-  status:        CloseStepStatus
-  assignee_id:   string | null
-  due_date:      string | null
-  completed_at:  string | null
-  completed_by:  string | null
-  notes:         string | null
+  step_key:       string
+  order_index:    number
+  title:          string
+  description:    string | null
+  category:       string
+  linked_module:  string | null
+  linked:         boolean
+  status:         CloseStepStatus
+  assignee_id:    string | null
+  due_date:       string | null
+  completed_at:   string | null
+  completed_by:   string | null
+  notes:          string | null
+  depends_on_key: string | null
+  blocked:        boolean
+  blocked_by:     string | null
 }
 
 export interface ChecklistResponse {
@@ -48,6 +51,7 @@ export interface TemplateStep {
   linked_module: string | null
   due_offset_days: number | null
   default_assignee_role: string | null
+  depends_on_key: string | null
   is_active:     boolean
 }
 
@@ -64,10 +68,14 @@ async function getChecklist(periodEnd: string): Promise<ChecklistResponse> {
 }
 
 async function updateStep(body: {
-  period_end: string
-  step_key:   string
-  status?:    CloseStepStatus
-  notes?:     string
+  period_end:      string
+  step_key:        string
+  status?:         CloseStepStatus
+  notes?:          string
+  assignee_id?:    string
+  due_date?:       string
+  clear_assignee?: boolean
+  clear_due?:      boolean
 }): Promise<CloseStep> {
   const { data } = await apiClient.post<CloseStep>("/api/close/step", body)
   return data
@@ -83,6 +91,7 @@ async function addStep(body: {
   description?: string | null
   category?: string
   due_offset_days?: number | null
+  depends_on_key?: string | null
 }): Promise<TemplateStep> {
   const { data } = await apiClient.post<TemplateStep>("/api/close/template", body)
   return data
@@ -95,6 +104,8 @@ async function editStep(id: string, body: Partial<{
   due_offset_days: number | null
   is_active: boolean
   order_index: number
+  depends_on_key: string | null
+  clear_depends_on: boolean
 }>): Promise<TemplateStep> {
   const { data } = await apiClient.patch<TemplateStep>(`/api/close/template/${id}`, body)
   return data

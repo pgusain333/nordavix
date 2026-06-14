@@ -50,6 +50,9 @@ class CloseTemplateStep(TenantBase):
     due_offset_days: Mapped[int | None] = mapped_column(Integer)
     # 'preparer'|'reviewer'|'admin' — a hint for who usually owns it. Optional.
     default_assignee_role: Mapped[str | None] = mapped_column(String(16))
+    # Prerequisite step (by stable `key`, same tenant). The step is "blocked"
+    # until that prerequisite's effective status is done. NULL = no dependency.
+    depends_on_key: Mapped[str | None] = mapped_column(String(64))
     is_active: Mapped[bool] = mapped_column(nullable=False, default=True)
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

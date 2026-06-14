@@ -23,6 +23,7 @@ _TYPE_LABELS = {
     "period_closed":   "Books closed",
     "period_reopened": "Books reopened",
     "task_assigned":   "Task assigned",
+    "close_step_assigned": "Close step assigned",
     "review_ready":    "Ready for review",
     "recon_approved":  "Reconciliation approved",
     "recon_reopened":  "Needs re-review",
