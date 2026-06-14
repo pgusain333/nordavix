@@ -19,7 +19,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useOrganization } from "@clerk/clerk-react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import {
   Rocket, Sparkles, RefreshCw, TrendingUp, Mail, Send,
   CheckCircle2, AlertTriangle, ShieldCheck, Clock, Play, Zap, Bot,
@@ -61,6 +61,7 @@ function fmtRunTime(iso: string | null): string {
 export function AutopilotSection() {
   const { organization } = useOrganization()
   const qc = useQueryClient()
+  const reduce = useReducedMotion()
 
   // Form + UI state — declared BEFORE the queries on purpose. The autopilot
   // query's refetchInterval closure reads `pollUntil`, and React Query can
@@ -344,14 +345,17 @@ export function AutopilotSection() {
             {running && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                transition={reduce ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
                 className="overflow-hidden"
               >
                 <div className="mt-4 h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.12)" }}>
+                  {/* Indeterminate progress sweep — respects prefers-reduced-motion:
+                      reduced-motion users get a static partial bar, not an infinite loop. */}
                   <motion.div
                     className="h-full rounded-full"
                     style={{ background: SAGE, width: "40%" }}
-                    animate={{ x: ["-100%", "260%"] }}
-                    transition={{ repeat: Infinity, duration: 1.6, ease: "easeInOut" }}
+                    animate={reduce ? { x: "80%" } : { x: ["-100%", "260%"] }}
+                    transition={reduce ? { duration: 0 } : { repeat: Infinity, duration: 1.6, ease: "easeInOut" }}
                   />
                 </div>
               </motion.div>

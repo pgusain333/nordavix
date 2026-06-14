@@ -142,15 +142,19 @@ export function LeftNav({ onClose }: Props) {
   const qc = useQueryClient()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
 
-  // Role for UI gating (shared cache key — TopBar/Adjustments use the same
-  // query, so this is a cache hit, not an extra request). Only admins get
-  // the company-rename affordance below.
-  const { data: meRole } = useQuery({
+  // Current user's role — a SINGLE shared query (TopBar/Adjustments/etc reuse
+  // this same cache entry, so it's a cache hit, not an extra request). Drives
+  // both the admin-only company-rename affordance below and the role chip next
+  // to the account email at the bottom of the nav. Long staleTime — role
+  // changes rarely — and consistent with every other workspace-me reader so a
+  // shorter staleTime elsewhere can't force a premature refetch of the cache.
+  const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
+    enabled:  !!organization,
   })
-  const isAdmin = meRole?.role === "admin"
+  const isAdmin = me?.role === "admin"
 
   // Collapsed (icon-only) rail — persisted; defaults to collapsed so the app
   // opens lean. Only applies to the desktop rail; the mobile drawer (onClose
@@ -184,16 +188,6 @@ export function LeftNav({ onClose }: Props) {
       return next
     })
   }
-
-  // Resolve the current user's role so we can show a small chip next to
-  // the account email at the bottom of the nav. Long staleTime — role
-  // changes rarely.
-  const { data: me } = useQuery({
-    queryKey: ["workspace-me"],
-    queryFn:  workspaceApi.getMe,
-    staleTime: 10 * 60_000,
-    enabled:  !!organization,
-  })
 
   // Open-tasks count for the Tasks nav badge. Lightweight call — server
   // returns just the numbers, not the full list. 30-second staleness +

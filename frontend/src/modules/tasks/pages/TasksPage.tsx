@@ -12,7 +12,7 @@
  *     an admin to assign or override the auto-default.
  *   • Snooze removed — was unused workflow noise.
  */
-import { useEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -131,7 +131,7 @@ export function TasksPage() {
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
   })
   const isAdmin = me?.role === "admin"
 
@@ -223,13 +223,15 @@ export function TasksPage() {
     if (isAllSelected) setSelected(new Set())
     else setSelected(new Set(allFilteredKeys))
   }
-  function toggleOne(key: string) {
+  // Stable identity so the memoized TaskRow rows don't all re-render when one
+  // checkbox toggles (the row receives this same function reference every render).
+  const toggleOne = useCallback((key: string) => {
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key); else next.add(key)
       return next
     })
-  }
+  }, [])
 
   // Bulk action — optimistically clears the selection so the UI
   // responds the instant the user clicks. The actual task rows
@@ -238,11 +240,31 @@ export function TasksPage() {
   // due_date / assignee / completion update lands.
   const bulkMut = useMutation({
     mutationFn: (body: Parameters<typeof tasksApi.bulkAction>[0]) => tasksApi.bulkAction(body),
-    onMutate: () => {
-      // Drop the selection immediately so the bulk action bar collapses
-      // and the user sees their click "took effect" without waiting.
+    onMutate: async (body) => {
+      // Snapshot which rows were selected, then drop the selection immediately
+      // so the bulk action bar collapses and the click feels instant.
+      const keys = new Set(selected)
       setSelected(new Set())
+      // Also patch those rows in the cache so their status/assignee/due flip
+      // right away instead of only after the refetch lands.
+      await qc.cancelQueries({ queryKey: ["tasks"] })
+      const prev = qc.getQueryData<Task[]>(["tasks", "all"])
+      if (prev) {
+        const nowIso = new Date().toISOString()
+        qc.setQueryData<Task[]>(["tasks", "all"], prev.map((t) => {
+          if (!keys.has(t.key)) return t
+          const next: Task = { ...t }
+          if (body.completed === true) next.completed_at = nowIso
+          if (body.dismissed === true) next.dismissed_at = nowIso
+          if (body.assigned_preparer_id !== undefined) next.assigned_preparer_id = body.assigned_preparer_id || null
+          if (body.assigned_reviewer_id !== undefined) next.assigned_reviewer_id = body.assigned_reviewer_id || null
+          if (body.due_date !== undefined) next.due_date = body.due_date || null
+          return next
+        }))
+      }
+      return { prev }
     },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(["tasks", "all"], ctx.prev) },
     onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   })
 
@@ -525,7 +547,7 @@ export function TasksPage() {
                       members={members}
                       isAdmin={isAdmin}
                       checked={selected.has(t.key)}
-                      onToggleCheck={() => toggleOne(t.key)}
+                      onToggleCheck={toggleOne}
                     />
                   ))}
                 </tbody>
@@ -787,13 +809,13 @@ function DueDatePopover({ label, onPick, current }:
 
 // ── TaskRow ────────────────────────────────────────────────────────────────
 
-function TaskRow({ task, userNames, members, isAdmin, checked, onToggleCheck }: {
+const TaskRow = memo(function TaskRow({ task, userNames, members, isAdmin, checked, onToggleCheck }: {
   task: Task
   userNames: Record<string, string>
   members: { id: string | null; display_name: string; role: string }[]
   isAdmin: boolean
   checked: boolean
-  onToggleCheck: () => void
+  onToggleCheck: (key: string) => void
 }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -807,7 +829,26 @@ function TaskRow({ task, userNames, members, isAdmin, checked, onToggleCheck }: 
 
   const actionMut = useMutation({
     mutationFn: (patch: Parameters<typeof tasksApi.upsertAction>[0]) => tasksApi.upsertAction(patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
+    // Optimistically patch this one task in the cache so the cell (preparer /
+    // reviewer / due) updates the instant the dropdown closes, instead of
+    // sitting unchanged until the refetch lands. Rolls back on error.
+    onMutate: async (patch) => {
+      await qc.cancelQueries({ queryKey: ["tasks"] })
+      const prev = qc.getQueryData<Task[]>(["tasks", "all"])
+      if (prev) {
+        qc.setQueryData<Task[]>(["tasks", "all"], prev.map((t) => {
+          if (t.key !== task.key) return t
+          const next: Task = { ...t }
+          if (patch.assigned_preparer_id !== undefined) next.assigned_preparer_id = patch.assigned_preparer_id || null
+          if (patch.assigned_reviewer_id !== undefined) next.assigned_reviewer_id = patch.assigned_reviewer_id || null
+          if (patch.due_date !== undefined) next.due_date = patch.due_date || null
+          return next
+        }))
+      }
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(["tasks", "all"], ctx.prev) },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   })
 
   function assignPreparer(uid: string | null) {
@@ -847,7 +888,7 @@ function TaskRow({ task, userNames, members, isAdmin, checked, onToggleCheck }: 
       opacity: dismissed ? 0.5 : 1,
     }}>
       <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-        <input type="checkbox" checked={checked} onChange={onToggleCheck} aria-label="Select task" />
+        <input type="checkbox" checked={checked} onChange={() => onToggleCheck(task.key)} aria-label="Select task" />
       </td>
 
       {/* Task */}
@@ -957,7 +998,7 @@ function TaskRow({ task, userNames, members, isAdmin, checked, onToggleCheck }: 
       </td>
     </tr>
   )
-}
+})
 
 // ── PersonCell — renders preparer or reviewer with optional admin assign ──
 

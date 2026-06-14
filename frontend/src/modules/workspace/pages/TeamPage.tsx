@@ -58,7 +58,7 @@ export function TeamPage() {
     isLoading: meLoading,
     refetch: refetchMe,
   } = useQuery({
-    queryKey: ["workspace-me"], queryFn: workspaceApi.getMe, staleTime: 60_000,
+    queryKey: ["workspace-me"], queryFn: workspaceApi.getMe, staleTime: 10 * 60_000,
     retry: 2,
   })
   const {

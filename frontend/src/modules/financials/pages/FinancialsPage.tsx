@@ -22,7 +22,7 @@
  */
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Download,
@@ -194,6 +194,8 @@ export function FinancialsPage() {
   const effectivePeriodStart: string | undefined =
     isPeriodBased && periodMode === "custom" ? periodStart : undefined
 
+  const queryClient = useQueryClient()
+
   const { data: stmt, isLoading, error, refetch } = useQuery({
     queryKey: ["financial-statement", tab, periodEnd, comparative, effectiveSource, effectivePeriodStart],
     queryFn:  () => {
@@ -205,8 +207,29 @@ export function FinancialsPage() {
     // required (snapshot may exist from past syncs even after disconnect).
     // CF always needs QBO regardless of source selection.
     enabled:  hasLoaded && (effectiveSource === "nordavix" || !!qbo),
-    staleTime: 60_000,
+    // 5 min keeps the cache warm across quick tab switches / comparative
+    // toggles so they don't trigger a refetch flicker (manual reload still works).
+    staleTime: 5 * 60_000,
   })
+
+  // Warm a sibling statement tab on hover so switching to it is instant — no
+  // refetch flicker. Mirrors the main query's key + fn for the hovered tab
+  // (CF always reads QuickBooks; period_start only applies to IS/CF in custom).
+  function prefetchTab(key: Tab) {
+    if (key === tab) return
+    const ps = (key === "is" || key === "cf") && periodMode === "custom" ? periodStart : undefined
+    const src: FinancialSource = key === "cf" ? "quickbooks" : source
+    if (!(hasLoaded && (src === "nordavix" || !!qbo))) return
+    queryClient.prefetchQuery({
+      queryKey: ["financial-statement", key, periodEnd, comparative, src, ps],
+      queryFn: () => {
+        if (key === "is") return financialsApi.getIncomeStatement(periodEnd, comparative, src, ps)
+        if (key === "bs") return financialsApi.getBalanceSheet(periodEnd, comparative, src)
+        return financialsApi.getCashFlow(periodEnd, comparative, src, ps)
+      },
+      staleTime: 5 * 60_000,
+    })
+  }
 
   const exportMut = useMutation({
     mutationFn: ({ kind, draft }: { kind: "is" | "bs" | "cf" | "full"; draft: boolean }) =>
@@ -508,7 +531,7 @@ export function FinancialsPage() {
                         borderRight: key !== "cf" ? "1px solid var(--border)" : undefined,
                         cursor: "pointer",
                       }}
-                      onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                      onMouseEnter={(e) => { if (!active) { (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"; prefetchTab(key) } }}
                       onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--surface)" }}
                     >
                       <div className="flex items-center gap-2">

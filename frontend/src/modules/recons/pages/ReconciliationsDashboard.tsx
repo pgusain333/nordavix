@@ -277,7 +277,7 @@ export function ReconciliationsDashboard() {
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,   // consistent across all workspace-me readers
   })
   const canReview = me?.role === "admin" || me?.role === "reviewer"
   const isAdmin = me?.role === "admin"
@@ -2475,27 +2475,27 @@ function InlineSubledgerForm({
       {
         queryKey: ["schedules", "prepaid", "suggestions", account.qbo_id, periodEnd],
         queryFn:  () => schedulesApi.getPrepaidSuggestions(account.qbo_id, periodEnd),
-        staleTime: 60_000,
+        staleTime: 10 * 60_000,
       },
       {
         queryKey: ["schedules", "accrual", "suggestions", account.qbo_id, periodEnd],
         queryFn:  () => schedulesApi.getAccrualSuggestions(account.qbo_id, periodEnd),
-        staleTime: 60_000,
+        staleTime: 10 * 60_000,
       },
       {
         queryKey: ["schedules", "fixed_asset", "suggestions", account.qbo_id, periodEnd],
         queryFn:  () => schedulesApi.getFixedAssetSuggestions(account.qbo_id, periodEnd),
-        staleTime: 60_000,
+        staleTime: 10 * 60_000,
       },
       {
         queryKey: ["schedules", "lease", "suggestions", account.qbo_id, periodEnd],
         queryFn:  () => schedulesApi.getLeaseSuggestions(account.qbo_id, periodEnd),
-        staleTime: 60_000,
+        staleTime: 10 * 60_000,
       },
       {
         queryKey: ["schedules", "loan", "suggestions", account.qbo_id, periodEnd],
         queryFn:  () => schedulesApi.getLoanSuggestions(account.qbo_id, periodEnd),
-        staleTime: 60_000,
+        staleTime: 10 * 60_000,
       },
     ],
   })

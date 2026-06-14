@@ -54,9 +54,10 @@ export function NotificationToaster() {
     queryFn:  () => notificationsApi.list(30),
     enabled:  !!organization,
     // Poll on the same cadence as the bell's unread count so toasts track live
-    // workspace activity. Tab-hidden polling pauses (RQ default), so we don't
-    // pop a pile of toasts the moment the user tabs back.
-    refetchInterval: 45_000,
+    // workspace activity. RQ v5 does NOT auto-pause refetchInterval on hidden
+    // tabs, so gate it on visibilityState — this both saves idle network
+    // chatter and avoids popping a pile of toasts the moment the user tabs back.
+    refetchInterval: () => (document.visibilityState === "visible" ? 45_000 : false),
     staleTime: 30_000,
   })
 

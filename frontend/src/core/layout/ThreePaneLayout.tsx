@@ -56,7 +56,7 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.22 }}
+              transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
               className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
               onClick={() => setMobileNavOpen(false)}
             />

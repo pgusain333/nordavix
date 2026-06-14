@@ -60,7 +60,7 @@ export function CloseReviewPage() {
   const [err, setErr] = useState<string | null>(null)
 
   const { data: me } = useQuery({
-    queryKey: ["workspace-me"], queryFn: workspaceApi.getMe, staleTime: 60_000,
+    queryKey: ["workspace-me"], queryFn: workspaceApi.getMe, staleTime: 10 * 60_000,
   })
   const canReview = me?.role === "admin" || me?.role === "reviewer"
 
@@ -77,10 +77,43 @@ export function CloseReviewPage() {
     onSuccess: put,
     onError: (e: unknown) => setErr(detail(e) ?? "Could not run the review."),
   })
+  // Optimistic clear/accept/reopen — move the finding between the open and
+  // Resolved lists (and adjust the severity counts) the instant the button is
+  // clicked, so it doesn't visibly linger until the refetch. onSuccess(put)
+  // overwrites with the authoritative server state; onError rolls back.
   const actM = useMutation({
     mutationFn: (v: { id: string; action: "clear" | "accept" | "reopen" }) => reviewApi.act(v.id, v.action),
+    onMutate: async (v) => {
+      await qc.cancelQueries({ queryKey: ["review", period] })
+      const prev = qc.getQueryData<ReviewState>(["review", period])
+      if (prev) {
+        const STATUS = { clear: "cleared", accept: "accepted", reopen: "open" } as const
+        const target = prev.findings.find((f) => f.id === v.id) ?? prev.resolved.find((f) => f.id === v.id)
+        if (target) {
+          const updated: ReviewFinding = { ...target, status: STATUS[v.action], status_changed_at: new Date().toISOString() }
+          const reopening = v.action === "reopen"
+          const findings = reopening
+            ? [...prev.findings.filter((f) => f.id !== v.id), updated]
+            : prev.findings.filter((f) => f.id !== v.id)
+          const resolved = reopening
+            ? prev.resolved.filter((f) => f.id !== v.id)
+            : [...prev.resolved.filter((f) => f.id !== v.id), updated]
+          const delta = reopening ? 1 : -1
+          const review = prev.review ? {
+            ...prev.review,
+            high_count:   prev.review.high_count   + (updated.severity === "high"   ? delta : 0),
+            review_count: prev.review.review_count + (updated.severity === "review" ? delta : 0),
+          } : prev.review
+          qc.setQueryData<ReviewState>(["review", period], { ...prev, findings, resolved, review })
+        }
+      }
+      return { prev }
+    },
     onSuccess: put,
-    onError: (e: unknown) => setErr(detail(e) ?? "Could not update the finding."),
+    onError: (e: unknown, _v, ctx: { prev?: ReviewState } | undefined) => {
+      if (ctx?.prev) qc.setQueryData(["review", period], ctx.prev)
+      setErr(detail(e) ?? "Could not update the finding.")
+    },
   })
   const signM = useMutation({
     mutationFn: () => reviewApi.signOff(period),

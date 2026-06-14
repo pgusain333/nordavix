@@ -258,7 +258,7 @@ export function FluxDashboard() {
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
   })
   const canSignOff = me?.role === "admin" || me?.role === "reviewer"
   const isAdmin    = me?.role === "admin"

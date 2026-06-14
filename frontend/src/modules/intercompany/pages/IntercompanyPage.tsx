@@ -580,11 +580,34 @@ function MarkModal({ existing, onClose, onSaved }:
       kind,
       notes:          notes.trim() || null,
     }),
-    onMutate: () => {
-      // Optimistically close the modal so the user isn't staring at
-      // a spinner; the parent's onSaved will fire on success too,
-      // but we don't want them to think the save is hung.
+    onMutate: async () => {
+      // Optimistically close the modal so the user isn't staring at a spinner.
       onSaved()
+      // When EDITING an existing mark, patch its row in the cached overview so
+      // the table reflects the change immediately instead of only after the
+      // refetch. (Adds need server-computed fields like balances, so they wait
+      // for the background refetch in onSettled.)
+      if (!existing) return { prev: undefined }
+      await qc.cancelQueries({ queryKey: ["intercompany-overview"] })
+      const prev = qc.getQueryData<{ accounts?: IcAccount[] } | undefined>(["intercompany-overview"])
+      qc.setQueryData<{ accounts?: IcAccount[] } | undefined>(
+        ["intercompany-overview"],
+        (old) => {
+          if (!old?.accounts) return old
+          return {
+            ...old,
+            accounts: old.accounts.map((a) =>
+              a.id === existing.id
+                ? { ...a, qbo_account_id: qboId.trim(), counterparty: counterparty.trim() || null, kind, notes: notes.trim() || null }
+                : a,
+            ),
+          }
+        },
+      )
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev !== undefined) qc.setQueryData(["intercompany-overview"], ctx.prev)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ["intercompany-overview"] }),
   })

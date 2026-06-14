@@ -25,7 +25,10 @@ export function NotificationBell({ onOpen, className }: Props) {
     queryKey: ["notifications", "count"],
     queryFn:  notificationsApi.count,
     staleTime: 30_000,
-    refetchInterval: 45_000,
+    // Pause polling while the tab is backgrounded — RQ v5 does NOT auto-pause
+    // refetchInterval on hidden tabs, so an idle tab would keep pinging the
+    // server every 45s. Resumes automatically when the tab is visible again.
+    refetchInterval: () => (document.visibilityState === "visible" ? 45_000 : false),
     enabled: !!organization,
   })
 

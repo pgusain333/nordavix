@@ -699,7 +699,7 @@ function TemplateEditor() {
           Customize the checklist
         </span>
         <ChevronRight size={16} strokeWidth={2}
-          style={{ color: "var(--text-muted)", transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
+          style={{ color: "var(--text-muted)", transform: open ? "rotate(90deg)" : "none", transition: "transform 0.12s ease-out" }} />
       </button>
 
       <AnimatePresence initial={false}>

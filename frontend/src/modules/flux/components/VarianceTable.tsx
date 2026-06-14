@@ -105,7 +105,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
   })
   const canApprove = me?.role === "admin" || me?.role === "reviewer"
   const [sorting,    setSorting]   = useState<SortingState>([

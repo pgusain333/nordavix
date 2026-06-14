@@ -36,6 +36,7 @@ import {
 } from "lucide-react"
 import { MemorySection } from "@/modules/memory/MemorySection"
 import { Spinner } from "@/core/ui/components"
+import { SkeletonBlock } from "@/core/ui/Skeleton"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { apiClient } from "@/core/api/client"
@@ -313,7 +314,15 @@ function CompanySection() {
     return () => clearTimeout(t)
   }, [savedAt])
 
-  if (!isLoaded) return <Spinner className="h-6 w-6" />
+  if (!isLoaded) return (
+    <SectionShell title="Company" description="Profile, address, tax info, and accounting defaults." icon={Building2}>
+      <div className="space-y-6">
+        <SkeletonBlock height={40} />
+        <SkeletonBlock height={80} />
+        <SkeletonBlock height={120} />
+      </div>
+    </SectionShell>
+  )
   if (!organization) {
     return (
       <SectionShell title="Company" description="Select a workspace to edit company details." icon={Building2}>
@@ -371,7 +380,25 @@ function ProfileSection() {
     enabled:  !!organization,
   })
 
-  if (!userLoaded) return <Spinner className="h-6 w-6" />
+  if (!userLoaded) return (
+    <SectionShell title="Profile" description="Your personal account." icon={User}>
+      <div className="space-y-4">
+        <div className="flex items-start gap-4 mb-6">
+          <SkeletonBlock width={56} height={56} radius={8} className="shrink-0" />
+          <div className="flex-1 space-y-2">
+            <SkeletonBlock height={20} width="60%" />
+            <SkeletonBlock height={16} width="40%" />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <SkeletonBlock height={70} />
+          <SkeletonBlock height={70} />
+          <SkeletonBlock height={70} />
+          <SkeletonBlock height={70} />
+        </div>
+      </div>
+    </SectionShell>
+  )
   if (!user) return null
 
   const displayName = [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || "—"

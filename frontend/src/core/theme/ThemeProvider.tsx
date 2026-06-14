@@ -2,7 +2,7 @@
  * Theme system — supports "light", "dark", and "system" (follows OS preference).
  * Persists to localStorage. Applies the `dark` class to <html>.
  */
-import { createContext, useContext, useEffect, useState, ReactNode } from "react"
+import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react"
 
 export type Theme = "light" | "dark" | "system"
 
@@ -61,12 +61,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mq.removeEventListener("change", handler)
   }, [theme])
 
-  function setTheme(t: Theme) {
-    setThemeState(t)
-  }
+  // Memoize the context value so consumers of useTheme() only re-render when
+  // theme/resolved actually change — not on every ThemeProvider render.
+  // setThemeState is a stable dispatcher, so it doesn't need to be a dependency.
+  const value = useMemo(() => ({ theme, resolved, setTheme: setThemeState }), [theme, resolved])
 
   return (
-    <ThemeContext.Provider value={{ theme, resolved, setTheme }}>
+    <ThemeContext.Provider value={value}>
       {children}
     </ThemeContext.Provider>
   )

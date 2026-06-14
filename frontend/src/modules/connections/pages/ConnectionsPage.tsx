@@ -50,7 +50,7 @@ export function ConnectionsPage() {
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
   })
   // Admins, or anyone granted the "Manage QuickBooks" power, can connect/
   // disconnect. (Gate var keeps the isAdmin name the buttons below read.)

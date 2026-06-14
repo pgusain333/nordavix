@@ -35,7 +35,7 @@ export function ProposedEntriesInline({
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
   })
   const canReview = me?.role === "admin" || me?.role === "reviewer"
   // Any workspace member (incl. preparer) can build the JE — pick accounts;

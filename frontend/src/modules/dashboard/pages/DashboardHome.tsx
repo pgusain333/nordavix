@@ -151,7 +151,7 @@ export function DashboardHome() {
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
   })
   const isAdmin = me?.role === "admin"
   // Closing/reopening the period is an admin power that can be delegated.

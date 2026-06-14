@@ -127,8 +127,10 @@ export function InsightsPage() {
     queryFn:  () => insightsApi.getOverview(pending!.periodEnd, pending?.periodStart ?? null),
     enabled:  pending !== null,
     // Insights are persisted server-side now, so a plain load returns the saved
-    // snapshot instantly. Keep it effectively fresh until the user hits Sync.
-    staleTime: Infinity,
+    // snapshot instantly. 10 min keeps it fresh during normal browsing without
+    // pinning it forever — re-selecting a period after a while re-pulls the
+    // saved snapshot; the Sync button (refresh=1) always forces a recompute.
+    staleTime: 10 * 60_000,
   })
 
   // ── Sync: recompute the loaded period (refresh=1) and overwrite the cache ──

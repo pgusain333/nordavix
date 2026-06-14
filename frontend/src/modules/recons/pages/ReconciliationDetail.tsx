@@ -8,7 +8,7 @@
  *   - AI commentary panel
  *   - Approve / request-review / add-notes / assign / export actions
  */
-import { useEffect, useMemo, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
@@ -32,6 +32,8 @@ import { humanize } from "@/core/ui/utils"
 import {
   reconsApi,
   type ReconciliationItem,
+  type ReconciliationDetail as ReconciliationDetailData,
+  type ReconNote,
   type ReconTransaction,
   type ItemStatus,
 } from "@/modules/recons/api"
@@ -49,6 +51,43 @@ const TXN_SECTIONS = [
   { key: "duplicate",      label: "Duplicate invoice detection" },
   { key: "manual_je",      label: "Manual journal entries" },
 ] as const
+
+// Memoized entity-list row. With a stable `onSelect`, selecting one entity no
+// longer re-renders every other row in the list — only the two rows whose
+// `isSelected` actually flipped. Matters most on AR/AP recs with many entities.
+const EntityListItem = memo(function EntityListItem({
+  item, isSelected, onSelect,
+}: {
+  item: ReconciliationItem
+  isSelected: boolean
+  onSelect: (id: string) => void
+}) {
+  return (
+    <li>
+      <button
+        onClick={() => onSelect(item.id)}
+        className="w-full px-4 py-2.5 flex items-center gap-2 text-left transition-colors"
+        style={isSelected
+          ? { background: "var(--surface-2)", borderLeft: "3px solid var(--green)" }
+          : { borderLeft: "3px solid transparent" }}
+        onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+        onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "" }}
+      >
+        <span className="h-1.5 w-1.5 rounded-full shrink-0"
+          style={{ background: item.risk_level === "high" ? "#9b3d37" : item.risk_level === "medium" ? "#c79a52" : "var(--green)" }}
+        />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-theme truncate">{item.entity_name}</p>
+          <p className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+            Diff {fmtMoney(item.difference)} · {item.risk_level}
+          </p>
+        </div>
+        {item.status === "approved" && <CheckCircle2 size={12} style={{ color: "var(--green)" }} />}
+        <ChevronRight size={12} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+      </button>
+    </li>
+  )
+})
 
 export function ReconciliationDetail() {
   const { reconId } = useParams<{ reconId: string }>()
@@ -96,19 +135,59 @@ export function ReconciliationDetail() {
     return detail.notes.filter(n => n.reconciliation_item_id === selectedItem.id)
   }, [detail, selectedItem])
 
+  // Stable selector so the memoized EntityListItem rows don't re-render on
+  // unrelated parent updates (setState + setSearchParams are both stable).
+  const selectItem = useCallback((id: string) => {
+    setSelectedItemId(id)
+    setParams({ item: id })
+  }, [setParams])
+
   // ── Mutations ──
   const resync = useMutation({
     mutationFn: () => reconsApi.resyncReconciliation(reconId!),
     onSuccess:  () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
   })
+  // Optimistic recon-level approval — stamp approved_by/at into the cache the
+  // instant the button is clicked so the badge + "Approved on…" line flip
+  // immediately, rolling back on error and reconciling via onSettled.
   const approveRecon = useMutation({
     mutationFn: () => reconsApi.approveReconciliation(reconId!),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: ["recon-detail", reconId] })
+      const prev = qc.getQueryData<ReconciliationDetailData>(["recon-detail", reconId])
+      if (prev) {
+        qc.setQueryData<ReconciliationDetailData>(["recon-detail", reconId], {
+          ...prev,
+          recon: {
+            ...prev.recon,
+            approved_by: user?.id?.replace(/^user_/, "") ?? prev.recon.approved_by,
+            approved_at: new Date().toISOString(),
+          },
+        })
+      }
+      return { prev }
+    },
+    onError:   (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(["recon-detail", reconId], ctx.prev) },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
   })
+  // Optimistic per-item status — the selected entity's badge updates instantly
+  // instead of waiting for the server round-trip + refetch.
   const setStatus = useMutation({
     mutationFn: ({ itemId, status }: { itemId: string; status: ItemStatus }) =>
       reconsApi.setItemStatus(reconId!, itemId, status),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
+    onMutate: async ({ itemId, status }) => {
+      await qc.cancelQueries({ queryKey: ["recon-detail", reconId] })
+      const prev = qc.getQueryData<ReconciliationDetailData>(["recon-detail", reconId])
+      if (prev) {
+        qc.setQueryData<ReconciliationDetailData>(["recon-detail", reconId], {
+          ...prev,
+          items: prev.items.map((it) => (it.id === itemId ? { ...it, status } : it)),
+        })
+      }
+      return { prev }
+    },
+    onError:   (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(["recon-detail", reconId], ctx.prev) },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
   })
   const regen = useMutation({
     mutationFn: (itemId: string) => reconsApi.explainItem(reconId!, itemId),
@@ -119,16 +198,51 @@ export function ReconciliationDetail() {
     mutationFn: () => reconsApi.explainRecon(reconId!),
     onSuccess:  () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
   })
+  // Optimistic note append — clear the input AND show the note immediately
+  // (with a temp id) so there's no gap between "input cleared" and "note
+  // visible". The onSettled refetch swaps the temp note for the real one.
   const addNote = useMutation({
     mutationFn: () => reconsApi.addNote(reconId!, noteDraft, selectedItem?.id),
-    onSuccess:  () => {
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: ["recon-detail", reconId] })
+      const prev = qc.getQueryData<ReconciliationDetailData>(["recon-detail", reconId])
+      const body = noteDraft.trim()
+      if (prev && body) {
+        const tempNote: ReconNote = {
+          id: "temp-" + Math.random().toString(36).slice(2),
+          reconciliation_id: reconId!,
+          reconciliation_item_id: selectedItem?.id ?? null,
+          author_id: user?.id?.replace(/^user_/, "") ?? "me",
+          body,
+          created_at: new Date().toISOString(),
+        }
+        qc.setQueryData<ReconciliationDetailData>(["recon-detail", reconId], {
+          ...prev,
+          notes: [...prev.notes, tempNote],
+        })
+      }
       setNoteDraft("")
-      qc.invalidateQueries({ queryKey: ["recon-detail", reconId] })
+      return { prev }
     },
+    onError:   (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(["recon-detail", reconId], ctx.prev) },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
   })
+  // Optimistic assign/unassign — the header button label flips instantly.
   const assign = useMutation({
     mutationFn: (uid: string | null) => reconsApi.assignReconciliation(reconId!, uid),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
+    onMutate: async (uid) => {
+      await qc.cancelQueries({ queryKey: ["recon-detail", reconId] })
+      const prev = qc.getQueryData<ReconciliationDetailData>(["recon-detail", reconId])
+      if (prev) {
+        qc.setQueryData<ReconciliationDetailData>(["recon-detail", reconId], {
+          ...prev,
+          recon: { ...prev.recon, assigned_to: uid },
+        })
+      }
+      return { prev }
+    },
+    onError:   (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(["recon-detail", reconId], ctx.prev) },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["recon-detail", reconId] }),
   })
   // Delete — invalidate the list so the deleted row vanishes when
   // the user arrives at the list, then navigate without `replace`
@@ -307,29 +421,12 @@ export function ReconciliationDetail() {
               </div>
               <ul className="max-h-[480px] overflow-y-auto">
                 {detail.items.map((it) => (
-                  <li key={it.id}>
-                    <button
-                      onClick={() => { setSelectedItemId(it.id); setParams({ item: it.id }) }}
-                      className="w-full px-4 py-2.5 flex items-center gap-2 text-left transition-colors"
-                      style={selectedItemId === it.id
-                        ? { background: "var(--surface-2)", borderLeft: "3px solid var(--green)" }
-                        : { borderLeft: "3px solid transparent" }}
-                      onMouseEnter={(e) => { if (selectedItemId !== it.id) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
-                      onMouseLeave={(e) => { if (selectedItemId !== it.id) (e.currentTarget as HTMLElement).style.background = "" }}
-                    >
-                      <span className="h-1.5 w-1.5 rounded-full shrink-0"
-                        style={{ background: it.risk_level === "high" ? "#9b3d37" : it.risk_level === "medium" ? "#c79a52" : "var(--green)" }}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-theme truncate">{it.entity_name}</p>
-                        <p className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-                          Diff {fmtMoney(it.difference)} · {it.risk_level}
-                        </p>
-                      </div>
-                      {it.status === "approved" && <CheckCircle2 size={12} style={{ color: "var(--green)" }} />}
-                      <ChevronRight size={12} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-                    </button>
-                  </li>
+                  <EntityListItem
+                    key={it.id}
+                    item={it}
+                    isSelected={selectedItemId === it.id}
+                    onSelect={selectItem}
+                  />
                 ))}
                 {detail.items.length === 0 && (
                   <li className="px-4 py-8 text-center text-sm" style={{ color: "var(--text-muted)" }}>

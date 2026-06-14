@@ -112,7 +112,7 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
             title={`Switch workspace · ${otherCount} other${otherCount === 1 ? "" : "s"}`}
             aria-label="Switch workspace"
           >
-            <ChevronDown size={13} strokeWidth={1.8} className="transition-transform"
+            <ChevronDown size={13} strokeWidth={1.8} className="transition-transform duration-[120ms] ease-out"
               style={{ color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "rotate(0deg)" }} />
           </button>
         </div>
@@ -132,7 +132,7 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
           <ChevronDown
             size={11}
             strokeWidth={1.8}
-            className="shrink-0 transition-transform"
+            className="shrink-0 transition-transform duration-[120ms] ease-out"
             style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
           />
         </button>

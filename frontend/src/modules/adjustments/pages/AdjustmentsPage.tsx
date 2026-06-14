@@ -42,7 +42,7 @@ export function AdjustmentsPage() {
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
   })
   const canReview = me?.role === "admin" || me?.role === "reviewer"
   // Preparers (and up) can select accounts on a JE; it auto-saves for review.

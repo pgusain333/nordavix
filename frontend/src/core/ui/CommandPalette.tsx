@@ -131,7 +131,7 @@ export function CommandPalette() {
       {open && (
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          transition={{ duration: 0.12 }}
+          transition={{ duration: 0.14, ease: "easeOut" }}
           className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-[12vh]"
           style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(2px)" }}
           onClick={() => setOpen(false)}

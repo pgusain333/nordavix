@@ -51,7 +51,7 @@ export function AdvisoryPage() {
   // other module via the selected-period store; last month is the fallback.
   const [period, setPeriod] = useSelectedPeriod(defaultPeriod())
 
-  const { data: me } = useQuery({ queryKey: ["workspace-me"], queryFn: workspaceApi.getMe, staleTime: 60_000 })
+  const { data: me } = useQuery({ queryKey: ["workspace-me"], queryFn: workspaceApi.getMe, staleTime: 10 * 60_000 })
   const canEdit = me?.role === "admin" || me?.role === "reviewer"
 
   const { data: kpiData, isLoading: kpisLoading } = useQuery({
@@ -337,7 +337,7 @@ function RecRow({ rec, canEdit, onSaved }: { rec: TrackedRec; canEdit: boolean; 
         )}
         <button onClick={() => setOpen((o) => !o)} aria-label="Toggle outcome notes"
           className="shrink-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
-          <ChevronDown size={16} strokeWidth={2} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+          <ChevronDown size={16} strokeWidth={2} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.12s ease-out" }} />
         </button>
       </div>
 

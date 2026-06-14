@@ -116,8 +116,10 @@ export function TopBar() {
       if (!t || typeof t.scrollTop !== "number" || t.clientHeight < 240) return
       setScrolled(t.scrollTop > 8)
     }
-    document.addEventListener("scroll", onScroll, true)
-    return () => document.removeEventListener("scroll", onScroll, true)
+    // passive: true lets the browser optimize scrolling — the handler never
+    // calls preventDefault, so it has no reason to block the scroll thread.
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true })
+    return () => document.removeEventListener("scroll", onScroll, { capture: true, passive: true } as EventListenerOptions)
   }, [])
 
   return (

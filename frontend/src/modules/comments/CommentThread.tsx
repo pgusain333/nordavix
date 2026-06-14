@@ -98,7 +98,7 @@ export function CommentThread({ entityType, entityId, link }: Props) {
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
     queryFn:  workspaceApi.getMe,
-    staleTime: 5 * 60_000,
+    staleTime: 10 * 60_000,
   })
 
   // Resolve every author + mentioned id to a display name. Names come straight
