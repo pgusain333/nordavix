@@ -31,6 +31,7 @@ import {
   Pencil,
   AlertTriangle,
   Sparkles,
+  Brain,
   Filter,
   Download,
   Eye,
@@ -1071,6 +1072,8 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
               onSave={() => editNarrative.mutate({ varId: r.id, content: editContent })}
               onCancel={() => setEditing(null)}
               isSaving={editNarrative.isPending}
+              suggestedDraft={readOnly ? "" : suggestedNarrative(r)}
+              onUseDraft={() => { setEditing(r.id); setEditContent(suggestedNarrative(r)) }}
             />
             {/* Proposed adjusting entries — AI-drafted JEs to review + copy
                 into QBO. Renders nothing until the deep agentic run proposes
@@ -1195,6 +1198,32 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   )
 }
 
+// ── Carry-forward draft (Client Memory · Slice D) ──────────────────────────────
+//
+// When a variance is PRE-EXPLAINED by a confirmed recurring expectation, build a
+// one-click commentary draft from that rule + this period's actuals. It only ever
+// fires for the within-tolerance confirmed case (pre_explained === true), so it
+// can't speak for a run-rate baseline or a deviation. It's a SUGGESTION that opens
+// the editor for review — never auto-saved, never auto-approved.
+function suggestedNarrative(row: VarianceRow): string {
+  if (!row.pre_explained || row.expected_value == null) return ""
+  const usd = (s: string | null | undefined): string => {
+    if (s == null || s === "") return "—"
+    const n = Number(s)
+    if (Number.isNaN(n)) return "—"
+    const abs = `$${Math.abs(Math.round(n)).toLocaleString()}`
+    return n < 0 ? `(${abs})` : abs
+  }
+  // expected_basis for a confirmed in-tolerance rule is "Confirmed rule: <reason>"
+  // or "Confirmed recurring expectation" (no reason captured). Pull out the reason.
+  const basis = (row.expected_basis ?? "").trim()
+  let reason = basis.replace(/^confirmed rule:\s*/i, "").trim()
+  if (/^confirmed recurring expectation$/i.test(reason)) reason = ""
+  let draft = `Recurring movement, consistent with the confirmed expectation for this account: expected ≈ ${usd(row.expected_value)}, actual ${usd(row.current_balance)} — within tolerance, no action required`
+  if (reason) draft += `. Basis: ${reason}`
+  return `${draft}.`
+}
+
 // ── NarrativePanel ────────────────────────────────────────────────────────────
 
 interface NarrativePanelProps {
@@ -1207,6 +1236,10 @@ interface NarrativePanelProps {
   onSave:        () => void
   onCancel:      () => void
   isSaving:      boolean
+  /** Memory-derived draft (Slice D); "" when none. */
+  suggestedDraft?: string
+  /** Open the editor pre-filled with the draft for review. */
+  onUseDraft?:   () => void
   // onRegenerate + isRegenerating dropped along with the
   // Find-reason / Regenerate button. AI generation now goes through
   // Agentic Mode in the header.
@@ -1214,7 +1247,7 @@ interface NarrativePanelProps {
 
 function NarrativePanel({
   row, tbId, isEditing, editContent, onEditContent,
-  onEdit, onSave, onCancel, isSaving,
+  onEdit, onSave, onCancel, isSaving, suggestedDraft, onUseDraft,
 }: NarrativePanelProps) {
   const anomalyLabels: Record<string, string> = {
     new_account:        "No prior balance",
@@ -1325,10 +1358,20 @@ function NarrativePanel({
               </p>
             )}
             <div className="flex items-center gap-2">
-              {/* (Find reason / Regenerate button removed — Agentic
-                  Mode in the header covers AI generation for every
-                  material variance at once. Manual edits via the Edit
-                  button below.) */}
+              {/* Carry-forward draft from a confirmed recurring expectation
+                  (Client Memory · Slice D). Opens the editor pre-filled for
+                  review — the human still edits/saves; nothing auto-applies. */}
+              {suggestedDraft && onUseDraft && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={onUseDraft}
+                  icon={<Brain size={12} strokeWidth={1.8} />}
+                  title="Draft commentary from the confirmed recurring expectation — review and edit before saving"
+                >
+                  Draft from memory
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="ghost"
