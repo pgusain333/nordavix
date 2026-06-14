@@ -1524,6 +1524,94 @@ async def set_account_subledger_override(
     }
 
 
+@router.post("/account/{qbo_account_id}/reconciling-items/save-recurring")
+async def save_recurring_reconciling_item(
+    qbo_account_id: str,
+    body: dict,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Capture a reconciling item as RECURRING — a confirm-first Client Memory
+    fact (Slice C). Creates a SUGGESTED fact only; a reviewer confirms it in
+    Settings → Memory, after which next period's recon SUGGESTS it. Memory never
+    auto-adds a reconciling item — the preparer still toggles it on and confirms
+    the amount — because items reduce the GL↔subledger difference. Any member may
+    suggest (preparers reconcile; reviewers confirm).
+
+    Body: { period_end, label, txn_type?, amount?, entity?, account_name? }
+    """
+    from datetime import date as _date
+    try:
+        pe = _date.fromisoformat(str(body.get("period_end", "")))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    label = str(body.get("label") or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="A label is required to learn a recurring item.")
+    qid = (qbo_account_id or "").strip()
+    if not qid:
+        raise HTTPException(status_code=400, detail="This account has no stable identifier to learn from.")
+
+    expected_amount: str | None = None
+    amount_raw = body.get("amount")
+    if amount_raw not in (None, ""):
+        try:
+            expected_amount = str(Decimal(str(amount_raw)))
+        except (ValueError, ArithmeticError):
+            raise HTTPException(status_code=400, detail="amount must be numeric.")
+
+    account_name = str(body.get("account_name") or "").strip() or None
+    value = {
+        "qbo_account_id": qid,
+        "account_name": account_name,
+        "label": label[:120],
+        "txn_type": str(body.get("txn_type") or "").strip() or "Reconciling item",
+        "expected_amount": expected_amount,
+        "entity": str(body.get("entity") or "").strip() or None,
+        "captured_period": pe.isoformat(),
+    }
+    from modules.memory.service import (
+        record_recurring_item_signal,
+        recurring_item_title,
+        serialize_fact,
+        upsert_recurring_item_fact,
+    )
+    title = recurring_item_title(label, account_name, expected_amount)
+    await record_recurring_item_signal(
+        db, tenant_id=tenant_id, qbo_account_id=qid, period_end=pe, value=value, created_by=user.id,
+    )
+    fact = await upsert_recurring_item_fact(
+        db, tenant_id=tenant_id, qbo_account_id=qid, label=label, value=value, title=title,
+    )
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="memory.recurring_item_captured",
+        entity_type="client_memory_fact", entity_id=fact.id,
+        metadata={"summary": f"Captured recurring reconciling item — {title}",
+                  "qbo_account_id": qid, "period_end": pe.isoformat()},
+    )
+    await db.commit()
+    return serialize_fact(fact)
+
+
+@router.get("/account/{qbo_account_id}/recurring-suggestions")
+async def recurring_reconciling_suggestions(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Confirmed recurring reconciling items for this account — surfaced as
+    suggestions in the recon 'Recurring (from memory)' panel. Read-only; only
+    `active` facts; the preparer toggles each on and confirms the amount before it
+    becomes a real reconciling item. (period_end is accepted for symmetry with the
+    other suggestion endpoints; recurring items apply every period.)"""
+    from modules.memory.service import active_recurring_items
+    items = await active_recurring_items(db, qbo_account_id)
+    return {"items": items}
+
+
 # ── Freeze displayed subledger when approval lands ──────────────────────────
 
 # Account types that carry credit-natural balances. QBO returns their

@@ -9,7 +9,7 @@ matcher is pure (no DB), so these are plain fast unit tests.
 """
 from types import SimpleNamespace
 
-from modules.memory.service import _fact_note_for_account
+from modules.memory.service import _fact_note_for_account, _recurring_slug
 
 
 def _fact(kind, value, fid="fid-1"):
@@ -104,6 +104,35 @@ def test_id_preferred_no_number_crossmatch():
     assert _fact_note_for_account(f, "999", "140") is None
     # The right account (matching id) still matches.
     assert _fact_note_for_account(f, "140", None) is not None
+
+
+# ── recon_recurring_item (Slice C) ─────────────────────────────────────────────
+
+def test_recurring_item_matches_account_with_label_and_amount():
+    f = _fact("recon_recurring_item", {
+        "qbo_account_id": "88", "label": "In-transit deposits",
+        "txn_type": "Deposit", "expected_amount": "5000",
+    })
+    note = _fact_note_for_account(f, "88", None)
+    assert note and note["module"] == "recons"
+    assert "In-transit deposits" in note["text"] and "$5,000" in note["text"]
+    # Different account: no match.
+    assert _fact_note_for_account(f, "99", None) is None
+
+
+def test_recurring_item_without_amount_omits_the_tilde_figure():
+    f = _fact("recon_recurring_item", {"qbo_account_id": "88", "label": "Unapplied cash"})
+    note = _fact_note_for_account(f, "88", None)
+    assert note and "Unapplied cash" in note["text"] and "≈" not in note["text"]
+
+
+def test_recurring_slug_is_stable_and_distinct():
+    assert _recurring_slug("In-transit deposits") == "in-transit-deposits"
+    assert _recurring_slug("  Unapplied   A/R cash!! ") == "unapplied-a-r-cash"
+    # Distinct labels → distinct slugs, so one account can carry several items.
+    assert _recurring_slug("In-transit deposits") != _recurring_slug("Unapplied cash")
+    # Blank label → empty slug (caller still namespaces by account id).
+    assert _recurring_slug("   ") == ""
 
 
 def test_unknown_kind_returns_none():

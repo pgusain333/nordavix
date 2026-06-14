@@ -60,6 +60,9 @@ export function MemorySection() {
     setActionErr(null)
     qc.invalidateQueries({ queryKey: ["memory-facts"] })
     qc.invalidateQueries({ queryKey: ["memory", "account-context"] })
+    // A confirmed/dismissed recurring item changes what the recon "Recurring
+    // (from memory)" panel offers — refresh it too so it's not stale ≤60s.
+    qc.invalidateQueries({ queryKey: ["recons", "recurring-suggestions"] })
   }
   const confirm = useMutation({
     mutationFn: (id: string) => memoryApi.confirmFact(id),
@@ -284,6 +287,7 @@ function FactRow({
               <p className="text-[11px] mt-2.5 mb-1.5 font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 {fact.kind === "vendor_schedule" ? "Learned from these schedules"
                   : fact.kind === "variance_expectation" ? "Captured from these closes"
+                  : fact.kind === "recon_recurring_item" ? "Captured from these reconciliations"
                   : "Learned from these edits"}
               </p>
               {loadingEv ? (
@@ -295,6 +299,12 @@ function FactRow({
                       {fact.kind === "variance_expectation" ? (
                         <>{fmtWhen(s.period_end)} ·{" "}
                           <span className="font-medium" style={{ color: "var(--green)" }}>{expectationLabel(s.after)}</span>
+                        </>
+                      ) : fact.kind === "recon_recurring_item" ? (
+                        <>{fmtWhen(s.period_end)} ·{" "}
+                          <span className="font-medium" style={{ color: "var(--green)" }}>
+                            {String((s.after as Record<string, unknown>)?.label ?? "recurring item")}
+                          </span>
                         </>
                       ) : fact.kind === "vendor_schedule" ? (
                         <>{fmtWhen(s.period_end)} · set up{" "}
@@ -311,7 +321,7 @@ function FactRow({
                 </ul>
               ) : (
                 <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                  Seen {seen}× across this client&apos;s {fact.kind === "vendor_schedule" ? "schedules" : "adjusting entries"}.
+                  Seen {seen}× across this client&apos;s {fact.kind === "vendor_schedule" ? "schedules" : fact.kind === "recon_recurring_item" ? "reconciliations" : "adjusting entries"}.
                 </p>
               )}
             </div>

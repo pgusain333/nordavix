@@ -721,6 +721,7 @@ _PREFILL_META: dict[str, tuple[str, str]] = {
     "variance_expectation": ("flux", "Pre-explains this account's variance when it lands within your confirmed tolerance"),
     "offset_account": ("adjustments", "Pre-selects your learned offset account for this account's adjustments"),
     "vendor_schedule": ("schedules", "Pre-fills this vendor's amortization setup on a new schedule"),
+    "recon_recurring_item": ("recons", "Suggests this confirmed recurring reconciling item on the recon"),
 }
 
 
@@ -883,6 +884,17 @@ def _fact_note_for_account(
                     "fact_id": str(fact.id)}
         return None
 
+    if fact.kind == "recon_recurring_item":
+        if matches(v.get("qbo_account_id")):
+            label = (v.get("label") or "Recurring item").strip() or "Recurring item"
+            amt = v.get("expected_amount")
+            txt = f"Recurring reconciling item: {label}"
+            if amt not in (None, ""):
+                txt += f" (≈ {_usd(amt)} each period)"
+            return {"kind": fact.kind, "module": "recons",
+                    "text": f"{txt}.", "fact_id": str(fact.id)}
+        return None
+
     return None
 
 
@@ -904,6 +916,139 @@ async def account_memory_context(
         if note:
             notes.append(note)
     return notes
+
+
+# ── Recurring reconciling items (Slice C — learn period-over-period recon items) ─
+#
+# When an accountant marks a reconciling item as RECURRING, capture it confirm-
+# first. Once confirmed, next period's recon SUGGESTS it — the preparer still
+# toggles it on and confirms the amount. Memory NEVER auto-adds a reconciling
+# item: items reduce the GL↔subledger difference, so an auto-added one could make
+# a recon falsely tie. So the apply side is suggestion-only, by design.
+
+_RECURRING_PREFIX = "recon:recurring:"
+
+
+def _recurring_slug(label: str) -> str:
+    """Stable slug for a recurring-item label, used in the fact_key so one account
+    can carry several distinct recurring items (e.g. unapplied cash AND in-transit)
+    without colliding."""
+    s = "".join(c if c.isalnum() else "-" for c in (label or "").strip().lower())
+    s = "-".join(p for p in s.split("-") if p)  # collapse runs of "-"
+    return s[:60]
+
+
+def recurring_item_title(label: str, account_name: str | None, expected_amount: Any) -> str:
+    """Human-readable label for a captured recurring reconciling item."""
+    base = f'{(account_name or "This account")}: recurring "{label}"'
+    if expected_amount not in (None, ""):
+        base += f" ≈ {_usd(expected_amount)}/period"
+    return base[:400]
+
+
+async def record_recurring_item_signal(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+    period_end: date,
+    value: dict[str, Any],
+    created_by: uuid.UUID | None,
+) -> ClientMemorySignal:
+    """One capture observation for a recurring reconciling item."""
+    sig = ClientMemorySignal(
+        id=uuid.uuid4(), tenant_id=tenant_id,
+        signal_type="recon_recurring_item", source="recon",
+        source_ref=qbo_account_id[:100], period_end=period_end,
+        account_key=qbo_account_id[:160], proposed_entry_id=None,
+        before=None, after=value, created_by=created_by,
+    )
+    db.add(sig)
+    await db.flush()
+    return sig
+
+
+async def upsert_recurring_item_fact(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    qbo_account_id: str,
+    label: str,
+    value: dict[str, Any],
+    title: str,
+) -> ClientMemoryFact:
+    """Upsert the confirm-first recurring-item fact (suggested; never applied until
+    confirmed). A CONFIRMED (active) fact is only reinforced, never silently
+    overwritten with a new amount/label out from under the reviewer."""
+    fact_key = f"{_RECURRING_PREFIX}{qbo_account_id}:{_recurring_slug(label)}"[:200]
+    sigs = (await db.execute(
+        select(ClientMemorySignal).where(
+            ClientMemorySignal.signal_type == "recon_recurring_item",
+            ClientMemorySignal.source == "recon",
+            ClientMemorySignal.account_key == qbo_account_id[:160],
+        )
+    )).scalars().all()
+    seen = len({s.period_end for s in sigs}) or 1
+    provenance = {"seen": seen, "signal_ids": [str(s.id) for s in sigs][:20]}
+    now = datetime.now(UTC)
+
+    existing = (await db.execute(
+        select(ClientMemoryFact).where(ClientMemoryFact.fact_key == fact_key)
+    )).scalar_one_or_none()
+    if existing is None:
+        fact = ClientMemoryFact(
+            id=uuid.uuid4(), tenant_id=tenant_id, kind="recon_recurring_item",
+            fact_key=fact_key, title=title[:400], value=value, confidence=seen,
+            status="suggested", provenance=provenance, last_seen_at=now,
+        )
+        if await _insert_fact_or_lose_race(db, fact):
+            return fact
+        existing = (await db.execute(
+            select(ClientMemoryFact).where(ClientMemoryFact.fact_key == fact_key)
+        )).scalar_one_or_none()
+        if existing is None:
+            raise RuntimeError("recurring-item fact vanished after unique conflict")
+    if existing.status == "active":
+        existing.confidence = seen
+        existing.last_seen_at = now
+    else:
+        existing.title = title[:400]
+        existing.value = value
+        existing.confidence = seen
+        existing.provenance = provenance
+        existing.status = "suggested"
+        existing.last_seen_at = now
+    await db.flush()
+    return existing
+
+
+async def active_recurring_items(db: AsyncSession, qbo_account_id: str) -> list[dict[str, Any]]:
+    """Confirmed recurring reconciling items for an account — suggestion-shaped for
+    the recon 'Recurring (from memory)' panel. Only `active` facts; the preparer
+    still toggles each on and confirms the amount (never auto-added). SELECT is
+    tenant-auto-filtered."""
+    qid = (qbo_account_id or "").strip()
+    if not qid:
+        return []
+    facts = (await db.execute(
+        select(ClientMemoryFact).where(
+            ClientMemoryFact.kind == "recon_recurring_item",
+            ClientMemoryFact.status == "active",
+        )
+    )).scalars().all()
+    out: list[dict[str, Any]] = []
+    for f in facts:
+        v = f.value or {}
+        if str(v.get("qbo_account_id") or "").strip() != qid:
+            continue
+        out.append({
+            "fact_id": str(f.id),
+            "label": v.get("label") or f.title,
+            "txn_type": v.get("txn_type") or "Reconciling item",
+            "expected_amount": v.get("expected_amount"),
+            "entity": v.get("entity") or "",
+        })
+    return out
 
 
 def serialize_fact(f: ClientMemoryFact) -> dict[str, Any]:

@@ -75,6 +75,8 @@ import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { InitialRecordingSuggestionsPanel } from "@/modules/schedules/components/InitialRecordingSuggestionsPanel"
 import { SchedulePeriodJesPanel } from "@/modules/schedules/components/SchedulePeriodJesPanel"
 import { BankReconWorksheet } from "@/modules/recons/components/BankReconWorksheet"
+import { RecurringSuggestionsPanel } from "@/modules/recons/components/RecurringSuggestionsPanel"
+import { MarkRecurringButton } from "@/modules/recons/components/MarkRecurringButton"
 import {
   PrepaidSuggestionsPanel,
   prepaidTxnId,
@@ -3156,6 +3158,37 @@ function InlineSubledgerForm({
         />
       ))}
 
+      {/* Recurring reconciling items learned from prior periods (Client Memory).
+          Suggest-only: toggling adds an editable manual item the preparer still
+          confirms — memory never auto-adds. Independent of schedules, so not
+          gated by isScheduleBacked. */}
+      <RecurringSuggestionsPanel
+        qboAccountId={account.qbo_id}
+        periodEnd={periodEnd}
+        selectedIds={new Set(Object.keys(selectedItemMap))}
+        readOnly={readOnly}
+        onToggle={(s, nextChecked) => {
+          const id = `manual-recurring-${s.fact_id}`
+          setSelectedItemMap((prev) => {
+            const next = { ...prev }
+            if (nextChecked) {
+              next[id] = {
+                txn_id:     id,
+                txn_type:   s.txn_type || "Recurring",
+                txn_number: "",
+                txn_date:   periodEnd,
+                amount:     s.expected_amount ?? "0",
+                memo:       `${s.label} · recurring (verify amount)`,
+                entity:     s.entity ?? "",
+              }
+            } else {
+              delete next[id]
+            }
+            return next
+          })
+        }}
+      />
+
       </div>{/* end Suggestions group */}
 
       {/* ── Items group (variance strip · build-up · reconciling table) ── */}
@@ -3257,6 +3290,9 @@ function InlineSubledgerForm({
         onUntickItem={(it) => toggleItem(it)}
         onEditManual={(it) => startEditManualItem(it)}
         onDeleteManual={(id) => deleteManualItem(id)}
+        qboAccountId={account.qbo_id}
+        periodEnd={periodEnd}
+        accountName={account.account_name}
       />
 
       {/* ── Reconciling items table (now BELOW the build-up so the
@@ -3850,6 +3886,7 @@ function ScheduleVsGlPanels({
 function SubledgerBuildup({
   openingBalance, scheduleBaseLabel, prior, selectedItems, selectedSum, computedSubledger, flipSign,
   readOnly = false, onUntickItem, onEditManual, onDeleteManual,
+  qboAccountId, periodEnd, accountName,
 }: {
   openingBalance:    number
   // When set, the base line IS the authoritative schedule balance (auto-pulled)
@@ -3874,6 +3911,10 @@ function SubledgerBuildup({
   onUntickItem:      (it: ReconcilingItem) => void
   onEditManual:      (it: ReconcilingItem) => void
   onDeleteManual:    (id: string) => void
+  // For the per-item "Mark recurring" capture (Client Memory · Slice C).
+  qboAccountId:      string
+  periodEnd:         string
+  accountName?:      string
 }) {
   return (
     <div className="rounded-xl mb-4 overflow-hidden"
@@ -3969,6 +4010,12 @@ function SubledgerBuildup({
                   </span>
                   {readOnly ? null : isManual ? (
                     <>
+                      <MarkRecurringButton
+                        qboAccountId={qboAccountId}
+                        periodEnd={periodEnd}
+                        accountName={accountName}
+                        item={it}
+                      />
                       <button type="button"
                         onClick={() => onEditManual(it)}
                         className="h-5 w-5 inline-flex items-center justify-center rounded"

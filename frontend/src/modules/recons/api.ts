@@ -661,6 +661,43 @@ async function setSubledgerOverride(
   return data
 }
 
+// ── Recurring reconciling-item memory (Client Memory · Slice C) ───────────────
+
+/** A confirmed recurring reconciling item Nordavix learned for this account,
+ *  surfaced as a suggestion. The preparer still toggles it on and confirms the
+ *  amount before it becomes a real reconciling item — memory never auto-adds. */
+export interface RecurringSuggestion {
+  fact_id:         string
+  label:           string
+  txn_type:        string
+  expected_amount: string | null
+  entity:          string
+}
+
+/** Capture a reconciling item as recurring → a SUGGESTED Client Memory fact
+ *  (confirm-first). Returns the serialized fact. */
+async function saveRecurringReconcilingItem(
+  qboAccountId: string,
+  body: { period_end: string; label: string; txn_type?: string; amount?: string | null; entity?: string; account_name?: string },
+): Promise<{ id: string; status: string }> {
+  const { data } = await apiClient.post(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/reconciling-items/save-recurring`,
+    body,
+  )
+  return data
+}
+
+/** Confirmed recurring reconciling items for this account (active facts only). */
+async function getRecurringSuggestions(
+  qboAccountId: string, periodEnd: string,
+): Promise<RecurringSuggestion[]> {
+  const { data } = await apiClient.get<{ items: RecurringSuggestion[] }>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/recurring-suggestions`,
+    { params: { period_end: periodEnd } },
+  )
+  return data.items
+}
+
 async function getPeriodEntries(
   qboAccountId: string,
   periodEnd: string,
@@ -1101,6 +1138,8 @@ export const reconsApi = {
   verifyEvidence,
   getPriorOverride,
   getScheduleSubledger,
+  saveRecurringReconcilingItem,
+  getRecurringSuggestions,
   getPeriodEntries,
   getBooksStatus,
   getSeedPreview,
