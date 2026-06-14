@@ -226,6 +226,181 @@ async def active_offset_fact(
     )).scalar_one_or_none()
 
 
+# ── Vendor schedule defaults (Slice 2) ────────────────────────────────────────
+#
+# Learn how a firm sets up a given vendor's prepaid (amortization method, term,
+# and the expense account it amortizes into) from the EXPLICIT choices made on
+# schedule creation — a deterministic signal, no inference. Same confirm-first
+# lifecycle: a suggestion does nothing until a reviewer confirms it.
+
+
+def _vendor_key(vendor: str | None) -> str | None:
+    """Stable grouping key for a vendor name: lowercased, whitespace-collapsed,
+    truncated to the source_ref column width. None for blank vendors."""
+    if not vendor:
+        return None
+    key = " ".join(str(vendor).strip().lower().split())
+    return key[:100] or None
+
+
+def _schedule_signature(d: dict[str, Any] | None) -> str:
+    """The repeatable 'how this vendor is set up' fingerprint — method + term +
+    offset account. Two creates that share it are the same convention."""
+    d = d or {}
+    method = (d.get("amortization_method") or "").strip()
+    term = d.get("term_months")
+    offset = str(d.get("offset_qbo_account_id") or "").strip()
+    return f"{method}|{term}|{offset}"
+
+
+def _schedule_title(schedule_type: str, vendor: str, d: dict[str, Any]) -> str:
+    term = d.get("term_months")
+    method = d.get("amortization_method") or ""
+    method_label = {"straight_line": "straight-line", "daily_rate": "daily-rate"}.get(method, method)
+    parts: list[str] = []
+    if term:
+        parts.append(f"{term}-month")
+    if method_label:
+        parts.append(method_label)
+    parts.append("prepaid" if schedule_type == "prepaid" else schedule_type)
+    title = f'Vendor "{vendor}" → ' + " ".join(parts)
+    offset_name = d.get("offset_account_name")
+    if offset_name:
+        title += f", amortizing into {offset_name}"
+    return title[:400]
+
+
+async def record_schedule_default(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    schedule_type: str,
+    vendor: str | None,
+    defaults: dict[str, Any],
+    item_id: uuid.UUID | None,
+    when: date,
+    created_by: uuid.UUID | None,
+) -> ClientMemorySignal | None:
+    vk = _vendor_key(vendor)
+    if not vk:
+        return None
+    sig = ClientMemorySignal(
+        id=uuid.uuid4(), tenant_id=tenant_id,
+        signal_type="schedule_default", source=schedule_type[:10],
+        source_ref=vk, period_end=when, account_key=vk,
+        proposed_entry_id=item_id, before=None, after=defaults,
+        created_by=created_by,
+    )
+    db.add(sig)
+    await db.flush()
+    return sig
+
+
+async def distill_schedule_default(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    schedule_type: str,
+    vendor: str | None,
+    defaults: dict[str, Any],
+) -> ClientMemoryFact | None:
+    """Promote a repeated vendor setup into a `suggested` fact. Counts DISTINCT
+    schedule items (an item can't double-count itself); never silently changes
+    a CONFIRMED default whose setup differs (confirm-first), and re-suggests a
+    dismissed vendor only when the setup actually changed."""
+    vk = _vendor_key(vendor)
+    if not vk:
+        return None
+    vendor_disp = " ".join(str(vendor).strip().split())[:255]
+    sig_str = _schedule_signature(defaults)
+    # Single normalized token for BOTH the signal `source` (String(10) column)
+    # and the fact_key, so they can never diverge for a longer schedule_type.
+    stype = schedule_type[:10]
+
+    rows = (await db.execute(
+        select(ClientMemorySignal).where(
+            ClientMemorySignal.signal_type == "schedule_default",
+            ClientMemorySignal.source == stype,
+            ClientMemorySignal.account_key == vk,
+        )
+    )).scalars().all()
+    matching = [s for s in rows if _schedule_signature(s.after) == sig_str]
+    item_ids = {s.proposed_entry_id for s in matching if s.proposed_entry_id}
+    seen = len(item_ids) if item_ids else len(matching)
+    if seen < SUGGEST_THRESHOLD:
+        return None
+
+    fact_key = f"{stype}:vendor:{vk}"
+    value = {
+        "vendor": vendor_disp,
+        "schedule_type": schedule_type,
+        "amortization_method": defaults.get("amortization_method"),
+        "term_months": defaults.get("term_months"),
+        "offset_qbo_account_id": defaults.get("offset_qbo_account_id"),
+        "offset_account_name": defaults.get("offset_account_name"),
+        "qbo_account_id": defaults.get("qbo_account_id"),
+    }
+    title = _schedule_title(schedule_type, vendor_disp, value)
+    provenance = {"seen": seen, "signal_ids": [str(s.id) for s in matching][:20]}
+    now = datetime.now(UTC)
+
+    existing = (await db.execute(
+        select(ClientMemoryFact).where(ClientMemoryFact.fact_key == fact_key)
+    )).scalar_one_or_none()
+    if existing is None:
+        fact = ClientMemoryFact(
+            id=uuid.uuid4(), tenant_id=tenant_id, kind="vendor_schedule",
+            fact_key=fact_key, title=title, value=value, confidence=seen,
+            status="suggested", provenance=provenance, last_seen_at=now,
+        )
+        db.add(fact)
+        await db.flush()
+        return fact
+    if existing.status in ("suggested", "stale"):
+        existing.title = title
+        existing.value = value
+        existing.confidence = seen
+        existing.provenance = provenance
+        existing.status = "suggested"
+        existing.last_seen_at = now
+    elif existing.status == "active":
+        # Reinforce only when the confirmed setup is unchanged — never silently
+        # overwrite a reviewer-confirmed default with a different setup.
+        if _schedule_signature(existing.value) == sig_str:
+            existing.value = value
+            existing.confidence = seen
+            existing.last_seen_at = now
+    elif existing.status == "dismissed":
+        # Re-suggest only if the firm has switched to a genuinely different
+        # setup than the one the reviewer rejected.
+        if _schedule_signature(existing.value) != sig_str:
+            existing.title = title
+            existing.value = value
+            existing.confidence = seen
+            existing.provenance = provenance
+            existing.status = "suggested"
+            existing.last_seen_at = now
+    await db.flush()
+    return existing
+
+
+async def active_schedule_default(
+    db: AsyncSession, *, schedule_type: str, vendor: str | None
+) -> ClientMemoryFact | None:
+    """The confirmed vendor setup for pre-filling a new schedule item, if any.
+    Only `active` facts apply (confirm-first)."""
+    vk = _vendor_key(vendor)
+    if not vk:
+        return None
+    fact_key = f"{schedule_type[:10]}:vendor:{vk}"
+    return (await db.execute(
+        select(ClientMemoryFact).where(
+            ClientMemoryFact.fact_key == fact_key,
+            ClientMemoryFact.status == "active",
+        )
+    )).scalar_one_or_none()
+
+
 def serialize_fact(f: ClientMemoryFact) -> dict[str, Any]:
     return {
         "id": str(f.id),

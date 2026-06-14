@@ -256,34 +256,6 @@ async def edit_proposal(
     if "memo" in payload:
         entry.memo = (str(payload["memo"]).strip()[:500] or None) if payload["memo"] else None
 
-    # ── Client Memory: learn from this correction (best-effort) ──────────
-    # If the human re-pointed the offset account, record the AI-original ->
-    # human-final swap and let the distiller decide whether it's now a
-    # repeatable convention worth suggesting. Must NEVER block or undo the edit.
-    #
-    # Skip for read-only requests (demo / suspended members): the edit itself
-    # is rejected at commit, so we never attempt a write here. The capture runs
-    # in a SAVEPOINT so a failure (e.g. a concurrent-insert unique race) rolls
-    # back only the memory writes, leaving the edit's transaction clean.
-    if not current_request_readonly.get():
-        try:
-            swap = memory.detect_offset_swap(before_lines, entry.lines)
-            if swap:
-                async with db.begin_nested():
-                    await memory.record_signal(
-                        db, tenant_id=tenant_id, signal_type="account_swap",
-                        source=entry.source, source_ref=entry.source_ref,
-                        period_end=entry.period_end, account_key=entry.source_ref,
-                        proposed_entry_id=entry.id, before=swap["from"], after=swap["to"],
-                        created_by=user.id,
-                    )
-                    await memory.distill_offset_swap(
-                        db, tenant_id=tenant_id, source=entry.source,
-                        source_ref=entry.source_ref, swap=swap,
-                    )
-        except Exception:
-            logger.exception("client-memory capture failed (entry=%s)", entry.id)
-
     await write_audit_event(
         db,
         tenant_id=tenant_id,
@@ -295,7 +267,35 @@ async def edit_proposal(
     )
     await db.commit()
     await db.refresh(entry)
-    return serialize(entry)
+    result = serialize(entry)
+
+    # ── Client Memory: learn from this correction ───────────────────────────
+    # Runs AFTER the edit is durably committed, in its own transaction, so a
+    # learning failure (e.g. a concurrent-insert unique race) can never block or
+    # undo the edit. If the human re-pointed the offset account, record the
+    # AI-original -> human-final swap and let the distiller decide whether it's
+    # a repeatable convention. Skipped for read-only (demo / suspended) requests.
+    if not current_request_readonly.get():
+        try:
+            swap = memory.detect_offset_swap(before_lines, entry.lines)
+            if swap:
+                await memory.record_signal(
+                    db, tenant_id=tenant_id, signal_type="account_swap",
+                    source=entry.source, source_ref=entry.source_ref,
+                    period_end=entry.period_end, account_key=entry.source_ref,
+                    proposed_entry_id=entry.id, before=swap["from"], after=swap["to"],
+                    created_by=user.id,
+                )
+                await memory.distill_offset_swap(
+                    db, tenant_id=tenant_id, source=entry.source,
+                    source_ref=entry.source_ref, swap=swap,
+                )
+                await db.commit()
+        except Exception:
+            logger.exception("client-memory capture failed (entry=%s)", entry.id)
+            await db.rollback()
+
+    return result
 
 
 # ── Save batch + QBO CSV export ───────────────────────────────────────────

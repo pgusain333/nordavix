@@ -50,4 +50,24 @@ async function getEvidence(id: string): Promise<{ fact: MemoryFact; signals: Mem
   return data
 }
 
-export const memoryApi = { listFacts, confirmFact, dismissFact, getEvidence }
+/** The confirmed vendor setup to pre-fill a new schedule item, if any.
+ *  Returns { default: null } when there's no active learned default. */
+export interface ScheduleDefault {
+  vendor?: string
+  schedule_type?: string
+  amortization_method?: "daily_rate" | "straight_line"
+  term_months?: number
+  offset_qbo_account_id?: string | null
+  offset_account_name?: string | null
+  qbo_account_id?: string | null
+}
+async function scheduleDefault(
+  scheduleType: string, vendor: string,
+): Promise<{ default: ScheduleDefault | null; fact_id: string | null }> {
+  const { data } = await apiClient.get<{ default: ScheduleDefault | null; fact_id: string | null }>(
+    "/api/memory/schedule-default", { params: { schedule_type: scheduleType, vendor } },
+  )
+  return data
+}
+
+export const memoryApi = { listFacts, confirmFact, dismissFact, getEvidence, scheduleDefault }

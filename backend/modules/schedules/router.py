@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.ai.guard import enforce_ai_limits
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
+from core.db.base import current_request_readonly
 from core.db.session import get_db
 from models.closed_period import ClosedPeriod
 from models.fixed_asset_candidate import FixedAssetCandidate
@@ -542,6 +543,7 @@ async def create_item(
     # …and un-approves any already-approved recon on those accounts: it was
     # signed off on numbers that just changed.
     await _reflag_approved_recons(db, tenant_id, accts, user_id=user.id, reason="schedule item added")
+
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
         action="schedule.item_created", entity_type="schedule_item", entity_id=row.id,
@@ -549,7 +551,55 @@ async def create_item(
     )
     await db.commit()
     await db.refresh(row)
-    return _serialize(schedule_type, row)
+    result = _serialize(schedule_type, row)
+
+    # ── Client Memory (Slice 2): learn this vendor's prepaid setup ──────────
+    # Runs AFTER the create is durably committed, in its own transaction, so a
+    # learning failure can never block or undo the create. The amortization
+    # method / term / offset account are explicit user choices — a deterministic
+    # signal, no inference. Skipped for read-only (demo / suspended) requests.
+    if (
+        schedule_type == "prepaid"
+        and (row.vendor or "").strip()
+        and not current_request_readonly.get()
+    ):
+        try:
+            from modules.memory import service as memory
+            # term = whole months from start, the exact inverse of the UI's
+            # addMonthsIso (end = start + N months − 1 day). Computing it this
+            # way (NOT calc._prepaid_months_touched, which counts calendar
+            # months *touched* and is off-by-one for mid-month windows) keeps
+            # identical conventions grouping together AND makes the pre-filled
+            # end date round-trip correctly.
+            term_months = None
+            if row.start_date and row.end_date:
+                ep = row.end_date + _timedelta(days=1)
+                term_months = max(
+                    1, (ep.year - row.start_date.year) * 12 + (ep.month - row.start_date.month)
+                )
+            defaults = {
+                "schedule_type":         "prepaid",
+                "amortization_method":   row.amortization_method,
+                "term_months":           term_months,
+                "offset_qbo_account_id": row.offset_qbo_account_id,
+                "offset_account_name":   row.offset_account_name,
+                "qbo_account_id":        row.qbo_account_id,
+            }
+            await memory.record_schedule_default(
+                db, tenant_id=tenant_id, schedule_type="prepaid",
+                vendor=row.vendor, defaults=defaults, item_id=row.id,
+                when=row.start_date, created_by=user.id,
+            )
+            await memory.distill_schedule_default(
+                db, tenant_id=tenant_id, schedule_type="prepaid",
+                vendor=row.vendor, defaults=defaults,
+            )
+            await db.commit()
+        except Exception:
+            logger.exception("client-memory schedule capture failed (item=%s)", row.id)
+            await db.rollback()
+
+    return result
 
 
 @router.put("/{schedule_type}/{item_id}", dependencies=[Depends(require_role("preparer"))])

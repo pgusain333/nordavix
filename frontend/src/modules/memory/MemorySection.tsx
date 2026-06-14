@@ -274,7 +274,7 @@ function FactRow({
           >
             <div className="px-3.5 pb-3.5 pt-0" style={{ borderTop: "1px solid var(--border)" }}>
               <p className="text-[11px] mt-2.5 mb-1.5 font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                Learned from these edits
+                {fact.kind === "vendor_schedule" ? "Learned from these schedules" : "Learned from these edits"}
               </p>
               {loadingEv ? (
                 <div className="flex items-center gap-2 py-2"><Spinner className="h-3.5 w-3.5" /><span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Loading…</span></div>
@@ -282,15 +282,22 @@ function FactRow({
                 <ul className="space-y-1">
                   {evidence.signals.map((s) => (
                     <li key={s.id} className="text-[11px]" style={{ color: "var(--text-2)" }}>
-                      {fmtWhen(s.period_end)} · changed{" "}
-                      <span className="font-medium">{accLabel(s.before)}</span> →{" "}
-                      <span className="font-medium" style={{ color: "var(--green)" }}>{accLabel(s.after)}</span>
+                      {fact.kind === "vendor_schedule" ? (
+                        <>{fmtWhen(s.period_end)} · set up{" "}
+                          <span className="font-medium" style={{ color: "var(--green)" }}>{scheduleLabel(s.after)}</span>
+                        </>
+                      ) : (
+                        <>{fmtWhen(s.period_end)} · changed{" "}
+                          <span className="font-medium">{accLabel(s.before)}</span> →{" "}
+                          <span className="font-medium" style={{ color: "var(--green)" }}>{accLabel(s.after)}</span>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
               ) : (
                 <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                  Seen {seen}× across this client's adjusting entries.
+                  Seen {seen}× across this client&apos;s {fact.kind === "vendor_schedule" ? "schedules" : "adjusting entries"}.
                 </p>
               )}
             </div>
@@ -306,6 +313,16 @@ function accLabel(acc: Record<string, unknown> | undefined): string {
   const num = (acc.account_number as string) || ""
   const name = (acc.account_name as string) || ""
   return [num, name].filter(Boolean).join(" · ") || "—"
+}
+
+function scheduleLabel(d: Record<string, unknown> | undefined): string {
+  if (!d) return "—"
+  const term = d.term_months ? `${d.term_months}-mo ` : ""
+  const method = d.amortization_method === "daily_rate" ? "daily-rate"
+    : d.amortization_method === "straight_line" ? "straight-line" : ""
+  const core = `${term}${method}`.trim() || "prepaid"
+  const offset = (d.offset_account_name as string) || ""
+  return offset ? `${core} → ${offset}` : core
 }
 
 // ── Local primitives (match the Settings look) ────────────────────────────────

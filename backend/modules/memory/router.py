@@ -21,7 +21,11 @@ from core.auth.dependencies import CurrentTenantId, require_role
 from core.db.session import get_db
 from models.client_memory import ClientMemoryFact, ClientMemorySignal
 from models.user import User
-from modules.memory.service import VALID_FACT_STATUSES, serialize_fact
+from modules.memory.service import (
+    VALID_FACT_STATUSES,
+    active_schedule_default,
+    serialize_fact,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -109,6 +113,23 @@ async def dismiss_fact(
     return await _transition(
         db, tenant_id, user, fact_id, new_status="dismissed", action="memory.dismiss"
     )
+
+
+@router.get("/schedule-default")
+async def schedule_default(
+    tenant_id: CurrentTenantId,
+    schedule_type: str = Query(..., description="prepaid"),
+    vendor: str = Query(..., description="vendor name to look up a confirmed setup for"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The CONFIRMED vendor setup to pre-fill a new schedule item, if any. Any
+    member can read it (preparers use the pre-fill); only `active` facts apply,
+    so nothing surfaces until a reviewer has confirmed it."""
+    fact = await active_schedule_default(db, schedule_type=schedule_type, vendor=vendor)
+    return {
+        "default": (fact.value if fact else None),
+        "fact_id": (str(fact.id) if fact else None),
+    }
 
 
 @router.get("/facts/{fact_id}/evidence")

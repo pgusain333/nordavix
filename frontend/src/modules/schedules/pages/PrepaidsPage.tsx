@@ -13,7 +13,7 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { Calendar, FileText, Pencil, Trash2, X } from "lucide-react"
+import { Brain, Calendar, FileText, Pencil, Trash2, X } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -28,6 +28,7 @@ import { AiDetectBanner } from "@/modules/schedules/components/AiDetectBanner"
 import { ImportPrepaidsFromQboBanner } from "@/modules/schedules/components/ImportPrepaidsFromQboBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
+import { memoryApi } from "@/modules/memory/api"
 import { formatDate } from "@/core/lib/dates"
 import type { PrepaidAlertItem, PrepaidAmortMethod, PrepaidCandidate, PrepaidItem } from "@/modules/schedules/types"
 
@@ -472,6 +473,15 @@ function Td({ children, right, tabular }: { children?: React.ReactNode; right?: 
 
 // ── Dialog ──────────────────────────────────────────────────────────────
 
+/** end = start + N months − 1 day (inclusive coverage), matching the renewal
+ *  and AI-candidate date math used elsewhere in this dialog. */
+function addMonthsIso(startIso: string, months: number): string {
+  const s = new Date(startIso + "T00:00:00")
+  const e = new Date(s.getFullYear(), s.getMonth() + months, s.getDate() - 1)
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${e.getFullYear()}-${p(e.getMonth() + 1)}-${p(e.getDate())}`
+}
+
 function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
   existing?:       PrepaidItem
   prefill?:        PrepaidPrefill
@@ -503,6 +513,43 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
   // Lets Nordavix draft complete two-sided proposed adjusting entries.
   const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error,       setError]       = useState<string | null>(null)
+
+  // Client Memory (Slice 2): a CONFIRMED setup for this vendor, if any. Only
+  // shown for new items, and only once the vendor name is typed. Confirm-first
+  // — the endpoint returns active facts only, so nothing surfaces unless a
+  // reviewer confirmed it in Settings → Client memory.
+  const vendorTrim = vendor.trim()
+  const vendorLc = vendorTrim.toLowerCase()
+  const { data: learnedResp } = useQuery({
+    queryKey: ["schedule-default", "prepaid", vendorLc],
+    queryFn:  () => memoryApi.scheduleDefault("prepaid", vendorTrim),
+    enabled:  !existing && vendorTrim.length >= 2,
+    staleTime: 60_000,
+  })
+  const learned = (!existing && learnedResp?.default) || null
+  // Per-vendor sentinel (not a one-way boolean) so changing the vendor mid-
+  // dialog re-offers the new vendor's learned default.
+  const [appliedFor, setAppliedFor] = useState<string | null>(null)
+
+  // Expense accounts — shares AccountPicker's cached query (same key), used to
+  // resolve the offset account's NAME so it's persisted on the item (and learned
+  // by Client Memory for the "amortizes into …" label).
+  const { data: expenseAccts } = useQuery({
+    queryKey: ["schedules", "accounts", "expense"],
+    queryFn:  () => schedulesApi.listAccounts("expense"),
+    staleTime: 5 * 60_000,
+  })
+  const offsetName = (id: string) =>
+    (expenseAccts ?? []).find((a) => a.qbo_account_id === id)?.name || null
+
+  function applyLearned() {
+    if (!learned) return
+    if (learned.amortization_method) setAmortMethod(learned.amortization_method)
+    if (learned.offset_qbo_account_id) setOffsetAccount(String(learned.offset_qbo_account_id))
+    if (!account && learned.qbo_account_id) setAccount(String(learned.qbo_account_id))
+    if (startDate && learned.term_months) setEndDate(addMonthsIso(startDate, Number(learned.term_months)))
+    setAppliedFor(vendorLc)
+  }
 
   const optimistic = useScheduleOptimistic("prepaid")
   const mut = useMutation({
@@ -563,6 +610,7 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
       end_date:            endDate,
       amortization_method: amortMethod,
       offset_qbo_account_id: offsetAccount || null,
+      offset_account_name:   offsetAccount ? offsetName(offsetAccount) : null,
       notes:               notes.trim() || null,
       is_active:           true,
     })
@@ -611,6 +659,23 @@ function PrepaidDialog({ existing, prefill, onClose, initialAccount }: {
                 Pre-filled from <span className="font-semibold">{prefill.sourceLabel}</span>.
                 {" "}Adjust amount, dates, or any other field — your edits override the suggestion.
               </span>
+            </div>
+          )}
+          {!existing && learned && appliedFor !== vendorLc && (
+            <div className="rounded-lg px-3 py-2.5 flex items-start gap-2.5"
+              style={{ background: "var(--green-subtle)", border: "1px solid var(--green)" }}>
+              <Brain size={15} strokeWidth={1.9} className="mt-0.5 shrink-0" style={{ color: "var(--green)" }} />
+              <p className="text-[12px] min-w-0 flex-1" style={{ color: "var(--text)" }}>
+                Client memory: <span className="font-semibold">{learned.vendor || vendorTrim}</span> is usually a{" "}
+                {learned.term_months ? `${learned.term_months}-month ` : ""}
+                {learned.amortization_method === "daily_rate" ? "daily-rate" : "straight-line"} prepaid
+                {learned.offset_account_name ? <> into <span className="font-semibold">{learned.offset_account_name}</span></> : null}.
+              </p>
+              <button onClick={applyLearned}
+                className="shrink-0 inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[12px] font-bold text-white transition-opacity hover:opacity-90"
+                style={{ background: "var(--green)" }}>
+                Apply
+              </button>
             </div>
           )}
           <AccountPicker mode="form" label="GL account (prepaid asset)" value={account} onChange={setAccount} />
