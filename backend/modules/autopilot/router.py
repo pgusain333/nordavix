@@ -26,6 +26,7 @@ from core.auth.dependencies import CurrentTenantId, require_capability
 from core.db.session import get_db
 from models.autopilot import AutopilotConfig, AutopilotRun
 from models.closed_period import ClosedPeriod
+from models.qbo_connection import QboConnection
 from models.tenant import Tenant
 from models.user import User
 from modules.autopilot.engine import focus_period_for, run_autopilot_for_tenant
@@ -169,6 +170,20 @@ async def run_now(
     )).scalar_one_or_none()
     if tenant is None or tenant.is_demo:
         raise HTTPException(status_code=403, detail="Autopilot can't run on the sample company.")
+
+    # QuickBooks must be connected — every Autopilot run starts by syncing the
+    # period from QBO. Without a connection the run would only produce a
+    # "sync skipped" error, so block it up front (same guard as flux/recons).
+    qbo = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if qbo is None:
+        raise HTTPException(
+            status_code=409,
+            detail="QuickBooks isn't connected. Connect it from the Connections page first.",
+        )
+
     config = (await db.execute(select(AutopilotConfig))).scalar_one_or_none()
     if config is None:
         raise HTTPException(status_code=409, detail="Save the Autopilot setup first.")

@@ -27,6 +27,7 @@ import {
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import { workspaceApi, hasPower } from "@/modules/workspace/api"
+import { useQboConnection } from "@/modules/flux/hooks"
 import {
   autopilotApi, type AutopilotRun, type AutopilotRunResults, type AutopilotState,
 } from "@/modules/autopilot/api"
@@ -89,6 +90,13 @@ export function AutopilotSection() {
   // can configure + run it. (Name kept as isAdmin since that's what the
   // controls below gate on — it now means "can operate autopilot".)
   const isAdmin = me?.role === "admin" || hasPower(me, "autopilot")
+
+  // A run starts by syncing the period from QuickBooks, so it can't run until
+  // QBO is connected. We gate the "Run now" button on this (the backend also
+  // enforces it — this just makes the requirement visible instead of a failed
+  // run). Treat "still loading" as connected so we never flash a false block.
+  const { data: qbo, isLoading: qboLoading } = useQboConnection()
+  const qboConnected = qboLoading || !!qbo
 
   const { data: state, isLoading, isError } = useQuery({
     queryKey: ["autopilot"],
@@ -266,15 +274,17 @@ export function AutopilotSection() {
               </div>
             </div>
 
-            {/* Run now */}
+            {/* Run now — disabled until QuickBooks is connected (a run begins by
+                syncing the period from QBO). */}
             {isAdmin && (
               <button
                 onClick={() => run.mutate()}
-                disabled={running || starting}
-                className="shrink-0 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all disabled:cursor-not-allowed"
+                disabled={running || starting || !qboConnected}
+                title={!qboConnected ? "Connect QuickBooks first — Autopilot syncs the period from QBO." : undefined}
+                className="shrink-0 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all disabled:cursor-not-allowed disabled:opacity-60"
                 style={{
-                  background: (running || starting) ? "rgba(156,196,173,0.28)" : SAGE,
-                  color: (running || starting) ? CREAM : PINE,
+                  background: (running || starting || !qboConnected) ? "rgba(156,196,173,0.28)" : SAGE,
+                  color: (running || starting || !qboConnected) ? CREAM : PINE,
                 }}
               >
                 {(running || starting) ? <Spinner className="h-4 w-4" /> : <Play size={15} strokeWidth={2.4} />}
@@ -314,6 +324,19 @@ export function AutopilotSection() {
               style={{ background: "rgba(255,255,255,0.08)", color: "#f4d6cf" }}>
               <AlertTriangle size={13} strokeWidth={2} className="mt-0.5 shrink-0" />
               {runErr}
+            </div>
+          )}
+
+          {/* QBO precondition — explains the disabled "Run now" button. Only for
+              operators (the button is theirs) and only once we know it's absent. */}
+          {isAdmin && !qboConnected && (
+            <div className="mt-4 rounded-lg px-3 py-2 text-[12px] flex items-start gap-1.5"
+              style={{ background: "rgba(255,255,255,0.08)", color: SAGE }}>
+              <AlertTriangle size={13} strokeWidth={2} className="mt-0.5 shrink-0" />
+              <span style={{ color: "rgba(244,241,233,0.85)" }}>
+                Connect QuickBooks from the <strong style={{ color: CREAM }}>Connections</strong> page before
+                running — Autopilot starts by syncing the period from QuickBooks.
+              </span>
             </div>
           )}
 
