@@ -11,6 +11,7 @@ import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
+import { LearnedDefaultChip } from "@/modules/schedules/components/LearnedDefaultChip"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { AccrualReversalDrawer } from "@/modules/schedules/components/AccrualReversalDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
@@ -399,6 +400,15 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
   const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error, setError] = useState<string | null>(null)
 
+  // Expense accounts (shares AccountPicker's cached query) — resolves the
+  // offset account NAME so it's stored on the item and learned by Client Memory.
+  const { data: expenseAccts } = useQuery({
+    queryKey: ["schedules", "accounts", "expense"],
+    queryFn:  () => schedulesApi.listAccounts("expense"),
+    staleTime: 5 * 60_000,
+  })
+  const offsetName = (id: string) => (expenseAccts ?? []).find((a) => a.qbo_account_id === id)?.name || null
+
   const optimistic = useScheduleOptimistic("accrual")
   const mut = useMutation({
     mutationFn: (body: Partial<AccrualItem>) => existing
@@ -446,6 +456,7 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
       accrual_date: accrualDate, amount,
       reverses_on: reversesOn || null, is_reversed: isReversed,
       offset_qbo_account_id: offsetAccount || null,
+      offset_account_name: offsetAccount ? offsetName(offsetAccount) : null,
       notes: notes.trim() || null, is_active: true,
     })
   }
@@ -487,6 +498,13 @@ function AccrualDialog({ existing, prefill, onClose, initialAccount }: {
               </span>
             </div>
           )}
+          <LearnedDefaultChip
+            scheduleType="accrual" party={vendor} existing={!!existing}
+            onApply={(d) => {
+              if (d.offset_qbo_account_id) setOffsetAccount(String(d.offset_qbo_account_id))
+              if (!account && d.qbo_account_id) setAccount(String(d.qbo_account_id))
+            }}
+          />
           <AccountPicker mode="form" label="GL account (accrued liability)" value={account} onChange={setAccount} />
           <div>
             <AccountPicker mode="form" kind="expense" label="Expense account (accrues to)" value={offsetAccount} onChange={setOffsetAccount} />

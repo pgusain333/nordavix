@@ -16,6 +16,7 @@ import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
+import { LearnedDefaultChip } from "@/modules/schedules/components/LearnedDefaultChip"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
@@ -400,6 +401,15 @@ function FADialog({ existing, prefill, onClose, initialAccount }: {
   const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error, setError] = useState<string | null>(null)
 
+  // Expense accounts (shares AccountPicker's cached query) — resolves the
+  // offset (depreciation expense) account NAME so it's stored and learned.
+  const { data: expenseAccts } = useQuery({
+    queryKey: ["schedules", "accounts", "expense"],
+    queryFn:  () => schedulesApi.listAccounts("expense"),
+    staleTime: 5 * 60_000,
+  })
+  const offsetName = (id: string) => (expenseAccts ?? []).find((a) => a.qbo_account_id === id)?.name || null
+
   const optimistic = useScheduleOptimistic("fixed_asset")
   const mut = useMutation({
     mutationFn: (body: Partial<FixedAssetItem>) => existing
@@ -456,6 +466,7 @@ function FADialog({ existing, prefill, onClose, initialAccount }: {
       disposed_on: disposedOn || null,
       disposal_proceeds: disposalProceeds || null,
       offset_qbo_account_id: offsetAccount || null,
+      offset_account_name: offsetAccount ? offsetName(offsetAccount) : null,
       notes: notes.trim() || null, is_active: true,
     })
   }
@@ -497,6 +508,16 @@ function FADialog({ existing, prefill, onClose, initialAccount }: {
               </span>
             </div>
           )}
+          <LearnedDefaultChip
+            scheduleType="fixed_asset" party={vendor} existing={!!existing}
+            onApply={(d) => {
+              if (d.offset_qbo_account_id) setOffsetAccount(String(d.offset_qbo_account_id))
+              if (d.accumulated_dep_qbo_account_id) setAccumAccount(String(d.accumulated_dep_qbo_account_id))
+              if (d.category) setCategory(String(d.category))
+              if (d.useful_life_months) setLife(String(d.useful_life_months))
+              if (!account && d.qbo_account_id) setAccount(String(d.qbo_account_id))
+            }}
+          />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <AccountPicker mode="form" label="Cost (asset) GL account" value={account} onChange={setAccount} />
             <AccountPicker mode="form" label="Accumulated depreciation GL account" value={accumAccount} onChange={setAccumAccount} />

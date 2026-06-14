@@ -315,14 +315,41 @@ function accLabel(acc: Record<string, unknown> | undefined): string {
   return [num, name].filter(Boolean).join(" · ") || "—"
 }
 
+/**
+ * Human label for a learned schedule default, from the signal's `after` blob.
+ * Type-aware so every schedule kind (prepaid / accrual / fixed asset / lease /
+ * loan) reads naturally — mirrors LearnedDefaultChip.describe but works on the
+ * raw signal dict. Always appends "→ offset account" when one was learned.
+ */
 function scheduleLabel(d: Record<string, unknown> | undefined): string {
   if (!d) return "—"
+  const offset = (d.offset_account_name as string) || ""
+  const arrow = (core: string) => (offset ? `${core} → ${offset}` : core)
+  const st = (d.schedule_type as string) || "prepaid"
   const term = d.term_months ? `${d.term_months}-mo ` : ""
+
+  if (st === "accrual") return arrow("accrual")
+  if (st === "fixed_asset") {
+    const bits = [
+      (d.category as string) || "",
+      d.useful_life_months ? `${d.useful_life_months}-mo` : "",
+      ((d.depreciation_method as string) || "").replace("_", " "),
+    ].filter(Boolean).join(" · ")
+    return arrow(bits || "fixed asset")
+  }
+  if (st === "lease") return arrow(`${term}lease`.trim())
+  if (st === "loan") {
+    const bits = [
+      d.term_months ? `${d.term_months}-mo` : "",
+      d.interest_rate_pct ? `${d.interest_rate_pct}%` : "",
+      (d.payment_type as string) || "",
+    ].filter(Boolean).join(" ")
+    return arrow(bits || "loan")
+  }
+  // prepaid
   const method = d.amortization_method === "daily_rate" ? "daily-rate"
     : d.amortization_method === "straight_line" ? "straight-line" : ""
-  const core = `${term}${method}`.trim() || "prepaid"
-  const offset = (d.offset_account_name as string) || ""
-  return offset ? `${core} → ${offset}` : core
+  return arrow(`${term}${method}`.trim() || "prepaid")
 }
 
 // ── Local primitives (match the Settings look) ────────────────────────────────

@@ -474,10 +474,19 @@ function Td({ children, right, tabular }: { children?: React.ReactNode; right?: 
 // ── Dialog ──────────────────────────────────────────────────────────────
 
 /** end = start + N months − 1 day (inclusive coverage), matching the renewal
- *  and AI-candidate date math used elsewhere in this dialog. */
-function addMonthsIso(startIso: string, months: number): string {
+ *  and AI-candidate date math used elsewhere in this dialog.
+ *
+ *  The start day is clamped to the target month's last day BEFORE subtracting a
+ *  day, so end-of-month starts don't overflow (naive Jan-31 + 1mo would build
+ *  "Feb 31" → Mar 2; clamping yields Feb 27). This keeps it the exact inverse of
+ *  the backend's _months_between for whole-month terms — which the Client Memory
+ *  signature relies on so an applied learned default re-saves to the same term.
+ *  Exported because the lease dialog reuses it to apply a learned lease term. */
+export function addMonthsIso(startIso: string, months: number): string {
   const s = new Date(startIso + "T00:00:00")
-  const e = new Date(s.getFullYear(), s.getMonth() + months, s.getDate() - 1)
+  const lastDayOfTarget = new Date(s.getFullYear(), s.getMonth() + months + 1, 0).getDate()
+  const day = Math.min(s.getDate(), lastDayOfTarget)
+  const e = new Date(s.getFullYear(), s.getMonth() + months, day - 1)
   const p = (n: number) => String(n).padStart(2, "0")
   return `${e.getFullYear()}-${p(e.getMonth() + 1)}-${p(e.getDate())}`
 }

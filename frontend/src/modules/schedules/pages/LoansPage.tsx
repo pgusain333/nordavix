@@ -16,6 +16,7 @@ import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
+import { LearnedDefaultChip } from "@/modules/schedules/components/LearnedDefaultChip"
 import { ImportScheduleFromQboBanner, ImportTh, importMoneyFmt } from "@/modules/schedules/components/ImportScheduleFromQboBanner"
 import type { LoanImportPreview } from "@/modules/schedules/api"
 import { formatDate } from "@/core/lib/dates"
@@ -312,6 +313,15 @@ function LoanDialog({ existing, onClose, initialAccount }: {
   const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error, setError] = useState<string | null>(null)
 
+  // Expense accounts (shares AccountPicker's cached query) — resolves the
+  // offset (interest expense) account NAME so it's stored and learned.
+  const { data: expenseAccts } = useQuery({
+    queryKey: ["schedules", "accounts", "expense"],
+    queryFn:  () => schedulesApi.listAccounts("expense"),
+    staleTime: 5 * 60_000,
+  })
+  const offsetName = (id: string) => (expenseAccts ?? []).find((a) => a.qbo_account_id === id)?.name || null
+
   const computedPmt = useMemo(
     () => paymentType === "amortizing" ? computePMT(principal, ratePct, term) : "",
     [principal, ratePct, term, paymentType],
@@ -352,6 +362,7 @@ function LoanDialog({ existing, onClose, initialAccount }: {
       payment_type: paymentType,
       monthly_payment: (monthly || computedPmt) || null,
       offset_qbo_account_id: offsetAccount || null,
+      offset_account_name: offsetAccount ? offsetName(offsetAccount) : null,
       notes: notes.trim() || null, is_active: true,
     })
   }
@@ -374,6 +385,16 @@ function LoanDialog({ existing, onClose, initialAccount }: {
           </button>
         </div>
         <div className="px-6 py-5 space-y-4">
+          <LearnedDefaultChip
+            scheduleType="loan" party={lender} existing={!!existing}
+            onApply={(d) => {
+              if (d.offset_qbo_account_id) setOffsetAccount(String(d.offset_qbo_account_id))
+              if (d.term_months) setTerm(String(d.term_months))
+              if (d.interest_rate_pct) setRatePct(String(d.interest_rate_pct))
+              if (d.payment_type) setPaymentType(String(d.payment_type))
+              if (!account && d.qbo_account_id) setAccount(String(d.qbo_account_id))
+            }}
+          />
           <AccountPicker mode="form" label="Loan liability GL account" value={account} onChange={setAccount} />
           <AccountPicker mode="form" kind="expense" label="Interest expense account" value={offsetAccount} onChange={setOffsetAccount} />
           <Field label="Description *">

@@ -265,6 +265,66 @@ def _apply_body(schedule_type: str, row, body: dict) -> None:
             raise HTTPException(status_code=400, detail="term_months must be >= 1.")
 
 
+# ── Client Memory capture helpers ─────────────────────────────────────────
+
+
+def _months_between(start, end) -> int | None:
+    """Whole months from start — the exact inverse of the UI's addMonthsIso
+    (end = start + N months − 1 day). None if either date is missing."""
+    if not start or not end:
+        return None
+    ep = end + _timedelta(days=1)
+    return max(1, (ep.year - start.year) * 12 + (ep.month - start.month))
+
+
+def _schedule_memory_defaults(schedule_type: str, row) -> tuple:
+    """(party, defaults, when) for a Client Memory capture, or (None, None,
+    None) when the row isn't learnable (no vendor / lessor / lender). `party`
+    is the vendor (prepaid/accrual/fixed_asset), lessor (lease), or lender
+    (loan). `defaults` carries the explicit setup choices we learn from; `when`
+    is the item's anchor date (the signal's period_end column is non-null)."""
+    common = {
+        "offset_qbo_account_id": getattr(row, "offset_qbo_account_id", None),
+        "offset_account_name":   getattr(row, "offset_account_name", None),
+        "qbo_account_id":        row.qbo_account_id,
+    }
+    if schedule_type == "prepaid":
+        return (row.vendor, {
+            "schedule_type": "prepaid",
+            "amortization_method": row.amortization_method,
+            "term_months": _months_between(row.start_date, row.end_date),
+            **common,
+        }, row.start_date)
+    if schedule_type == "accrual":
+        return (row.vendor, {"schedule_type": "accrual", **common}, row.accrual_date)
+    if schedule_type == "fixed_asset":
+        return (row.vendor, {
+            "schedule_type": "fixed_asset",
+            "category": row.category,
+            "useful_life_months": row.useful_life_months,
+            "depreciation_method": row.depreciation_method,
+            "accumulated_dep_qbo_account_id": row.accumulated_dep_qbo_account_id,
+            **common,
+        }, row.in_service_date)
+    if schedule_type == "lease":
+        return (row.lessor, {
+            "schedule_type": "lease",
+            "term_months": _months_between(row.lease_start, row.lease_end),
+            "discount_rate_pct": (str(row.discount_rate_pct) if row.discount_rate_pct is not None else None),
+            "rou_qbo_account_id": row.rou_qbo_account_id,
+            **common,
+        }, row.lease_start)
+    if schedule_type == "loan":
+        return (row.lender, {
+            "schedule_type": "loan",
+            "term_months": row.term_months,
+            "interest_rate_pct": (str(row.interest_rate_pct) if row.interest_rate_pct is not None else None),
+            "payment_type": row.payment_type,
+            **common,
+        }, row.loan_date)
+    return (None, None, None)
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────
 
 
@@ -553,51 +613,29 @@ async def create_item(
     await db.refresh(row)
     result = _serialize(schedule_type, row)
 
-    # ── Client Memory (Slice 2): learn this vendor's prepaid setup ──────────
+    # ── Client Memory: learn this party's setup for this schedule type ──────
     # Runs AFTER the create is durably committed, in its own transaction, so a
-    # learning failure can never block or undo the create. The amortization
-    # method / term / offset account are explicit user choices — a deterministic
-    # signal, no inference. Skipped for read-only (demo / suspended) requests.
-    if (
-        schedule_type == "prepaid"
-        and (row.vendor or "").strip()
-        and not current_request_readonly.get()
-    ):
-        try:
-            from modules.memory import service as memory
-            # term = whole months from start, the exact inverse of the UI's
-            # addMonthsIso (end = start + N months − 1 day). Computing it this
-            # way (NOT calc._prepaid_months_touched, which counts calendar
-            # months *touched* and is off-by-one for mid-month windows) keeps
-            # identical conventions grouping together AND makes the pre-filled
-            # end date round-trip correctly.
-            term_months = None
-            if row.start_date and row.end_date:
-                ep = row.end_date + _timedelta(days=1)
-                term_months = max(
-                    1, (ep.year - row.start_date.year) * 12 + (ep.month - row.start_date.month)
+    # learning failure can never block or undo the create. Every captured field
+    # is an explicit user choice — a deterministic signal, no inference. Skipped
+    # for read-only (demo / suspended) requests.
+    if not current_request_readonly.get():
+        party, defaults, when = _schedule_memory_defaults(schedule_type, row)
+        if party and str(party).strip() and when is not None:
+            try:
+                from modules.memory import service as memory
+                await memory.record_schedule_default(
+                    db, tenant_id=tenant_id, schedule_type=schedule_type,
+                    vendor=party, defaults=defaults, item_id=row.id,
+                    when=when, created_by=user.id,
                 )
-            defaults = {
-                "schedule_type":         "prepaid",
-                "amortization_method":   row.amortization_method,
-                "term_months":           term_months,
-                "offset_qbo_account_id": row.offset_qbo_account_id,
-                "offset_account_name":   row.offset_account_name,
-                "qbo_account_id":        row.qbo_account_id,
-            }
-            await memory.record_schedule_default(
-                db, tenant_id=tenant_id, schedule_type="prepaid",
-                vendor=row.vendor, defaults=defaults, item_id=row.id,
-                when=row.start_date, created_by=user.id,
-            )
-            await memory.distill_schedule_default(
-                db, tenant_id=tenant_id, schedule_type="prepaid",
-                vendor=row.vendor, defaults=defaults,
-            )
-            await db.commit()
-        except Exception:
-            logger.exception("client-memory schedule capture failed (item=%s)", row.id)
-            await db.rollback()
+                await memory.distill_schedule_default(
+                    db, tenant_id=tenant_id, schedule_type=schedule_type,
+                    vendor=party, defaults=defaults,
+                )
+                await db.commit()
+            except Exception:
+                logger.exception("client-memory schedule capture failed (item=%s)", row.id)
+                await db.rollback()
 
     return result
 

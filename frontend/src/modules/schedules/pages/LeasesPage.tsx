@@ -21,13 +21,14 @@ import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
 import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
+import { LearnedDefaultChip } from "@/modules/schedules/components/LearnedDefaultChip"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { LeaseItem } from "@/modules/schedules/types"
-import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
+import { Field, inputCls, inputStyle, addMonthsIso } from "@/modules/schedules/pages/PrepaidsPage"
 
 function defaultPeriodEnd(): string {
   const now = new Date()
@@ -298,6 +299,15 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
   const [offsetAccount, setOffsetAccount] = useState(existing?.offset_qbo_account_id ?? "")
   const [error, setError] = useState<string | null>(null)
 
+  // Expense accounts (shares AccountPicker's cached query) — resolves the
+  // offset (lease/interest expense) account NAME so it's stored and learned.
+  const { data: expenseAccts } = useQuery({
+    queryKey: ["schedules", "accounts", "expense"],
+    queryFn:  () => schedulesApi.listAccounts("expense"),
+    staleTime: 5 * 60_000,
+  })
+  const offsetName = (id: string) => (expenseAccts ?? []).find((a) => a.qbo_account_id === id)?.name || null
+
   // Live PV preview — recomputed whenever any input changes so the user
   // sees the exact number that will be persisted as Initial ROU Asset
   // and Initial Liability on save. NO manual fields, NO button — the
@@ -370,6 +380,7 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
       initial_rou_asset:  initialRouAsset,
       initial_liability:  initialLiability,
       offset_qbo_account_id: offsetAccount || null,
+      offset_account_name: offsetAccount ? offsetName(offsetAccount) : null,
       notes:              notes.trim() || null,
       is_active:          true,
     })
@@ -393,6 +404,20 @@ function LeaseDialog({ existing, onClose, initialAccount }: {
           </button>
         </div>
         <div className="px-6 py-5 space-y-4">
+          <LearnedDefaultChip
+            scheduleType="lease" party={lessor} existing={!!existing}
+            onApply={(d) => {
+              if (d.offset_qbo_account_id) setOffsetAccount(String(d.offset_qbo_account_id))
+              if (d.rou_qbo_account_id) setRouAccount(String(d.rou_qbo_account_id))
+              if (d.discount_rate_pct) setDiscountRate(String(d.discount_rate_pct))
+              if (d.rou_qbo_account_id || d.discount_rate_pct) setUseAsc842(true)
+              // Apply the learned lease term: a lease has no standalone term
+              // field — its term is start→end, so derive end from the start
+              // (when set) + learned months, mirroring the prepaid dialog.
+              if (leaseStart && d.term_months) setLeaseEnd(addMonthsIso(leaseStart, Number(d.term_months)))
+              if (!account && d.qbo_account_id) setAccount(String(d.qbo_account_id))
+            }}
+          />
           <AccountPicker mode="form" label="Lease liability GL account" value={account} onChange={setAccount} />
           <AccountPicker mode="form" kind="expense" label="Lease / interest expense account" value={offsetAccount} onChange={setOffsetAccount} />
           <Field label="Description *">

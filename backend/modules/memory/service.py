@@ -244,29 +244,71 @@ def _vendor_key(vendor: str | None) -> str | None:
 
 
 def _schedule_signature(d: dict[str, Any] | None) -> str:
-    """The repeatable 'how this vendor is set up' fingerprint — method + term +
-    offset account. Two creates that share it are the same convention."""
+    """The repeatable 'how this party is set up' fingerprint, per schedule type.
+    Two creates that share it are the same convention. Derived deterministically
+    from the captured fields (so it works on historical signals too), keyed on
+    schedule_type so different types never collide."""
     d = d or {}
-    method = (d.get("amortization_method") or "").strip()
-    term = d.get("term_months")
+    st = (d.get("schedule_type") or "").strip()
     offset = str(d.get("offset_qbo_account_id") or "").strip()
-    return f"{method}|{term}|{offset}"
+    bs = str(d.get("qbo_account_id") or "").strip()
+    if st == "prepaid":
+        return f"prepaid|{(d.get('amortization_method') or '').strip()}|{d.get('term_months')}|{offset}|{bs}"
+    if st == "accrual":
+        return f"accrual|{offset}|{bs}"
+    if st == "fixed_asset":
+        return (
+            f"fixed_asset|{(d.get('category') or '').strip().lower()}|{d.get('useful_life_months')}|"
+            f"{(d.get('depreciation_method') or '').strip()}|"
+            f"{str(d.get('accumulated_dep_qbo_account_id') or '').strip()}|{offset}|{bs}"
+        )
+    if st == "lease":
+        return (
+            f"lease|{d.get('term_months')}|{str(d.get('discount_rate_pct') or '').strip()}|"
+            f"{str(d.get('rou_qbo_account_id') or '').strip()}|{offset}|{bs}"
+        )
+    if st == "loan":
+        return (
+            f"loan|{d.get('term_months')}|{str(d.get('interest_rate_pct') or '').strip()}|"
+            f"{(d.get('payment_type') or '').strip()}|{offset}|{bs}"
+        )
+    return st
 
 
-def _schedule_title(schedule_type: str, vendor: str, d: dict[str, Any]) -> str:
-    term = d.get("term_months")
-    method = d.get("amortization_method") or ""
-    method_label = {"straight_line": "straight-line", "daily_rate": "daily-rate"}.get(method, method)
-    parts: list[str] = []
-    if term:
-        parts.append(f"{term}-month")
-    if method_label:
-        parts.append(method_label)
-    parts.append("prepaid" if schedule_type == "prepaid" else schedule_type)
-    title = f'Vendor "{vendor}" → ' + " ".join(parts)
+def _schedule_title(schedule_type: str, party: str, d: dict[str, Any]) -> str:
+    """Human-readable convention label, per schedule type."""
     offset_name = d.get("offset_account_name")
-    if offset_name:
-        title += f", amortizing into {offset_name}"
+    if schedule_type == "prepaid":
+        term = d.get("term_months")
+        method = d.get("amortization_method") or ""
+        method_label = {"straight_line": "straight-line", "daily_rate": "daily-rate"}.get(method, method)
+        parts = [p for p in (f"{term}-month" if term else "", method_label, "prepaid") if p]
+        title = f'Vendor "{party}" → ' + " ".join(parts)
+        if offset_name:
+            title += f", amortizing into {offset_name}"
+    elif schedule_type == "accrual":
+        title = f'Vendor "{party}" → accrual'
+        if offset_name:
+            title += f", booking to {offset_name}"
+    elif schedule_type == "fixed_asset":
+        cat = d.get("category")
+        life = d.get("useful_life_months")
+        meth = (d.get("depreciation_method") or "").replace("_", " ")
+        bits = [b for b in (cat, f"{life}-mo" if life else "", meth) if b]
+        title = f'Vendor "{party}" → {(" · ".join(bits)) or "fixed asset"} depreciation'
+        if offset_name:
+            title += f", into {offset_name}"
+    elif schedule_type == "lease":
+        term = d.get("term_months")
+        title = f'Lessor "{party}" → {term}-month lease' if term else f'Lessor "{party}" → lease'
+    elif schedule_type == "loan":
+        term = d.get("term_months")
+        rate = d.get("interest_rate_pct")
+        pt = d.get("payment_type") or ""
+        bits = [b for b in (f"{term}-month" if term else "", f"{rate}%" if rate else "", pt) if b]
+        title = f'Lender "{party}" → ' + (" ".join(bits)) + " loan"
+    else:
+        title = f'"{party}" → learned setup'
     return title[:400]
 
 
@@ -331,15 +373,30 @@ async def distill_schedule_default(
         return None
 
     fact_key = f"{stype}:vendor:{vk}"
+    # Carry every field a dialog might pre-fill, keyed by schedule type. The
+    # shared keys are always present; the type-specific ones only for the
+    # relevant type (so the frontend chip/onApply have what they need).
     value = {
         "vendor": vendor_disp,
         "schedule_type": schedule_type,
-        "amortization_method": defaults.get("amortization_method"),
         "term_months": defaults.get("term_months"),
         "offset_qbo_account_id": defaults.get("offset_qbo_account_id"),
         "offset_account_name": defaults.get("offset_account_name"),
         "qbo_account_id": defaults.get("qbo_account_id"),
     }
+    if schedule_type == "prepaid":
+        value["amortization_method"] = defaults.get("amortization_method")
+    elif schedule_type == "fixed_asset":
+        value["category"] = defaults.get("category")
+        value["useful_life_months"] = defaults.get("useful_life_months")
+        value["depreciation_method"] = defaults.get("depreciation_method")
+        value["accumulated_dep_qbo_account_id"] = defaults.get("accumulated_dep_qbo_account_id")
+    elif schedule_type == "lease":
+        value["discount_rate_pct"] = defaults.get("discount_rate_pct")
+        value["rou_qbo_account_id"] = defaults.get("rou_qbo_account_id")
+    elif schedule_type == "loan":
+        value["interest_rate_pct"] = defaults.get("interest_rate_pct")
+        value["payment_type"] = defaults.get("payment_type")
     title = _schedule_title(schedule_type, vendor_disp, value)
     provenance = {"seen": seen, "signal_ids": [str(s.id) for s in matching][:20]}
     now = datetime.now(UTC)

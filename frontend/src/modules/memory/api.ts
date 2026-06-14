@@ -55,11 +55,24 @@ async function getEvidence(id: string): Promise<{ fact: MemoryFact; signals: Mem
 export interface ScheduleDefault {
   vendor?: string
   schedule_type?: string
-  amortization_method?: "daily_rate" | "straight_line"
-  term_months?: number
+  // shared
   offset_qbo_account_id?: string | null
   offset_account_name?: string | null
   qbo_account_id?: string | null
+  term_months?: number
+  // prepaid
+  amortization_method?: "daily_rate" | "straight_line"
+  // fixed_asset
+  category?: string | null
+  useful_life_months?: number
+  depreciation_method?: string | null
+  accumulated_dep_qbo_account_id?: string | null
+  // lease
+  discount_rate_pct?: string | null
+  rou_qbo_account_id?: string | null
+  // loan
+  interest_rate_pct?: string | null
+  payment_type?: string | null
 }
 async function scheduleDefault(
   scheduleType: string, vendor: string,
