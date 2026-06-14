@@ -17,6 +17,7 @@ fully-rendered, ephemeral checklist without ever persisting a row.
 """
 import uuid
 from calendar import monthrange
+from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -504,3 +505,81 @@ def focus_period(tenant: Tenant, closed: set[date], today: date) -> date | None:
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+# ── Cycle-time analytics ──────────────────────────────────────────────────
+
+
+async def compute_analytics(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, Any]:
+    """Close-cycle analytics across every period (read-only):
+      - days-to-close per closed period (period_end → ClosedPeriod.closed_at) + average + trend,
+      - per-step average days-to-complete (completed_at − period_end) + on-time rate,
+      - overall on-time %, and the bottleneck (slowest) step.
+    All SELECTs are tenant-auto-filtered."""
+    insts = list((await db.execute(select(CloseStepInstance))).scalars().all())
+    closed = list((await db.execute(select(ClosedPeriod))).scalars().all())
+
+    # Days to close per closed period (clamp negatives to 0).
+    trend: list[dict[str, Any]] = []
+    dtc: list[int] = []
+    for c in sorted(closed, key=lambda c: c.period_end):
+        if c.closed_at is None:
+            continue
+        days = max(0, (c.closed_at.date() - c.period_end).days)
+        dtc.append(days)
+        trend.append({
+            "period_end": c.period_end.isoformat(),
+            "label":      c.period_end.strftime("%b %Y"),
+            "days":       days,
+        })
+
+    # Per-step duration + on-time, single pass over instances.
+    dur: dict[str, list[int]] = defaultdict(list)
+    st_hit: dict[str, int] = defaultdict(int)
+    st_tot: dict[str, int] = defaultdict(int)
+    title: dict[str, str] = {}
+    cat: dict[str, str] = {}
+    order: dict[str, int] = {}
+    for i in insts:
+        title[i.step_key] = i.title
+        cat[i.step_key] = i.category
+        order[i.step_key] = i.order_index
+        if i.completed_at is not None:
+            dur[i.step_key].append(max(0, (i.completed_at.date() - i.period_end).days))
+            if i.due_date is not None:
+                st_tot[i.step_key] += 1
+                if i.completed_at.date() <= i.due_date:
+                    st_hit[i.step_key] += 1
+
+    steps: list[dict[str, Any]] = []
+    for k, vals in dur.items():
+        tot = st_tot.get(k, 0)
+        steps.append({
+            "step_key":        k,
+            "title":           title.get(k, k),
+            "category":        cat.get(k, "custom"),
+            "order_index":     order.get(k, 0),
+            "avg_days":        round(sum(vals) / len(vals), 1),
+            "completed_count": len(vals),
+            "on_time_pct":     (round(st_hit.get(k, 0) / tot * 100) if tot else None),
+        })
+    # Bottleneck = slowest average step (with at least one completion). Tie-break
+    # deterministically on earliest workflow position, then key — otherwise the
+    # pick would depend on the unordered query's row order.
+    bottleneck = (
+        max(steps, key=lambda s: (s["avg_days"], -s["order_index"], s["step_key"]))["step_key"]
+        if steps else None
+    )
+    steps.sort(key=lambda s: s["order_index"])
+
+    total_tot = sum(st_tot.values())
+    total_hit = sum(st_hit.values())
+
+    return {
+        "periods_closed":      len(dtc),
+        "avg_days_to_close":   (round(sum(dtc) / len(dtc), 1) if dtc else None),
+        "on_time_pct":         (round(total_hit / total_tot * 100) if total_tot else None),
+        "days_to_close_trend": trend,
+        "steps":               steps,
+        "bottleneck_step_key": bottleneck,
+    }

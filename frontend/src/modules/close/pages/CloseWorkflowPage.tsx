@@ -21,7 +21,7 @@ import {
   RefreshCw, Scale, ClipboardList, Sparkles, BarChart3, BookOpen,
   ShieldCheck, Lock, ListChecks, CheckCircle2, Circle, Clock,
   ChevronRight, Pencil, Trash2, Plus, ArrowUp, ArrowDown, UserPlus,
-  type LucideIcon,
+  Timer, TrendingUp, AlertTriangle, type LucideIcon,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
@@ -104,7 +104,11 @@ export function CloseWorkflowPage() {
   const [actionErr, setActionErr] = useState<string | null>(null)
   const stepMut = useMutation({
     mutationFn: closeApi.updateStep,
-    onSuccess: () => { setActionErr(null); qc.invalidateQueries({ queryKey: ["close", "checklist", period] }) },
+    onSuccess: () => {
+      setActionErr(null)
+      qc.invalidateQueries({ queryKey: ["close", "checklist", period] })
+      qc.invalidateQueries({ queryKey: ["close", "analytics"] })
+    },
     onError: (e: unknown) => {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setActionErr(msg ?? "Couldn't update — you may not have permission, or the connection hiccuped.")
@@ -215,6 +219,9 @@ export function CloseWorkflowPage() {
               ))}
             </div>
           )}
+
+          {/* Cycle-time analytics (workspace-wide, all members) */}
+          <AnalyticsSection />
 
           {/* Admin: template editor */}
           {isAdmin && <TemplateEditor />}
@@ -600,6 +607,141 @@ function TemplateRow({ step, allSteps, first, last, onMove, onEdit, onDelete }: 
           ))}
         </select>
       </div>
+    </div>
+  )
+}
+
+// ── Cycle-time analytics ──────────────────────────────────────────────────
+
+function AnalyticsSection() {
+  const { organization } = useOrganization()
+  const { data, isLoading } = useQuery({
+    queryKey: ["close", "analytics"], queryFn: closeApi.getAnalytics, enabled: !!organization,
+  })
+
+  if (isLoading && !data) {
+    return (
+      <div className="mt-6 rounded-2xl p-5 flex items-center gap-3"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+        <Spinner className="h-4 w-4" />
+        <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>Loading analytics…</span>
+      </div>
+    )
+  }
+  if (!data) return null
+
+  const hasData = data.periods_closed > 0 || data.steps.length > 0
+  if (!hasData) {
+    return (
+      <div className="mt-6 rounded-2xl p-6 text-center"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+        <TrendingUp size={22} strokeWidth={1.6} className="mx-auto mb-2" style={{ color: "var(--text-muted)" }} />
+        <p className="text-sm font-semibold text-theme">No cycle-time data yet</p>
+        <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>
+          Close a couple of months and your days-to-close trend and per-step timing will appear here.
+        </p>
+      </div>
+    )
+  }
+
+  // Scale the trend bars to the SAME window we render (last 12), so a tall older
+  // outlier outside the window can't flatten the visible chart.
+  const recentTrend = data.days_to_close_trend.slice(-12)
+  const maxDays = Math.max(1, ...recentTrend.map((t) => t.days))
+  const maxStepAvg = Math.max(1, ...data.steps.map((s) => s.avg_days))
+
+  return (
+    <div className="mt-6 rounded-2xl overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
+        <TrendingUp size={15} strokeWidth={1.9} style={{ color: "var(--text-muted)" }} />
+        <span className="text-sm font-semibold text-theme">Cycle-time analytics</span>
+        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>· across all periods</span>
+      </div>
+
+      <div className="p-5 space-y-5">
+        {/* KPI tiles */}
+        <div className="grid grid-cols-3 gap-3">
+          <Kpi icon={Timer} label="Avg days to close"
+            value={data.avg_days_to_close != null ? `${data.avg_days_to_close}` : "—"} />
+          <Kpi icon={CheckCircle2} label="On-time steps"
+            value={data.on_time_pct != null ? `${data.on_time_pct}%` : "—"} />
+          <Kpi icon={Lock} label="Periods closed" value={`${data.periods_closed}`} />
+        </div>
+
+        {/* Days-to-close trend */}
+        {recentTrend.length > 0 && (
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
+              Days to close by period
+            </p>
+            <div className="flex items-end gap-2 h-28">
+              {recentTrend.map((t) => (
+                <div key={t.period_end} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+                  <span className="text-[10px] tabular-nums" style={{ color: "var(--text-2)" }}>{t.days}</span>
+                  <div className="w-full rounded-t" title={`${t.label}: ${t.days} day${t.days === 1 ? "" : "s"}`}
+                    style={{ height: `${Math.max(4, (t.days / maxDays) * 92)}px`, background: "var(--green)" }} />
+                  <span className="text-[9px] truncate w-full text-center" style={{ color: "var(--text-muted)" }}>
+                    {t.label.replace(" ", " ")}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Per-step timing */}
+        {data.steps.length > 0 && (
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
+              Average time per step (days after month-end)
+            </p>
+            <div className="space-y-1.5">
+              {data.steps.map((s) => {
+                const Icon = CAT_ICON[s.category] || ListChecks
+                const isBottleneck = s.step_key === data.bottleneck_step_key
+                return (
+                  <div key={s.step_key} className="flex items-center gap-3">
+                    <Icon size={14} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+                    <span className="text-[12px] text-theme w-40 shrink-0 truncate">{s.title}</span>
+                    <div className="flex-1 h-2.5 rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
+                      <div className="h-full rounded-full"
+                        style={{ width: `${(s.avg_days / maxStepAvg) * 100}%`,
+                                 background: isBottleneck ? "#9b3d37" : "var(--green)" }} />
+                    </div>
+                    <span className="text-[11px] tabular-nums w-10 text-right" style={{ color: "var(--text-2)" }}>
+                      {s.avg_days}d
+                    </span>
+                    {s.on_time_pct != null && (
+                      <span className="text-[10px] tabular-nums w-16 text-right" style={{ color: "var(--text-muted)" }}>
+                        {s.on_time_pct}% on-time
+                      </span>
+                    )}
+                    {isBottleneck && (
+                      <span className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide shrink-0"
+                        style={{ background: "rgba(155,61,55,0.12)", color: "#9b3d37" }}>
+                        <AlertTriangle size={9} strokeWidth={2.4} /> Bottleneck
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Kpi({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
+  return (
+    <div className="rounded-xl p-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide mb-1"
+        style={{ color: "var(--text-muted)" }}>
+        <Icon size={12} strokeWidth={2} /> {label}
+      </div>
+      <p className="text-xl font-bold tabular-nums text-theme">{value}</p>
     </div>
   )
 }

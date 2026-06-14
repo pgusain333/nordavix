@@ -3,6 +3,7 @@ Close Management workflow API — the milestone checklist above Tasks.
 
   GET   /api/close/periods             month list + focus period (any member)
   GET   /api/close/checklist?period_end=…   the period's ordered checklist
+  GET   /api/close/analytics           cycle-time analytics across all periods
   POST  /api/close/step                update one step (complete / assign / note)
   GET   /api/close/template            the reusable step template (any member)
   POST  /api/close/template            add a custom step          (admin)
@@ -97,6 +98,17 @@ async def get_checklist(
         "summary":    {"total": total, "done": done,
                        "pct": round(done / total * 100) if total else 0},
     }
+
+
+@router.get("/analytics")
+async def get_analytics(
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Close-cycle analytics across all periods (read-only): days-to-close trend,
+    per-step average duration + on-time rate, overall on-time %, bottleneck step."""
+    return await service.compute_analytics(db, tenant_id)
 
 
 @router.post("/step")

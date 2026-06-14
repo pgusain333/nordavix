@@ -55,8 +55,30 @@ export interface TemplateStep {
   is_active:     boolean
 }
 
+export interface CloseAnalytics {
+  periods_closed:      number
+  avg_days_to_close:   number | null
+  on_time_pct:         number | null
+  bottleneck_step_key: string | null
+  days_to_close_trend: { period_end: string; label: string; days: number }[]
+  steps: {
+    step_key:        string
+    title:           string
+    category:        string
+    order_index:     number
+    avg_days:        number
+    completed_count: number
+    on_time_pct:     number | null
+  }[]
+}
+
 async function getPeriods(): Promise<PeriodsResponse> {
   const { data } = await apiClient.get<PeriodsResponse>("/api/close/periods")
+  return data
+}
+
+async function getAnalytics(): Promise<CloseAnalytics> {
+  const { data } = await apiClient.get<CloseAnalytics>("/api/close/analytics")
   return data
 }
 
@@ -124,6 +146,6 @@ async function reorder(orderedIds: string[]): Promise<{ steps: TemplateStep[] }>
 }
 
 export const closeApi = {
-  getPeriods, getChecklist, updateStep,
+  getPeriods, getAnalytics, getChecklist, updateStep,
   getTemplate, addStep, editStep, deleteStep, reorder,
 }
