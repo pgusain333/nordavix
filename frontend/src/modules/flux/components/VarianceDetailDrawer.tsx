@@ -293,7 +293,7 @@ export function VarianceDetailDrawer({
             <div className="flex-1 overflow-y-auto">
               {tab === "summary" && (
                 <div className="px-5 py-5">
-                  <SummaryTab row={row} />
+                  <SummaryTab row={row} tbId={tbId} readOnly={readOnly} />
                 </div>
               )}
               {tab === "commentary" && (
@@ -687,9 +687,114 @@ function FluxReviewChecklist({ row }: { row: VarianceRow }) {
   )
 }
 
+// ── Capture: teach NDVX this variance recurs (Client Memory, confirm-first) ───
+
+function ExpectationCapture({ tbId, row }: { tbId?: string; row: VarianceRow }) {
+  const [open, setOpen] = useState(false)
+  const [recurrence, setRecurrence] = useState<"annual" | "monthly">("annual")
+  const [tolerance, setTolerance] = useState("15")
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  if (!tbId) return null
+
+  async function save() {
+    if (!tbId) return
+    setSaving(true)
+    setErr(null)
+    try {
+      const tol = Math.max(1, Math.min(200, parseFloat(tolerance) || 15))
+      await fluxApi.saveVarianceExpectation(tbId, row.id, { recurrence, tolerance_pct: tol })
+      setSaved(true)
+      setOpen(false)
+    } catch {
+      setErr("Couldn't save — please try again.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (saved) {
+    return (
+      <Card title="Recurring expectation" icon={<Lightbulb size={13} strokeWidth={1.8} />}>
+        <p className="text-[12px]" style={{ color: "var(--text)" }}>
+          Saved as a suggestion. A reviewer can confirm it in <strong>Settings → Memory</strong>; once
+          confirmed, NDVX pre-explains this account next period when it lands as expected — and still
+          flags it if it deviates.
+        </p>
+      </Card>
+    )
+  }
+
+  return (
+    <Card title="Teach NDVX" icon={<Lightbulb size={13} strokeWidth={1.8} />}>
+      {!open ? (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+            Does this recur? Save the explanation as a recurring expectation NDVX can reuse.
+          </p>
+          <button
+            onClick={() => setOpen(true)}
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+            style={{ border: "1px solid var(--border-strong)", color: "var(--text-2)" }}
+          >
+            Save as recurring
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <p className="text-[11px] font-semibold mb-1.5" style={{ color: "var(--text-2)" }}>How often does it recur?</p>
+            <div className="inline-flex items-center gap-1 rounded-lg p-1"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              {([["annual", "Each year (this month)"], ["monthly", "Every month"]] as const).map(([v, label]) => (
+                <button key={v} onClick={() => setRecurrence(v)}
+                  className="rounded-md px-2.5 py-1 text-[11px] font-medium"
+                  style={{
+                    background: recurrence === v ? "var(--green-subtle)" : "transparent",
+                    color: recurrence === v ? "var(--green)" : "var(--text-muted)",
+                  }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Tolerance ±</label>
+            <input value={tolerance} onChange={(e) => setTolerance(e.target.value)} inputMode="decimal"
+              aria-label="Tolerance percent"
+              className="w-16 rounded-md px-2 py-1 text-[12px] outline-none"
+              style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              % — within this band of the expected balance NDVX pre-explains it; outside it, it's flagged.
+            </span>
+          </div>
+          {err && <p className="text-[11px]" style={{ color: "var(--danger)" }}>{err}</p>}
+          <div className="flex items-center gap-2">
+            <button onClick={save} disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+              style={{ background: "var(--green)" }}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button onClick={() => setOpen(false)} disabled={saving}
+              className="rounded-lg px-2.5 py-1.5 text-[12px] font-semibold"
+              style={{ border: "1px solid var(--border-strong)", color: "var(--text-2)" }}>
+              Cancel
+            </button>
+          </div>
+          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+            Creates a suggestion only — a reviewer confirms it in Settings → Memory before it ever applies.
+          </p>
+        </div>
+      )}
+    </Card>
+  )
+}
+
 // ── Summary tab ───────────────────────────────────────────────────────
 
-function SummaryTab({ row }: { row: VarianceRow }) {
+function SummaryTab({ row, tbId, readOnly }: { row: VarianceRow; tbId?: string; readOnly: boolean }) {
   const anomalyLabels: Record<string, string> = {
     new_account:         "No prior balance",
     sign_flip:           "Sign flip",
@@ -709,10 +814,16 @@ function SummaryTab({ row }: { row: VarianceRow }) {
           AI's verdict/bridge/recommendations — then the evidence below. */}
       <FluxReviewChecklist row={row} />
 
-      {/* Expectation — shown when NDVX formed a run-rate expectation for this
-          account (the actual-vs-expected lens). Mode-independent context. */}
+      {/* Expectation — shown when NDVX formed an expectation for this account
+          (run-rate, or a confirmed recurring rule). Mode-independent context. */}
       {row.expected_value != null && (
         <Card title="Expectation" icon={<FileText size={13} strokeWidth={1.8} />}>
+          {row.pre_explained && (
+            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 mb-2 text-[10px] font-bold uppercase tracking-wider"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              <CheckCircle2 size={11} strokeWidth={2.4} /> Pre-explained · confirm to accept
+            </span>
+          )}
           <p className="text-[12px]" style={{ color: "var(--text)" }}>
             Expected <strong>{fmtUsd(row.expected_value)}</strong>
             {row.dollar_variance_expected != null && (
@@ -723,6 +834,13 @@ function SummaryTab({ row }: { row: VarianceRow }) {
             <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{row.expected_basis}</p>
           )}
         </Card>
+      )}
+
+      {/* Teach NDVX this recurs — capture the explanation as a confirm-first
+          recurring expectation (Client Memory). Only when there's an
+          explanation to capture and the period is open. */}
+      {!readOnly && (row.ai_commentary || row.narrative) && (
+        <ExpectationCapture tbId={tbId} row={row} />
       )}
 
       {/* AI verdict + bridge + actions */}

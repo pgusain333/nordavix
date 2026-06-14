@@ -15,9 +15,11 @@ close action that triggered it, so callers wrap these in try/except.
 import logging
 import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.client_memory import ClientMemoryFact, ClientMemorySignal
@@ -28,6 +30,26 @@ logger = logging.getLogger(__name__)
 SUGGEST_THRESHOLD = 2
 
 VALID_FACT_STATUSES = {"suggested", "active", "dismissed", "stale"}
+
+
+async def _insert_fact_or_lose_race(db: AsyncSession, fact: ClientMemoryFact) -> bool:
+    """Insert a brand-new fact inside a SAVEPOINT. Returns True on success, or
+    False if a concurrent request already inserted the same (tenant_id, fact_key):
+    the unique constraint turns that race into an IntegrityError, which we scope
+    to the savepoint so the rest of the transaction (e.g. the signal row written
+    earlier in the same request) survives. On False the caller re-selects the
+    winning row and merges into it instead of double-inserting.
+
+    A SELECT-then-INSERT is otherwise not atomic — two simultaneous first-time
+    captures for the same account would both see no row and both INSERT, 500-ing
+    the loser and losing its capture. Mirrors the close_workflow precedent."""
+    try:
+        async with db.begin_nested():
+            db.add(fact)
+            await db.flush()
+        return True
+    except IntegrityError:
+        return False
 
 
 def _acct_identity(line: dict[str, Any] | None) -> str | None:
@@ -175,9 +197,15 @@ async def distill_offset_swap(
             fact_key=fact_key, title=title, value=value, confidence=seen,
             status="suggested", provenance=provenance, last_seen_at=now,
         )
-        db.add(fact)
-        await db.flush()
-        return fact
+        if await _insert_fact_or_lose_race(db, fact):
+            return fact
+        # Lost the insert race to a concurrent request — re-select the winner and
+        # fall through to merge into it.
+        existing = (await db.execute(
+            select(ClientMemoryFact).where(ClientMemoryFact.fact_key == fact_key)
+        )).scalar_one_or_none()
+        if existing is None:
+            raise RuntimeError("offset fact vanished after unique conflict")
 
     if existing.status in ("suggested", "stale"):
         existing.title = title
@@ -410,9 +438,14 @@ async def distill_schedule_default(
             fact_key=fact_key, title=title, value=value, confidence=seen,
             status="suggested", provenance=provenance, last_seen_at=now,
         )
-        db.add(fact)
-        await db.flush()
-        return fact
+        if await _insert_fact_or_lose_race(db, fact):
+            return fact
+        # Lost the insert race to a concurrent request — re-select and merge.
+        existing = (await db.execute(
+            select(ClientMemoryFact).where(ClientMemoryFact.fact_key == fact_key)
+        )).scalar_one_or_none()
+        if existing is None:
+            raise RuntimeError("vendor-schedule fact vanished after unique conflict")
     if existing.status in ("suggested", "stale"):
         existing.title = title
         existing.value = value
@@ -456,6 +489,215 @@ async def active_schedule_default(
             ClientMemoryFact.status == "active",
         )
     )).scalar_one_or_none()
+
+
+# ── Variance expectations (Slice 2 — captured judgment on flux) ────────────────
+#
+# When an accountant explains a flux variance and marks it as RECURRING, we
+# capture that judgment as a confirm-first fact. Once a reviewer confirms it,
+# the next period's flux uses the human's expectation in place of the
+# statistical run-rate — and pre-explains the variance ONLY when the actual
+# lands within the rule's tolerance. Outside tolerance the rule never hides the
+# movement; it flags it as deviating. Same two-gate safety as every memory fact.
+
+_EXPECTATION_PREFIX = "flux:expectation:"
+
+
+def _usd(v: Any) -> str:
+    try:
+        n = Decimal(str(v))
+    except (TypeError, InvalidOperation, ValueError):
+        return "—"
+    body = f"${abs(n):,.0f}"
+    return f"({body})" if n < 0 else body
+
+
+def expectation_title(account_name: str, recurrence: str, month: int | None,
+                      expected_balance: Any, explanation: str | None) -> str:
+    """Human-readable label for a captured expectation, shown in the Memory UI."""
+    import calendar
+    when = "every month" if recurrence == "monthly" else (
+        f"each {calendar.month_name[month]}" if month and 1 <= month <= 12 else "each year"
+    )
+    base = f"{(account_name or 'This account')}: expect ~{_usd(expected_balance)} {when}"
+    reason = (explanation or "").strip().splitlines()[0] if explanation else ""
+    if reason:
+        base += f" — {reason[:80]}"
+    return base[:400]
+
+
+def evaluate_expectation(
+    value: dict[str, Any] | None,
+    period_end: date,
+    actual_balance: Decimal,
+) -> dict[str, Any] | None:
+    """PURE. Given a confirmed expectation fact's value, decide how it applies to
+    one account this period. Returns None when the rule does NOT fire this period
+    (wrong recurrence month, or malformed) — caller then falls back to run-rate.
+
+    When it fires, returns {expected_value, basis, pre_explained}:
+      • pre_explained is True ONLY when the actual is within the rule's tolerance
+        band of the expectation. Outside the band the rule still surfaces the
+        expectation (so the human sees what was expected) but pre_explained is
+        False and the basis says it DEVIATES — a learned rule never silences a
+        genuinely anomalous movement.
+    This function is deterministic + side-effect-free so it can be unit-tested.
+    """
+    if not value:
+        return None
+    recurrence = value.get("recurrence")
+    if recurrence == "annual":
+        month = value.get("month")
+        try:
+            if not month or period_end.month != int(month):
+                return None
+        except (TypeError, ValueError):
+            return None
+    elif recurrence != "monthly":
+        return None
+
+    try:
+        expected = Decimal(str(value.get("expected_balance")))
+    except (TypeError, InvalidOperation, ValueError):
+        return None
+    # "NaN"/"Infinity" parse cleanly into Decimal but would poison the tolerance
+    # math and the <= comparison below. A non-finite expectation is malformed —
+    # don't fire; fall back to the run-rate baseline.
+    if not expected.is_finite():
+        return None
+
+    try:
+        tol_pct = Decimal(str(value.get("tolerance_pct", 15)))
+    except (TypeError, InvalidOperation, ValueError):
+        tol_pct = Decimal(15)
+    # CRITICAL: a non-finite tolerance ("Infinity"/"NaN") must never reach the
+    # band math. Infinity would make every variance "within tolerance" (silently
+    # pre-explaining a genuine anomaly); NaN would raise on the `< 0` compare and
+    # crash the run. Both are garbage — fall back to the safe default. This pure
+    # gate is the safety boundary; it cannot trust the JSONB value it is handed.
+    if not tol_pct.is_finite():
+        tol_pct = Decimal(15)
+    if tol_pct < 0:
+        tol_pct = Decimal(0)
+    # Never honor a band wider than the product's capture cap (router clamps to
+    # 1..200). Keeps a drifted/edited fact from granting an impossibly wide,
+    # anomaly-hiding tolerance the human never could have confirmed.
+    if tol_pct > 200:
+        tol_pct = Decimal(200)
+    tol_abs = (abs(expected) * tol_pct / Decimal(100))
+
+    reason = str(value.get("explanation") or "").strip()
+    short = (reason[:140] + "…") if len(reason) > 140 else reason
+    within = abs(actual_balance - expected) <= tol_abs
+    if within:
+        basis = f"Confirmed rule: {short}" if short else "Confirmed recurring expectation"
+    else:
+        basis = f"Deviates from confirmed expectation (~{_usd(expected)})"
+        if short:
+            basis += f": {short}"
+    return {"expected_value": expected, "basis": basis[:200], "pre_explained": within}
+
+
+async def record_expectation_signal(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    account_key: str,
+    period_end: date,
+    value: dict[str, Any],
+    variance_id: uuid.UUID | None,
+    created_by: uuid.UUID | None,
+) -> ClientMemorySignal:
+    """One capture observation for a recurring variance expectation."""
+    sig = ClientMemorySignal(
+        id=uuid.uuid4(), tenant_id=tenant_id,
+        signal_type="variance_expectation", source="flux",
+        source_ref=account_key[:100], period_end=period_end,
+        account_key=account_key[:160], proposed_entry_id=variance_id,
+        before=None, after=value, created_by=created_by,
+    )
+    db.add(sig)
+    await db.flush()
+    return sig
+
+
+async def upsert_expectation_fact(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    account_key: str,
+    value: dict[str, Any],
+    title: str,
+) -> ClientMemoryFact:
+    """Upsert the confirm-first expectation fact for an account. A deliberate
+    human capture, so threshold is 1 — but it is created `suggested` and never
+    applied until a reviewer confirms it. A CONFIRMED (active) fact is only
+    reinforced, never silently overwritten with a new expectation."""
+    fact_key = f"{_EXPECTATION_PREFIX}{account_key}"[:200]
+    sigs = (await db.execute(
+        select(ClientMemorySignal).where(
+            ClientMemorySignal.signal_type == "variance_expectation",
+            ClientMemorySignal.source == "flux",
+            ClientMemorySignal.account_key == account_key[:160],
+        )
+    )).scalars().all()
+    # Distinct capture periods — re-saving within the same period shouldn't
+    # inflate the "seen" count.
+    seen = len({s.period_end for s in sigs}) or 1
+    provenance = {"seen": seen, "signal_ids": [str(s.id) for s in sigs][:20]}
+    now = datetime.now(UTC)
+
+    existing = (await db.execute(
+        select(ClientMemoryFact).where(ClientMemoryFact.fact_key == fact_key)
+    )).scalar_one_or_none()
+    if existing is None:
+        fact = ClientMemoryFact(
+            id=uuid.uuid4(), tenant_id=tenant_id, kind="variance_expectation",
+            fact_key=fact_key, title=title[:400], value=value, confidence=seen,
+            status="suggested", provenance=provenance, last_seen_at=now,
+        )
+        if await _insert_fact_or_lose_race(db, fact):
+            return fact
+        # Lost the insert race to a concurrent capture — re-select the winning
+        # row and fall through to reinforce/re-surface it (never double-insert).
+        existing = (await db.execute(
+            select(ClientMemoryFact).where(ClientMemoryFact.fact_key == fact_key)
+        )).scalar_one_or_none()
+        if existing is None:
+            raise RuntimeError("expectation fact vanished after unique conflict")
+    if existing.status == "active":
+        # Confirmed — reinforce recency/confidence only. Never change the
+        # confirmed expectation's value out from under the reviewer.
+        existing.confidence = seen
+        existing.last_seen_at = now
+    else:
+        # suggested | stale | dismissed → (re-)surface this deliberate capture.
+        existing.title = title[:400]
+        existing.value = value
+        existing.confidence = seen
+        existing.provenance = provenance
+        existing.status = "suggested"
+        existing.last_seen_at = now
+    await db.flush()
+    return existing
+
+
+async def active_expectation_facts_map(db: AsyncSession) -> dict[str, dict[str, Any]]:
+    """Map account_key → confirmed expectation value, for all ACTIVE expectation
+    facts of the current tenant (SELECT auto-filtered by TenantBase). Used by the
+    flux build to apply confirmed expectations. Only `active` facts are returned."""
+    facts = (await db.execute(
+        select(ClientMemoryFact).where(
+            ClientMemoryFact.kind == "variance_expectation",
+            ClientMemoryFact.status == "active",
+        )
+    )).scalars().all()
+    out: dict[str, dict[str, Any]] = {}
+    for f in facts:
+        key = (f.fact_key or "").removeprefix(_EXPECTATION_PREFIX)
+        if key:
+            out[key] = f.value or {}
+    return out
 
 
 def serialize_fact(f: ClientMemoryFact) -> dict[str, Any]:

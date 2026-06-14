@@ -67,8 +67,11 @@ def upgrade() -> None:
                   server_default=sa.func.now(), nullable=False),
     )
     # One fact row per convention per tenant — the distiller upserts on this.
-    # Tenant-leading so a fact_key can never collide ACROSS tenants, and the
-    # SELECT-or-insert in distill_offset_swap is race-safe at the DB layer.
+    # Tenant-leading so a fact_key can never collide ACROSS tenants. This
+    # constraint is the backstop for concurrent first-time captures: the app
+    # layer (modules/memory/service._insert_fact_or_lose_race) inserts inside a
+    # SAVEPOINT and, on the IntegrityError this constraint raises for the loser,
+    # re-selects the winning row and merges into it instead of 500-ing.
     op.create_unique_constraint(
         "uq_client_memory_facts_tenant_factkey",
         "client_memory_facts", ["tenant_id", "fact_key"],

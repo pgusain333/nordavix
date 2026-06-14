@@ -274,7 +274,9 @@ function FactRow({
           >
             <div className="px-3.5 pb-3.5 pt-0" style={{ borderTop: "1px solid var(--border)" }}>
               <p className="text-[11px] mt-2.5 mb-1.5 font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                {fact.kind === "vendor_schedule" ? "Learned from these schedules" : "Learned from these edits"}
+                {fact.kind === "vendor_schedule" ? "Learned from these schedules"
+                  : fact.kind === "variance_expectation" ? "Captured from these closes"
+                  : "Learned from these edits"}
               </p>
               {loadingEv ? (
                 <div className="flex items-center gap-2 py-2"><Spinner className="h-3.5 w-3.5" /><span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Loading…</span></div>
@@ -282,7 +284,11 @@ function FactRow({
                 <ul className="space-y-1">
                   {evidence.signals.map((s) => (
                     <li key={s.id} className="text-[11px]" style={{ color: "var(--text-2)" }}>
-                      {fact.kind === "vendor_schedule" ? (
+                      {fact.kind === "variance_expectation" ? (
+                        <>{fmtWhen(s.period_end)} ·{" "}
+                          <span className="font-medium" style={{ color: "var(--green)" }}>{expectationLabel(s.after)}</span>
+                        </>
+                      ) : fact.kind === "vendor_schedule" ? (
                         <>{fmtWhen(s.period_end)} · set up{" "}
                           <span className="font-medium" style={{ color: "var(--green)" }}>{scheduleLabel(s.after)}</span>
                         </>
@@ -313,6 +319,16 @@ function accLabel(acc: Record<string, unknown> | undefined): string {
   const num = (acc.account_number as string) || ""
   const name = (acc.account_name as string) || ""
   return [num, name].filter(Boolean).join(" · ") || "—"
+}
+
+/** Human label for a captured variance-expectation signal's `after` blob. */
+function expectationLabel(d: Record<string, unknown> | undefined): string {
+  if (!d) return "—"
+  const rec = d.recurrence === "monthly" ? "every month" : "each year"
+  const raw = d.expected_balance
+  const n = raw == null ? NaN : Number(raw)
+  const bal = Number.isNaN(n) ? "" : `~$${Math.abs(Math.round(n)).toLocaleString()}`
+  return [bal ? `expect ${bal}` : "expectation", rec].filter(Boolean).join(" · ")
 }
 
 /**

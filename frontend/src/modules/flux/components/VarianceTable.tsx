@@ -538,11 +538,23 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     col.accessor("account_name", {
       header: "Account Name",
       size:   200,
-      cell: (c) => (
-        <span className="text-sm font-medium truncate max-w-[200px] block text-theme" title={c.getValue()}>
-          {c.getValue()}
-        </span>
-      ),
+      cell: (c) => {
+        const r = c.row.original
+        return (
+          <div className="min-w-0">
+            <span className="text-sm font-medium truncate max-w-[200px] block text-theme" title={c.getValue()}>
+              {c.getValue()}
+            </span>
+            {r.pre_explained && (
+              <span className="inline-flex items-center gap-1 mt-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+                title={r.expected_basis ?? "Pre-explained by a confirmed recurring expectation"}>
+                <Sparkles size={9} strokeWidth={2.4} /> Pre-explained
+              </span>
+            )}
+          </div>
+        )
+      },
     }),
     col.accessor("fs_category", {
       header: "Category",

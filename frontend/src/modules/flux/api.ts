@@ -181,6 +181,21 @@ async function setComparisonMode(id: string, mode: "prior" | "expected"): Promis
   return data
 }
 
+/** Capture this variance's explanation as a recurring expectation for the
+ *  account (Client Memory). Creates a SUGGESTED rule only — a reviewer must
+ *  confirm it in Settings → Memory before it ever applies. Returns the fact. */
+async function saveVarianceExpectation(
+  tbId: string,
+  varId: string,
+  body: { recurrence: "monthly" | "annual"; tolerance_pct?: number },
+): Promise<{ id: string; status: string; title: string }> {
+  const { data } = await apiClient.post<{ id: string; status: string; title: string }>(
+    `/api/flux/trial-balances/${tbId}/variances/${varId}/save-expectation`,
+    body,
+  )
+  return data
+}
+
 // ── Upload & Parse ────────────────────────────────────────────────────────────
 
 async function uploadFile(id: string, file: File): Promise<UploadPreview> {
@@ -470,6 +485,7 @@ export const api = {
   deleteTrialBalance,
   approveTrialBalance,
   setComparisonMode,
+  saveVarianceExpectation,
   // Upload & Parse
   uploadFile,
   parseColumns,

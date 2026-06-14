@@ -42,6 +42,7 @@ from modules.flux.schemas import (
     FluxRunResponse,
     NarrativeUpdate,
     ParseResult,
+    SaveExpectationBody,
     TrialBalanceCreate,
     TrialBalanceResponse,
     UploadPreview,
@@ -49,6 +50,7 @@ from modules.flux.schemas import (
     VarianceStatusUpdate,
 )
 from modules.flux.service import (
+    _account_key,
     create_accounts_and_variances,
     parse_accounts_from_file,
     parse_file_to_preview,
@@ -59,6 +61,12 @@ from modules.flux.tasks import (  # noqa: F401  (kept for celery)
     generate_narrative_task,
 )
 from modules.flux.variance_txns import pull_transactions_for_variance
+from modules.memory.service import (
+    expectation_title,
+    record_expectation_signal,
+    serialize_fact,
+    upsert_expectation_fact,
+)
 from modules.qbo.router import _get_valid_token  # type: ignore  # reuse existing helper
 
 router = APIRouter()
@@ -637,6 +645,85 @@ async def approve_variance(
         "approved_by": str(user.id),
         "approved_at": var.approved_at.isoformat(),
     }
+
+
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/save-expectation")
+async def save_variance_expectation(
+    tb_id: uuid.UUID,
+    var_id: uuid.UUID,
+    body: SaveExpectationBody,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Capture this variance's explanation as a recurring expectation for the
+    account (Client Memory). Creates a SUGGESTED fact only — confirm-first: a
+    reviewer must confirm it in Settings → Memory before it ever applies. Any
+    member may suggest (preparers explain; reviewers confirm)."""
+    if body.recurrence not in ("monthly", "annual"):
+        raise HTTPException(status_code=400, detail="recurrence must be 'monthly' or 'annual'.")
+
+    var = (await db.execute(select(Variance).where(Variance.id == var_id))).scalar_one_or_none()
+    if var is None:
+        raise HTTPException(status_code=404, detail="Variance not found")
+    acct = (await db.execute(select(Account).where(Account.id == var.account_id))).scalar_one_or_none()
+    if acct is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    tb = (await db.execute(select(TrialBalance).where(TrialBalance.id == tb_id))).scalar_one_or_none()
+    if tb is None:
+        raise HTTPException(status_code=404, detail="Trial balance not found")
+
+    # The explanation is the heart of the rule — require one (from AI commentary
+    # or a written narrative) so we never store an empty, low-quality memory.
+    explanation = ""
+    if isinstance(var.ai_commentary, dict):
+        explanation = (var.ai_commentary.get("narrative") or var.ai_commentary.get("headline") or "").strip()
+    if not explanation:
+        narr = (await db.execute(
+            select(Narrative).where(Narrative.variance_id == var_id)
+        )).scalar_one_or_none()
+        if narr and narr.content:
+            explanation = narr.content.strip()
+    if not explanation:
+        raise HTTPException(
+            status_code=400,
+            detail="Add an explanation first (run AI or write commentary) — a recurring expectation needs a reason.",
+        )
+
+    account_key = _account_key(acct.qbo_account_id, acct.account_number)
+    if not account_key:
+        raise HTTPException(status_code=400, detail="This account has no stable identifier to learn from.")
+
+    tol = 15.0 if body.tolerance_pct is None else max(1.0, min(200.0, float(body.tolerance_pct)))
+    month = tb.period_current.month if body.recurrence == "annual" else None
+    value = {
+        "account_number": acct.account_number,
+        "account_name": acct.account_name,
+        "qbo_account_id": acct.qbo_account_id,
+        "recurrence": body.recurrence,
+        "month": month,
+        "expected_balance": str(acct.current_balance),
+        "tolerance_pct": tol,
+        "explanation": explanation[:2000],
+        "captured_period": tb.period_current.isoformat(),
+    }
+    title = expectation_title(acct.account_name, body.recurrence, month, acct.current_balance, explanation)
+
+    await record_expectation_signal(
+        db, tenant_id=tenant_id, account_key=account_key,
+        period_end=tb.period_current, value=value, variance_id=var_id, created_by=user.id,
+    )
+    fact = await upsert_expectation_fact(
+        db, tenant_id=tenant_id, account_key=account_key, value=value, title=title,
+    )
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="memory.expectation_captured", entity_type="variance", entity_id=var_id,
+        metadata={"summary": f"Captured recurring expectation — {title}",
+                  "trial_balance_id": str(tb_id), "fact_id": str(fact.id)},
+    )
+    await db.commit()
+    return serialize_fact(fact)
 
 
 # Status values the /status endpoint accepts. We intentionally exclude

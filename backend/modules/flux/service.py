@@ -5,6 +5,7 @@ All functions receive an AsyncSession and tenant_id explicitly.
 This module has no HTTP concerns — it's pure business logic.
 """
 import io
+import logging
 import uuid
 from decimal import Decimal, InvalidOperation
 
@@ -15,6 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.account import Account
 from models.trial_balance import TrialBalance
 from models.variance import Variance
+from modules.memory.service import active_expectation_facts_map, evaluate_expectation
+
+logger = logging.getLogger(__name__)
 
 # Standard GAAP 4-digit account number ranges for FS categorization.
 _FS_CATEGORY_RANGES: list[tuple[int, int, str, str]] = [
@@ -427,6 +431,14 @@ async def create_accounts_and_variances(
 
     # One history pass for the whole chart (avoids a query per account).
     hist = await _expectation_history(session, tenant_id, trial_balance.period_current)
+    # Confirmed (reviewer-approved) expectation rules for this tenant, keyed by
+    # account. Best-effort: a memory hiccup must never block the close — we just
+    # fall back to the run-rate baseline.
+    try:
+        exp_facts = await active_expectation_facts_map(session)
+    except Exception:
+        logger.warning("flux: expectation facts unavailable; using run-rate only", exc_info=True)
+        exp_facts = {}
 
     for ad in account_dicts:
         account = Account(
@@ -448,12 +460,33 @@ async def create_accounts_and_variances(
         is_material = abs(dollar) >= trial_balance.materiality_threshold
         flags = detect_anomalies(ad["current_balance"], ad["prior_balance"], dollar, pct)
 
-        # Actual-vs-expected lens. Expected = trailing run-rate of recent closes.
-        # SLICE-2 HOOK: a confirmed client-memory expectation rule for this
-        # account would override (expected, basis) here before the delta is
-        # computed — that's where captured judgment plugs in.
+        # Actual-vs-expected lens. A CONFIRMED client-memory expectation rule
+        # (captured judgment) takes precedence over the statistical run-rate; it
+        # only pre-explains when the actual is within the rule's tolerance and
+        # the rule fires this period (recurrence-aware). Otherwise we fall back
+        # to the trailing run-rate baseline.
         key = _account_key(ad.get("qbo_account_id"), ad.get("account_number"))
-        expected, basis = _expected_from_history(hist.get(key, []))
+        expected: Decimal | None = None
+        basis: str | None = None
+        pre_explained = False
+        rule = exp_facts.get(key)
+        if rule:
+            # Best-effort, per the memory module's contract: a malformed stored
+            # fact must degrade to the run-rate baseline for THIS account only,
+            # never crash the whole flux build. (evaluate_expectation is hardened
+            # to return None on malformed input; this try/except is the backstop
+            # so any future field can't fail the close.)
+            try:
+                ev = evaluate_expectation(rule, trial_balance.period_current, ad["current_balance"])
+            except Exception:
+                logger.warning("flux: expectation eval failed for %s; using run-rate", key, exc_info=True)
+                ev = None
+            if ev:
+                expected = ev["expected_value"]
+                basis = ev["basis"]
+                pre_explained = ev["pre_explained"]
+        if expected is None:
+            expected, basis = _expected_from_history(hist.get(key, []))
         if expected is not None:
             d_exp, p_exp = compute_variance(ad["current_balance"], expected)
         else:
@@ -472,6 +505,7 @@ async def create_accounts_and_variances(
             expected_basis=basis,
             dollar_variance_expected=d_exp,
             pct_variance_expected=p_exp,
+            pre_explained=pre_explained,
         )
         session.add(variance)
         variances_created += 1

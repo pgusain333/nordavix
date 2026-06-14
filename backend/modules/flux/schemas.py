@@ -115,6 +115,19 @@ class ComparisonModeBody(BaseModel):
     mode: str
 
 
+class SaveExpectationBody(BaseModel):
+    """Body for POST .../variances/{id}/save-expectation — captures this
+    variance's explanation as a recurring client-memory expectation (confirm-
+    first; a reviewer must confirm it before it ever applies).
+
+      recurrence    'monthly' (every close) | 'annual' (this calendar month only)
+      tolerance_pct band within which a future actual counts as 'as expected'
+                    (defaults to 15%; clamped 1..200 server-side)
+    """
+    recurrence: str
+    tolerance_pct: float | None = None
+
+
 class NarrativeUpdate(BaseModel):
     content: str
 
