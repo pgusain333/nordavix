@@ -16,6 +16,9 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit.log import write_audit_event
+from core.db.base import current_tenant_id
+from core.db.session import AsyncSessionLocal
 from core.qbo_gl import pull_gl_transactions_multi
 from models.gl_accuracy_finding import GlAccuracyFinding
 from models.gl_balance_snapshot import GlBalanceSnapshot
@@ -178,6 +181,38 @@ async def scan_period(
         "medium": len(open_findings) - high,
         "dollars": str(dollars),
     }
+
+
+async def run_auto_scan(tenant_id: uuid.UUID, period_end: date) -> None:
+    """Watchdog pass triggered right after a QuickBooks sync, as a BackgroundTask.
+
+    Runs in its own session with its own error handling: a scan failure must
+    never surface to — or fail — the sync that scheduled it. Idempotent, since
+    scan_period only replaces a period's *open* findings (accepted/dismissed
+    stay put, and dismissed pairings remain suppressed via the learned
+    exception). If QuickBooks isn't connected, it quietly does nothing.
+    """
+    current_tenant_id.set(tenant_id)
+    async with AsyncSessionLocal() as session:
+        try:
+            conn = (await session.execute(
+                select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+                execution_options={"skip_tenant_filter": True},
+            )).scalar_one_or_none()
+            if conn is None:
+                return
+            summary = await scan_period(conn, session, tenant_id=tenant_id, period_end=period_end)
+            await write_audit_event(
+                session, tenant_id=tenant_id, user_id=None, action="gl_accuracy.auto_scan",
+                entity_type="period", entity_id=None,
+                metadata={"summary": f"Auto-checked GL accuracy after sync for {period_end} "
+                                     f"— {summary['findings']} to review",
+                          "period_end": period_end.isoformat(), "findings": summary["findings"],
+                          "scanned": summary["scanned"]},
+            )
+            await session.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("Auto GL-accuracy scan failed: tenant=%s period=%s", tenant_id, period_end)
 
 
 def serialize_finding(f: GlAccuracyFinding) -> dict:

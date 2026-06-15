@@ -461,6 +461,14 @@ async def sync_overview_endpoint(
         metadata={"summary": f"Synced {pe} from QuickBooks ({len(overview.get('accounts', []))} accounts)"},
     )
     await db.commit()
+
+    # A second pair of eyes runs on its own right after the sync: the GL-accuracy
+    # watchdog re-checks this period's vendor coding in the background, so flags
+    # are waiting without anyone clicking "Scan". It owns its session + errors —
+    # a scan failure can never affect this sync (see service.run_auto_scan).
+    from modules.gl_accuracy.service import run_auto_scan
+    background_tasks.add_task(run_auto_scan, tenant_id, pe)
+
     return overview
 
 
