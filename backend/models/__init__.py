@@ -39,6 +39,7 @@ from models.tenant import Tenant
 from models.trial_balance import TrialBalance
 from models.user import User
 from models.variance import Variance
+from models.workpaper_evidence import WorkpaperEvidence
 
 __all__ = [
     "AutopilotConfig",
@@ -83,4 +84,5 @@ __all__ = [
     "TrialBalance",
     "User",
     "Variance",
+    "WorkpaperEvidence",
 ]
