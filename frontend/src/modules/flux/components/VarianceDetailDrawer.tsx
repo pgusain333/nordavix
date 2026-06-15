@@ -42,6 +42,7 @@ import { api as fluxApi, type VarianceRow, type AICommentary } from "@/modules/f
 import { formatDateTime } from "@/core/lib/dates"
 import { CommentThread } from "@/modules/comments/CommentThread"
 import { MemoryContextNote } from "@/modules/memory/MemoryContextNote"
+import { GlFlagChip } from "@/modules/gl_accuracy/components/GlFlagChip"
 
 const TABS = [
   { id: "summary",      label: "Summary",      icon: Sparkles },
@@ -59,6 +60,8 @@ interface Props {
   rows:          VarianceRow[]
   /** Trial-balance id — enables the per-variance PDF download. */
   tbId?:         string
+  /** Period-end (ISO date) of the current column — scopes the GL-accuracy chip. */
+  periodEnd?:    string
   /** True when books are closed → drawer renders read-only. */
   readOnly:      boolean
   /** Called when the user picks a different variance. */
@@ -95,7 +98,7 @@ function persistWidth(w: number): void {
 }
 
 export function VarianceDetailDrawer({
-  row, rows, tbId, readOnly, onNavigate, onClose,
+  row, rows, tbId, periodEnd, readOnly, onNavigate, onClose,
   renderCommentary, renderTransactions, renderFooter,
 }: Props) {
   const [tab, setTab] = useTabHash(row?.id ?? null)
@@ -294,7 +297,7 @@ export function VarianceDetailDrawer({
             <div className="flex-1 overflow-y-auto">
               {tab === "summary" && (
                 <div className="px-5 py-5">
-                  <SummaryTab row={row} tbId={tbId} readOnly={readOnly} />
+                  <SummaryTab row={row} tbId={tbId} periodEnd={periodEnd} readOnly={readOnly} />
                 </div>
               )}
               {tab === "commentary" && (
@@ -795,7 +798,7 @@ function ExpectationCapture({ tbId, row }: { tbId?: string; row: VarianceRow }) 
 
 // ── Summary tab ───────────────────────────────────────────────────────
 
-function SummaryTab({ row, tbId, readOnly }: { row: VarianceRow; tbId?: string; readOnly: boolean }) {
+function SummaryTab({ row, tbId, periodEnd, readOnly }: { row: VarianceRow; tbId?: string; periodEnd?: string; readOnly: boolean }) {
   const anomalyLabels: Record<string, string> = {
     new_account:         "No prior balance",
     sign_flip:           "Sign flip",
@@ -818,6 +821,10 @@ function SummaryTab({ row, tbId, readOnly }: { row: VarianceRow; tbId?: string; 
       {/* What Nordavix knows about this account — confirmed conventions learned
           elsewhere (schedules, adjustments) surfaced here. Context only. */}
       <MemoryContextNote qboAccountId={row.qbo_account_id} accountNumber={row.account_number} />
+
+      {/* Second pair of eyes — the GL-accuracy watchdog. Shows only when an open
+          finding points at this exact account; links to the full review. */}
+      <GlFlagChip qboAccountId={row.qbo_account_id} periodEnd={periodEnd} />
 
       {/* Expectation — shown when NDVX formed an expectation for this account
           (run-rate, or a confirmed recurring rule). Mode-independent context. */}

@@ -47,6 +47,7 @@ import { schedulesApi } from "@/modules/schedules/api"
 import { CommentThread } from "@/modules/comments/CommentThread"
 import { ProposedEntriesInline } from "@/modules/adjustments/components/ProposedEntriesInline"
 import { MemoryContextNote } from "@/modules/memory/MemoryContextNote"
+import { GlFlagChip } from "@/modules/gl_accuracy/components/GlFlagChip"
 
 const TABS = [
   { id: "summary",     label: "Summary",     icon: Sparkles },
@@ -778,6 +779,10 @@ function SummaryTab({ account, periodEnd, readOnly }: { account: OverviewAccount
           elsewhere (schedules, flux expectations, adjustments) surfaced here.
           Context only; never changes a balance or variance. */}
       <MemoryContextNote qboAccountId={account.qbo_id} accountNumber={account.account_number} />
+
+      {/* Second pair of eyes — the GL-accuracy watchdog. Shows only when an open
+          finding points at this exact account; links to the full review. */}
+      <GlFlagChip qboAccountId={account.qbo_id} periodEnd={periodEnd} />
 
       {/* AI verdict snapshot */}
       {account.ai_commentary ? (

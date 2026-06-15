@@ -24,12 +24,13 @@ import {
   RefreshCw, Scale, ClipboardList, Sparkles, BarChart3, BookOpen,
   ShieldCheck, Lock, ListChecks, CheckCircle2, Circle, Clock, Check,
   ChevronRight, Pencil, Trash2, Plus, ArrowUp, ArrowDown, UserPlus,
-  Timer, TrendingUp, AlertTriangle, Brain, type LucideIcon,
+  Timer, TrendingUp, AlertTriangle, Brain, ScanSearch, type LucideIcon,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
 import { workspaceApi, type WorkspaceMember } from "@/modules/workspace/api"
 import { closeApi, type CloseStep, type TemplateStep, type PrefillItem } from "@/modules/close/api"
+import { glAccuracyApi } from "@/modules/gl_accuracy/api"
 
 const CAT_ICON: Record<string, LucideIcon> = {
   sync: RefreshCw, recon: Scale, schedule: ClipboardList, adjustments: Sparkles,
@@ -257,6 +258,7 @@ export function CloseWorkflowPage() {
               />
             )}
             <PrefillCard period={period} onOpen={(href) => navigate(href)} />
+            <GlAccuracyRailCard period={period} onOpen={(href) => navigate(href)} />
             <CycleTimeCard reduce={reduce} />
           </aside>
         </div>
@@ -637,6 +639,71 @@ function PrefillCard({ period, onOpen }: { period: string; onOpen: (href: string
               </span>
             </button>
           )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// The watchdog's second pair of eyes, surfaced in the close rail: how many
+// entries this period's GL-accuracy scan thinks may be miscoded. Reads the same
+// findings the GL Accuracy page does (shared query key → one fetch, always in
+// sync). The auto-scan after each sync keeps this fresh without anyone clicking.
+function GlAccuracyRailCard({ period, onOpen }: { period: string; onOpen: (href: string) => void }) {
+  const { organization } = useOrganization()
+  const { data, isLoading } = useQuery({
+    queryKey: ["gl-accuracy", "findings", period],
+    queryFn:  () => glAccuracyApi.getFindings(period),
+    enabled:  !!organization && !!period,
+    staleTime: 5 * 60_000,
+  })
+
+  const open = data?.open_count ?? 0
+  const high = data?.high ?? 0
+  const dollars = Number(data?.dollars ?? 0)
+
+  return (
+    <div className="rounded-2xl p-5"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <ScanSearch size={14} strokeWidth={2} style={{ color: open > 0 ? "var(--warn)" : "var(--green)" }} />
+          <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+            GL Accuracy
+          </p>
+        </div>
+        {open > 0 && (
+          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold"
+            style={{ background: "var(--warn-subtle)", color: "var(--warn)" }}>
+            {open} to review
+          </span>
+        )}
+      </div>
+
+      {isLoading && !data ? (
+        <div className="flex items-center gap-2 py-2"><Spinner className="h-4 w-4" />
+          <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>Loading…</span></div>
+      ) : open === 0 ? (
+        <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+          A second pair of eyes ran after your last sync. No likely miscodes flagged for this month.
+        </p>
+      ) : (
+        <>
+          <p className="text-[12px]" style={{ color: "var(--text-2)" }}>
+            {open} {open === 1 ? "entry looks" : "entries look"} miscoded against the vendor's own history
+            {high > 0 ? ` (${high} high-confidence)` : ""} — {dollars.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 })} to reclassify.
+          </p>
+          <button onClick={() => onOpen("/app/gl-accuracy")}
+            className="mt-3 w-full inline-flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors hover:bg-[var(--surface-2)]"
+            style={{ border: "1px solid var(--border)", color: "var(--text-2)" }}>
+            <span className="inline-flex items-center gap-1.5">
+              <ScanSearch size={12} strokeWidth={2} style={{ color: "var(--warn)" }} />
+              Review findings
+            </span>
+            <span className="inline-flex items-center gap-0.5" style={{ color: "var(--text-muted)" }}>
+              Open <ChevronRight size={13} strokeWidth={2} />
+            </span>
+          </button>
         </>
       )}
     </div>
