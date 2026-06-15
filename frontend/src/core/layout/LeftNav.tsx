@@ -58,6 +58,7 @@ function prefetchRoute(path: string): void {
     case "autopilot":      void import("@/modules/autopilot/pages/AutopilotPage");          return
     case "close":          void import("@/modules/close/pages/CloseWorkflowPage");          return
     case "gl-accuracy":    void import("@/modules/gl_accuracy/pages/GlAccuracyPage");        return
+    case "workpapers":     void import("@/modules/workpapers/pages/WorkpapersPage");         return
     case "tasks":          void import("@/modules/tasks/pages/TasksPage");                  return
     case "connections":    void import("@/modules/connections/pages/ConnectionsPage");      return
     case "flux":           void import("@/modules/flux/pages/FluxMonthIndex");              return
@@ -131,7 +132,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Advisory",           path: "/app/advisory",        icon: Target,          available: true  },
   { label: "Financial Statements", path: "/app/financials",     icon: BookOpen,        available: true  },
   { label: "Team",               path: "/app/team",            icon: Users,           available: true  },
-  { label: "Workpapers",         path: "/app/workpapers",      icon: FileText,        available: false },
+  { label: "Workpapers",         path: "/app/workpapers",      icon: FileText,        available: true  },
 ]
 
 interface Props {
