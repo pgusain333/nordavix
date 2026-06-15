@@ -15,6 +15,10 @@ export interface WpEvidence {
   uploaded_by: string
   uploaded_at: string | null
   verification: Record<string, unknown> | null
+  /** "workpaper" = attached here; "recon" = merged in from the account's
+   *  reconciliation (manual recon upload or PBC client magic-link upload),
+   *  shown read-only and managed in Reconciliations. */
+  source?: "workpaper" | "recon"
 }
 
 export interface WpEvidenceSummary {

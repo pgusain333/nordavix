@@ -548,7 +548,16 @@ export function WorkpapersPage() {
                               onMouseLeave={(ev) => (ev.currentTarget.style.background = "transparent")}>
                               <FileGlyph name={e.file_name} />
                               <div className="flex-1 min-w-0">
-                                <div className="truncate text-[12px] font-medium text-theme">{e.file_name}</div>
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="truncate text-[12px] font-medium text-theme">{e.file_name}</span>
+                                  {e.source === "recon" && (
+                                    <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded"
+                                      style={{ background: "var(--info-subtle)", color: "var(--info)" }}
+                                      title="Provided in Reconciliations (includes client magic-link uploads) — manage it there">
+                                      <Scale size={9} strokeWidth={2.4} /> Recon
+                                    </span>
+                                  )}
+                                </div>
                                 {(fmtSize(e.file_size) || fmtDate(e.uploaded_at)) && (
                                   <div className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
                                     {[fmtSize(e.file_size), e.uploaded_at ? `attached ${fmtDate(e.uploaded_at)}` : ""].filter(Boolean).join(" · ")}
@@ -560,10 +569,12 @@ export function WorkpapersPage() {
                                   className="p-1.5 rounded-md" style={{ color: "var(--text-muted)" }}
                                   onMouseEnter={(ev) => (ev.currentTarget.style.background = "var(--surface)")}
                                   onMouseLeave={(ev) => (ev.currentTarget.style.background = "transparent")}><Download size={14} strokeWidth={2} /></button>
-                                <button onClick={() => deleteMut.mutate(e.id)} disabled={deleteMut.isPending} title="Remove"
-                                  className="p-1.5 rounded-md disabled:opacity-50" style={{ color: "var(--text-muted)" }}
-                                  onMouseEnter={(ev) => (ev.currentTarget.style.color = "var(--danger)")}
-                                  onMouseLeave={(ev) => (ev.currentTarget.style.color = "var(--text-muted)")}><Trash2 size={14} strokeWidth={2} /></button>
+                                {e.source !== "recon" && (
+                                  <button onClick={() => deleteMut.mutate(e.id)} disabled={deleteMut.isPending} title="Remove"
+                                    className="p-1.5 rounded-md disabled:opacity-50" style={{ color: "var(--text-muted)" }}
+                                    onMouseEnter={(ev) => (ev.currentTarget.style.color = "var(--danger)")}
+                                    onMouseLeave={(ev) => (ev.currentTarget.style.color = "var(--text-muted)")}><Trash2 size={14} strokeWidth={2} /></button>
+                                )}
                               </div>
                             </div>
                           ))}

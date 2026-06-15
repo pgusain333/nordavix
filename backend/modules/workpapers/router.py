@@ -22,6 +22,7 @@ from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
 from core.storage import r2 as r2_storage
 from models.closed_period import ClosedPeriod
+from models.subledger_evidence import SubledgerEvidence
 from models.workpaper_evidence import WorkpaperEvidence
 from modules.workpapers.binder import build_close_binder
 
@@ -134,6 +135,29 @@ def _serialize_evidence(e: WorkpaperEvidence) -> dict:
         "uploaded_by": str(e.uploaded_by),
         "uploaded_at": e.uploaded_at.isoformat() if e.uploaded_at else None,
         "verification": e.verification,
+        "source": "workpaper",
+    }
+
+
+def _serialize_recon_evidence(e: SubledgerEvidence) -> dict:
+    """A per-account recon document (manual recon upload OR a PBC client
+    magic-link upload — both land as SubledgerEvidence) shaped like a
+    workpaper-evidence row so the Workpapers binder can show it alongside its
+    own attachments. Marked source="recon": read-only in Workpapers (managed in
+    Reconciliations), but downloadable + folded into the binder."""
+    return {
+        "id": str(e.id),
+        "period_end": e.period_end.isoformat(),
+        "ref_type": "account",
+        "ref_id": e.qbo_account_id,
+        "file_name": e.file_name,
+        "file_size": e.file_size,
+        "mime_type": e.mime_type,
+        "note": None,
+        "uploaded_by": str(e.uploaded_by),
+        "uploaded_at": e.uploaded_at.isoformat() if e.uploaded_at else None,
+        "verification": e.verification,
+        "source": "recon",
     }
 
 
@@ -218,7 +242,23 @@ async def list_workpaper_evidence(
     if ref_id:
         q = q.where(WorkpaperEvidence.ref_id == ref_id)
     rows = (await db.execute(q.order_by(desc(WorkpaperEvidence.uploaded_at)))).scalars().all()
-    return {"items": [_serialize_evidence(e) for e in rows]}
+    items = [_serialize_evidence(e) for e in rows]
+
+    # Union the account's reconciliation evidence (manual recon uploads + PBC
+    # client magic-link uploads, both stored as SubledgerEvidence) so the
+    # Workpapers binder shows account-level support too. Scoped to account
+    # queries; read-only here (managed in Reconciliations).
+    if ref_type == "account" and ref_id:
+        sub_rows = (await db.execute(
+            select(SubledgerEvidence).where(
+                SubledgerEvidence.qbo_account_id == ref_id,
+                SubledgerEvidence.period_end == pe,
+            ).order_by(desc(SubledgerEvidence.uploaded_at))
+        )).scalars().all()
+        items.extend(_serialize_recon_evidence(e) for e in sub_rows)
+        items.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
+
+    return {"items": items}
 
 
 @router.get("/evidence/summary")
@@ -237,6 +277,18 @@ async def workpaper_evidence_summary(
         .group_by(WorkpaperEvidence.ref_type, WorkpaperEvidence.ref_id)
     )).all()
     counts = {f"{rt}:{rid or ''}": int(n) for rt, rid, n in rows}
+
+    # Fold per-account reconciliation evidence (incl. PBC client uploads) into
+    # the same "account:<qbo>" keys so the index badges + readiness reflect it.
+    sub_rows = (await db.execute(
+        select(SubledgerEvidence.qbo_account_id, func.count(SubledgerEvidence.id))
+        .where(SubledgerEvidence.period_end == pe)
+        .group_by(SubledgerEvidence.qbo_account_id)
+    )).all()
+    for qbo, n in sub_rows:
+        key = f"account:{qbo}"
+        counts[key] = counts.get(key, 0) + int(n)
+
     return {"counts": counts, "total": sum(counts.values())}
 
 
@@ -251,10 +303,20 @@ async def download_workpaper_evidence(
     row = (await db.execute(
         select(WorkpaperEvidence).where(WorkpaperEvidence.id == evidence_id)
     )).scalar_one_or_none()
+    r2_key = row.r2_key if row else None
+    file_name = row.file_name if row else None
     if row is None:
-        raise HTTPException(status_code=404, detail="Evidence not found.")
-    url = r2_storage.generate_presigned_download_url(row.r2_key, expires_in=300)
-    return {"url": url, "file_name": row.file_name}
+        # Merged-in reconciliation evidence (incl. PBC client uploads) lives in
+        # SubledgerEvidence — resolve it here so one download endpoint serves
+        # both stores. Tenant-auto-filtered, so cross-org access is impossible.
+        sub = (await db.execute(
+            select(SubledgerEvidence).where(SubledgerEvidence.id == evidence_id)
+        )).scalar_one_or_none()
+        if sub is None:
+            raise HTTPException(status_code=404, detail="Evidence not found.")
+        r2_key, file_name = sub.r2_key, sub.file_name
+    url = r2_storage.generate_presigned_download_url(r2_key, expires_in=300)
+    return {"url": url, "file_name": file_name}
 
 
 @router.delete("/evidence/{evidence_id}")
