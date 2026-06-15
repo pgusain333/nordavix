@@ -9,6 +9,7 @@
  */
 import type { BlogPostModule } from "@/marketing/blog/types"
 
+import * as catchGlCodingErrors             from "@/marketing/blog/posts/catch-gl-coding-errors"
 import * as fluxAnalysisGuide               from "@/marketing/blog/posts/flux-analysis-guide"
 import * as fluxAnalysisExample             from "@/marketing/blog/posts/flux-analysis-example"
 import * as balanceSheetReconciliationChecklist from "@/marketing/blog/posts/balance-sheet-reconciliation-checklist"
@@ -24,6 +25,7 @@ import * as prepaidAmortizationSchedule     from "@/marketing/blog/posts/prepaid
 import * as makerCheckerControls            from "@/marketing/blog/posts/maker-checker-accounting-controls"
 
 const RAW_POSTS: BlogPostModule[] = [
+  catchGlCodingErrors             as BlogPostModule,
   prepaidAmortizationSchedule     as BlogPostModule,
   makerCheckerControls            as BlogPostModule,
   fluxAnalysisGuide               as BlogPostModule,
