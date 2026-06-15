@@ -30,6 +30,7 @@ import {
 } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
+import { ConfirmDialog } from "@/core/ui/ConfirmDialog"
 import { formatDate } from "@/core/lib/dates"
 import { ProposedEntriesInline } from "@/modules/adjustments/components/ProposedEntriesInline"
 import { reconsApi } from "@/modules/recons/api"
@@ -58,6 +59,7 @@ function fmt(n: string | number, opts: { sign?: boolean } = {}): string {
 export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnly }: Props) {
   const qc = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [confirmClear, setConfirmClear] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [bankEnding, setBankEnding] = useState<string>("")
 
@@ -161,8 +163,8 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
           border: `1px solid ${w.uploaded ? "var(--green)" : "var(--border)"}`,
         }}>
         <span className="h-7 w-7 rounded-md inline-flex items-center justify-center"
-          style={{ background: "white", border: "1px solid var(--border)" }}>
-          <Banknote size={13} strokeWidth={1.8} style={{ color: "#3c5a76" }} />
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <Banknote size={13} strokeWidth={1.8} style={{ color: "var(--info)" }} />
         </span>
         <div className="flex-1 min-w-0">
           {w.uploaded ? (
@@ -203,14 +205,22 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
             {!readOnly && (
               <button type="button"
                 title="Clear uploaded statement"
-                onClick={() => {
-                  if (window.confirm("Clear the uploaded statement and start over?")) clearMut.mutate()
-                }}
+                onClick={() => setConfirmClear(true)}
                 className="p-1 rounded hover:bg-[var(--surface-2)]"
-                style={{ color: "#9b3d37" }}>
+                style={{ color: "var(--danger)" }}>
                 <Trash2 size={13} strokeWidth={1.8} />
               </button>
             )}
+            <ConfirmDialog
+              open={confirmClear}
+              title="Clear the uploaded statement?"
+              body="This removes the parsed statement rows and starts the bank rec over. No file is stored server-side."
+              confirmLabel="Clear statement"
+              variant="danger"
+              loading={clearMut.isPending}
+              onConfirm={() => { clearMut.mutate(); setConfirmClear(false) }}
+              onCancel={() => setConfirmClear(false)}
+            />
           </>
         )}
       </div>
@@ -219,7 +229,7 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
 
       {error && (
         <div className="rounded-md px-3 py-2 text-[11px] flex items-start gap-2"
-          style={{ background: "#f7eeec", color: "#86332e", border: "1px solid #ecd7d3" }}>
+          style={{ background: "var(--danger-subtle)", color: "var(--danger)", border: "1px solid var(--danger-border)" }}>
           <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
           {error}
         </div>
@@ -276,7 +286,7 @@ export function BankReconWorksheet({ qboAccountId, periodEnd, glBalance, readOnl
                           <CheckCircle2 size={11} strokeWidth={2.2} /> Reconciled
                         </span>
                       : <span className="inline-flex items-center gap-1 text-[10px] font-semibold"
-                          style={{ color: "#9b3d37" }}>
+                          style={{ color: "var(--danger)" }}>
                           <AlertTriangle size={11} strokeWidth={2.2} /> Out of balance
                         </span>}
                   />
@@ -434,7 +444,7 @@ function TieOutBanner({ totals }: { totals: Worksheet["statement_totals"] }) {
 
   return (
     <div className="rounded-md px-3 py-2 text-[11px] flex items-start gap-2"
-      style={{ background: "#f7eeec", color: "#86332e", border: "1px solid #ecd7d3" }}>
+      style={{ background: "var(--danger-subtle)", color: "var(--danger)", border: "1px solid var(--danger-border)" }}>
       <AlertTriangle size={12} strokeWidth={2} className="shrink-0 mt-px" />
       <span>
         <span className="font-semibold">Statement doesn't tie out — off by {fmt(tie_out_diff ?? 0)}.</span>{" "}
@@ -463,7 +473,7 @@ function Row({
   return (
     <tr style={border ? { borderTop: "1px solid var(--border-strong)" } : undefined}>
       <td className="px-4 py-2 text-theme" style={{ fontWeight: bold ? 700 : 400 }}>
-        <span style={{ color: positive ? "var(--green)" : negative ? "#9b3d37" : undefined }}>
+        <span style={{ color: positive ? "var(--green)" : negative ? "var(--danger)" : undefined }}>
           {label}
         </span>
         {sub && <span className="ml-2 text-[10px]" style={{ color: "var(--text-muted)" }}>{sub}</span>}
@@ -472,7 +482,7 @@ function Row({
       <td className="px-4 py-2 text-right tabular-nums"
         style={{
           fontWeight: bold ? 700 : 400,
-          color: positive ? "var(--green)" : negative ? "#9b3d37" : "var(--text)",
+          color: positive ? "var(--green)" : negative ? "var(--danger)" : "var(--text)",
         }}>
         {value}
       </td>
@@ -491,8 +501,8 @@ function BucketCard({
   children: React.ReactNode
 }) {
   const palette = tone === "warn"
-    ? { hdr: "rgba(199, 154, 82, 0.08)", border: "rgba(199, 154, 82, 0.40)", text: "#7a5622" }
-    : { hdr: "rgba(60, 90, 118, 0.06)",  border: "rgba(60, 90, 118, 0.30)",  text: "#3c5a76" }
+    ? { hdr: "var(--warn-subtle)", border: "var(--warn-border)", text: "var(--warn)" }
+    : { hdr: "var(--info-subtle)", border: "var(--info-border)", text: "var(--info)" }
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "var(--surface)", border: `1px solid ${palette.border}` }}>
@@ -500,7 +510,7 @@ function BucketCard({
         style={{ background: palette.hdr, borderBottom: "1px solid var(--border)" }}>
         <p className="text-[11px] font-semibold" style={{ color: palette.text }}>{title}</p>
         <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-          style={{ background: "white", color: palette.text, border: `1px solid ${palette.border}` }}>
+          style={{ background: "var(--surface)", color: palette.text, border: `1px solid ${palette.border}` }}>
           {count} · {total}
         </span>
       </div>
@@ -534,12 +544,12 @@ function BankOnlyRow({ row }: { row: BankStatementRow }) {
       <td className="px-3 py-1.5 text-theme">{row.description ?? "—"}</td>
       <td className="px-3 py-1.5 text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>{row.bank_ref ?? "—"}</td>
       <td className="px-3 py-1.5 text-right tabular-nums font-semibold"
-        style={{ color: isDeposit ? "var(--green)" : "#9b3d37" }}>
+        style={{ color: isDeposit ? "var(--green)" : "var(--danger)" }}>
         {isDeposit ? <ArrowDownLeft size={10} strokeWidth={2} className="inline-block mr-0.5" /> : <ArrowUpRight size={10} strokeWidth={2} className="inline-block mr-0.5" />}
         {fmt(row.amount)}
       </td>
       <td className="px-3 py-1.5 text-[11px]" style={{ color: "var(--text-2)" }}>
-        <FileText size={10} strokeWidth={2} className="inline-block mr-1" style={{ color: "#54588a" }} />
+        <FileText size={10} strokeWidth={2} className="inline-block mr-1" style={{ color: "var(--info)" }} />
         {suggestion}
       </td>
     </tr>
@@ -556,7 +566,7 @@ function GlOnlyRow({ row }: { row: BankGlRow }) {
       <td className="px-3 py-1.5 text-theme">{row.memo ?? row.entity_name ?? "—"}</td>
       <td className="px-3 py-1.5 text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>{row.txn_number ?? "—"}</td>
       <td className="px-3 py-1.5 text-right tabular-nums font-semibold"
-        style={{ color: amt >= 0 ? "var(--green)" : "#9b3d37" }}>
+        style={{ color: amt >= 0 ? "var(--green)" : "var(--danger)" }}>
         {fmt(row.amount)}
       </td>
     </tr>
