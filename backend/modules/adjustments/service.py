@@ -39,7 +39,7 @@ ZERO = Decimal("0.00")
 # decimal places can leave a sub-cent gap; one cent of slack absorbs it.
 BALANCE_TOLERANCE = Decimal("0.01")
 
-VALID_SOURCES = {"bank", "recon", "flux"}
+VALID_SOURCES = {"bank", "recon", "flux", "gl_accuracy"}
 VALID_STATUSES = {"open", "accepted", "posted", "dismissed"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
 

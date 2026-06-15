@@ -14,6 +14,7 @@ from models.closed_period import ClosedPeriod
 from models.comment import Comment
 from models.evidence_request import EvidenceRequest
 from models.feedback import Feedback
+from models.gl_accuracy_finding import GlAccuracyFinding
 from models.insights_snapshot import InsightsSnapshot
 from models.intercompany_account import IntercompanyAccount
 from models.intercompany_pair import IntercompanyPair
@@ -58,6 +59,7 @@ __all__ = [
     "ClosedPeriod",
     "Comment",
     "Feedback",
+    "GlAccuracyFinding",
     "InsightsSnapshot",
     "IntercompanyAccount",
     "IntercompanyPair",

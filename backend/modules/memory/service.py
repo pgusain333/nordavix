@@ -1051,6 +1051,85 @@ async def active_recurring_items(db: AsyncSession, qbo_account_id: str) -> list[
     return out
 
 
+# ── GL accuracy exceptions (Client Brain — dismissed-as-correct) ───────────────
+#
+# When a reviewer dismisses a GL-accuracy flag ("this coding is correct"), record
+# the vendor→account pairing as a CONFIRMED exception so the watchdog never raises
+# it again. Minted already-ACTIVE: the dismissal IS the human confirmation.
+
+_GLACC_EXC_PREFIX = "gl_accuracy:exception:"
+
+
+async def confirm_classification_exception(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    vendor: str,
+    vendor_norm: str,
+    account_id: str,
+    account_name: str | None,
+    created_by: uuid.UUID | None,
+) -> ClientMemoryFact:
+    """Record a vendor→account pairing as correct (watchdog won't re-flag it).
+    Active on creation; idempotent on fact_key; race-safe."""
+    # Key on the RAW normalized vendor (already lowercased + whitespace-collapsed),
+    # not a slug — slugging maps "AT&T" and "AT T" to the same token, which would
+    # let one vendor's confirmed exception overwrite another's and re-open a
+    # dismissed pairing. Strip the ":" delimiter so it can't break the key shape.
+    vk = (vendor_norm or vendor or "").replace(":", " ").strip()
+    fact_key = f"{_GLACC_EXC_PREFIX}{vk}:{account_id}"[:200]
+    value = {"vendor": vendor, "vendor_norm": vendor_norm,
+             "account_id": account_id, "account_name": account_name}
+    title = f'"{vendor or "This vendor"}" → {account_name or account_id} is correct'[:400]
+    now = datetime.now(UTC)
+
+    existing = (await db.execute(
+        select(ClientMemoryFact).where(ClientMemoryFact.fact_key == fact_key)
+    )).scalar_one_or_none()
+    if existing is None:
+        fact = ClientMemoryFact(
+            id=uuid.uuid4(), tenant_id=tenant_id, kind="gl_accuracy_exception",
+            fact_key=fact_key, title=title, value=value, confidence=1,
+            status="active", provenance={"seen": 1}, last_seen_at=now,
+            confirmed_by=created_by, confirmed_at=now,
+        )
+        if await _insert_fact_or_lose_race(db, fact):
+            return fact
+        existing = (await db.execute(
+            select(ClientMemoryFact).where(ClientMemoryFact.fact_key == fact_key)
+        )).scalar_one_or_none()
+        if existing is None:
+            raise RuntimeError("gl-accuracy exception vanished after unique conflict")
+    existing.status = "active"
+    existing.value = value
+    existing.title = title
+    existing.last_seen_at = now
+    if existing.confirmed_at is None:
+        existing.confirmed_by = created_by
+        existing.confirmed_at = now
+    await db.flush()
+    return existing
+
+
+async def active_classification_exceptions(db: AsyncSession) -> set[tuple[str, str]]:
+    """Confirmed (vendor_norm, account_id) pairings the watchdog must never flag.
+    SELECT auto-filtered to the current tenant."""
+    facts = (await db.execute(
+        select(ClientMemoryFact).where(
+            ClientMemoryFact.kind == "gl_accuracy_exception",
+            ClientMemoryFact.status == "active",
+        )
+    )).scalars().all()
+    out: set[tuple[str, str]] = set()
+    for f in facts:
+        v = f.value or {}
+        vn = str(v.get("vendor_norm") or "").strip()
+        acct = str(v.get("account_id") or "").strip()
+        if vn and acct:
+            out.add((vn, acct))
+    return out
+
+
 def serialize_fact(f: ClientMemoryFact) -> dict[str, Any]:
     return {
         "id": str(f.id),

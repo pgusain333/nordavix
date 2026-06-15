@@ -56,8 +56,8 @@ class ProposedEntry(TenantBase):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     # ── Provenance ──────────────────────────────────────────────────────
-    # bank | recon | flux
-    source:     Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    # bank | recon | flux | gl_accuracy
+    source:     Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     # origin key: qbo_account_id (bank/recon) or Variance id (flux)
     source_ref: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     period_end: Mapped[date] = mapped_column(Date, nullable=False, index=True)

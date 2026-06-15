@@ -20,6 +20,7 @@ from modules.exports.router import router as exports_router
 from modules.feedback.router import router as feedback_router
 from modules.financials.router import router as financials_router
 from modules.flux.router import router as flux_router
+from modules.gl_accuracy.router import router as gl_accuracy_router
 from modules.insights.router import router as insights_router
 from modules.intercompany.router import router as intercompany_router
 from modules.internal.router import router as internal_router
@@ -136,6 +137,7 @@ app.include_router(advisory_router,       prefix="/api/advisory",     tags=["adv
 app.include_router(memory_router,         prefix="/api/memory",       tags=["memory"])
 app.include_router(workpapers_router,      prefix="/api/workpapers",   tags=["workpapers"])
 app.include_router(close_workflow_router,  prefix="/api/close",        tags=["close"])
+app.include_router(gl_accuracy_router,      prefix="/api/gl-accuracy",  tags=["gl-accuracy"])
 
 
 @app.get("/api/health", tags=["system"])
