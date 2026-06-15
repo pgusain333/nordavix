@@ -669,7 +669,7 @@ function GlAccuracyRailCard({ period, onOpen }: { period: string; onOpen: (href:
         <div className="flex items-center gap-2">
           <ScanSearch size={14} strokeWidth={2} style={{ color: open > 0 ? "var(--warn)" : "var(--green)" }} />
           <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-            GL Accuracy
+            Risk Radar
           </p>
         </div>
         {open > 0 && (

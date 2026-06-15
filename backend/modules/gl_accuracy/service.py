@@ -24,7 +24,7 @@ from models.gl_accuracy_finding import GlAccuracyFinding
 from models.gl_balance_snapshot import GlBalanceSnapshot
 from models.proposed_entry import ProposedEntry
 from models.qbo_connection import QboConnection
-from modules.gl_accuracy.engine import _norm_vendor, detect_misclassifications
+from modules.gl_accuracy.engine import _norm_vendor, run_detectors
 from modules.memory.service import (
     active_classification_exceptions,
     confirm_classification_exception,
@@ -82,15 +82,24 @@ async def _expense_account_ids(db: AsyncSession, tenant_id: uuid.UUID, period_en
 
 
 def _finding_key(flag: dict) -> str:
-    # txn_id is the natural key, but QBO GL rows can lack one — add txn_number +
-    # amount as tiebreakers so two id-less entries for the same vendor/account
-    # don't collide and silently drop a genuine finding.
-    return ":".join([
+    # Stable per-finding key for idempotent re-scan. A detector may supply its own
+    # `dedupe_key` (e.g. missing-recurring has no current txn); otherwise we build
+    # one from txn_id + posted account (+ txn_number + amount as tiebreakers, since
+    # QBO GL rows can lack a txn_id and we mustn't silently drop a real finding).
+    #
+    # Misclassification keeps its ORIGINAL un-prefixed key so a re-scan still
+    # matches findings actioned before the Risk-Radar generalization — a
+    # dismissed/accepted item must never come back. Other kinds namespace by kind.
+    kind = str(flag.get("kind") or "misclassification")
+    if flag.get("dedupe_key"):
+        return f"{kind}:{flag['dedupe_key']}"[:160]
+    base = ":".join([
         str(flag.get("qbo_txn_id") or ""),
         str(flag.get("posted_account_id") or ""),
         str(flag.get("txn_number") or ""),
         str(flag.get("amount") or ""),
-    ])[:160]
+    ])
+    return (base if kind == "misclassification" else f"{kind}:{base}")[:160]
 
 
 async def _replace_open_findings(
@@ -120,6 +129,12 @@ async def _replace_open_findings(
         seen.add(key)
         db.add(GlAccuracyFinding(
             id=uuid.uuid4(), tenant_id=tenant_id, period_end=period_end, finding_key=key,
+            kind=fl.get("kind") or "misclassification",
+            severity=fl.get("severity") or fl.get("confidence") or "medium",
+            action_kind=fl.get("action_kind") or "reclass",
+            title=(fl.get("title") or None),
+            detail=(fl.get("detail") or None),
+            evidence=(fl.get("evidence") or None),
             vendor=(fl.get("vendor") or "(unknown)")[:255],
             qbo_txn_id=fl.get("qbo_txn_id"), txn_type=fl.get("txn_type"),
             txn_number=fl.get("txn_number"), txn_date=_as_date(fl.get("txn_date")),
@@ -161,7 +176,7 @@ async def scan_period(
     current = await pull_gl_transactions_multi(conn, db, acct_ids, period_start, period_end)
     history = await pull_gl_transactions_multi(conn, db, acct_ids, hist_start, hist_end)
     exceptions = await active_classification_exceptions(db)
-    flags = detect_misclassifications(current, history, exceptions=exceptions)
+    flags = run_detectors(current, history, exceptions=exceptions)
     await _replace_open_findings(db, tenant_id, period_end, flags)
 
     open_findings = (await db.execute(
@@ -170,7 +185,7 @@ async def scan_period(
             GlAccuracyFinding.status == "open",
         )
     )).scalars().all()
-    high = sum(1 for f in open_findings if f.confidence == "high")
+    high = sum(1 for f in open_findings if f.severity == "high")
     dollars = sum((abs(_dec(f.amount)) for f in open_findings), Decimal("0"))
     return {
         "period_end": period_end.isoformat(),
@@ -215,10 +230,24 @@ async def run_auto_scan(tenant_id: uuid.UUID, period_end: date) -> None:
             logger.exception("Auto GL-accuracy scan failed: tenant=%s period=%s", tenant_id, period_end)
 
 
+def _composed_title(f: GlAccuracyFinding) -> str:
+    """Fallback headline for rows written before titles were stored (legacy
+    misclassification findings)."""
+    posted = f.posted_account_name or f.posted_account_id or "another account"
+    suggested = f.suggested_account_name or f.suggested_account_id or "the suggested account"
+    return f"{f.vendor}: {posted} → {suggested}"
+
+
 def serialize_finding(f: GlAccuracyFinding) -> dict:
     return {
         "id": str(f.id),
         "period_end": f.period_end.isoformat(),
+        "kind": f.kind or "misclassification",
+        "severity": f.severity or f.confidence or "medium",
+        "action_kind": f.action_kind or "reclass",
+        "title": f.title or _composed_title(f),
+        "detail": f.detail,
+        "evidence": f.evidence,
         "vendor": f.vendor,
         "qbo_txn_id": f.qbo_txn_id,
         "txn_type": f.txn_type,
@@ -246,7 +275,7 @@ async def list_findings(db: AsyncSession, period_end: date) -> dict:
     # open first, then by absolute dollars desc.
     rows = sorted(rows, key=lambda f: (f.status != "open", -abs(_dec(f.amount))))
     open_rows = [f for f in rows if f.status == "open"]
-    high = sum(1 for f in open_rows if f.confidence == "high")
+    high = sum(1 for f in open_rows if f.severity == "high")
     dollars = sum((abs(_dec(f.amount)) for f in open_rows), Decimal("0"))
     return {
         "items": [serialize_finding(f) for f in rows],
@@ -286,7 +315,11 @@ def build_reclass_entry(f: GlAccuracyFinding) -> dict:
 async def accept_finding(
     db: AsyncSession, *, tenant_id: uuid.UUID, finding: GlAccuracyFinding, user_id: uuid.UUID | None,
 ) -> uuid.UUID:
-    """File the reclass as a ProposedEntry in Adjustments and link it. Caller commits."""
+    """File the fixable finding as a ProposedEntry in Adjustments and link it.
+    Caller commits. Review-only flags aren't fixable by a JE and must go through
+    acknowledge_finding instead — guarded here so a flag can never mint an entry."""
+    if (finding.action_kind or "reclass") == "flag":
+        raise ValueError("This finding is review-only; acknowledge it instead of accepting.")
     entry = build_reclass_entry(finding)
     pe = ProposedEntry(
         id=uuid.uuid4(), tenant_id=tenant_id, source="gl_accuracy",
@@ -316,5 +349,16 @@ async def dismiss_finding(
         account_name=finding.posted_account_name, created_by=user_id,
     )
     finding.status = "dismissed"
+    finding.status_changed_by = user_id
+    finding.status_changed_at = datetime.now(UTC)
+
+
+async def acknowledge_finding(
+    db: AsyncSession, *, finding: GlAccuracyFinding, user_id: uuid.UUID | None,
+) -> None:
+    """Mark a review-only flag as handled (no journal entry). For findings whose
+    action is to be *looked at*, not auto-fixed (duplicates, missing memos, …).
+    Distinct from dismiss, which records 'this isn't a problem'. Caller commits."""
+    finding.status = "acknowledged"
     finding.status_changed_by = user_id
     finding.status_changed_at = datetime.now(UTC)

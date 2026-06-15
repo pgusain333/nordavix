@@ -23,9 +23,10 @@ Migration: 054_gl_accuracy_findings.py.
 """
 import uuid
 from datetime import date, datetime
+from typing import Any
 
 from sqlalchemy import Date, DateTime, Integer, Numeric, String, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.db.base import TenantBase
@@ -42,6 +43,17 @@ class GlAccuracyFinding(TenantBase):
     period_end: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     # Stable dedupe key for idempotent re-scan: "<qbo_txn_id>:<posted_account_id>".
     finding_key: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+
+    # ── Risk Radar — which detector raised this + how it reads/resolves ──
+    # kind:        misclassification | missing_recurring | duplicate | ... (registry)
+    # severity:    cross-kind triage rank — high | medium | low
+    # action_kind: how Accept resolves it — reclass | accrual | flag (review-only)
+    kind:        Mapped[str] = mapped_column(String(40), nullable=False, default="misclassification", index=True)
+    severity:    Mapped[str] = mapped_column(String(10), nullable=False, default="medium")
+    action_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="reclass")
+    title:       Mapped[str | None] = mapped_column(String(200))
+    detail:      Mapped[str | None] = mapped_column(Text)
+    evidence:    Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     # ── The flagged transaction ─────────────────────────────────────────
     vendor:      Mapped[str] = mapped_column(String(255), nullable=False, index=True)

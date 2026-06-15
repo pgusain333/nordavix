@@ -2,11 +2,20 @@
 import { apiClient } from "@/core/api/client"
 
 export type GlConfidence = "high" | "medium"
-export type GlFindingStatus = "open" | "in_adjustments" | "dismissed"
+export type GlSeverity = "high" | "medium" | "low"
+export type GlActionKind = "reclass" | "accrual" | "flag"
+export type GlFindingStatus = "open" | "in_adjustments" | "dismissed" | "acknowledged"
 
 export interface GlFinding {
   id:                       string
   period_end:               string
+  // ── Risk Radar envelope (every finding) ──
+  kind:                     string          // "misclassification" | future detectors
+  severity:                 GlSeverity | string
+  action_kind:              GlActionKind | string  // reclass | accrual | flag
+  title:                    string
+  detail:                   string | null
+  evidence:                 Record<string, unknown> | null
   vendor:                   string
   qbo_txn_id:               string | null
   txn_type:                 string | null
@@ -75,4 +84,9 @@ async function dismiss(id: string): Promise<GlFinding> {
   return data
 }
 
-export const glAccuracyApi = { scan, getFindings, accept, bulkAccept, dismiss }
+async function acknowledge(id: string): Promise<GlFinding> {
+  const { data } = await apiClient.post<GlFinding>(`/api/gl-accuracy/findings/${id}/acknowledge`)
+  return data
+}
+
+export const glAccuracyApi = { scan, getFindings, accept, bulkAccept, dismiss, acknowledge }

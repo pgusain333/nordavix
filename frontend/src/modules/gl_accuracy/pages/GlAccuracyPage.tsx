@@ -111,10 +111,10 @@ export function GlAccuracyPage() {
 
   const items = data?.items ?? []
   const open = items.filter((f) => f.status === "open")
-  const high = open.filter((f) => f.confidence === "high").length
+  const high = open.filter((f) => f.severity === "high").length
   const medium = open.length - high
   const dollars = open.reduce((s, f) => s + Math.abs(Number(f.amount) || 0), 0)
-  const shown = items.filter((f) => filter === "all" || (f.status === "open" && f.confidence === filter))
+  const shown = items.filter((f) => filter === "all" || (f.status === "open" && f.severity === filter))
   // Trophy only right after an explicit scan of this period returned nothing.
   const justScannedClean = scanned?.period === activePeriod && open.length === 0
 
@@ -131,7 +131,7 @@ export function GlAccuracyPage() {
     if (n.has(id)) n.delete(id); else n.add(id)
     return n
   })
-  const selectHigh = () => setSelected(new Set(open.filter((f) => f.confidence === "high").map((f) => f.id)))
+  const selectHigh = () => setSelected(new Set(open.filter((f) => f.severity === "high").map((f) => f.id)))
 
   if (!organization) {
     return <Shell><Card><div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
@@ -148,11 +148,11 @@ export function GlAccuracyPage() {
             <ShieldCheck size={20} strokeWidth={1.8} />
           </span>
           <div className="min-w-0">
-            <h1 className="text-lg font-bold text-theme leading-tight">GL accuracy</h1>
+            <h1 className="text-lg font-bold text-theme leading-tight">Risk Radar</h1>
             <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
               {scanned?.period === activePeriod
-                ? <>Nordavix checked <span className="text-theme font-semibold">{scanned.total.toLocaleString()} entries</span> against this client's posting history.</>
-                : "Nordavix compares each vendor's coding to its own history — and never writes to QuickBooks."}
+                ? <>Nordavix checked <span className="text-theme font-semibold">{scanned.total.toLocaleString()} entries</span> against this client's own history.</>
+                : "A second pair of eyes on this period's books — deterministic, evidence-first, and never writes to QuickBooks."}
             </p>
           </div>
         </div>
@@ -335,21 +335,28 @@ function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck,
 }) {
   const qc = useQueryClient()
   const isOpen = f.status === "open"
-  const dot = f.confidence === "high" ? "var(--green)" : "#8a6326"
+  const isMisc = f.kind === "misclassification"
+  const isFlag = f.action_kind === "flag"   // review-only: acknowledge, not a JE
+  const dot = f.severity === "high" ? "var(--green)" : f.severity === "low" ? "var(--text-muted)" : "#8a6326"
 
   const acceptMut = useMutation({
     mutationFn: () => glAccuracyApi.accept(f.id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["adjustments"] }); onChanged() },
   })
+  const ackMut = useMutation({
+    mutationFn: () => glAccuracyApi.acknowledge(f.id),
+    onSuccess: onChanged,
+  })
   const dismissMut = useMutation({
     mutationFn: () => glAccuracyApi.dismiss(f.id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["memory", "account-context"] }); onChanged() },
   })
-  const busy = acceptMut.isPending || dismissMut.isPending
+  const busy = acceptMut.isPending || dismissMut.isPending || ackMut.isPending
 
   const statusChip =
     f.status === "in_adjustments" ? { label: "In Adjustments", bg: "var(--green-subtle)", color: "var(--green)" }
     : f.status === "dismissed" ? { label: "Confirmed correct", bg: "var(--surface-2)", color: "var(--text-muted)" }
+    : f.status === "acknowledged" ? { label: "Reviewed", bg: "var(--surface-2)", color: "var(--text-muted)" }
     : null
 
   return (
@@ -363,13 +370,17 @@ function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck,
             className="shrink-0 h-3.5 w-3.5 cursor-pointer" style={{ accentColor: "var(--green)" }}
             aria-label={`Select ${f.vendor} for bulk accept`} />
         )}
-        <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: dot }} title={f.confidence === "high" ? "High confidence" : "Medium confidence"} />
+        <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: dot }} title={f.severity === "high" ? "High severity" : f.severity === "low" ? "Low severity" : "Medium severity"} />
         <span className="text-sm font-semibold text-theme shrink-0" style={{ minWidth: 72 }}>{f.vendor}</span>
-        <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: "var(--text-muted)" }}>
-          <span style={{ textDecoration: "line-through" }}>{f.posted_account_name || "—"}</span>{" "}
-          <ArrowRight size={12} strokeWidth={2} style={{ display: "inline", verticalAlign: "-2px" }} />{" "}
-          <span className="text-theme">{f.suggested_account_name || "—"}</span>
-        </span>
+        {isMisc ? (
+          <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: "var(--text-muted)" }}>
+            <span style={{ textDecoration: "line-through" }}>{f.posted_account_name || "—"}</span>{" "}
+            <ArrowRight size={12} strokeWidth={2} style={{ display: "inline", verticalAlign: "-2px" }} />{" "}
+            <span className="text-theme">{f.suggested_account_name || "—"}</span>
+          </span>
+        ) : (
+          <span className="text-[12px] flex-1 min-w-0 truncate text-theme">{f.title}</span>
+        )}
         <span className="text-[13px] tabular-nums font-medium text-theme shrink-0">{fmtUsd(f.amount)}</span>
         {statusChip && (
           <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0" style={{ background: statusChip.bg, color: statusChip.color }}>{statusChip.label}</span>
@@ -385,43 +396,68 @@ function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck,
               <div className="rounded-lg px-3 py-2 mt-2.5" style={{ border: "1px solid var(--border)" }}>
                 <div className="text-[10px] uppercase tracking-wide mb-0.5" style={{ color: "var(--text-muted)" }}>The entry under review</div>
                 <div className="text-[13px] text-theme">
-                  {[f.txn_type, f.txn_number ? `#${f.txn_number}` : null, f.txn_date ? formatDate(f.txn_date) : null].filter(Boolean).join(" · ")}
+                  {[f.txn_type, f.txn_number ? `#${f.txn_number}` : null, f.txn_date ? formatDate(f.txn_date) : null].filter(Boolean).join(" · ") || f.vendor}
                   {f.memo ? <span style={{ color: "var(--text-muted)" }}> · {f.memo}</span> : null}
                 </div>
-                <div className="text-[12px] mt-0.5">Booked to <span style={{ color: "#9b3d37" }}>{f.posted_account_name || f.posted_account_id}</span> · <span className="tabular-nums">{fmtUsd(f.amount)}</span></div>
+                {f.posted_account_id && (
+                  <div className="text-[12px] mt-0.5">Booked to <span style={{ color: "#9b3d37" }}>{f.posted_account_name || f.posted_account_id}</span> · <span className="tabular-nums">{fmtUsd(f.amount)}</span></div>
+                )}
               </div>
 
-              {/* Zone 2 — the evidence (the hero) */}
-              <EvidenceBar f={f} />
-
-              {/* Zone 3 — why (demoted footnote) */}
-              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                Statistical pattern, not a prediction — {Math.round((f.dominant_count / Math.max(1, f.total_count)) * 100)}% of this vendor's spend goes there. Nordavix never writes to QuickBooks.
-              </p>
+              {/* Zone 2 + 3 — evidence + why. Misclassification shows the auditable
+                  tally; other detectors show their plain-English detail. */}
+              {isMisc ? (
+                <>
+                  <EvidenceBar f={f} />
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    Statistical pattern, not a prediction — {Math.round((f.dominant_count / Math.max(1, f.total_count)) * 100)}% of this vendor's spend goes there. Nordavix never writes to QuickBooks.
+                  </p>
+                </>
+              ) : (
+                f.detail && <p className="text-[12.5px] text-theme">{f.detail}</p>
+              )}
 
               {/* Zone 4 — the fix + actions, OR the resolved receipt */}
               {isOpen ? (
-                <>
-                  <ProposedEntryCard entry={reclassPreview(f)} preview />
+                isFlag ? (
                   <div className="flex items-center gap-2 pt-0.5">
-                    <button onClick={() => acceptMut.mutate()} disabled={busy}
+                    <button onClick={() => ackMut.mutate()} disabled={busy}
                       className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
                       style={{ background: "var(--green)" }}>
-                      {acceptMut.isPending ? <Spinner className="h-3.5 w-3.5" /> : <Check size={13} strokeWidth={2.6} />}
-                      Accept · post to Adjustments
+                      {ackMut.isPending ? <Spinner className="h-3.5 w-3.5" /> : <Check size={13} strokeWidth={2.6} />}
+                      Mark reviewed
                     </button>
                     {canReview && (
                       <button onClick={() => dismissMut.mutate()} disabled={busy}
                         className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
                         style={{ border: "1px solid var(--border-strong)", color: "var(--text-2)" }}>
-                        <ThumbsUp size={13} strokeWidth={2} /> This is right
+                        <ThumbsUp size={13} strokeWidth={2} /> Not an issue
                       </button>
                     )}
                   </div>
-                  {!canReview && (
-                    <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>A reviewer can mark a finding correct (Settings → roles).</p>
-                  )}
-                </>
+                ) : (
+                  <>
+                    {isMisc && <ProposedEntryCard entry={reclassPreview(f)} preview />}
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <button onClick={() => acceptMut.mutate()} disabled={busy}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+                        style={{ background: "var(--green)" }}>
+                        {acceptMut.isPending ? <Spinner className="h-3.5 w-3.5" /> : <Check size={13} strokeWidth={2.6} />}
+                        Accept · post to Adjustments
+                      </button>
+                      {canReview && (
+                        <button onClick={() => dismissMut.mutate()} disabled={busy}
+                          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
+                          style={{ border: "1px solid var(--border-strong)", color: "var(--text-2)" }}>
+                          <ThumbsUp size={13} strokeWidth={2} /> This is right
+                        </button>
+                      )}
+                    </div>
+                    {!canReview && (
+                      <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>A reviewer can mark a finding correct (Settings → roles).</p>
+                    )}
+                  </>
+                )
               ) : f.status === "in_adjustments" ? (
                 <button onClick={onGoAdjustments}
                   className="w-full inline-flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold"
@@ -432,7 +468,10 @@ function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck,
               ) : (
                 <div className="rounded-lg px-3 py-2 flex items-start gap-2" style={{ background: "var(--surface-2)" }}>
                   <Brain size={16} strokeWidth={1.9} style={{ color: "#54588a", marginTop: 1 }} />
-                  <p className="text-[12px] text-theme">What Nordavix knows — <span style={{ color: "var(--text-muted)" }}>{f.vendor} → {f.posted_account_name || f.posted_account_id} is correct. I won't flag this pairing again.</span></p>
+                  <p className="text-[12px] text-theme">{isMisc
+                    ? <>What Nordavix knows — <span style={{ color: "var(--text-muted)" }}>{f.vendor} → {f.posted_account_name || f.posted_account_id} is correct. I won't flag this pairing again.</span></>
+                    : <span style={{ color: "var(--text-muted)" }}>{f.status === "acknowledged" ? "Reviewed and handled." : "Marked not an issue."}</span>}
+                  </p>
                 </div>
               )}
             </div>

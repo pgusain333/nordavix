@@ -152,6 +152,10 @@ async def bulk_accept(
     accepted = 0
     period_end: date | None = None
     for finding in rows:
+        # Review-only flags aren't fixable by a JE — skip them defensively even
+        # if one slips into the selection (the UI never offers them for bulk).
+        if (finding.action_kind or "reclass") == "flag":
+            continue
         await service.accept_finding(db, tenant_id=tenant_id, finding=finding, user_id=user.id)
         period_end = finding.period_end
         accepted += 1
@@ -185,6 +189,31 @@ async def dismiss(
         entity_type="gl_accuracy_finding", entity_id=finding.id,
         metadata={"summary": f"Confirmed {finding.vendor} → {finding.posted_account_name or finding.posted_account_id} is correct",
                   "period_end": finding.period_end.isoformat()},
+    )
+    await db.commit()
+    await db.refresh(finding)
+    return service.serialize_finding(finding)
+
+
+@router.post("/findings/{finding_id}/acknowledge")
+async def acknowledge(
+    finding_id: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Mark a review-only flag as handled (no journal entry). For Risk-Radar
+    findings whose fix is to investigate, not reclass (duplicates, missing memos,
+    …). Distinct from dismiss ('this isn't a problem')."""
+    finding = await _load_finding(db, finding_id)
+    if finding.status != "open":
+        raise HTTPException(status_code=400, detail="This finding has already been actioned.")
+    await service.acknowledge_finding(db, finding=finding, user_id=user.id)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id, action="gl_accuracy.acknowledge",
+        entity_type="gl_accuracy_finding", entity_id=finding.id,
+        metadata={"summary": f"Acknowledged risk finding for {finding.vendor}",
+                  "kind": finding.kind, "period_end": finding.period_end.isoformat()},
     )
     await db.commit()
     await db.refresh(finding)

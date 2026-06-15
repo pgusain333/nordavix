@@ -125,7 +125,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Intercompany",       path: "/app/intercompany",    icon: ArrowLeftRight,  available: true  },
   { label: "Reconciliations",    path: "/app/reconciliations", icon: Scale,           available: true  },
   { label: "Adjustments",        path: "/app/adjustments",     icon: Sparkles,        available: true  },
-  { label: "GL Accuracy",        path: "/app/gl-accuracy",     icon: ScanSearch,      available: true  },
+  { label: "Risk Radar",         path: "/app/gl-accuracy",     icon: ScanSearch,      available: true  },
   { label: "Close Review",       path: "/app/review",          icon: ShieldCheck,     available: true  },
   { label: "Insights",           path: "/app/insights",        icon: Lightbulb,       available: true  },
   { label: "Advisory",           path: "/app/advisory",        icon: Target,          available: true  },

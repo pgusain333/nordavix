@@ -146,3 +146,78 @@ def detect_misclassifications(
 
     flags.sort(key=lambda f: (0 if f["confidence"] == "high" else 1, -abs(float(f["amount"]))))
     return flags
+
+
+# ── Detector registry ───────────────────────────────────────────────────────
+#
+# Risk Radar runs a catalog of PURE, deterministic detectors over the same
+# evidence (current-period rows + a trailing-history window + chart-of-accounts
+# snapshots) and feeds one findings inbox. Each detector returns finding dicts
+# that carry the generalized envelope every finding has:
+#
+#   kind        — detector id (e.g. "misclassification")
+#   severity    — cross-kind triage rank: "high" | "medium" | "low"
+#   action_kind — how Accept resolves it: "reclass" | "accrual" | "flag"
+#   title       — short human headline
+#   detail      — one-line plain-English explanation
+#   evidence    — optional structured dict for the per-kind UI
+#   dedupe_key  — optional stable key for idempotent re-scan (else the service
+#                 falls back to txn id + posted account)
+#
+# A detector is `(current, history, snapshots, exceptions, opts) -> list[dict]`;
+# it ignores the inputs it doesn't need. Adding R2+ detectors = one entry here.
+
+KIND_MISCLASSIFICATION = "misclassification"
+
+
+def _enrich_misclassification(f: dict) -> dict:
+    """Wrap a raw misclassification flag in the generalized Risk-Radar envelope.
+
+    Kept separate from detect_misclassifications so that detector stays a pristine,
+    independently-tested pure function."""
+    out = {**f}
+    conf = f.get("confidence") or "medium"
+    posted = f.get("posted_account_name") or f.get("posted_account_id") or "another account"
+    suggested = f.get("suggested_account_name") or f.get("suggested_account_id") or "the suggested account"
+    out["kind"] = KIND_MISCLASSIFICATION
+    out["severity"] = conf  # statistical confidence doubles as triage rank here
+    out["action_kind"] = "reclass"
+    out["title"] = f"{f.get('vendor') or 'Vendor'}: {posted} → {suggested}"
+    out["detail"] = (
+        f"{f.get('dominant_count')} of {f.get('total_count')} of this vendor's entries go to "
+        f"{suggested}; this one went to {posted}."
+    )
+    return out
+
+
+def _detector_misclassification(current, history, snapshots, exceptions, opts) -> list[dict]:
+    return [_enrich_misclassification(f)
+            for f in detect_misclassifications(current, history, exceptions=exceptions, opts=opts)]
+
+
+# Ordered list of active detectors. R2+ append here.
+DETECTORS: list[dict[str, Any]] = [
+    {"key": KIND_MISCLASSIFICATION, "fn": _detector_misclassification},
+]
+
+
+def run_detectors(
+    current_txns: Iterable[dict],
+    history: Iterable[dict],
+    snapshots: Iterable[dict] | None = None,
+    exceptions: set[tuple[str, str]] | None = None,
+    opts: dict[str, Any] | None = None,
+) -> list[dict]:
+    """Run every active detector over the shared evidence and return one merged,
+    triage-sorted list of findings. PURE: detectors don't do I/O. Materialize the
+    iterables once so each detector can re-scan them."""
+    cur = list(current_txns)
+    hist = list(history)
+    snaps = list(snapshots or [])
+    out: list[dict] = []
+    for d in DETECTORS:
+        out.extend(d["fn"](cur, hist, snaps, exceptions, opts))
+    sev_rank = {"high": 0, "medium": 1, "low": 2}
+    out.sort(key=lambda f: (sev_rank.get(f.get("severity") or "medium", 1),
+                            -abs(float(_signed(f.get("amount"))))))
+    return out
