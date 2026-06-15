@@ -333,7 +333,7 @@ export function WorkpapersPage() {
         }
       />
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4">
+      <div className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden flex flex-col px-4 sm:px-6 py-4">
         {binderErr && (
           <div className="rounded-xl px-4 py-3 text-[12px] mb-4"
             style={{ background: "var(--warn-subtle)", color: "var(--warn)", border: "1px solid var(--warn-border)" }}>
@@ -387,10 +387,10 @@ export function WorkpapersPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 grid-cols-1 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+        <div className="grid gap-3 grid-cols-1 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:flex-1 lg:min-h-0 lg:[grid-template-rows:minmax(0,1fr)]">
 
           {/* ── Binder index ── */}
-          <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
+          <div className="rounded-2xl overflow-hidden lg:flex lg:flex-col lg:min-h-0" style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
             tabIndex={0} role="listbox" aria-label="Binder index"
             onKeyDown={(e) => {
               if ((e.target as HTMLElement).tagName === "INPUT") return
@@ -407,6 +407,7 @@ export function WorkpapersPage() {
               </div>
             </div>
 
+            <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
             {ovLoading && !overview ? (
               <div className="p-3 space-y-2.5">
                 {Array.from({ length: 8 }).map((_, i) => (
@@ -454,10 +455,11 @@ export function WorkpapersPage() {
                 {tailRows.map((r) => renderRow(r))}
               </div>
             )}
+            </div>
           </div>
 
           {/* ── Detail ── */}
-          <div className="rounded-2xl p-4 sm:p-5" style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", boxShadow: "var(--card-shadow)" }}>
+          <div className="rounded-2xl p-4 sm:p-5 lg:min-h-0 lg:overflow-y-auto" style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", boxShadow: "var(--card-shadow)" }}>
             {!selected ? (
               <div className="text-[13px]" style={{ color: "var(--text-muted)" }}>Select a workpaper.</div>
             ) : (
