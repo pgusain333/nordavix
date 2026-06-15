@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
@@ -107,6 +108,15 @@ class AuditRow:
     user: str
     action: str
     summary: str
+
+
+@dataclass
+class EvidenceRow:
+    no: str          # cross-reference, e.g. "E-1"
+    document: str
+    supports: str    # the workpaper it backs (account name / section)
+    who: str
+    when: str
 
 
 # ── Small helpers ────────────────────────────────────────────────────────────
@@ -269,6 +279,7 @@ def _draw_cover(canvas, ctx: BinderContext) -> None:
         "Financial statements — income statement, balance sheet, cash flow",
         "Reconciliation working papers — one per balance-sheet account",
         "Flux analysis — every material variance, explained",
+        "Supporting evidence — every attached document, indexed",
         "Audit trail — every prepare, approve and sign-off action",
     ]
     canvas.setFont("Helvetica", 10)
@@ -481,6 +492,67 @@ def render_audit_appendix(buffer, *, ctx: BinderContext,
         ])
     t = Table(data, colWidths=[_BODY_W * 0.18, _BODY_W * 0.2, _BODY_W * 0.22,
                                _BODY_W * 0.4], repeatRows=1)
+    ts = [
+        ("BACKGROUND", (0, 0), (-1, 0), INK),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.4, BORDER),
+    ]
+    for i in range(1, len(data)):
+        if i % 2 == 0:
+            ts.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#FAF9F6")))
+    t.setStyle(TableStyle(ts))
+    story.append(t)
+    doc.build(story)
+
+
+# ── Public: evidence appendix ────────────────────────────────────────────────
+def render_evidence_appendix(buffer, *, ctx: BinderContext,
+                             rows: list[EvidenceRow]) -> None:
+    doc = _make_doc(buffer, ctx,
+                    title=f"Evidence — {ctx.company} — {ctx.period_end.isoformat()}",
+                    with_cover=False)
+    s = _styles()
+    story: list = [Paragraph("EVIDENCE APPENDIX", s["eyebrow"]),
+                   Paragraph("Supporting documents, indexed", s["title"])]
+    story.append(Paragraph(
+        f"{len(rows)} document{'' if len(rows) == 1 else 's'} attached to this close, "
+        f"cross-referenced to the working papers they support. Source files are "
+        f"retained in Nordavix and downloadable from the Workpapers workspace.",
+        s["subtitle"]))
+    story.append(Spacer(1, 12))
+
+    if not rows:
+        story.append(Paragraph("No supporting documents were attached for this period.",
+                               s["oblique"]))
+        doc.build(story)
+        return
+
+    head = ParagraphStyle("eh", fontName="Helvetica-Bold", fontSize=7.5,
+                          leading=10, textColor=colors.white)
+    cell = ParagraphStyle("ec", fontName="Helvetica", fontSize=8, leading=11,
+                          textColor=GREY_DARK)
+    cell_b = ParagraphStyle("ecb", fontName="Helvetica-Bold", fontSize=8,
+                            leading=11, textColor=INK)
+    data = [[Paragraph("REF", head), Paragraph("DOCUMENT", head),
+             Paragraph("SUPPORTS", head), Paragraph("ATTACHED BY", head),
+             Paragraph("WHEN", head)]]
+    for r in rows:
+        # Filenames / account names / person names are user-supplied — escape
+        # XML metacharacters so "Repairs & Maintenance" or "AT&T invoice.pdf"
+        # never breaks the Paragraph parser (and the whole binder render).
+        data.append([
+            Paragraph(r.no, cell_b),
+            Paragraph(_xml_escape(r.document[:60]), cell),
+            Paragraph(_xml_escape(r.supports[:40]), cell),
+            Paragraph(_xml_escape(r.who[:24]), cell),
+            Paragraph(_xml_escape(r.when), cell),
+        ])
+    t = Table(data, colWidths=[_BODY_W * 0.08, _BODY_W * 0.34, _BODY_W * 0.26,
+                               _BODY_W * 0.18, _BODY_W * 0.14], repeatRows=1)
     ts = [
         ("BACKGROUND", (0, 0), (-1, 0), INK),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),

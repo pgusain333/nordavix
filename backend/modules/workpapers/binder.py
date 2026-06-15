@@ -42,8 +42,10 @@ from modules.recons.overview import read_overview_from_snapshots
 from modules.workpapers.pdf_pages import (
     AuditRow,
     BinderContext,
+    EvidenceRow,
     TocEntry,
     render_audit_appendix,
+    render_evidence_appendix,
     render_front_matter,
 )
 
@@ -237,6 +239,86 @@ async def _render_audit(
     return buf.getvalue(), len(rows), window_label
 
 
+# Friendly "supports" label for non-account evidence references.
+_EVIDENCE_SECTION_LABELS = {
+    "schedule": "Schedules",
+    "adjustment": "Adjustments",
+    "flux": "Flux analysis",
+    "financials": "Financial statements",
+    "general": "Supporting documents",
+}
+
+
+async def _render_evidence(
+    db: AsyncSession, tenant_id: uuid.UUID, ctx: BinderContext, period_end: date,
+) -> tuple[bytes | None, int]:
+    """Indexed appendix of every document attached to this period's working
+    papers — each cross-referenced (E-n) to the workpaper it backs. The source
+    files stay in Nordavix; the appendix is the manifest of record in the binder.
+
+    Returns (None, 0) when nothing is attached, so the section is simply omitted.
+    """
+    from models.workpaper_evidence import WorkpaperEvidence
+
+    try:
+        items = list((await db.execute(
+            select(WorkpaperEvidence)
+            .where(WorkpaperEvidence.period_end == period_end)
+            .order_by(
+                WorkpaperEvidence.ref_type,
+                WorkpaperEvidence.ref_id,
+                WorkpaperEvidence.uploaded_at,
+            )
+        )).scalars().all())
+    except Exception:
+        logger.warning("binder: evidence query failed; skipping", exc_info=True)
+        return None, 0
+
+    if not items:
+        return None, 0
+
+    # Resolve account references to human account names (committed snapshot).
+    acct_names: dict[str, str] = {}
+    try:
+        ov = await read_overview_from_snapshots(db, period_end)
+        for a in (ov.get("accounts") or []):
+            qid = a.get("qbo_id") or a.get("qbo_account_id")
+            if qid:
+                acct_names[str(qid)] = a.get("account_name") or str(qid)
+    except Exception:
+        logger.debug("binder: evidence account map failed", exc_info=True)
+
+    # Resolve uploader display names (Clerk-backed, best-effort).
+    ids = list({e.uploaded_by for e in items if e.uploaded_by})
+    names: dict[str, str] = {}
+    if ids:
+        try:
+            from modules.audit.router import _resolve_user_names
+            names = await _resolve_user_names(db, ids)
+        except Exception:
+            logger.debug("binder: evidence name resolution failed", exc_info=True)
+
+    rows: list[EvidenceRow] = []
+    for i, e in enumerate(items, start=1):
+        if e.ref_type == "account":
+            if e.ref_id:
+                supports = acct_names.get(str(e.ref_id), f"Account {e.ref_id}")
+            else:
+                supports = "Account (unspecified)"
+        else:
+            supports = _EVIDENCE_SECTION_LABELS.get(
+                e.ref_type, (e.ref_type or "").replace("_", " ").title() or "—")
+        who = names.get(str(e.uploaded_by), "—") if e.uploaded_by else "—"
+        when = _fmt_dt(e.uploaded_at) or ""
+        rows.append(EvidenceRow(
+            no=f"E-{i}", document=e.file_name or "(unnamed)",
+            supports=supports, who=who, when=when))
+
+    buf = io.BytesIO()
+    render_evidence_appendix(buf, ctx=ctx, rows=rows)
+    return buf.getvalue(), len(rows)
+
+
 async def _render_recon_packets(
     db: AsyncSession, tenant_id: uuid.UUID, period_end: date, company: str,
     user_email: str,
@@ -423,6 +505,12 @@ async def build_close_binder(
         sections.append(_Section(
             "flux", "Flux analysis",
             f"{flux_n} material variance{'' if flux_n == 1 else 's'}", flux_pdf, _count(flux_pdf)))
+
+    ev_pdf, ev_n = await _render_evidence(db, tenant_id, ctx, period_end)
+    if ev_pdf:
+        sections.append(_Section(
+            "evidence", "Evidence appendix",
+            f"{ev_n} document{'' if ev_n == 1 else 's'}", ev_pdf, _count(ev_pdf)))
 
     audit_pdf, audit_n, _ = await _render_audit(db, tenant_id, ctx, period_end)
     sections.append(_Section(
