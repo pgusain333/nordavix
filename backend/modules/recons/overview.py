@@ -410,6 +410,21 @@ async def _build_overview_from_qbo_data(
     for e in ev_rows:
         evidence_by_acct.setdefault(e.qbo_account_id, []).append(e)
 
+    # Workpaper-binder attachments tied to an account also count toward "this
+    # account has support". One query for the period; we fold only the COUNT
+    # here (the files themselves live in the Workpapers store and surface in the
+    # recon drawer read-only) so the card/badge matches the drawer's list.
+    from models.workpaper_evidence import WorkpaperEvidence
+    wp_evidence_by_acct: dict[str, int] = {}
+    for e in (await session.execute(
+        select(WorkpaperEvidence).where(
+            WorkpaperEvidence.period_end == period_end,
+            WorkpaperEvidence.ref_type == "account",
+        )
+    )).scalars().all():
+        if e.ref_id:
+            wp_evidence_by_acct[e.ref_id] = wp_evidence_by_acct.get(e.ref_id, 0) + 1
+
     out_accounts: list[dict] = []
     for a in accounts_meta:
         acct_type = a.get("AccountType", "")
@@ -539,7 +554,7 @@ async def _build_overview_from_qbo_data(
                                     if (review and review.subledger_entered_by) else None,
             "subledger_entered_at": review.subledger_entered_at.isoformat()
                                     if (review and review.subledger_entered_at) else None,
-            "evidence_count":      len(evidence_by_acct.get(qbo_id, [])),
+            "evidence_count":      len(evidence_by_acct.get(qbo_id, [])) + wp_evidence_by_acct.get(qbo_id, 0),
             "evidence_files":      [
                 {
                     "id":           str(f.id),

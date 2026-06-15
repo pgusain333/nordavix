@@ -65,6 +65,7 @@ from models.reconciliation import (
 )
 from models.subledger_evidence import SubledgerEvidence
 from models.tenant import Tenant
+from models.workpaper_evidence import WorkpaperEvidence
 from modules.recons.overview import (
     fetch_subledger_detail,
     fetch_variance_detail,
@@ -2885,6 +2886,23 @@ def _serialize_evidence(e: SubledgerEvidence) -> dict:
         "uploaded_by": str(e.uploaded_by),
         "uploaded_at": e.uploaded_at.isoformat() if e.uploaded_at else None,
         "verification": e.verification,
+        "source":      "recon",
+    }
+
+
+def _serialize_workpaper_as_evidence(e: WorkpaperEvidence) -> dict:
+    """A binder (Workpapers) attachment on this account, shaped like recon
+    evidence so it lists in the recon drawer alongside native files. Marked
+    source="binder": read-only here (download only) — managed in Workpapers."""
+    return {
+        "id":          str(e.id),
+        "file_name":   e.file_name,
+        "file_size":   e.file_size,
+        "mime_type":   e.mime_type,
+        "uploaded_by": str(e.uploaded_by),
+        "uploaded_at": e.uploaded_at.isoformat() if e.uploaded_at else None,
+        "verification": e.verification,
+        "source":      "binder",
     }
 
 
@@ -2909,7 +2927,20 @@ async def list_account_evidence(
         )
         .order_by(desc(SubledgerEvidence.uploaded_at))
     )).scalars().all())
-    return {"evidence": [_serialize_evidence(r) for r in rows]}
+    items = [_serialize_evidence(r) for r in rows]
+
+    # Union binder (Workpapers) attachments tied to this account so evidence is
+    # symmetric across both surfaces. Read-only here; sorted with native files.
+    wp_rows = list((await db.execute(
+        select(WorkpaperEvidence).where(
+            WorkpaperEvidence.ref_type == "account",
+            WorkpaperEvidence.ref_id == qbo_account_id,
+            WorkpaperEvidence.period_end == pe,
+        ).order_by(desc(WorkpaperEvidence.uploaded_at))
+    )).scalars().all())
+    items.extend(_serialize_workpaper_as_evidence(e) for e in wp_rows)
+    items.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
+    return {"evidence": items}
 
 
 @router.post("/account/{qbo_account_id}/evidence", status_code=status.HTTP_201_CREATED)
@@ -3005,10 +3036,20 @@ async def download_account_evidence(
     row = (await db.execute(
         select(SubledgerEvidence).where(SubledgerEvidence.id == evidence_id)
     )).scalar_one_or_none()
+    r2_key = row.r2_key if row else None
+    file_name = row.file_name if row else None
+    mime_type = row.mime_type if row else None
     if row is None:
-        raise HTTPException(status_code=404, detail="Evidence not found.")
-    url = r2_storage.generate_presigned_download_url(row.r2_key, expires_in=300)
-    return {"download_url": url, "file_name": row.file_name, "mime_type": row.mime_type}
+        # Binder (Workpapers) attachment merged into this account's list —
+        # resolve it here so one endpoint serves both stores. Tenant-scoped.
+        wp = (await db.execute(
+            select(WorkpaperEvidence).where(WorkpaperEvidence.id == evidence_id)
+        )).scalar_one_or_none()
+        if wp is None:
+            raise HTTPException(status_code=404, detail="Evidence not found.")
+        r2_key, file_name, mime_type = wp.r2_key, wp.file_name, wp.mime_type
+    url = r2_storage.generate_presigned_download_url(r2_key, expires_in=300)
+    return {"download_url": url, "file_name": file_name, "mime_type": mime_type}
 
 
 @router.post("/evidence/{evidence_id}/verify", dependencies=[Depends(enforce_ai_limits)])

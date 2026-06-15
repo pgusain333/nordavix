@@ -145,6 +145,9 @@ export function WorkpapersPage() {
 
   const cnt = (refType: string, refId: string | null) =>
     summary?.counts[`${refType}:${refId ?? ""}`] ?? 0
+  // Pending PBC requests for an account (awaiting client) — separate from files.
+  const reqCnt = (refId: string | null) =>
+    summary?.requests?.[`account:${refId ?? ""}`] ?? 0
 
   const accounts: OverviewAccount[] = useMemo(() => overview?.accounts ?? [], [overview])
   const isClosed = !!overview?.is_closed
@@ -287,6 +290,12 @@ export function WorkpapersPage() {
           {r.title}
           {isAcct && account?.group_label && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · {account.group_label}</span>}
         </span>
+        {isAcct && reqCnt(r.refId) > 0 && (
+          <span className="text-[11px] inline-flex items-center gap-0.5 shrink-0" style={{ color: "var(--warn)" }}
+            title={`${reqCnt(r.refId)} document${reqCnt(r.refId) === 1 ? "" : "s"} requested — awaiting client`}>
+            <Clock size={11} strokeWidth={2} /> {reqCnt(r.refId)}
+          </span>
+        )}
         {isAcct && flagged
           ? <span className="text-[11px] shrink-0 tabular-nums" style={{ color: "var(--danger)" }}>{fmtUsd(account?.variance)}</span>
           : n > 0 && (
@@ -546,7 +555,9 @@ export function WorkpapersPage() {
                               style={{ border: "1px solid var(--border)" }}
                               onMouseEnter={(ev) => (ev.currentTarget.style.background = "var(--surface-2)")}
                               onMouseLeave={(ev) => (ev.currentTarget.style.background = "transparent")}>
-                              <FileGlyph name={e.file_name} />
+                              {e.source === "request"
+                                ? <Clock size={16} strokeWidth={1.9} style={{ color: "var(--warn)" }} />
+                                : <FileGlyph name={e.file_name} />}
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <span className="truncate text-[12px] font-medium text-theme">{e.file_name}</span>
@@ -557,25 +568,38 @@ export function WorkpapersPage() {
                                       <Scale size={9} strokeWidth={2.4} /> Recon
                                     </span>
                                   )}
+                                  {e.source === "request" && (
+                                    <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded"
+                                      style={{ background: "var(--warn-subtle)", color: "var(--warn)" }}
+                                      title="Requested via client magic link — manage it in Reconciliations">
+                                      <Clock size={9} strokeWidth={2.4} /> Requested
+                                    </span>
+                                  )}
                                 </div>
-                                {(fmtSize(e.file_size) || fmtDate(e.uploaded_at)) && (
+                                {e.source === "request" ? (
+                                  <div className="text-[11px] mt-0.5" style={{ color: "var(--warn)" }}>
+                                    Awaiting client{e.recipient ? ` · ${e.recipient}` : ""}
+                                  </div>
+                                ) : (fmtSize(e.file_size) || fmtDate(e.uploaded_at)) ? (
                                   <div className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
                                     {[fmtSize(e.file_size), e.uploaded_at ? `attached ${fmtDate(e.uploaded_at)}` : ""].filter(Boolean).join(" · ")}
                                   </div>
-                                )}
+                                ) : null}
                               </div>
-                              <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => workpapersApi.downloadEvidence(e.id)} title="Download"
-                                  className="p-1.5 rounded-md" style={{ color: "var(--text-muted)" }}
-                                  onMouseEnter={(ev) => (ev.currentTarget.style.background = "var(--surface)")}
-                                  onMouseLeave={(ev) => (ev.currentTarget.style.background = "transparent")}><Download size={14} strokeWidth={2} /></button>
-                                {e.source !== "recon" && (
-                                  <button onClick={() => deleteMut.mutate(e.id)} disabled={deleteMut.isPending} title="Remove"
-                                    className="p-1.5 rounded-md disabled:opacity-50" style={{ color: "var(--text-muted)" }}
-                                    onMouseEnter={(ev) => (ev.currentTarget.style.color = "var(--danger)")}
-                                    onMouseLeave={(ev) => (ev.currentTarget.style.color = "var(--text-muted)")}><Trash2 size={14} strokeWidth={2} /></button>
-                                )}
-                              </div>
+                              {e.source !== "request" && (
+                                <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button onClick={() => workpapersApi.downloadEvidence(e.id)} title="Download"
+                                    className="p-1.5 rounded-md" style={{ color: "var(--text-muted)" }}
+                                    onMouseEnter={(ev) => (ev.currentTarget.style.background = "var(--surface)")}
+                                    onMouseLeave={(ev) => (ev.currentTarget.style.background = "transparent")}><Download size={14} strokeWidth={2} /></button>
+                                  {e.source !== "recon" && (
+                                    <button onClick={() => deleteMut.mutate(e.id)} disabled={deleteMut.isPending} title="Remove"
+                                      className="p-1.5 rounded-md disabled:opacity-50" style={{ color: "var(--text-muted)" }}
+                                      onMouseEnter={(ev) => (ev.currentTarget.style.color = "var(--danger)")}
+                                      onMouseLeave={(ev) => (ev.currentTarget.style.color = "var(--text-muted)")}><Trash2 size={14} strokeWidth={2} /></button>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           ))}
 

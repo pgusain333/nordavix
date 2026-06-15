@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import logging
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -22,6 +22,7 @@ from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
 from core.storage import r2 as r2_storage
 from models.closed_period import ClosedPeriod
+from models.evidence_request import EvidenceRequest
 from models.subledger_evidence import SubledgerEvidence
 from models.workpaper_evidence import WorkpaperEvidence
 from modules.workpapers.binder import build_close_binder
@@ -161,6 +162,28 @@ def _serialize_recon_evidence(e: SubledgerEvidence) -> dict:
     }
 
 
+def _serialize_request_as_evidence(r: EvidenceRequest) -> dict:
+    """A pending PBC document request shaped like an evidence row so the binder
+    can show it as 'awaiting client' before the file lands. source="request":
+    no file yet, so no download/delete — purely a visible placeholder."""
+    return {
+        "id": str(r.id),
+        "period_end": r.period_end.isoformat(),
+        "ref_type": "account",
+        "ref_id": r.qbo_account_id,
+        "file_name": r.title,
+        "file_size": 0,
+        "mime_type": "",
+        "note": r.note,
+        "uploaded_by": str(r.created_by),
+        "uploaded_at": r.created_at.isoformat() if r.created_at else None,
+        "verification": None,
+        "source": "request",
+        "request_status": "pending",
+        "recipient": r.recipient_email,
+    }
+
+
 @router.post("/evidence")
 async def upload_workpaper_evidence(
     tenant_id: CurrentTenantId,
@@ -258,6 +281,21 @@ async def list_workpaper_evidence(
         items.extend(_serialize_recon_evidence(e) for e in sub_rows)
         items.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
 
+        # Append pending PBC requests for this account as "awaiting client"
+        # placeholders (no file uploaded yet). Shown after attached files.
+        now = datetime.now(UTC)
+        req_rows = (await db.execute(
+            select(EvidenceRequest).where(
+                EvidenceRequest.qbo_account_id == ref_id,
+                EvidenceRequest.period_end == pe,
+                EvidenceRequest.status == "pending",
+            ).order_by(desc(EvidenceRequest.created_at))
+        )).scalars().all()
+        items.extend(
+            _serialize_request_as_evidence(r) for r in req_rows
+            if r.expires_at and r.expires_at > now
+        )
+
     return {"items": items}
 
 
@@ -289,7 +327,21 @@ async def workpaper_evidence_summary(
         key = f"account:{qbo}"
         counts[key] = counts.get(key, 0) + int(n)
 
-    return {"counts": counts, "total": sum(counts.values())}
+    # Pending PBC requests per account (awaiting client) — a separate signal
+    # from attached files so the index can show "awaiting" distinctly.
+    now = datetime.now(UTC)
+    req_rows = (await db.execute(
+        select(EvidenceRequest.qbo_account_id, func.count(EvidenceRequest.id))
+        .where(
+            EvidenceRequest.period_end == pe,
+            EvidenceRequest.status == "pending",
+            EvidenceRequest.expires_at > now,
+        )
+        .group_by(EvidenceRequest.qbo_account_id)
+    )).all()
+    requests = {f"account:{qbo}": int(n) for qbo, n in req_rows}
+
+    return {"counts": counts, "total": sum(counts.values()), "requests": requests}
 
 
 @router.get("/evidence/{evidence_id}/download")

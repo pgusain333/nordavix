@@ -243,6 +243,9 @@ export interface EvidenceFile {
   uploaded_by:  string
   uploaded_at:  string
   verification: EvidenceVerification | null
+  /** "recon" = native recon/PBC upload; "binder" = merged in from a Workpapers
+   *  attachment on this account (read-only here — manage it in Workpapers). */
+  source?:      "recon" | "binder"
 }
 
 export type OverrideVerificationState = "match" | "mismatch" | "unknown" | "unverified"

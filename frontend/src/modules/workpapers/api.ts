@@ -16,14 +16,20 @@ export interface WpEvidence {
   uploaded_at: string | null
   verification: Record<string, unknown> | null
   /** "workpaper" = attached here; "recon" = merged in from the account's
-   *  reconciliation (manual recon upload or PBC client magic-link upload),
-   *  shown read-only and managed in Reconciliations. */
-  source?: "workpaper" | "recon"
+   *  reconciliation (manual recon upload or PBC client magic-link upload);
+   *  "request" = a pending PBC request (awaiting client — no file yet).
+   *  recon/request rows are read-only here. */
+  source?: "workpaper" | "recon" | "request"
+  /** Set when source === "request". */
+  request_status?: string
+  recipient?:      string
 }
 
 export interface WpEvidenceSummary {
-  counts: Record<string, number>   // keyed "ref_type:ref_id" ("general:" for general)
-  total:  number
+  counts:    Record<string, number>   // keyed "ref_type:ref_id" ("general:" for general)
+  total:     number
+  /** Pending PBC requests per account, keyed "account:<qbo>" — awaiting client. */
+  requests?: Record<string, number>
 }
 
 async function listEvidence(periodEnd: string, refType?: string, refId?: string | null): Promise<WpEvidence[]> {

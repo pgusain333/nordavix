@@ -3578,8 +3578,13 @@ function InlineSubledgerForm({
                         className="rounded-md px-2 py-1.5 text-xs space-y-1.5"
                         style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
                         <div className="flex items-center gap-2">
-                          <FileText size={12} strokeWidth={1.8} style={{ color: "var(--green)" }} />
+                          <FileText size={12} strokeWidth={1.8} style={{ color: f.source === "binder" ? "var(--info)" : "var(--green)" }} />
                           <span className="flex-1 truncate text-theme">{f.file_name}</span>
+                          {f.source === "binder" && (
+                            <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0"
+                              style={{ background: "var(--info-subtle)", color: "var(--info)" }}
+                              title="Attached in the Workpapers binder — manage it there">Binder</span>
+                          )}
                           <span style={{ color: "var(--text-muted)" }}>
                             {Math.round(f.file_size / 1024)} KB
                           </span>
@@ -3589,20 +3594,23 @@ function InlineSubledgerForm({
                             style={{ color: "var(--text-muted)" }}>
                             <Download size={11} strokeWidth={1.8} />
                           </button>
-                          <button type="button"
-                            onClick={() => deleteMut.mutate(f.id)}
-                            disabled={deleteMut.isPending}
-                            className="h-6 w-6 inline-flex items-center justify-center rounded"
-                            title="Remove"
-                            style={{ color: "var(--danger)" }}>
-                            <X size={12} strokeWidth={1.8} />
-                          </button>
+                          {f.source !== "binder" && (
+                            <button type="button"
+                              onClick={() => deleteMut.mutate(f.id)}
+                              disabled={deleteMut.isPending}
+                              className="h-6 w-6 inline-flex items-center justify-center rounded"
+                              title="Remove"
+                              style={{ color: "var(--danger)" }}>
+                              <X size={12} strokeWidth={1.8} />
+                            </button>
+                          )}
                         </div>
 
                         {/* Verification result — or the trigger button if not yet verified.
                             Pass the computed subledger so the live delta tracks the
-                            calculation as the user picks more reconciling items. */}
-                        {v ? (
+                            calculation as the user picks more reconciling items.
+                            Binder-sourced files are read-only here (no AI-verify). */}
+                        {f.source !== "binder" && (v ? (
                           <VerificationBadge verification={v} enteredAmount={computedSubledger} valid={true}
                             onReverify={() => verifyMut.mutate(f.id)} reverifying={verifying} />
                         ) : (
@@ -3618,7 +3626,7 @@ function InlineSubledgerForm({
                             <Sparkles size={11} strokeWidth={1.8} />
                             {verifying ? "Reading document…" : "Verify with AI"}
                           </button>
-                        )}
+                        ))}
                       </li>
                     )
                   })}
