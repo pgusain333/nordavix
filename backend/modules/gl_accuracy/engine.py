@@ -218,6 +218,19 @@ def _median(nums: list[Decimal]) -> Decimal:
     return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
 
 
+def _as_day(v: Any) -> date | None:
+    if isinstance(v, date):
+        return v
+    try:
+        return date.fromisoformat(str(v or "")[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def _cents(v: Any) -> Decimal:
+    return abs(_signed(v)).quantize(Decimal("0.01"))
+
+
 def _detector_missing_recurring(current, history, snapshots, exceptions, opts) -> list[dict]:
     """Flag a vendor+expense-account billed in most of the recent months but
     ABSENT this period — a likely missing accrual. The estimate is the median of
@@ -291,10 +304,141 @@ def _detector_missing_recurring(current, history, snapshots, exceptions, opts) -
     return flags
 
 
-# Ordered list of active detectors. R3+ append here.
+# ── Review-flag detectors (look-at-this, no journal entry) ───────────────────
+
+KIND_DUPLICATE = "duplicate"
+KIND_LARGE_NO_MEMO = "large_no_memo"
+KIND_ROUND_DOLLAR = "round_dollar"
+
+
+def _detector_duplicates(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """Same vendor + same amount appearing 2+ times within a short window this
+    period — a possible double payment. Review-only flag (no JE)."""
+    o = opts or {}
+    min_amt = o.get("dup_materiality", Decimal("50"))
+    window_days = int(o.get("dup_window_days", 7))
+    high_amt = o.get("dup_high", Decimal("1000"))
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for t in current:
+        v = _norm_vendor(t.get("entity_name"))
+        amt = _cents(t.get("amount"))
+        if not v or amt < min_amt:
+            continue
+        groups.setdefault((v, str(amt)), []).append(t)
+
+    flags: list[dict] = []
+    for (v, amtstr), txns in groups.items():
+        # A genuine duplicate spans 2+ DISTINCT transactions. Multiple GL lines of
+        # ONE evenly-split transaction (same qbo_txn_id, equal per-line amounts)
+        # must not look like a double payment. Id-less rows each count as distinct.
+        ids = [t.get("qbo_txn_id") for t in txns]
+        distinct_ids = sorted({i for i in ids if i})
+        n = len(distinct_ids) + sum(1 for i in ids if not i)
+        if n < 2:
+            continue
+        days = [d for d in (_as_day(t.get("txn_date")) for t in txns) if d]
+        if days and (max(days) - min(days)).days > window_days:
+            continue  # same vendor/amount but spread out — likely legitimately recurring
+        amt = Decimal(amtstr)
+        vendor_disp = next((str(t.get("entity_name")).strip() for t in txns if t.get("entity_name")), v)
+        acct = next((str(t.get("qbo_account_id")) for t in txns if t.get("qbo_account_id")), "")
+        acct_name = next((str(t.get("qbo_account_name")) for t in txns if t.get("qbo_account_name")), "")
+        conf = "high" if amt >= high_amt else "medium"
+        flags.append({
+            "kind": KIND_DUPLICATE, "severity": conf, "confidence": conf, "action_kind": "flag",
+            "dedupe_key": f"{v}:{amtstr}:{min(days).isoformat() if days else ''}",
+            "title": f"{vendor_disp}: possible duplicate — {n}x {amtstr}",
+            "detail": (f"{n} entries to {vendor_disp} for {amtstr} within {window_days} days "
+                       f"— check for a double payment."),
+            "vendor": vendor_disp, "amount": amtstr,
+            "posted_account_id": acct or None, "posted_account_name": acct_name or None,
+            "suggested_account_id": None, "suggested_account_name": None,
+            "dominant_count": n, "total_count": n, "posted_count": 0,
+            "evidence": {"count": n, "amount": amtstr, "window_days": window_days,
+                         "txn_ids": [t.get("qbo_txn_id") for t in txns]},
+        })
+    return flags
+
+
+def _detector_large_no_memo(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """A material entry with a blank memo/description — a documentation gap to
+    close before sign-off. Review-only flag."""
+    o = opts or {}
+    min_amt = o.get("nomemo_min", Decimal("5000"))
+    high_amt = o.get("nomemo_high", Decimal("10000"))
+    flags: list[dict] = []
+    for t in current:
+        if str(t.get("memo") or "").strip():
+            continue
+        amt = _cents(t.get("amount"))
+        if amt < min_amt:
+            continue
+        vendor_disp = str(t.get("entity_name") or "").strip() or "(no vendor)"
+        acct = str(t.get("qbo_account_id") or "")
+        acct_name = str(t.get("qbo_account_name") or "")
+        txn_id = str(t.get("qbo_txn_id") or "")
+        conf = "high" if amt >= high_amt else "medium"
+        flags.append({
+            "kind": KIND_LARGE_NO_MEMO, "severity": conf, "confidence": conf, "action_kind": "flag",
+            "dedupe_key": f"{txn_id}:{acct}:{amt}",
+            "title": f"{vendor_disp}: {amt} with no description",
+            "detail": (f"A {amt} entry to {acct_name or acct or 'an account'} has no memo or "
+                       f"description — add support before close."),
+            "vendor": vendor_disp, "amount": str(amt),
+            "posted_account_id": acct or None, "posted_account_name": acct_name or None,
+            "suggested_account_id": None, "suggested_account_name": None,
+            "dominant_count": 0, "total_count": 0, "posted_count": 0,
+            "qbo_txn_id": t.get("qbo_txn_id"), "txn_type": t.get("txn_type"),
+            "txn_number": t.get("txn_number"), "txn_date": t.get("txn_date"),
+            "evidence": {"amount": str(amt), "account_id": acct, "account_name": acct_name},
+        })
+    return flags
+
+
+def _detector_round_dollar(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """A manual journal entry for a suspiciously round amount (exact multiple of
+    $1,000) — often an estimate or plug. Review-only flag."""
+    o = opts or {}
+    min_amt = o.get("round_min", Decimal("1000"))
+    base = o.get("round_base", Decimal("1000"))
+    high_base = o.get("round_high_base", Decimal("5000"))
+    flags: list[dict] = []
+    for t in current:
+        if "journal" not in str(t.get("txn_type") or "").lower():
+            continue
+        amt = _cents(t.get("amount"))
+        if amt < min_amt or amt % base != 0:
+            continue
+        vendor_disp = str(t.get("entity_name") or "").strip() or "Journal entry"
+        acct = str(t.get("qbo_account_id") or "")
+        acct_name = str(t.get("qbo_account_name") or "")
+        txn_id = str(t.get("qbo_txn_id") or "")
+        conf = "high" if amt % high_base == 0 else "medium"
+        flags.append({
+            "kind": KIND_ROUND_DOLLAR, "severity": conf, "confidence": conf, "action_kind": "flag",
+            "dedupe_key": f"{txn_id}:{acct}:{amt}",
+            "title": f"Round-dollar JE: {amt}",
+            "detail": (f"A manual journal entry for exactly {amt} to {acct_name or acct or 'an account'} "
+                       f"— round amounts can signal an estimate or plug; confirm it's supported."),
+            "vendor": vendor_disp, "amount": str(amt),
+            "posted_account_id": acct or None, "posted_account_name": acct_name or None,
+            "suggested_account_id": None, "suggested_account_name": None,
+            "dominant_count": 0, "total_count": 0, "posted_count": 0,
+            "qbo_txn_id": t.get("qbo_txn_id"), "txn_type": t.get("txn_type"),
+            "txn_number": t.get("txn_number"), "txn_date": t.get("txn_date"),
+            "evidence": {"amount": str(amt), "account_id": acct, "account_name": acct_name},
+        })
+    return flags
+
+
+# Ordered list of active detectors. R4+ append here.
 DETECTORS: list[dict[str, Any]] = [
     {"key": KIND_MISCLASSIFICATION, "fn": _detector_misclassification},
     {"key": KIND_MISSING_RECURRING, "fn": _detector_missing_recurring},
+    {"key": KIND_DUPLICATE, "fn": _detector_duplicates},
+    {"key": KIND_LARGE_NO_MEMO, "fn": _detector_large_no_memo},
+    {"key": KIND_ROUND_DOLLAR, "fn": _detector_round_dollar},
 ]
 
 

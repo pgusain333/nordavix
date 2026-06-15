@@ -186,7 +186,10 @@ async def scan_period(
         )
     )).scalars().all()
     high = sum(1 for f in open_findings if f.severity == "high")
-    dollars = sum((abs(_dec(f.amount)) for f in open_findings), Decimal("0"))
+    # "to reclassify" dollars cover only fixable findings (reclass/accrual);
+    # review-only flags (duplicates, missing memos, …) aren't a dollar to move.
+    dollars = sum((abs(_dec(f.amount)) for f in open_findings
+                   if (f.action_kind or "reclass") != "flag"), Decimal("0"))
     return {
         "period_end": period_end.isoformat(),
         "scanned": len(current),
@@ -276,7 +279,8 @@ async def list_findings(db: AsyncSession, period_end: date) -> dict:
     rows = sorted(rows, key=lambda f: (f.status != "open", -abs(_dec(f.amount))))
     open_rows = [f for f in rows if f.status == "open"]
     high = sum(1 for f in open_rows if f.severity == "high")
-    dollars = sum((abs(_dec(f.amount)) for f in open_rows), Decimal("0"))
+    dollars = sum((abs(_dec(f.amount)) for f in open_rows
+                   if (f.action_kind or "reclass") != "flag"), Decimal("0"))
     return {
         "items": [serialize_finding(f) for f in rows],
         "open_count": len(open_rows),

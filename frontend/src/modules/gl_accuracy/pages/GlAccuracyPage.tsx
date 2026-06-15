@@ -129,7 +129,7 @@ export function GlAccuracyPage() {
   const open = items.filter((f) => f.status === "open")
   const high = open.filter((f) => f.severity === "high").length
   const medium = open.length - high
-  const dollars = open.reduce((s, f) => s + Math.abs(Number(f.amount) || 0), 0)
+  const dollars = open.filter((f) => f.action_kind !== "flag").reduce((s, f) => s + Math.abs(Number(f.amount) || 0), 0)
   const shown = items.filter((f) => filter === "all" || (f.status === "open" && f.severity === filter))
   // Trophy only right after an explicit scan of this period returned nothing.
   const justScannedClean = scanned?.period === activePeriod && open.length === 0
@@ -147,7 +147,7 @@ export function GlAccuracyPage() {
     if (n.has(id)) n.delete(id); else n.add(id)
     return n
   })
-  const selectHigh = () => setSelected(new Set(open.filter((f) => f.severity === "high").map((f) => f.id)))
+  const selectHigh = () => setSelected(new Set(open.filter((f) => f.severity === "high" && f.action_kind !== "flag").map((f) => f.id)))
 
   if (!organization) {
     return <Shell><Card><div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
@@ -380,7 +380,7 @@ function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck,
       style={{ background: "var(--surface)", border: `1px solid ${open ? "var(--green)" : "var(--border)"}`,
                boxShadow: "var(--card-shadow)", opacity: isOpen ? 1 : 0.72 }}>
       <div onClick={onToggle} className="flex items-center gap-2.5 px-3.5 py-3 cursor-pointer">
-        {selectable && isOpen && (
+        {selectable && isOpen && !isFlag && (
           <input type="checkbox" checked={!!checked}
             onClick={(e) => e.stopPropagation()} onChange={onCheck}
             className="shrink-0 h-3.5 w-3.5 cursor-pointer" style={{ accentColor: "var(--green)" }}

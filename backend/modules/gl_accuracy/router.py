@@ -105,6 +105,8 @@ async def accept(
     finding = await _load_finding(db, finding_id)
     if finding.status != "open":
         raise HTTPException(status_code=400, detail="This finding has already been actioned.")
+    if (finding.action_kind or "reclass") == "flag":
+        raise HTTPException(status_code=400, detail="This finding is review-only — acknowledge it instead.")
     pe_id = await service.accept_finding(db, tenant_id=tenant_id, finding=finding, user_id=user.id)
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id, action="gl_accuracy.accept",
