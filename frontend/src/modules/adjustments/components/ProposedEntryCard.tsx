@@ -54,9 +54,12 @@ interface Props {
   canReview?: boolean   // reviewer+ — Approve / Dismiss
   canEdit?:   boolean   // preparer+ — select accounts on the JE lines
   readOnly?:  boolean
+  // preview: render the card body ONLY (no Copy/Approve/Dismiss row, no editing).
+  // Used by GL Accuracy to show the proposed reclass inside a finding review.
+  preview?:   boolean
 }
 
-export function ProposedEntryCard({ entry, canReview, canEdit, readOnly }: Props) {
+export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview }: Props) {
   const qc = useQueryClient()
   const [copied, setCopied] = useState(false)
 
@@ -91,7 +94,7 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly }: Props
   // reviewer. Approval stays reviewer-only. Falls back to canReview when an
   // older caller hasn't passed canEdit yet.
   const allowEdit = canEdit ?? canReview
-  const editable = entry.status === "open" && !readOnly && !!allowEdit
+  const editable = entry.status === "open" && !readOnly && !preview && !!allowEdit
   const { data: accounts } = useQuery({
     queryKey: ["adjustments", "accounts", entry.period_end],
     queryFn:  () => adjustmentsApi.accounts(entry.period_end),
@@ -281,7 +284,8 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly }: Props
         </div>
       )}
 
-      {/* Actions */}
+      {/* Actions — suppressed in preview (the host owns the actions) */}
+      {!preview && (
       <div className="px-3 py-2 flex items-center gap-2 flex-wrap" style={{ borderTop: "1px solid var(--border)" }}>
         <button
           type="button"
@@ -320,6 +324,7 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly }: Props
           </button>
         )}
       </div>
+      )}
     </div>
   )
 }

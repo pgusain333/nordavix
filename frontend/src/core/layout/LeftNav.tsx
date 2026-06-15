@@ -16,6 +16,7 @@ import {
   Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
   MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList, Search,
   PanelLeft, PanelLeftClose, Sparkles, ShieldCheck, Target, Rocket, ListChecks,
+  ScanSearch,
   type LucideIcon,
 } from "lucide-react"
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
@@ -56,6 +57,7 @@ function prefetchRoute(path: string): void {
     case "":               return // Dashboard is eager
     case "autopilot":      void import("@/modules/autopilot/pages/AutopilotPage");          return
     case "close":          void import("@/modules/close/pages/CloseWorkflowPage");          return
+    case "gl-accuracy":    void import("@/modules/gl_accuracy/pages/GlAccuracyPage");        return
     case "tasks":          void import("@/modules/tasks/pages/TasksPage");                  return
     case "connections":    void import("@/modules/connections/pages/ConnectionsPage");      return
     case "flux":           void import("@/modules/flux/pages/FluxMonthIndex");              return
@@ -123,6 +125,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Intercompany",       path: "/app/intercompany",    icon: ArrowLeftRight,  available: true  },
   { label: "Reconciliations",    path: "/app/reconciliations", icon: Scale,           available: true  },
   { label: "Adjustments",        path: "/app/adjustments",     icon: Sparkles,        available: true  },
+  { label: "GL Accuracy",        path: "/app/gl-accuracy",     icon: ScanSearch,      available: true  },
   { label: "Close Review",       path: "/app/review",          icon: ShieldCheck,     available: true  },
   { label: "Insights",           path: "/app/insights",        icon: Lightbulb,       available: true  },
   { label: "Advisory",           path: "/app/advisory",        icon: Target,          available: true  },

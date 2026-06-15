@@ -43,6 +43,7 @@ const InsightsPage            = lazy(() => import("@/modules/insights/pages/Insi
 const AdjustmentsPage         = lazy(() => import("@/modules/adjustments/pages/AdjustmentsPage").then(m => ({ default: m.AdjustmentsPage })))
 const AutopilotPage           = lazy(() => import("@/modules/autopilot/pages/AutopilotPage").then(m => ({ default: m.AutopilotPage })))
 const CloseWorkflowPage       = lazy(() => import("@/modules/close/pages/CloseWorkflowPage").then(m => ({ default: m.CloseWorkflowPage })))
+const GlAccuracyPage          = lazy(() => import("@/modules/gl_accuracy/pages/GlAccuracyPage").then(m => ({ default: m.GlAccuracyPage })))
 const CloseReviewPage         = lazy(() => import("@/modules/review/pages/CloseReviewPage").then(m => ({ default: m.CloseReviewPage })))
 const AdvisoryPage            = lazy(() => import("@/modules/advisory/pages/AdvisoryPage").then(m => ({ default: m.AdvisoryPage })))
 const SchedulesOverview       = lazy(() => import("@/modules/schedules/pages/SchedulesOverview").then(m => ({ default: m.SchedulesOverview })))
@@ -129,6 +130,7 @@ function AppRoutes() {
             <Route path="adjustments"  element={<AdjustmentsPage />} />
             <Route path="autopilot"    element={<AutopilotPage />} />
             <Route path="close"        element={<CloseWorkflowPage />} />
+            <Route path="gl-accuracy"  element={<GlAccuracyPage />} />
             <Route path="review"       element={<CloseReviewPage />} />
             <Route path="advisory"     element={<AdvisoryPage />} />
             {/* Schedules — overview + 5 type-specific detail pages. Each
