@@ -300,7 +300,7 @@ export function WorkpapersPage() {
   }
 
   return (
-    <>
+    <div className="flex flex-col h-full overflow-hidden">
       <PageHeader
         title="Workpapers"
         subtitle={periodMeta ? `${periodMeta.label}${periodMeta.closed ? " · closed" : ""}` : "Close binder"}
@@ -324,7 +324,7 @@ export function WorkpapersPage() {
         }
       />
 
-      <div className="px-4 sm:px-6 py-4">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4">
         {binderErr && (
           <div className="rounded-xl px-4 py-3 text-[12px] mb-4"
             style={{ background: "var(--warn-subtle)", color: "var(--warn)", border: "1px solid var(--warn-border)" }}>
@@ -621,7 +621,7 @@ export function WorkpapersPage() {
           </div>
         </div>
       </div>
-    </>
+    </div>
   )
 }
 
