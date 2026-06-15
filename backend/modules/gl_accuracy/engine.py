@@ -23,6 +23,7 @@ accusation surface is covered by fast unit tests.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -195,9 +196,105 @@ def _detector_misclassification(current, history, snapshots, exceptions, opts) -
             for f in detect_misclassifications(current, history, exceptions=exceptions, opts=opts)]
 
 
-# Ordered list of active detectors. R2+ append here.
+# ── Detector: missing recurring item (likely missing accrual) ───────────────
+
+KIND_MISSING_RECURRING = "missing_recurring"
+
+
+def _month_key(v: Any) -> str:
+    """'YYYY-MM' from a date or ISO-ish string; '' if unparseable."""
+    if isinstance(v, date):
+        return f"{v.year:04d}-{v.month:02d}"
+    s = str(v or "")
+    return s[:7] if len(s) >= 7 else ""
+
+
+def _median(nums: list[Decimal]) -> Decimal:
+    s = sorted(nums)
+    n = len(s)
+    if n == 0:
+        return Decimal(0)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
+
+
+def _detector_missing_recurring(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """Flag a vendor+expense-account billed in most of the recent months but
+    ABSENT this period — a likely missing accrual. The estimate is the median of
+    its monthly totals (robust to one-off spikes). PURE; ignores classification
+    exceptions (those are about *coding*, not whether a charge is expected).
+
+    Defaults (override via opts): present in >= mr_min_months (3) of the last
+    mr_window (6) months, estimate >= mr_materiality ($50); high severity when
+    present in >= mr_high_months (5) of them.
+    """
+    o = opts or {}
+    window_n = int(o.get("mr_window", 6))
+    min_months = int(o.get("mr_min_months", 3))
+    high_months = int(o.get("mr_high_months", 5))
+    materiality = o.get("mr_materiality", Decimal("50"))
+
+    cur_list = list(current)
+    if not cur_list:
+        return []  # period not populated yet — don't flag absences prematurely
+
+    # Trailing window anchored at the most recent month present anywhere in
+    # history (normally the month before this period).
+    months = sorted({_month_key(t.get("txn_date")) for t in history if _month_key(t.get("txn_date"))})
+    if not months:
+        return []
+    window = set(months[-window_n:])
+
+    # (vendor, account) -> {month -> summed signed amount} + display names.
+    pairs: dict[tuple[str, str], dict] = {}
+    for t in history:
+        v = _norm_vendor(t.get("entity_name"))
+        acct = str(t.get("qbo_account_id") or "").strip()
+        mk = _month_key(t.get("txn_date"))
+        if not v or not acct or mk not in window:
+            continue
+        p = pairs.setdefault((v, acct), {"months": {}, "vendor": "", "acct_name": ""})
+        p["months"][mk] = p["months"].get(mk, Decimal(0)) + _signed(t.get("amount"))
+        if not p["vendor"] and t.get("entity_name"):
+            p["vendor"] = str(t.get("entity_name")).strip()
+        if not p["acct_name"] and t.get("qbo_account_name"):
+            p["acct_name"] = str(t.get("qbo_account_name"))
+
+    present_now = {(_norm_vendor(t.get("entity_name")), str(t.get("qbo_account_id") or "").strip())
+                   for t in cur_list}
+
+    flags: list[dict] = []
+    for (v, acct), p in pairs.items():
+        months_present = len(p["months"])
+        if months_present < min_months or (v, acct) in present_now:
+            continue
+        est = _median(list(p["months"].values()))
+        if est <= 0 or abs(est) < materiality:
+            continue  # credits/refunds or immaterial — not an accrual candidate
+        conf = "high" if months_present >= high_months else "medium"
+        vendor_disp = p["vendor"] or v
+        acct_disp = p["acct_name"] or acct
+        flags.append({
+            "kind": KIND_MISSING_RECURRING, "severity": conf, "confidence": conf,
+            "action_kind": "accrual", "dedupe_key": f"{v}:{acct}",
+            "title": f"{vendor_disp}: recurring {acct_disp} charge missing",
+            "detail": (f"{vendor_disp} hit {acct_disp} in {months_present} of the last {len(window)} "
+                       f"months (typically ~{est}); nothing this period — likely a missing accrual."),
+            "vendor": vendor_disp, "amount": str(est),
+            "suggested_account_id": acct, "suggested_account_name": acct_disp,
+            "posted_account_id": None, "posted_account_name": None,
+            "dominant_count": months_present, "total_count": len(window), "posted_count": 0,
+            "evidence": {"months_present": months_present, "window": len(window),
+                         "estimate": str(est), "basis": "median of monthly totals",
+                         "account_id": acct, "account_name": acct_disp},
+        })
+    return flags
+
+
+# Ordered list of active detectors. R3+ append here.
 DETECTORS: list[dict[str, Any]] = [
     {"key": KIND_MISCLASSIFICATION, "fn": _detector_misclassification},
+    {"key": KIND_MISSING_RECURRING, "fn": _detector_missing_recurring},
 ]
 
 

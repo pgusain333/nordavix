@@ -178,16 +178,24 @@ async def dismiss(
     user: User = Depends(require_role("reviewer")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Mark the coding correct: records a confirmed vendor→account exception so
-    the watchdog never re-flags this pairing. Reviewer+ (a standing decision)."""
+    """Dismiss the finding as 'not a problem'. For a MISCLASSIFICATION this also
+    records a confirmed vendor→account exception so the watchdog never re-flags
+    that pairing; for other kinds (accrual / flags) it just closes the finding —
+    recording a classification exception would wrongly mark the pairing 'correct'.
+    Reviewer+ (a standing decision)."""
     finding = await _load_finding(db, finding_id)
     if finding.status != "open":
         raise HTTPException(status_code=400, detail="This finding has already been actioned.")
     await service.dismiss_finding(db, tenant_id=tenant_id, finding=finding, user_id=user.id)
+    summary = (
+        f"Confirmed {finding.vendor} → {finding.posted_account_name or finding.posted_account_id} is correct"
+        if (finding.kind or "misclassification") == "misclassification"
+        else f"Dismissed risk finding for {finding.vendor}"
+    )
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id, action="gl_accuracy.dismiss",
         entity_type="gl_accuracy_finding", entity_id=finding.id,
-        metadata={"summary": f"Confirmed {finding.vendor} → {finding.posted_account_name or finding.posted_account_id} is correct",
+        metadata={"summary": summary, "kind": finding.kind,
                   "period_end": finding.period_end.isoformat()},
     )
     await db.commit()

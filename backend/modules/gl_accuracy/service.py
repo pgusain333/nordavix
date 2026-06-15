@@ -312,15 +312,37 @@ def build_reclass_entry(f: GlAccuracyFinding) -> dict:
             "rationale": rationale, "confidence": f.confidence, "lines": lines}
 
 
+def build_accrual_entry(f: GlAccuracyFinding) -> dict:
+    """The accrual for a recurring charge that's missing this period: Dr the
+    expense account the vendor usually hits (known), Cr an accrued-liability
+    account the preparer picks in Adjustments before posting (we can't reliably
+    know the client's accrual account, so we leave it as an editable placeholder
+    — confirm-first, and we never post to QuickBooks)."""
+    amt = abs(_dec(f.amount))
+    expense = {"account_qbo_id": f.suggested_account_id,
+               "account_name": f.suggested_account_name or "Expense account"}
+    accrued = {"account_qbo_id": None, "account_name": "Accrued liabilities (select account)"}
+    lines = [{**expense, "debit": str(amt), "credit": "0.00"},
+             {**accrued, "debit": "0.00", "credit": str(amt)}]
+    rationale = (
+        f"{f.vendor} recurs in most recent months (~{amt}) but has no entry this period; "
+        f"accrue the expected charge. Choose the accrued-liability account before posting."
+    )
+    desc = f"Accrue {f.vendor} — recurring {f.suggested_account_name or 'expense'} missing this period"
+    return {"description": desc[:500], "memo": None, "rationale": rationale,
+            "confidence": f.severity or f.confidence or "medium", "lines": lines}
+
+
 async def accept_finding(
     db: AsyncSession, *, tenant_id: uuid.UUID, finding: GlAccuracyFinding, user_id: uuid.UUID | None,
 ) -> uuid.UUID:
     """File the fixable finding as a ProposedEntry in Adjustments and link it.
     Caller commits. Review-only flags aren't fixable by a JE and must go through
     acknowledge_finding instead — guarded here so a flag can never mint an entry."""
-    if (finding.action_kind or "reclass") == "flag":
+    action = finding.action_kind or "reclass"
+    if action == "flag":
         raise ValueError("This finding is review-only; acknowledge it instead of accepting.")
-    entry = build_reclass_entry(finding)
+    entry = build_accrual_entry(finding) if action == "accrual" else build_reclass_entry(finding)
     pe = ProposedEntry(
         id=uuid.uuid4(), tenant_id=tenant_id, source="gl_accuracy",
         source_ref=str(finding.id), period_end=finding.period_end,
@@ -340,14 +362,19 @@ async def accept_finding(
 async def dismiss_finding(
     db: AsyncSession, *, tenant_id: uuid.UUID, finding: GlAccuracyFinding, user_id: uuid.UUID | None,
 ) -> None:
-    """Record the vendor→account pairing as correct (never re-flag) + close the
-    finding. Caller commits."""
-    await confirm_classification_exception(
-        db, tenant_id=tenant_id, vendor=finding.vendor,
-        vendor_norm=_norm_vendor(finding.vendor),
-        account_id=finding.posted_account_id or "",
-        account_name=finding.posted_account_name, created_by=user_id,
-    )
+    """Close the finding as 'not a problem'. For a MISCLASSIFICATION, this also
+    records a confirmed vendor→account exception so the watchdog never re-flags
+    that pairing. For other kinds we only close it — recording a classification
+    exception would wrongly tell the miscode detector the pairing is 'correct'.
+    (Within-period re-flagging is already prevented by the finding_key.) Caller
+    commits."""
+    if (finding.kind or "misclassification") == "misclassification":
+        await confirm_classification_exception(
+            db, tenant_id=tenant_id, vendor=finding.vendor,
+            vendor_norm=_norm_vendor(finding.vendor),
+            account_id=finding.posted_account_id or "",
+            account_name=finding.posted_account_name, created_by=user_id,
+        )
     finding.status = "dismissed"
     finding.status_changed_by = user_id
     finding.status_changed_at = datetime.now(UTC)

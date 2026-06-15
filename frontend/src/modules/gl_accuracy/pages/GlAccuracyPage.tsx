@@ -51,6 +51,22 @@ function reclassPreview(f: GlFinding): ProposedEntry {
   } as unknown as ProposedEntry
 }
 
+// The accrual preview for a missing recurring item — Dr the expense account the
+// vendor usually hits, Cr an accrued-liability placeholder the preparer picks in
+// Adjustments. A faithful mirror of the server's build_accrual_entry.
+function accrualPreview(f: GlFinding): ProposedEntry {
+  const amt = Math.abs(Number(f.amount) || 0).toFixed(2)
+  const expense = { account_qbo_id: f.suggested_account_id, account_number: null, account_name: f.suggested_account_name || "Expense account" }
+  const accrued = { account_qbo_id: null, account_number: null, account_name: "Accrued liabilities (select account)" }
+  return {
+    id: `preview-${f.id}`, source: "gl_accuracy", source_ref: f.id, period_end: f.period_end,
+    description: `Accrue ${f.vendor} — recurring ${f.suggested_account_name || "expense"} missing this period`,
+    lines: [{ ...expense, debit: amt, credit: "0.00" }, { ...accrued, debit: "0.00", credit: amt }],
+    memo: null, confidence: f.severity, status: "open", saved_at: null,
+    rationale: `${f.vendor} recurs in most recent months (~${amt}) but has no entry this period; accrue the expected charge. Choose the accrued-liability account before posting.`,
+  } as unknown as ProposedEntry
+}
+
 export function GlAccuracyPage() {
   const { organization } = useOrganization()
   const qc = useQueryClient()
@@ -438,6 +454,7 @@ function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck,
                 ) : (
                   <>
                     {isMisc && <ProposedEntryCard entry={reclassPreview(f)} preview />}
+                    {f.action_kind === "accrual" && <ProposedEntryCard entry={accrualPreview(f)} preview />}
                     <div className="flex items-center gap-2 pt-0.5">
                       <button onClick={() => acceptMut.mutate()} disabled={busy}
                         className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
