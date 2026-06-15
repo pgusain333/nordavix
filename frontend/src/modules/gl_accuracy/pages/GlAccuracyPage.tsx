@@ -12,8 +12,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { useNavigate } from "react-router-dom"
 import {
-  ShieldCheck, Sparkles, Brain, ArrowRight, ArrowUpRight, ArrowDown,
-  Check, ThumbsUp, ChevronDown,
+  ShieldCheck, Sparkles, Brain, ArrowRight, ArrowUpRight, ArrowDown, ArrowLeft,
+  Check, ThumbsUp, ChevronDown, ListChecks,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
@@ -80,17 +80,32 @@ export function GlAccuracyPage() {
   const [err, setErr] = useState<string | null>(null)
   const [filter, setFilter] = useState<"all" | "high" | "medium">("all")
   const [openId, setOpenId] = useState<string | null>(null)
+  // C3c — the reviewer's pre-close sweep: multi-select for bulk-accept and a
+  // guided one-at-a-time walk. Accept-only by design; dismiss stays single.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [guided, setGuided] = useState(false)
+  const [step, setStep] = useState(0)
 
   const scanMut = useMutation({
     mutationFn: () => glAccuracyApi.scan(activePeriod),
     onSuccess: (s) => {
       setErr(null)
       setScanned({ period: activePeriod, total: s.scanned })
+      setSelected(new Set())
       qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })
     },
     onError: (e: unknown) => {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setErr(msg ?? "Couldn't finish the check — the last QuickBooks sync may be incomplete. Your books are unchanged.")
+    },
+  })
+
+  const bulkMut = useMutation({
+    mutationFn: (ids: string[]) => glAccuracyApi.bulkAccept(ids),
+    onSuccess: () => {
+      setSelected(new Set())
+      qc.invalidateQueries({ queryKey: ["adjustments"] })
+      qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })
     },
   })
 
@@ -102,6 +117,21 @@ export function GlAccuracyPage() {
   const shown = items.filter((f) => filter === "all" || (f.status === "open" && f.confidence === filter))
   // Trophy only right after an explicit scan of this period returned nothing.
   const justScannedClean = scanned?.period === activePeriod && open.length === 0
+
+  // Selection only ever acts on still-open findings (stale ids are pruned both
+  // here and server-side), and the guided queue walks the filtered open list.
+  const openIds = new Set(open.map((f) => f.id))
+  const selectedOpen = [...selected].filter((id) => openIds.has(id))
+  const selectedDollars = open.filter((f) => selected.has(f.id)).reduce((s, f) => s + Math.abs(Number(f.amount) || 0), 0)
+  const guidedQueue = shown.filter((f) => f.status === "open")
+  const guidedIdx = Math.min(step, Math.max(0, guidedQueue.length - 1))
+
+  const toggleSelect = (id: string) => setSelected((prev) => {
+    const n = new Set(prev)
+    if (n.has(id)) n.delete(id); else n.add(id)
+    return n
+  })
+  const selectHigh = () => setSelected(new Set(open.filter((f) => f.confidence === "high").map((f) => f.id)))
 
   if (!organization) {
     return <Shell><Card><div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
@@ -128,7 +158,7 @@ export function GlAccuracyPage() {
         </div>
         <div className="flex items-center gap-2">
           {periodsResp && periodsResp.periods.length > 0 && (
-            <select value={activePeriod} onChange={(e) => { setPeriod(e.target.value); setScanned(null); setOpenId(null) }}
+            <select value={activePeriod} onChange={(e) => { setPeriod(e.target.value); setScanned(null); setOpenId(null); setSelected(new Set()); setGuided(false); setStep(0) }}
               className="rounded-lg px-3 py-2 text-sm outline-none"
               style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
               {periodsResp.periods.map((p) => (
@@ -191,9 +221,9 @@ export function GlAccuracyPage() {
             )}
           </div>
 
-          {/* Toolbar */}
+          {/* Toolbar — filter chips + bulk / guided affordances */}
           {open.length > 0 && (
-            <div className="flex gap-1.5 mb-3">
+            <div className="flex items-center gap-1.5 mb-3 flex-wrap">
               {([["all", "All", open.length], ["high", "High", high], ["medium", "Medium", medium]] as const).map(([k, lbl, n]) => (
                 <button key={k} onClick={() => setFilter(k)}
                   className="text-[13px] px-2.5 py-1 rounded-md"
@@ -203,18 +233,93 @@ export function GlAccuracyPage() {
                   {lbl} <span style={{ opacity: 0.6 }}>{n}</span>
                 </button>
               ))}
+              <div className="flex-1" />
+              {high > 0 && !guided && (
+                <button onClick={selectHigh}
+                  className="text-[12px] px-2.5 py-1 rounded-md inline-flex items-center gap-1"
+                  style={{ background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
+                  <Check size={12} strokeWidth={2.4} /> Select {high} high-confidence
+                </button>
+              )}
+              <button onClick={() => { setGuided((g) => !g); setStep(0); setSelected(new Set()) }}
+                className="text-[12px] px-2.5 py-1 rounded-md inline-flex items-center gap-1"
+                style={guided
+                  ? { background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }
+                  : { background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
+                <ListChecks size={12} strokeWidth={2} /> Guided review
+              </button>
             </div>
           )}
 
-          {/* Findings */}
-          <div className="space-y-2">
-            {shown.map((f) => (
-              <FindingCard key={f.id} f={f} open={openId === f.id} canReview={canReview} reduce={reduce}
-                onToggle={() => setOpenId(openId === f.id ? null : f.id)}
-                onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}
-                onGoAdjustments={() => navigate("/app/adjustments")} />
-            ))}
-          </div>
+          {/* Guarded bulk-accept bar — accept-only; never bulk-dismiss. The
+              reclasses still land in Adjustments for the normal approval gate. */}
+          <AnimatePresence initial={false}>
+            {!guided && selectedOpen.length > 0 && (
+              <motion.div initial={reduce ? false : { height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={reduce ? undefined : { height: 0, opacity: 0 }} transition={{ duration: 0.15 }} style={{ overflow: "hidden" }}>
+                <div className="flex items-center gap-2 mb-3 rounded-xl px-3.5 py-2.5"
+                  style={{ background: "var(--green-subtle)", border: "1px solid var(--green)" }}>
+                  <span className="text-[13px] font-semibold" style={{ color: "var(--green)" }}>
+                    {selectedOpen.length} selected · {fmtUsd(selectedDollars)} to reclassify
+                  </span>
+                  <div className="flex-1" />
+                  <button onClick={() => setSelected(new Set())} className="text-[12px] px-2.5 py-1.5 rounded-lg font-semibold"
+                    style={{ color: "var(--text-2)", border: "1px solid var(--border-strong)" }}>Clear</button>
+                  <button onClick={() => bulkMut.mutate(selectedOpen)} disabled={bulkMut.isPending}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+                    style={{ background: "var(--green)" }}>
+                    {bulkMut.isPending ? <Spinner className="h-3.5 w-3.5" /> : <Check size={13} strokeWidth={2.6} />}
+                    Accept {selectedOpen.length} → Adjustments
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Findings — guided one-at-a-time, or the full reviewable list */}
+          {guided ? (
+            guidedQueue.length === 0 ? (
+              <div className="rounded-xl p-6 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <ShieldCheck size={28} strokeWidth={1.8} style={{ color: "var(--green)" }} className="mx-auto mb-2" />
+                <p className="text-sm font-semibold text-theme">Every flagged entry reviewed</p>
+                <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>Nothing left in the guided queue for this filter.</p>
+                <button onClick={() => setGuided(false)} className="mt-3 text-[12px] font-semibold" style={{ color: "var(--green)" }}>Back to list</button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+                    Reviewing <span className="text-theme font-semibold">{guidedIdx + 1}</span> of {guidedQueue.length}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={guidedIdx === 0}
+                      className="inline-flex items-center gap-1 text-[12px] px-2.5 py-1 rounded-md disabled:opacity-40"
+                      style={{ background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
+                      <ArrowLeft size={13} strokeWidth={2} /> Prev
+                    </button>
+                    <button onClick={() => setStep(() => Math.min(guidedQueue.length - 1, guidedIdx + 1))} disabled={guidedIdx >= guidedQueue.length - 1}
+                      className="inline-flex items-center gap-1 text-[12px] px-2.5 py-1 rounded-md disabled:opacity-40"
+                      style={{ background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
+                      Next <ArrowRight size={13} strokeWidth={2} />
+                    </button>
+                  </div>
+                </div>
+                <FindingCard key={guidedQueue[guidedIdx].id} f={guidedQueue[guidedIdx]} open canReview={canReview} reduce={reduce}
+                  onToggle={() => {}}
+                  onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}
+                  onGoAdjustments={() => navigate("/app/adjustments")} />
+              </div>
+            )
+          ) : (
+            <div className="space-y-2">
+              {shown.map((f) => (
+                <FindingCard key={f.id} f={f} open={openId === f.id} canReview={canReview} reduce={reduce}
+                  selectable checked={selected.has(f.id)} onCheck={() => toggleSelect(f.id)}
+                  onToggle={() => setOpenId(openId === f.id ? null : f.id)}
+                  onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}
+                  onGoAdjustments={() => navigate("/app/adjustments")} />
+              ))}
+            </div>
+          )}
         </>
       )}
     </Shell>
@@ -223,8 +328,9 @@ export function GlAccuracyPage() {
 
 // ── Finding card (collapsed row + expanded review) ─────────────────────────
 
-function FindingCard({ f, open, canReview, reduce, onToggle, onChanged, onGoAdjustments }: {
+function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck, onToggle, onChanged, onGoAdjustments }: {
   f: GlFinding; open: boolean; canReview: boolean; reduce: boolean
+  selectable?: boolean; checked?: boolean; onCheck?: () => void
   onToggle: () => void; onChanged: () => void; onGoAdjustments: () => void
 }) {
   const qc = useQueryClient()
@@ -251,6 +357,12 @@ function FindingCard({ f, open, canReview, reduce, onToggle, onChanged, onGoAdju
       style={{ background: "var(--surface)", border: `1px solid ${open ? "var(--green)" : "var(--border)"}`,
                boxShadow: "var(--card-shadow)", opacity: isOpen ? 1 : 0.72 }}>
       <div onClick={onToggle} className="flex items-center gap-2.5 px-3.5 py-3 cursor-pointer">
+        {selectable && isOpen && (
+          <input type="checkbox" checked={!!checked}
+            onClick={(e) => e.stopPropagation()} onChange={onCheck}
+            className="shrink-0 h-3.5 w-3.5 cursor-pointer" style={{ accentColor: "var(--green)" }}
+            aria-label={`Select ${f.vendor} for bulk accept`} />
+        )}
         <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: dot }} title={f.confidence === "high" ? "High confidence" : "Medium confidence"} />
         <span className="text-sm font-semibold text-theme shrink-0" style={{ minWidth: 72 }}>{f.vendor}</span>
         <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: "var(--text-muted)" }}>

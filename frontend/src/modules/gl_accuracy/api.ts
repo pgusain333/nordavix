@@ -63,9 +63,16 @@ async function accept(id: string): Promise<GlFinding> {
   return data
 }
 
+async function bulkAccept(ids: string[]): Promise<{ accepted: number }> {
+  const { data } = await apiClient.post<{ accepted: number }>(
+    "/api/gl-accuracy/findings/bulk-accept", { ids },
+  )
+  return data
+}
+
 async function dismiss(id: string): Promise<GlFinding> {
   const { data } = await apiClient.post<GlFinding>(`/api/gl-accuracy/findings/${id}/dismiss`)
   return data
 }
 
-export const glAccuracyApi = { scan, getFindings, accept, dismiss }
+export const glAccuracyApi = { scan, getFindings, accept, bulkAccept, dismiss }

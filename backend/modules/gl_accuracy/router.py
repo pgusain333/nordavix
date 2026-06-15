@@ -13,6 +13,7 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -114,6 +115,56 @@ async def accept(
     await db.commit()
     await db.refresh(finding)
     return service.serialize_finding(finding)
+
+
+class BulkAcceptBody(BaseModel):
+    ids: list[str] = Field(..., min_length=1, max_length=500)
+
+
+@router.post("/findings/bulk-accept")
+async def bulk_accept(
+    body: BulkAcceptBody,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """File several open findings' reclasses into Adjustments at once — for the
+    reviewer's pre-close sweep. Atomic: one transaction, so all selected
+    findings are filed or none are. Accept-only by design; dismiss stays a
+    deliberate single action (it teaches the watchdog a permanent exception).
+    Already-actioned ids in the selection are silently skipped."""
+    ids: list[uuid.UUID] = []
+    for raw in body.ids:
+        try:
+            ids.append(uuid.UUID(raw))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid finding id in selection.")
+
+    # Tenant-auto-filtered SELECT → scoped to the caller's workspace; the
+    # status guard means re-submitting a partly-actioned selection is safe.
+    rows = (await db.execute(
+        select(GlAccuracyFinding).where(
+            GlAccuracyFinding.id.in_(ids),
+            GlAccuracyFinding.status == "open",
+        )
+    )).scalars().all()
+
+    accepted = 0
+    period_end: date | None = None
+    for finding in rows:
+        await service.accept_finding(db, tenant_id=tenant_id, finding=finding, user_id=user.id)
+        period_end = finding.period_end
+        accepted += 1
+
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id, action="gl_accuracy.bulk_accept",
+        entity_type="period", entity_id=None,
+        metadata={"summary": f"Filed {accepted} reclass entries to Adjustments",
+                  "count": accepted,
+                  "period_end": period_end.isoformat() if period_end else None},
+    )
+    await db.commit()
+    return {"accepted": accepted}
 
 
 @router.post("/findings/{finding_id}/dismiss")
