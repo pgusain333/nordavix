@@ -37,8 +37,11 @@ async def capture_snapshot(
     Pull every active QBO account + its balance at period_end via the
     canonical TB fetcher and upsert to gl_balance_snapshots.
 
-    Returns the number of rows written. Logs and swallows on QBO
-    error so this never blocks the recons sync.
+    Returns the number of rows written, or -1 if the QBO TrialBalance pull (or
+    the commit) failed — so the caller can tell a failed refresh (which leaves a
+    STALE snapshot) apart from a legitimately empty one, and surface it instead
+    of continuing silently. Never raises on a QBO error, so it can't block the
+    recons sync.
     """
     from core.qbo_tb import fetch_trial_balance, parse_trial_balance
 
@@ -55,7 +58,7 @@ async def capture_snapshot(
         parsed = parse_trial_balance(report)
     except Exception:
         logger.exception("Snapshot TB pull failed for %s", period_end)
-        return 0
+        return -1
 
     # parse_trial_balance returns rows keyed by account name; we also
     # need account_type which only the /query gives us. Pull the
@@ -129,7 +132,7 @@ async def capture_snapshot(
         # the next query on the same session hits PendingRollbackError).
         await db.rollback()
         logger.exception("Snapshot commit failed for %s", period_end)
-        return 0
+        return -1
     return written
 
 

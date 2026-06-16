@@ -143,10 +143,24 @@ async def sync_overview(
     # reuse its result via a fresh _qbo_trial_balance_by_account call —
     # not ideal but the parsed shape is different and refactoring the
     # capture function to share is more churn than it's worth.
+    # capture_snapshot returns -1 if the QBO TB pull (or commit) failed: the
+    # financials snapshot wasn't refreshed, so Financial Statements for this
+    # period would render STALE. Surface that instead of silently continuing.
+    snapshot_error: str | None = None
     try:
-        await capture_snapshot(session, tid, period_end, conn=conn)
+        snap_written = await capture_snapshot(session, tid, period_end, conn=conn)
+        if snap_written < 0:
+            snapshot_error = (
+                "Couldn't refresh the financial-statement snapshot from QuickBooks — "
+                "Financial Statements for this period may be stale until you re-sync."
+            )
+            logger.error("GL snapshot not refreshed for %s — financials may be stale", period_end)
     except Exception:
-        logger.exception("GL snapshot capture failed for %s — continuing", period_end)
+        logger.exception("GL snapshot capture failed for %s", period_end)
+        snapshot_error = (
+            "Couldn't refresh the financial-statement snapshot from QuickBooks — "
+            "Financial Statements for this period may be stale until you re-sync."
+        )
 
     # NOTE: we used to backfill the immediately-prior month's GL
     # snapshot here on every sync (so April's "opening" could roll
@@ -247,6 +261,7 @@ async def sync_overview(
     # real $0 subledger (None = pull succeeded).
     overview["ar_error"] = ar_error
     overview["ap_error"] = ap_error
+    overview["snapshot_error"] = snapshot_error
     return overview
 
 

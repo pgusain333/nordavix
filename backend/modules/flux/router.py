@@ -211,16 +211,18 @@ async def create_trial_balance_from_qbo(
     # whole query silently returned 0 results.
     qbo_acct_lookup: dict[str, dict] = {}
     try:
+        from core.qbo_http import request_with_retry
         token = await _get_valid_token(conn, db)
         url = f"{settings.qbo_base_url}/v3/company/{conn.realm_id}/query"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        params = {
+            "query": "SELECT Id, Name, AcctNum, AccountType FROM Account WHERE Active = true MAXRESULTS 1000",
+            "minorversion": "65",
+        }
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(
-                url,
-                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-                params={
-                    "query": "SELECT Id, Name, AcctNum, AccountType FROM Account WHERE Active = true MAXRESULTS 1000",
-                    "minorversion": "65",
-                },
+            resp = await request_with_retry(
+                lambda: client.get(url, headers=headers, params=params),
+                label="QBO Account query (flux)",
             )
         if resp.status_code == 200:
             for a in resp.json().get("QueryResponse", {}).get("Account", []) or []:

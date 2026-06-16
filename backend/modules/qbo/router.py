@@ -301,13 +301,12 @@ async def fetch_qbo_trial_balance(
         f"?start_date={start_date}&end_date={end_date}&accounting_method=Accrual"
     )
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            url,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept":        "application/json",
-            },
+    from core.qbo_http import request_with_retry
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await request_with_retry(
+            lambda: client.get(url, headers=headers),
+            label="QBO TrialBalance (qbo router)",
         )
 
     if resp.status_code == 401:
