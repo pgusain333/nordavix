@@ -187,7 +187,14 @@ async function setComparisonMode(id: string, mode: "prior" | "expected"): Promis
 async function saveVarianceExpectation(
   tbId: string,
   varId: string,
-  body: { recurrence: "monthly" | "annual"; tolerance_pct?: number },
+  body: {
+    recurrence: "monthly" | "quarterly" | "annual" | "one_off"
+    expected_amount?: number
+    tolerance_mode?: "pct" | "abs"
+    tolerance_pct?: number
+    tolerance_abs?: number
+    explanation?: string
+  },
 ): Promise<{ id: string; status: string; title: string }> {
   const { data } = await apiClient.post<{ id: string; status: string; title: string }>(
     `/api/flux/trial-balances/${tbId}/variances/${varId}/save-expectation`,

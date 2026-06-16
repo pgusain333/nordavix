@@ -690,6 +690,32 @@ async function saveRecurringReconcilingItem(
   return data
 }
 
+/** Capture this account's reconciliation balance as a recurring expectation
+ *  (Client Memory) — the recon-side twin of the flux "Teach NDVX" chip. Creates a
+ *  SUGGESTED rule only; a reviewer confirms it in Settings → Memory, after which
+ *  NDVX pre-explains this account next period (on flux + recon) when it lands
+ *  within the band, and still flags it when it deviates. */
+async function saveAccountExpectation(
+  qboAccountId: string,
+  body: {
+    period_end: string
+    recurrence: "monthly" | "quarterly" | "annual" | "one_off"
+    explanation: string
+    expected_amount?: number
+    tolerance_mode?: "pct" | "abs"
+    tolerance_pct?: number
+    tolerance_abs?: number
+    account_name?: string
+    account_number?: string
+  },
+): Promise<{ id: string; status: string; title: string }> {
+  const { data } = await apiClient.post(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/save-expectation`,
+    body,
+  )
+  return data
+}
+
 /** Confirmed recurring reconciling items for this account (active facts only). */
 async function getRecurringSuggestions(
   qboAccountId: string, periodEnd: string,
@@ -1142,6 +1168,7 @@ export const reconsApi = {
   getPriorOverride,
   getScheduleSubledger,
   saveRecurringReconcilingItem,
+  saveAccountExpectation,
   getRecurringSuggestions,
   getPeriodEntries,
   getBooksStatus,

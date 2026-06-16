@@ -62,6 +62,7 @@ from modules.flux.tasks import (  # noqa: F401  (kept for celery)
 )
 from modules.flux.variance_txns import pull_transactions_for_variance
 from modules.memory.service import (
+    build_expectation_value,
     expectation_title,
     record_expectation_signal,
     serialize_fact,
@@ -660,8 +661,11 @@ async def save_variance_expectation(
     account (Client Memory). Creates a SUGGESTED fact only — confirm-first: a
     reviewer must confirm it in Settings → Memory before it ever applies. Any
     member may suggest (preparers explain; reviewers confirm)."""
-    if body.recurrence not in ("monthly", "annual"):
-        raise HTTPException(status_code=400, detail="recurrence must be 'monthly' or 'annual'.")
+    if body.recurrence not in ("monthly", "quarterly", "annual", "one_off"):
+        raise HTTPException(
+            status_code=400,
+            detail="recurrence must be 'monthly', 'quarterly', 'annual', or 'one_off'.",
+        )
 
     var = (await db.execute(select(Variance).where(Variance.id == var_id))).scalar_one_or_none()
     if var is None:
@@ -673,10 +677,11 @@ async def save_variance_expectation(
     if tb is None:
         raise HTTPException(status_code=404, detail="Trial balance not found")
 
-    # The explanation is the heart of the rule — require one (from AI commentary
-    # or a written narrative) so we never store an empty, low-quality memory.
-    explanation = ""
-    if isinstance(var.ai_commentary, dict):
+    # The explanation is the heart of the rule — prefer the user's own words, then
+    # fall back to the variance's AI commentary / written narrative. Require one so
+    # we never store an empty, low-quality memory.
+    explanation = (body.explanation or "").strip()
+    if not explanation and isinstance(var.ai_commentary, dict):
         explanation = (var.ai_commentary.get("narrative") or var.ai_commentary.get("headline") or "").strip()
     if not explanation:
         narr = (await db.execute(
@@ -694,20 +699,22 @@ async def save_variance_expectation(
     if not account_key:
         raise HTTPException(status_code=400, detail="This account has no stable identifier to learn from.")
 
-    tol = 15.0 if body.tolerance_pct is None else max(1.0, min(200.0, float(body.tolerance_pct)))
-    month = tb.period_current.month if body.recurrence == "annual" else None
-    value = {
-        "account_number": acct.account_number,
-        "account_name": acct.account_name,
-        "qbo_account_id": acct.qbo_account_id,
-        "recurrence": body.recurrence,
-        "month": month,
-        "expected_balance": str(acct.current_balance),
-        "tolerance_pct": tol,
-        "explanation": explanation[:2000],
-        "captured_period": tb.period_current.isoformat(),
-    }
-    title = expectation_title(acct.account_name, body.recurrence, month, acct.current_balance, explanation)
+    value = build_expectation_value(
+        account_number=acct.account_number,
+        account_name=acct.account_name,
+        qbo_account_id=acct.qbo_account_id,
+        default_balance=acct.current_balance,
+        period_current=tb.period_current,
+        recurrence=body.recurrence,
+        explanation=explanation,
+        expected_amount=body.expected_amount,
+        tolerance_mode=body.tolerance_mode,
+        tolerance_pct=body.tolerance_pct,
+        tolerance_abs=body.tolerance_abs,
+    )
+    title = expectation_title(
+        acct.account_name, body.recurrence, value["month"], value["expected_balance"], explanation,
+    )
 
     await record_expectation_signal(
         db, tenant_id=tenant_id, account_key=account_key,

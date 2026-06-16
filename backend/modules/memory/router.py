@@ -10,7 +10,8 @@ Confirm-first: a fact never changes AI output until a reviewer confirms it.
 """
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -138,14 +139,36 @@ async def account_context(
     tenant_id: CurrentTenantId,
     qbo_account_id: str | None = Query(None),
     account_number: str | None = Query(None),
+    period_end: str | None = Query(None),
+    actual_balance: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Confirmed conventions Nordavix has learned about ONE account — the
     "What Nordavix knows" note shown in the flux + recon detail drawers. Any
     member may read it; only `active` facts surface (confirm-first); the SELECT is
-    tenant-scoped. Read-only — these notes are context, never a computed result."""
+    tenant-scoped. Read-only — these notes are context, never a computed result.
+
+    When `period_end` + `actual_balance` (the account's booked balance this period)
+    are supplied, each variance_expectation note gains a live `match` showing
+    whether this period lands within the confirmed band — the recon-drawer twin of
+    the flux variance's pre-explained signal. Both are ignored if unparseable."""
+    pe: date | None = None
+    if period_end:
+        try:
+            pe = date.fromisoformat(period_end)
+        except ValueError:
+            pe = None
+    actual: Decimal | None = None
+    if actual_balance not in (None, ""):
+        try:
+            actual = Decimal(str(actual_balance))
+            if not actual.is_finite():
+                actual = None
+        except (InvalidOperation, ValueError):
+            actual = None
     notes = await account_memory_context(
         db, qbo_account_id=qbo_account_id, account_number=account_number,
+        period_end=pe, actual_balance=actual,
     )
     return {"notes": notes}
 

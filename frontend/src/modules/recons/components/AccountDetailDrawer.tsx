@@ -47,6 +47,8 @@ import { schedulesApi } from "@/modules/schedules/api"
 import { CommentThread } from "@/modules/comments/CommentThread"
 import { ProposedEntriesInline } from "@/modules/adjustments/components/ProposedEntriesInline"
 import { MemoryContextNote } from "@/modules/memory/MemoryContextNote"
+import { ExpectationCapture } from "@/modules/memory/ExpectationCapture"
+import { reconsApi } from "@/modules/recons/api"
 import { GlFlagChip } from "@/modules/gl_accuracy/components/GlFlagChip"
 
 const TABS = [
@@ -778,7 +780,12 @@ function SummaryTab({ account, periodEnd, readOnly }: { account: OverviewAccount
       {/* What Nordavix knows about this account — confirmed conventions learned
           elsewhere (schedules, flux expectations, adjustments) surfaced here.
           Context only; never changes a balance or variance. */}
-      <MemoryContextNote qboAccountId={account.qbo_id} accountNumber={account.account_number} />
+      <MemoryContextNote
+        qboAccountId={account.qbo_id}
+        accountNumber={account.account_number}
+        periodEnd={periodEnd}
+        actualBalance={account.gl_balance}
+      />
 
       {/* Second pair of eyes — the GL-accuracy watchdog. Shows only when an open
           finding points at this exact account; links to the full review. */}
@@ -886,6 +893,28 @@ function SummaryTab({ account, periodEnd, readOnly }: { account: OverviewAccount
         periodEnd={periodEnd}
         readOnly={readOnly}
         title="Proposed adjusting entries"
+      />
+
+      {/* Teach NDVX this recurs — capture this account's balance as a confirm-first
+          recurring expectation (Client Memory). The reason prefills from any AI
+          commentary; saving teaches the SAME per-account fact flux uses. */}
+      <ExpectationCapture
+        disabled={readOnly}
+        defaultExpected={account.gl_balance}
+        defaultReason={account.ai_commentary?.narrative || account.ai_commentary?.headline || ""}
+        onSave={async (p) => {
+          await reconsApi.saveAccountExpectation(account.qbo_id, {
+            period_end: periodEnd,
+            recurrence: p.recurrence,
+            explanation: p.explanation,
+            expected_amount: p.expected_amount,
+            tolerance_mode: p.tolerance_mode,
+            tolerance_pct: p.tolerance_pct,
+            tolerance_abs: p.tolerance_abs,
+            account_name: account.account_name,
+            account_number: account.account_number,
+          })
+        }}
       />
 
       {/* Variance status */}

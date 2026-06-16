@@ -42,6 +42,7 @@ import { api as fluxApi, type VarianceRow, type AICommentary } from "@/modules/f
 import { formatDateTime } from "@/core/lib/dates"
 import { CommentThread } from "@/modules/comments/CommentThread"
 import { MemoryContextNote } from "@/modules/memory/MemoryContextNote"
+import { ExpectationCapture } from "@/modules/memory/ExpectationCapture"
 import { GlFlagChip } from "@/modules/gl_accuracy/components/GlFlagChip"
 
 const TABS = [
@@ -693,109 +694,6 @@ function FluxReviewChecklist({ row }: { row: VarianceRow }) {
 
 // ── Capture: teach NDVX this variance recurs (Client Memory, confirm-first) ───
 
-function ExpectationCapture({ tbId, row }: { tbId?: string; row: VarianceRow }) {
-  const [open, setOpen] = useState(false)
-  const [recurrence, setRecurrence] = useState<"annual" | "monthly">("annual")
-  const [tolerance, setTolerance] = useState("15")
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-
-  if (!tbId) return null
-
-  async function save() {
-    if (!tbId) return
-    setSaving(true)
-    setErr(null)
-    try {
-      const tol = Math.max(1, Math.min(200, parseFloat(tolerance) || 15))
-      await fluxApi.saveVarianceExpectation(tbId, row.id, { recurrence, tolerance_pct: tol })
-      setSaved(true)
-      setOpen(false)
-    } catch {
-      setErr("Couldn't save — please try again.")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (saved) {
-    return (
-      <Card title="Recurring expectation" icon={<Lightbulb size={13} strokeWidth={1.8} />}>
-        <p className="text-[12px]" style={{ color: "var(--text)" }}>
-          Saved as a suggestion. A reviewer can confirm it in <strong>Settings → Memory</strong>; once
-          confirmed, NDVX pre-explains this account next period when it lands as expected — and still
-          flags it if it deviates.
-        </p>
-      </Card>
-    )
-  }
-
-  return (
-    <Card title="Teach NDVX" icon={<Lightbulb size={13} strokeWidth={1.8} />}>
-      {!open ? (
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-            Does this recur? Save the explanation as a recurring expectation NDVX can reuse.
-          </p>
-          <button
-            onClick={() => setOpen(true)}
-            className="shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
-            style={{ border: "1px solid var(--border-strong)", color: "var(--text-2)" }}
-          >
-            Save as recurring
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <div>
-            <p className="text-[11px] font-semibold mb-1.5" style={{ color: "var(--text-2)" }}>How often does it recur?</p>
-            <div className="inline-flex items-center gap-1 rounded-lg p-1"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              {([["annual", "Each year (this month)"], ["monthly", "Every month"]] as const).map(([v, label]) => (
-                <button key={v} onClick={() => setRecurrence(v)}
-                  className="rounded-md px-2.5 py-1 text-[11px] font-medium"
-                  style={{
-                    background: recurrence === v ? "var(--green-subtle)" : "transparent",
-                    color: recurrence === v ? "var(--green)" : "var(--text-muted)",
-                  }}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Tolerance ±</label>
-            <input value={tolerance} onChange={(e) => setTolerance(e.target.value)} inputMode="decimal"
-              aria-label="Tolerance percent"
-              className="w-16 rounded-md px-2 py-1 text-[12px] outline-none"
-              style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
-            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              % — within this band of the expected balance NDVX pre-explains it; outside it, it's flagged.
-            </span>
-          </div>
-          {err && <p className="text-[11px]" style={{ color: "var(--danger)" }}>{err}</p>}
-          <div className="flex items-center gap-2">
-            <button onClick={save} disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
-              style={{ background: "var(--green)" }}>
-              {saving ? "Saving…" : "Save"}
-            </button>
-            <button onClick={() => setOpen(false)} disabled={saving}
-              className="rounded-lg px-2.5 py-1.5 text-[12px] font-semibold"
-              style={{ border: "1px solid var(--border-strong)", color: "var(--text-2)" }}>
-              Cancel
-            </button>
-          </div>
-          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-            Creates a suggestion only — a reviewer confirms it in Settings → Memory before it ever applies.
-          </p>
-        </div>
-      )}
-    </Card>
-  )
-}
-
 // ── Summary tab ───────────────────────────────────────────────────────
 
 function SummaryTab({ row, tbId, periodEnd, readOnly }: { row: VarianceRow; tbId?: string; periodEnd?: string; readOnly: boolean }) {
@@ -849,10 +747,23 @@ function SummaryTab({ row, tbId, periodEnd, readOnly }: { row: VarianceRow; tbId
       )}
 
       {/* Teach NDVX this recurs — capture the explanation as a confirm-first
-          recurring expectation (Client Memory). Only when there's an
-          explanation to capture and the period is open. */}
-      {!readOnly && (row.ai_commentary || row.narrative) && (
-        <ExpectationCapture tbId={tbId} row={row} />
+          recurring expectation (Client Memory). Open period only; the reason is
+          prefilled from any AI commentary / narrative but the user can edit it. */}
+      {!readOnly && tbId && (
+        <ExpectationCapture
+          defaultExpected={row.current_balance}
+          defaultReason={row.ai_commentary?.narrative || row.ai_commentary?.headline || row.narrative || ""}
+          onSave={async (p) => {
+            await fluxApi.saveVarianceExpectation(tbId, row.id, {
+              recurrence: p.recurrence,
+              expected_amount: p.expected_amount,
+              tolerance_mode: p.tolerance_mode,
+              tolerance_pct: p.tolerance_pct,
+              tolerance_abs: p.tolerance_abs,
+              explanation: p.explanation,
+            })
+          }}
+        />
       )}
 
       {/* AI verdict + bridge + actions */}

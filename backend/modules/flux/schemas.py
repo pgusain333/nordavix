@@ -120,12 +120,24 @@ class SaveExpectationBody(BaseModel):
     variance's explanation as a recurring client-memory expectation (confirm-
     first; a reviewer must confirm it before it ever applies).
 
-      recurrence    'monthly' (every close) | 'annual' (this calendar month only)
-      tolerance_pct band within which a future actual counts as 'as expected'
-                    (defaults to 15%; clamped 1..200 server-side)
+      recurrence      'monthly' (every close) | 'quarterly' (this month + every
+                      3rd) | 'annual' (this calendar month only) | 'one_off'
+                      (this period only, never recurs)
+      expected_amount overrides the expected balance (defaults to the account's
+                      current balance)
+      tolerance_mode  'pct' (default) or 'abs' — percent band vs absolute ±$ band
+      tolerance_pct   percent band a future actual counts as 'as expected'
+                      (default 15%; clamped 1..200 server-side); used when mode=pct
+      tolerance_abs   absolute ±$ band; used when mode=abs
+      explanation     the reason in the user's words; falls back to the variance's
+                      AI commentary / written narrative when omitted
     """
     recurrence: str
     tolerance_pct: float | None = None
+    tolerance_mode: str | None = None
+    tolerance_abs: float | None = None
+    expected_amount: float | None = None
+    explanation: str | None = None
 
 
 class NarrativeUpdate(BaseModel):

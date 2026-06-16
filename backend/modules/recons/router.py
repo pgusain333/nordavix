@@ -1604,6 +1604,106 @@ async def save_recurring_reconciling_item(
     return serialize_fact(fact)
 
 
+@router.post("/account/{qbo_account_id}/save-expectation")
+async def save_account_expectation(
+    qbo_account_id: str,
+    body: dict,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Capture this account's reconciliation balance as a recurring expectation
+    (Client Memory) — the recon-side twin of the flux 'Teach NDVX' chip. Creates a
+    SUGGESTED fact only (confirm-first); a reviewer confirms it in Settings → Memory,
+    after which NDVX pre-explains this account next period when it lands within the
+    band — on BOTH flux and recon, since both teach the SAME per-account fact. Any
+    member may suggest (preparers reconcile; reviewers confirm).
+
+    Body: { period_end, recurrence, explanation, expected_amount?, tolerance_mode?,
+            tolerance_pct?, tolerance_abs?, account_name?, account_number? }
+    """
+    from datetime import date as _date
+
+    from modules.memory.service import (
+        build_expectation_value,
+        expectation_title,
+        record_expectation_signal,
+        serialize_fact,
+        upsert_expectation_fact,
+    )
+
+    try:
+        pe = _date.fromisoformat(str(body.get("period_end", "")))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    await _block_if_closed(db, pe)
+
+    recurrence = str(body.get("recurrence") or "").strip()
+    if recurrence not in ("monthly", "quarterly", "annual", "one_off"):
+        raise HTTPException(
+            status_code=400,
+            detail="recurrence must be 'monthly', 'quarterly', 'annual', or 'one_off'.",
+        )
+    explanation = str(body.get("explanation") or "").strip()
+    if not explanation:
+        raise HTTPException(
+            status_code=400,
+            detail="A reason is required — a recurring expectation needs an explanation.",
+        )
+
+    qid = (qbo_account_id or "").strip()
+    account_number = str(body.get("account_number") or "").strip()
+    # Same cross-period key as flux (_account_key): QBO id if present, else the
+    # account number — so flux + recon teach/reinforce the ONE per-account fact.
+    account_key = qid or account_number
+    if not account_key:
+        raise HTTPException(status_code=400, detail="This account has no stable identifier to learn from.")
+
+    # Expected balance defaults to the value the drawer prefilled (the account's GL
+    # balance); the user can edit it before saving.
+    default_balance: Any = Decimal("0")
+    raw_expected = body.get("expected_amount")
+    if raw_expected not in (None, ""):
+        try:
+            default_balance = Decimal(str(raw_expected))
+        except (ValueError, ArithmeticError):
+            raise HTTPException(status_code=400, detail="expected_amount must be numeric.")
+
+    value = build_expectation_value(
+        account_number=account_number or None,
+        account_name=str(body.get("account_name") or "").strip() or None,
+        qbo_account_id=qid or None,
+        default_balance=default_balance,
+        period_current=pe,
+        recurrence=recurrence,
+        explanation=explanation,
+        expected_amount=None,  # already folded into default_balance above
+        tolerance_mode=body.get("tolerance_mode"),
+        tolerance_pct=body.get("tolerance_pct"),
+        tolerance_abs=body.get("tolerance_abs"),
+    )
+    title = expectation_title(
+        value["account_name"], recurrence, value["month"], value["expected_balance"], explanation,
+    )
+
+    await record_expectation_signal(
+        db, tenant_id=tenant_id, account_key=account_key, period_end=pe,
+        value=value, variance_id=None, created_by=user.id, source="recon",
+    )
+    fact = await upsert_expectation_fact(
+        db, tenant_id=tenant_id, account_key=account_key, value=value, title=title,
+    )
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="memory.expectation_captured",
+        entity_type="client_memory_fact", entity_id=fact.id,
+        metadata={"summary": f"Captured recurring expectation — {title}",
+                  "qbo_account_id": qid, "period_end": pe.isoformat()},
+    )
+    await db.commit()
+    return serialize_fact(fact)
+
+
 @router.get("/account/{qbo_account_id}/recurring-suggestions")
 async def recurring_reconciling_suggestions(
     qbo_account_id: str,

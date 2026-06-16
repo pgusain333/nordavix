@@ -34,14 +34,27 @@ export interface MemoryContextItem {
   module:  string
   text:    string
   fact_id: string
+  /** Live match for a confirmed variance_expectation, present only when the caller
+   *  passed this period + the account's actual balance. */
+  match?: {
+    status:   "within" | "deviates"
+    expected: string
+    text:     string
+  }
 }
 
 async function getAccountContext(
   qboAccountId?: string | null, accountNumber?: string | null,
+  periodEnd?: string | null, actualBalance?: string | number | null,
 ): Promise<{ notes: MemoryContextItem[] }> {
   const { data } = await apiClient.get<{ notes: MemoryContextItem[] }>(
     "/api/memory/account-context",
-    { params: { qbo_account_id: qboAccountId || undefined, account_number: accountNumber || undefined } },
+    { params: {
+        qbo_account_id: qboAccountId || undefined,
+        account_number: accountNumber || undefined,
+        period_end:     periodEnd || undefined,
+        actual_balance: actualBalance == null || actualBalance === "" ? undefined : String(actualBalance),
+      } },
   )
   return data
 }

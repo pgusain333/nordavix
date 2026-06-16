@@ -512,18 +512,107 @@ def _usd(v: Any) -> str:
     return f"({body})" if n < 0 else body
 
 
+def _recurrence_phrase(recurrence: str | None, month: int | None) -> str:
+    """Shared human phrase for an expectation's cadence — used by the title and the
+    'What Nordavix knows' note so both read consistently across the four cadences
+    (monthly / quarterly / annual / one-off)."""
+    import calendar
+    if recurrence == "monthly":
+        return "every month"
+    if recurrence == "quarterly":
+        return "every quarter"
+    if recurrence == "one_off":
+        return "this period"
+    # annual (and legacy/unknown) — name the calendar month when we have it.
+    try:
+        m = int(month)  # type: ignore[arg-type]
+        if 1 <= m <= 12:
+            return f"each {calendar.month_name[m]}"
+    except (TypeError, ValueError):
+        pass
+    return "each year"
+
+
+def _tolerance_phrase(v: dict[str, Any]) -> str:
+    """Short band label ('15%' or '$500') for display; '' if unparseable. Mirrors
+    the band evaluate_expectation actually applies (percent default, abs opt-in)."""
+    mode = str(v.get("tolerance_mode") or "pct").lower()
+    try:
+        if mode == "abs":
+            return f"${abs(float(v.get('tolerance_abs'))):,.0f}"
+        return f"{float(v.get('tolerance_pct', 15)):g}%"
+    except (TypeError, ValueError):
+        return ""
+
+
 def expectation_title(account_name: str, recurrence: str, month: int | None,
                       expected_balance: Any, explanation: str | None) -> str:
     """Human-readable label for a captured expectation, shown in the Memory UI."""
-    import calendar
-    when = "every month" if recurrence == "monthly" else (
-        f"each {calendar.month_name[month]}" if month and 1 <= month <= 12 else "each year"
-    )
+    when = _recurrence_phrase(recurrence, month)
     base = f"{(account_name or 'This account')}: expect ~{_usd(expected_balance)} {when}"
     reason = (explanation or "").strip().splitlines()[0] if explanation else ""
     if reason:
         base += f" — {reason[:80]}"
     return base[:400]
+
+
+def build_expectation_value(
+    *,
+    account_number: str | None,
+    account_name: str | None,
+    qbo_account_id: str | None,
+    default_balance: Any,
+    period_current: date,
+    recurrence: str,
+    explanation: str,
+    expected_amount: Any = None,
+    tolerance_mode: str | None = None,
+    tolerance_pct: Any = None,
+    tolerance_abs: Any = None,
+    scope: str = "account",
+) -> dict[str, Any]:
+    """Build the JSONB `value` for a variance_expectation fact from a capture
+    request. Shared by the flux + recon capture endpoints so both store the
+    identical shape with identical clamping. Validates/clamps user input here; the
+    apply-side gate (evaluate_expectation) re-validates defensively regardless.
+
+      • expected_balance: the user's override, else the account's current balance
+      • month: anchor month for annual + quarterly cadences (None otherwise)
+      • tolerance: percent (default, clamped 1..200) or absolute ±$ (>= 0)
+    """
+    expected = default_balance
+    if expected_amount not in (None, ""):
+        try:
+            expected = Decimal(str(expected_amount))
+        except (TypeError, InvalidOperation, ValueError):
+            expected = default_balance
+    month = period_current.month if recurrence in ("annual", "quarterly") else None
+    mode = "abs" if str(tolerance_mode or "").lower() == "abs" else "pct"
+    tol_pct, tol_abs = 15.0, 0.0
+    if mode == "abs":
+        try:
+            tol_abs = max(0.0, float(tolerance_abs)) if tolerance_abs not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            tol_abs = 0.0
+    else:
+        try:
+            tol_pct = max(1.0, min(200.0, float(tolerance_pct))) if tolerance_pct not in (None, "") else 15.0
+        except (TypeError, ValueError):
+            tol_pct = 15.0
+    return {
+        "account_number": account_number,
+        "account_name": account_name,
+        "qbo_account_id": qbo_account_id,
+        "recurrence": recurrence,
+        "month": month,
+        "expected_balance": str(expected),
+        "tolerance_mode": mode,
+        "tolerance_pct": tol_pct,
+        "tolerance_abs": tol_abs,
+        "explanation": (explanation or "")[:2000],
+        "captured_period": period_current.isoformat(),
+        "scope": scope,
+    }
 
 
 def _expectation_fires(value: dict[str, Any] | None, period_end: date) -> bool:
@@ -537,12 +626,25 @@ def _expectation_fires(value: dict[str, Any] | None, period_end: date) -> bool:
     recurrence = value.get("recurrence")
     if recurrence == "monthly":
         return True
+    if recurrence == "quarterly":
+        # Fires on the captured month and every third month thereafter
+        # (e.g. captured in March → Jun/Sep/Dec also fire).
+        month = value.get("month")
+        try:
+            return bool(month) and (period_end.month - int(month)) % 3 == 0
+        except (TypeError, ValueError):
+            return False
     if recurrence == "annual":
         month = value.get("month")
         try:
             return bool(month) and period_end.month == int(month)
         except (TypeError, ValueError):
             return False
+    if recurrence == "one_off":
+        # A documented one-time expectation: applies only to the period it was
+        # captured for, and never recurs.
+        cap = str(value.get("captured_period") or "")
+        return bool(cap) and period_end.isoformat() == cap
     return False
 
 
@@ -578,25 +680,37 @@ def evaluate_expectation(
     if not expected.is_finite():
         return None
 
-    try:
-        tol_pct = Decimal(str(value.get("tolerance_pct", 15)))
-    except (TypeError, InvalidOperation, ValueError):
-        tol_pct = Decimal(15)
-    # CRITICAL: a non-finite tolerance ("Infinity"/"NaN") must never reach the
-    # band math. Infinity would make every variance "within tolerance" (silently
-    # pre-explaining a genuine anomaly); NaN would raise on the `< 0` compare and
-    # crash the run. Both are garbage — fall back to the safe default. This pure
-    # gate is the safety boundary; it cannot trust the JSONB value it is handed.
-    if not tol_pct.is_finite():
-        tol_pct = Decimal(15)
-    if tol_pct < 0:
-        tol_pct = Decimal(0)
-    # Never honor a band wider than the product's capture cap (router clamps to
-    # 1..200). Keeps a drifted/edited fact from granting an impossibly wide,
-    # anomaly-hiding tolerance the human never could have confirmed.
-    if tol_pct > 200:
-        tol_pct = Decimal(200)
-    tol_abs = (abs(expected) * tol_pct / Decimal(100))
+    # Two tolerance modes: a percent band (default) or an absolute ±$ band the
+    # user can opt into. Either way the result is a finite, non-negative `tol_abs`
+    # the comparison below uses. The pure gate cannot trust the JSONB it is handed:
+    # a non-finite/negative band ("Infinity"/"NaN"/-1) is garbage and collapses to
+    # an exact-match band (0), NEVER an anomaly-hiding infinite one.
+    mode = str(value.get("tolerance_mode") or "pct").lower()
+    if mode == "abs":
+        try:
+            tol_abs = Decimal(str(value.get("tolerance_abs", 0)))
+        except (TypeError, InvalidOperation, ValueError):
+            tol_abs = Decimal(0)
+        if not tol_abs.is_finite() or tol_abs < 0:
+            tol_abs = Decimal(0)
+    else:
+        try:
+            tol_pct = Decimal(str(value.get("tolerance_pct", 15)))
+        except (TypeError, InvalidOperation, ValueError):
+            tol_pct = Decimal(15)
+        # Infinity would make every variance "within tolerance" (silently pre-
+        # explaining a genuine anomaly); NaN would raise on the `< 0` compare and
+        # crash the run. Fall back to the safe default.
+        if not tol_pct.is_finite():
+            tol_pct = Decimal(15)
+        if tol_pct < 0:
+            tol_pct = Decimal(0)
+        # Never honor a band wider than the product's capture cap (router clamps to
+        # 1..200). Keeps a drifted/edited fact from granting an impossibly wide,
+        # anomaly-hiding tolerance the human never could have confirmed.
+        if tol_pct > 200:
+            tol_pct = Decimal(200)
+        tol_abs = (abs(expected) * tol_pct / Decimal(100))
 
     reason = str(value.get("explanation") or "").strip()
     short = (reason[:140] + "…") if len(reason) > 140 else reason
@@ -619,11 +733,15 @@ async def record_expectation_signal(
     value: dict[str, Any],
     variance_id: uuid.UUID | None,
     created_by: uuid.UUID | None,
+    source: str = "flux",
 ) -> ClientMemorySignal:
-    """One capture observation for a recurring variance expectation."""
+    """One capture observation for a recurring variance expectation. `source` is
+    where the human taught it ('flux' or 'recon') — both teach the SAME per-account
+    fact (keyed by account, not source), so an expectation learned on either
+    surface compounds and applies to both."""
     sig = ClientMemorySignal(
         id=uuid.uuid4(), tenant_id=tenant_id,
-        signal_type="variance_expectation", source="flux",
+        signal_type="variance_expectation", source=source,
         source_ref=account_key[:100], period_end=period_end,
         account_key=account_key[:160], proposed_entry_id=variance_id,
         before=None, after=value, created_by=created_by,
@@ -646,10 +764,11 @@ async def upsert_expectation_fact(
     applied until a reviewer confirms it. A CONFIRMED (active) fact is only
     reinforced, never silently overwritten with a new expectation."""
     fact_key = f"{_EXPECTATION_PREFIX}{account_key}"[:200]
+    # Count signals across ALL sources (flux + recon) for this account — teaching
+    # on either surface reinforces the one per-account expectation fact.
     sigs = (await db.execute(
         select(ClientMemorySignal).where(
             ClientMemorySignal.signal_type == "variance_expectation",
-            ClientMemorySignal.source == "flux",
             ClientMemorySignal.account_key == account_key[:160],
         )
     )).scalars().all()
@@ -803,16 +922,11 @@ def _schedule_brief(v: dict[str, Any]) -> str:
 
 
 def _expectation_note(v: dict[str, Any]) -> str:
-    import calendar
-    rec = v.get("recurrence")
-    when = "every month"
-    if rec == "annual":
-        try:
-            m = int(v.get("month"))
-            when = f"each {calendar.month_name[m]}" if 1 <= m <= 12 else "each year"
-        except (TypeError, ValueError):
-            when = "each year"
+    when = _recurrence_phrase(v.get("recurrence"), v.get("month"))
     base = f"Expected ~{_usd(v.get('expected_balance'))} {when}"
+    band = _tolerance_phrase(v)
+    if band:
+        base += f" (±{band})"
     expl = str(v.get("explanation") or "").strip()
     reason = expl.splitlines()[0] if expl else ""
     if reason:
@@ -900,11 +1014,18 @@ def _fact_note_for_account(
 
 async def account_memory_context(
     db: AsyncSession, *, qbo_account_id: str | None = None, account_number: str | None = None,
+    period_end: date | None = None, actual_balance: Decimal | None = None,
 ) -> list[dict[str, Any]]:
     """Read-only: confirmed (active) facts that concern ONE account, as display
     notes for the 'What Nordavix knows' surfaces in flux + recon. Additive
     context only — never changes a computed number. SELECT is tenant-auto-filtered,
-    so one workspace can never read another's conventions."""
+    so one workspace can never read another's conventions.
+
+    When the caller supplies `period_end` + `actual_balance` (the account's booked
+    balance this period), each variance_expectation note gains a live `match`:
+    {status: 'within'|'deviates', expected, text} — the same evaluation flux applies
+    to a variance, surfaced read-only so the recon drawer can show whether this
+    period lands as expected. Omitted when the rule doesn't fire this period."""
     if not (qbo_account_id or "").strip() and not (account_number or "").strip():
         return []
     facts = (await db.execute(
@@ -913,8 +1034,21 @@ async def account_memory_context(
     notes: list[dict[str, Any]] = []
     for f in facts:
         note = _fact_note_for_account(f, qbo_account_id, account_number)
-        if note:
-            notes.append(note)
+        if not note:
+            continue
+        if (f.kind == "variance_expectation" and period_end is not None
+                and actual_balance is not None):
+            try:
+                res = evaluate_expectation(f.value, period_end, actual_balance)
+            except Exception:  # pragma: no cover - defensive; note still renders
+                res = None
+            if res is not None:
+                note["match"] = {
+                    "status": "within" if res["pre_explained"] else "deviates",
+                    "expected": str(res["expected_value"]),
+                    "text": res["basis"],
+                }
+        notes.append(note)
     return notes
 
 
