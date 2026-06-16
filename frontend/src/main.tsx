@@ -2,6 +2,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { QueryClient, QueryClientProvider, keepPreviousData } from "@tanstack/react-query"
 import { BrowserRouter } from "react-router-dom"
+import { MotionConfig } from "framer-motion"
 import { HelmetProvider } from "react-helmet-async"
 import App from "./App"
 import DevShell from "./DevShell"
@@ -108,7 +109,12 @@ if (IS_DEV_PLACEHOLDER) {
           <LazyClerkProvider publishableKey={PUBLISHABLE_KEY}>
             <QueryClientProvider client={queryClient}>
               <BrowserRouter>
-                <App />
+                {/* reducedMotion="user" makes every framer-motion animation
+                    respect the OS "reduce motion" setting (WCAG 2.3.3) — one
+                    place instead of per-animation guards. */}
+                <MotionConfig reducedMotion="user">
+                  <App />
+                </MotionConfig>
               </BrowserRouter>
             </QueryClientProvider>
           </LazyClerkProvider>

@@ -142,7 +142,7 @@ export function FeedbackDialog({ open, onClose }: Props) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
-            onClick={onClose}
+            onClick={() => { if (!submit.isPending) onClose() }}
             className="fixed inset-0 z-40"
             style={{ background: "rgba(0, 0, 0, 0.55)", backdropFilter: "blur(2px)" }}
           />

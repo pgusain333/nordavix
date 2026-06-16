@@ -271,6 +271,8 @@ export function DatePicker({ value, onChange, min, max, disabled, placeholder, c
           className="shrink-0 inline-flex items-center justify-center"
           style={{ color: "var(--text-muted)", cursor: disabled ? "not-allowed" : "pointer" }}
           aria-label="Open date picker"
+          aria-haspopup="dialog"
+          aria-expanded={open}
           tabIndex={-1}
         >
           <Calendar size={compact ? 12 : 13} strokeWidth={1.8} />
