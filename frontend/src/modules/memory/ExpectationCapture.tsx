@@ -10,6 +10,7 @@
  * actual API call (so the same form serves both flux and recon).
  */
 import { useState, type ReactNode } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Lightbulb } from "lucide-react"
 
 /** Titled card chrome matching the flux + recon detail drawers (which each define
@@ -59,6 +60,7 @@ export function ExpectationCapture({
   disabled?: boolean
   onSave: (p: ExpectationPayload) => Promise<void>
 }) {
+  const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [recurrence, setRecurrence] = useState<Cadence>("monthly")
   const [expected, setExpected] = useState(
@@ -97,6 +99,11 @@ export function ExpectationCapture({
     setErr(null)
     try {
       await onSave(payload)
+      // A saved expectation is a new (suggested) Client Memory fact — refresh the
+      // memory views so the Settings → Memory badge and "What Nordavix knows"
+      // notes update without a manual reload. Confirm-first still applies.
+      void qc.invalidateQueries({ queryKey: ["memory-facts"] })
+      void qc.invalidateQueries({ queryKey: ["memory", "account-context"] })
       setSaved(true)
       setOpen(false)
     } catch {

@@ -2814,6 +2814,10 @@ function InlineSubledgerForm({
       setUploadError(null)
       refetchEvidence()
       qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+      // Account evidence also surfaces in the Workpapers binder — keep its
+      // counts + lists fresh for this period (no-op if Workpapers isn't open).
+      qc.invalidateQueries({ queryKey: ["workpapers", "evidence-summary", periodEnd] })
+      qc.invalidateQueries({ queryKey: ["workpapers", "evidence", periodEnd] })
     },
     onError: (err: unknown) => {
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }
@@ -2826,6 +2830,8 @@ function InlineSubledgerForm({
     onSuccess: () => {
       refetchEvidence()
       qc.invalidateQueries({ queryKey: ["recons-overview", periodEnd] })
+      qc.invalidateQueries({ queryKey: ["workpapers", "evidence-summary", periodEnd] })
+      qc.invalidateQueries({ queryKey: ["workpapers", "evidence", periodEnd] })
     },
   })
 

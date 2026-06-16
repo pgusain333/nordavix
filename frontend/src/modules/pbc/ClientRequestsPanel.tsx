@@ -68,6 +68,9 @@ function ClientRequestsPanelInner({ qboAccountId, periodEnd, accountLabel, readO
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: key })
     void qc.invalidateQueries({ queryKey: ["pbc-requests"] })
+    // A pending request shows as "awaiting client" in the Workpapers binder too —
+    // refresh its requests count for this period (no-op if Workpapers isn't open).
+    void qc.invalidateQueries({ queryKey: ["workpapers", "evidence-summary", periodEnd] })
   }
 
   const createMut = useMutation({

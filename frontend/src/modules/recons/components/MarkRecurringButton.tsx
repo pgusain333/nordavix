@@ -8,7 +8,7 @@
  * owns its popover, mutation, and saved state so the host build-up stays simple.
  */
 import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Repeat, Check } from "lucide-react"
 import { reconsApi, type ReconcilingItem } from "@/modules/recons/api"
 
@@ -29,6 +29,7 @@ export function MarkRecurringButton({ qboAccountId, periodEnd, accountName, item
   const [open, setOpen] = useState(false)
   const [label, setLabel] = useState(() => defaultLabel(item))
   const [saved, setSaved] = useState(false)
+  const qc = useQueryClient()
 
   const mut = useMutation({
     mutationFn: () => reconsApi.saveRecurringReconcilingItem(qboAccountId, {
@@ -39,7 +40,8 @@ export function MarkRecurringButton({ qboAccountId, periodEnd, accountName, item
       entity: item.entity,
       account_name: accountName,
     }),
-    onSuccess: () => { setSaved(true); setOpen(false) },
+    // Refresh the Settings → Memory badge — a new suggested fact was created.
+    onSuccess: () => { setSaved(true); setOpen(false); void qc.invalidateQueries({ queryKey: ["memory-facts"] }) },
   })
 
   if (saved) {
