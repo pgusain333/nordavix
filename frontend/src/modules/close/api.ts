@@ -3,6 +3,15 @@ import { apiClient } from "@/core/api/client"
 
 export type CloseStepStatus = "pending" | "in_progress" | "done" | "skipped"
 
+/** Per-kind commit state for the schedule step, scoped to the close period. */
+export interface ScheduleKindDetail {
+  kind:                   string   // prepaid | accrual | fixed_asset | lease | loan
+  label:                  string   // "Prepaid Expenses", "Loans", …
+  state:                  "committed" | "stale" | "missing"
+  committed_at:           string | null
+  committed_other_period: string | null  // committed for a DIFFERENT month (mismatch)
+}
+
 export interface CloseStep {
   step_key:       string
   order_index:    number
@@ -20,6 +29,9 @@ export interface CloseStep {
   depends_on_key: string | null
   blocked:        boolean
   blocked_by:     string | null
+  // Schedule step only: per-kind commit state for THIS period. Drives the chips
+  // and the dynamic description. Absent/null on every other step.
+  schedule_detail?: { applicable: boolean; kinds: ScheduleKindDetail[] } | null
 }
 
 export interface ChecklistResponse {

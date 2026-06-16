@@ -56,6 +56,15 @@ DEP_SATISFIED = ("done", "skipped")
 _SCHEDULE_MODELS = (
     SchedulePrepaid, ScheduleAccrual, ScheduleFixedAsset, ScheduleLease, ScheduleLoan,
 )
+# Kind ↔ model ↔ human label (labels mirror the schedules module's _HUMAN_NAMES).
+_SCHEDULE_KIND_FOR = {
+    SchedulePrepaid: "prepaid", ScheduleAccrual: "accrual",
+    ScheduleFixedAsset: "fixed_asset", ScheduleLease: "lease", ScheduleLoan: "loan",
+}
+_SCHEDULE_KIND_LABEL = {
+    "prepaid": "Prepaid Expenses", "accrual": "Accrued Expenses",
+    "fixed_asset": "Fixed Assets", "lease": "Leases", "loan": "Loans",
+}
 
 # The default close checklist seeded for a new workspace. Order matters — it
 # mirrors the real month-end sequence. Linked steps auto-complete from their
@@ -218,6 +227,56 @@ async def _schedule_status(db: AsyncSession, pe: date) -> tuple[str, datetime | 
     return "pending", None
 
 
+async def _schedule_detail(db: AsyncSession, pe: date) -> dict[str, Any]:
+    """Per-kind commit state for the schedule step, scoped to the EXACT close
+    period `pe`. Powers the dynamic description + per-kind chips so a stuck
+    schedule step is never a mystery: which kind still needs a commit, which went
+    stale (committed, then items changed) and needs a re-commit, and — the common
+    gotcha — which was committed for a DIFFERENT month than the one being closed.
+    Pure reads; never mutates a row, so it's safe on the read-only (demo) path."""
+    active_kinds: list[str] = []
+    for model in _SCHEDULE_MODELS:
+        n = (await db.execute(
+            select(func.count()).select_from(model).where(model.is_active.is_(True))
+        )).scalar_one()
+        if n:
+            active_kinds.append(_SCHEDULE_KIND_FOR[model])
+    if not active_kinds:
+        return {"applicable": False, "kinds": []}
+
+    # Every snapshot for the in-use kinds, any period — one query. We look across
+    # periods so a kind committed for the WRONG month can be surfaced explicitly.
+    snaps = list((await db.execute(
+        select(ScheduleSnapshot).where(ScheduleSnapshot.schedule_type.in_(active_kinds))
+    )).scalars().all())
+
+    kinds_out: list[dict[str, Any]] = []
+    for kind in active_kinds:
+        ks = [s for s in snaps if s.schedule_type == kind]
+        committed_here = [s for s in ks if s.period_end == pe and s.status == "committed"]
+        stale_here = [s for s in ks if s.period_end == pe and s.status == "stale"]
+        other: date | None = None
+        if committed_here:
+            stamps = [s.committed_at for s in committed_here if s.committed_at]
+            state, committed_at = "committed", (max(stamps) if stamps else None)
+        elif stale_here:
+            stamps = [s.committed_at for s in stale_here if s.committed_at]
+            state, committed_at = "stale", (max(stamps) if stamps else None)
+        else:
+            state, committed_at = "missing", None
+            # Committed for a different period? That's why the close step is stuck.
+            elsewhere = [s.period_end for s in ks if s.status == "committed" and s.period_end != pe]
+            other = max(elsewhere) if elsewhere else None
+        kinds_out.append({
+            "kind": kind,
+            "label": _SCHEDULE_KIND_LABEL.get(kind, kind),
+            "state": state,
+            "committed_at": committed_at.isoformat() if committed_at else None,
+            "committed_other_period": other.isoformat() if other else None,
+        })
+    return {"applicable": True, "kinds": kinds_out}
+
+
 async def _sync_status(db: AsyncSession, pe: date) -> tuple[str, datetime | None]:
     row = (await db.execute(
         select(PeriodSync).where(PeriodSync.period_end == pe)
@@ -344,6 +403,21 @@ async def build_checklist(
         o["depends_on_key"] = active_dep
         o["blocked"] = blocked
         o["blocked_by"] = title_by_key.get(active_dep) if blocked else None
+
+    # Schedule step: attach per-kind commit detail + a description that names only
+    # the schedule kinds this client actually uses — so it never implies the blank
+    # ones must be committed, and the chips show exactly what's missing, stale, or
+    # committed for the wrong month. Pure reads (safe on the read-only path).
+    for o in out:
+        if o.get("linked_module") == "schedule":
+            detail = await _schedule_detail(db, pe)
+            o["schedule_detail"] = detail
+            if not detail["applicable"]:
+                o["description"] = "No supporting schedules in use for this client — nothing to commit."
+            else:
+                labels = ", ".join(k["label"] for k in detail["kinds"])
+                o["description"] = f"Roll forward and commit your schedules for this period: {labels}."
+            break
 
     if not readonly:
         await db.flush()

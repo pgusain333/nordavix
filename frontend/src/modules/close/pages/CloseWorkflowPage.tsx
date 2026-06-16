@@ -28,8 +28,9 @@ import {
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
+import { writeSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { workspaceApi, type WorkspaceMember } from "@/modules/workspace/api"
-import { closeApi, type CloseStep, type TemplateStep, type PrefillItem } from "@/modules/close/api"
+import { closeApi, type CloseStep, type TemplateStep, type PrefillItem, type ScheduleKindDetail } from "@/modules/close/api"
 import { glAccuracyApi } from "@/modules/gl_accuracy/api"
 
 const CAT_ICON: Record<string, LucideIcon> = {
@@ -125,6 +126,14 @@ export function CloseWorkflowPage() {
       setPeriod(periodsResp.focus || periodsResp.periods[0]?.period_end || "")
     }
   }, [periodsResp, period])
+
+  // Drive the cross-app "selected period" so Schedules / Recons / Insights open to
+  // the SAME month the close is on. Without this the schedule pages defaulted to
+  // their own month, so committed snapshots landed on the wrong period_end and the
+  // "Update supporting schedules" step stayed stuck no matter how often you committed.
+  useEffect(() => {
+    if (period && organization?.id) writeSelectedPeriod(period, organization.id)
+  }, [period, organization?.id])
 
   const periodLabel = periodsResp?.periods.find((p) => p.period_end === period)?.label ?? ""
 
@@ -267,6 +276,36 @@ export function CloseWorkflowPage() {
   )
 }
 
+// One pill per supporting-schedule kind in use: committed ✓ for THIS close
+// period, stale (committed then items changed → re-commit), or never committed —
+// and, the common gotcha, committed for a DIFFERENT month. Clicking opens
+// Schedules, which now defaults to the close period (see the global-period write).
+function ScheduleKindChip({ kind, onOpen }: { kind: ScheduleKindDetail; onOpen: () => void }) {
+  const meta =
+    kind.state === "committed"
+      ? { Icon: CheckCircle2, fg: "var(--green)", bg: "var(--green-subtle)", border: "var(--green)", text: kind.label }
+      : kind.state === "stale"
+        ? { Icon: RefreshCw, fg: "#a9762a", bg: "rgba(199,154,82,0.14)", border: "#d8b070", text: `${kind.label} — re-commit` }
+        : { Icon: Circle, fg: "var(--text-muted)", bg: "var(--surface-2)", border: "var(--border)", text: `${kind.label} — needs commit` }
+  const title =
+    kind.state === "committed"
+      ? `Committed${kind.committed_at ? ` ${formatDate(kind.committed_at)}` : ""}`
+      : kind.committed_other_period
+        ? `Committed for ${formatDate(kind.committed_other_period)} — not this period. Open Schedules (now set to this period) and commit.`
+        : "Open Schedules and commit this for the close period"
+  return (
+    <button onClick={onOpen} title={title}
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-opacity hover:opacity-80"
+      style={{ background: meta.bg, color: meta.fg, border: `1px solid ${meta.border}` }}>
+      <meta.Icon size={10} strokeWidth={2.4} />
+      {meta.text}
+      {kind.state === "missing" && kind.committed_other_period && (
+        <span style={{ opacity: 0.75, fontWeight: 500 }}>· committed {formatDate(kind.committed_other_period)}</span>
+      )}
+    </button>
+  )
+}
+
 // ── Timeline step ─────────────────────────────────────────────────────────
 
 function TimelineStep({ step, periodEnd, isAdmin, members, memberName, reduce, upNext, isLast, busy, onOpen, onToggle, onAssign, onDue }: {
@@ -356,6 +395,13 @@ function TimelineStep({ step, periodEnd, isAdmin, members, memberName, reduce, u
             </div>
             {step.description && (
               <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{step.description}</p>
+            )}
+            {step.category === "schedule" && step.schedule_detail?.applicable && step.schedule_detail.kinds.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {step.schedule_detail.kinds.map((k) => (
+                  <ScheduleKindChip key={k.kind} kind={k} onOpen={() => onOpen("/app/schedules")} />
+                ))}
+              </div>
             )}
             {blocked && step.blocked_by && (
               <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
