@@ -80,6 +80,8 @@ _INVARIANT_FILES = {
     "test_memory_context.py",     # memory note matcher (no cross-account bleed)
     "test_recon_tieout.py",       # recon tie-out gate (RECON_TOLERANCE + is_reconciled)
     "test_schedule_rollforward.py", # loan/lease inception-month interest accrual
+    "test_tb_integrity.py",       # trial-balance ingest tie-out (tb_imbalance)
+    "test_sign_conventions.py",   # statement sign convention (_signed_for_display)
 }
 
 
