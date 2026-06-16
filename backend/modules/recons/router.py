@@ -1772,16 +1772,30 @@ async def _freeze_displayed_subledger(
             GlBalanceSnapshot.period_end == period_end,
         )
     )).scalar_one_or_none()
-    if snap is None:
-        # No snapshot — nothing to freeze. Should be rare since approval
-        # implies the account showed up in the overview.
-        logger.warning(
-            "Freeze subledger: no GL snapshot for account %s @ %s — skipping",
-            qbo_account_id, period_end,
-        )
-        return
+    # This period's snapshot is normally present (approval implies the account
+    # showed up in the overview). When it's missing — a partial/failed sync — we
+    # must NOT silently skip: that leaves subledger_total NULL, and the next
+    # period's roll-forward chain then skips this row and silently rolls its
+    # opening from an older period (the "Feb closed but April rolls from Jan"
+    # bug). Fall back to the most-recent snapshot for this account purely to read
+    # its (stable) account_type, so opening + items still freezes correctly. Only
+    # when there is genuinely nothing to compute from do we leave it unfrozen —
+    # and then loudly, not silently (see the GL-fallback branch below).
+    meta_snap = snap
+    if meta_snap is None:
+        meta_snap = (await db.execute(
+            select(GlBalanceSnapshot)
+            .where(
+                GlBalanceSnapshot.tenant_id == tenant_id,
+                GlBalanceSnapshot.qbo_account_id == qbo_account_id,
+                GlBalanceSnapshot.period_end <= period_end,
+            )
+            .order_by(GlBalanceSnapshot.period_end.desc())
+            .limit(1)
+        )).scalar_one_or_none()
 
-    is_credit_natural = snap.account_type in _CREDIT_NATURAL_ACCOUNT_TYPES
+    acct_type = meta_snap.account_type if meta_snap is not None else ""
+    is_credit_natural = acct_type in _CREDIT_NATURAL_ACCOUNT_TYPES
     flip = -1 if is_credit_natural else 1
 
     # Prior reconciled subledger → opening
@@ -1814,6 +1828,18 @@ async def _freeze_displayed_subledger(
     # the variance = 0 default behavior the dashboard already shows
     # for Bank/Other accounts that are auto-matched to GL.
     if not has_prior and not items:
+        if snap is None:
+            # No prior, no reconciling items, and no snapshot for THIS period —
+            # there's genuinely no basis to freeze a value (we won't fabricate one
+            # from a stale period). Leave it unfrozen, but loudly: this is the only
+            # remaining case that can't roll forward until a re-sync + re-approval.
+            logger.error(
+                "Freeze subledger: no GL snapshot, no prior, no items for account "
+                "%s @ %s — cannot freeze; next period's opening will not roll from "
+                "this period until it is re-synced and re-approved.",
+                qbo_account_id, period_end,
+            )
+            return
         frozen = Decimal(snap.balance)
         source = "Auto-saved on approval (matches GL — no prior reconciliation on file)"
     else:

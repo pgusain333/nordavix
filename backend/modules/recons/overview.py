@@ -121,7 +121,20 @@ async def sync_overview(
     if tid is None:
         return _empty_overview(period_end, synced=False)
 
-    accounts_meta = await _list_balance_sheet_accounts(conn, session)
+    try:
+        accounts_meta = await _list_balance_sheet_accounts(conn, session, raise_on_error=True)
+    except Exception:
+        # The QBO account-list pull failed. This is a sync ERROR, not "never
+        # synced" — surface it so the dashboard shows a retry prompt instead of
+        # the first-run CTA (which would walk the user into the same failure).
+        logger.exception("Account-list pull failed during sync for %s", period_end)
+        return _empty_overview(
+            period_end, synced=False,
+            sync_error=(
+                "Couldn't reach QuickBooks to pull your account list. "
+                "This is usually temporary — try syncing again in a moment."
+            ),
+        )
     if not accounts_meta:
         return _empty_overview(period_end, synced=False)
 
@@ -940,8 +953,14 @@ def _extract_net_income(report: dict) -> Decimal | None:
 async def _list_balance_sheet_accounts(
     conn: QboConnection,
     session: AsyncSession,
+    *,
+    raise_on_error: bool = False,
 ) -> list[dict]:
-    """Return active accounts whose AccountType is reconcilable."""
+    """Return active accounts whose AccountType is reconcilable.
+
+    On a QBO failure this returns [] by default (callers that can tolerate a
+    missing list), or re-raises when raise_on_error=True so the sync path can
+    tell a real QBO error apart from a genuinely empty account list."""
     types = list(ACCOUNT_TYPE_GROUPS.keys())
     quoted = ", ".join(f"'{t}'" for t in types)
     q = (
@@ -953,6 +972,8 @@ async def _list_balance_sheet_accounts(
         data = await _qbo_get(conn, session, "/query", params={"query": q, "minorversion": "65"})
     except Exception:
         logger.exception("Account list pull failed")
+        if raise_on_error:
+            raise
         return []
     return data.get("QueryResponse", {}).get("Account", []) or []
 
@@ -1097,7 +1118,7 @@ def pick_rollforward_opening(prior_review: Any | None) -> tuple[date, Decimal] |
     return (prior_review.period_end, Decimal(prior_review.subledger_total))
 
 
-def _empty_overview(period_end: date, *, synced: bool = False) -> dict:
+def _empty_overview(period_end: date, *, synced: bool = False, sync_error: str | None = None) -> dict:
     return {
         "period_end": period_end.isoformat(),
         "accounts":   [],
@@ -1108,6 +1129,10 @@ def _empty_overview(period_end: date, *, synced: bool = False) -> dict:
         "synced":     synced,
         "synced_at":  None,
         "tb_check":   None,
+        # Set only when a sync ATTEMPT failed (e.g. QBO unreachable). Distinguishes
+        # a real error from "never synced" so the dashboard shows a retry prompt
+        # rather than the first-run CTA. Null on the ordinary not-synced path.
+        "sync_error": sync_error,
     }
 
 

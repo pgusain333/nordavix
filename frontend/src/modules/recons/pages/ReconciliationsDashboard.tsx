@@ -1217,7 +1217,31 @@ export function ReconciliationsDashboard() {
           </div>
         )}
 
-        {qbo && overview && overview.synced === false && !isFetching && priorBlockers.length === 0 && (
+        {/* Sync-failed card — a sync ATTEMPT hit a QBO error (e.g. unreachable),
+            which is different from "never synced". Show a retry prompt instead of
+            the green first-run CTA so the user isn't walked into the same wall. */}
+        {qbo && overview?.sync_error && !isFetching && (
+          <div
+            className="rounded-xl p-8 text-center"
+            style={{ background: "var(--surface)", border: "1px solid var(--danger-border)", boxShadow: "var(--card-shadow)" }}
+          >
+            <div className="h-14 w-14 mx-auto rounded-full flex items-center justify-center mb-4"
+              style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}>
+              <AlertTriangle size={26} strokeWidth={1.6} />
+            </div>
+            <p className="text-base font-semibold mb-1" style={{ color: "var(--danger)" }}>
+              Sync didn't complete
+            </p>
+            <p className="text-sm max-w-md mx-auto mb-5" style={{ color: "var(--text-muted)" }}>
+              {overview.sync_error}
+            </p>
+            <Button size="sm" icon={<RefreshCw size={14} strokeWidth={1.8} />} loading={syncMut.isPending} onClick={handleSync}>
+              Try sync again
+            </Button>
+          </div>
+        )}
+
+        {qbo && overview && overview.synced === false && !overview.sync_error && !isFetching && priorBlockers.length === 0 && (
           <div
             className="rounded-xl p-8 text-center"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}

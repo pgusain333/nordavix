@@ -326,6 +326,9 @@ export interface Overview {
   // read $0 when it isn't. Null/absent = the pull succeeded.
   ar_error?:       string | null
   ap_error?:       string | null
+  // Set when a sync ATTEMPT failed (e.g. QBO unreachable) — distinct from
+  // "never synced". The dashboard shows a retry card instead of the first-run CTA.
+  sync_error?:     string | null
 }
 
 export interface SubledgerRow {
