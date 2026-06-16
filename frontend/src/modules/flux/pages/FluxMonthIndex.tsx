@@ -125,7 +125,7 @@ export function FluxMonthIndex() {
     staleTime: 60_000,
   })
 
-  const { data: tbs = [], isLoading: tbsLoading } = useQuery({
+  const { data: tbs = [], isLoading: tbsLoading, isError: tbsError, refetch: refetchTbs } = useQuery({
     queryKey: ["flux-trial-balances"],
     queryFn:  fluxApi.listTrialBalances,
     staleTime: 60_000,
@@ -307,7 +307,22 @@ export function FluxMonthIndex() {
             style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <SkeletonTable rows={6} />
           </div>
-        ) : !qbo ? null : rows.length === 0 ? (
+        ) : !qbo ? null : tbsError ? (
+          /* Honest error state — without this a failed fetch fell through to
+             "No analyses yet", which reads as empty rather than broken. */
+          <div className="rounded-xl p-10 text-center"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <AlertCircle size={28} strokeWidth={1.6}
+              className="mx-auto mb-3" style={{ color: "var(--danger)" }} />
+            <p className="text-sm font-semibold text-theme mb-1">Couldn&apos;t load your analyses</p>
+            <p className="text-xs mb-4 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+              Something went wrong fetching your flux analyses. Check your connection and try again.
+            </p>
+            <Button size="sm" icon={<ArrowRight size={12} strokeWidth={1.8} />} onClick={() => refetchTbs()}>
+              Retry
+            </Button>
+          </div>
+        ) : rows.length === 0 ? (
           <div className="rounded-xl p-10 text-center"
             style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <BarChart3 size={28} strokeWidth={1.6}
