@@ -906,9 +906,42 @@ function TemplateEditor() {
     qc.invalidateQueries({ queryKey: ["close", "analytics"] })
   }
   const addMut    = useMutation({ mutationFn: closeApi.addStep, onSuccess: ok, onError: fail })
-  const editMut   = useMutation({ mutationFn: (v: { id: string; body: Parameters<typeof closeApi.editStep>[1] }) => closeApi.editStep(v.id, v.body), onSuccess: ok, onError: fail })
+  // Edit + reorder apply optimistically to the template cache so renames and
+  // up/down feel instant; on error we roll the cache back and surface the reason.
+  const editMut   = useMutation({
+    mutationFn: (v: { id: string; body: Parameters<typeof closeApi.editStep>[1] }) => closeApi.editStep(v.id, v.body),
+    onMutate: async (v) => {
+      await qc.cancelQueries({ queryKey: ["close", "template"] })
+      const prev = qc.getQueryData<{ steps: TemplateStep[] }>(["close", "template"])
+      if (prev) {
+        const patch = v.body.clear_depends_on ? { ...v.body, depends_on_key: null } : v.body
+        qc.setQueryData(["close", "template"], {
+          steps: prev.steps.map((s) => (s.id === v.id ? { ...s, ...patch } : s)),
+        })
+      }
+      return { prev }
+    },
+    onError: (e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(["close", "template"], ctx.prev); fail(e) },
+    onSuccess: ok,
+  })
   const deleteMut = useMutation({ mutationFn: closeApi.deleteStep, onSuccess: ok, onError: fail })
-  const reorderMut = useMutation({ mutationFn: closeApi.reorder, onSuccess: ok, onError: fail })
+  const reorderMut = useMutation({
+    mutationFn: closeApi.reorder,
+    onMutate: async (ids: string[]) => {
+      await qc.cancelQueries({ queryKey: ["close", "template"] })
+      const prev = qc.getQueryData<{ steps: TemplateStep[] }>(["close", "template"])
+      if (prev) {
+        const byId = new Map(prev.steps.map((s) => [s.id, s]))
+        const reordered = ids
+          .map((id, i) => { const s = byId.get(id); return s ? { ...s, order_index: i } : null })
+          .filter(Boolean) as TemplateStep[]
+        qc.setQueryData(["close", "template"], { steps: reordered })
+      }
+      return { prev }
+    },
+    onError: (e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(["close", "template"], ctx.prev); fail(e) },
+    onSuccess: ok,
+  })
 
   const [newTitle, setNewTitle] = useState("")
   function submitAdd() {

@@ -394,7 +394,23 @@ async def build_checklist(
     status_by_key = {o["step_key"]: o["status"] for o in out}
     dep_by_key = {s.key: s.depends_on_key for s in active_steps}
     title_by_key = {s.key: s.title for s in active_steps}
+    tmpl_by_key = {s.key: s for s in active_steps}
+    # Closed periods keep the title/order they were generated with (audit trail).
+    # OPEN periods overlay the CURRENT template, so an admin's renames, reordering,
+    # and re-categorising in "Customize the checklist" show up on the live
+    # checklist right away instead of being frozen at the period's snapshot.
+    # (Per-instance fields — status, owner, due date, notes — are never touched.)
+    period_is_closed = (await db.execute(
+        select(ClosedPeriod).where(ClosedPeriod.period_end == pe)
+    )).scalar_one_or_none() is not None
     for o in out:
+        if not period_is_closed:
+            t = tmpl_by_key.get(o["step_key"])
+            if t is not None:
+                o["title"] = t.title
+                o["description"] = t.description
+                o["category"] = t.category
+                o["order_index"] = t.order_index
         dep = dep_by_key.get(o["step_key"])
         # Only an ACTIVE prerequisite (one present in status_by_key) can gate a
         # step; a hidden/deleted prereq neither blocks nor is advertised here.
