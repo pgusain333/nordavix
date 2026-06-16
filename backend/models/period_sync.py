@@ -31,6 +31,11 @@ class PeriodSync(TenantBase):
     # card when this is None.
     actual_net_income: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     pl_error: Mapped[str | None] = mapped_column(Text)
+    # Aging-pull failures: store WHY the AR/AP aging report couldn't be fetched
+    # on the last sync instead of silently persisting $0 (which reads as a real
+    # zero subledger). Null = the pull succeeded. Mirrors pl_error above.
+    ar_error: Mapped[str | None] = mapped_column(Text)
+    ap_error: Mapped[str | None] = mapped_column(Text)
     # Ingest integrity: did the parsed trial balance tie (Σdebits = Σcredits,
     # within $1) on the last sync? Null = legacy row (synced before this check
     # existed). False blocks period close until a clean re-sync.

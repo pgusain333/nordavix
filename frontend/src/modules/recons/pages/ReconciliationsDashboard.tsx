@@ -1157,6 +1157,28 @@ export function ReconciliationsDashboard() {
         </div>
       )}
 
+      {/* Aging-pull failure banner — the AR/AP aging report couldn't be pulled
+          on the last sync, so that subledger may read $0 when it isn't. Surfaced
+          here so the user re-syncs instead of reconciling against a failed pull.
+          Warn (not danger): it doesn't block close like a TB imbalance does. */}
+      {(overview?.ar_error || overview?.ap_error) && (
+        <div className="px-4 sm:px-8 py-2.5 text-xs font-medium flex items-center gap-2"
+          style={{ background: "var(--warn-subtle)", color: "var(--warn)", borderBottom: "1px solid var(--warn-border)" }}>
+          <AlertTriangle size={14} strokeWidth={2} className="shrink-0" />
+          <span className="flex-1">
+            {overview.ar_error && overview.ap_error
+              ? "The A/R and A/P aging reports couldn't be pulled"
+              : overview.ar_error
+              ? "The A/R aging report couldn't be pulled"
+              : "The A/P aging report couldn't be pulled"}
+            {" "}on the last sync — that subledger may show $0 when it isn't. Re-sync before reconciling it.
+          </span>
+          <Button size="sm" variant="outline" loading={syncMut.isPending} onClick={handleSync}>
+            <RefreshCw size={11} strokeWidth={2} /> Re-sync
+          </Button>
+        </div>
+      )}
+
       {/* Agentic run-result banner — appears after the AI preparer
           finishes. Shows the prepared/analyzed/skipped counts and
           lets the user dismiss. Stays until dismissed so they can

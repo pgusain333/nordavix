@@ -322,6 +322,10 @@ export interface Overview {
   // Ingest integrity of the last sync: did our parse of the QBO trial balance
   // tie out (debits = credits)? tb_balanced false = incomplete/bad data.
   sync_health?:    { tb_balanced: boolean | null; tb_diff: string | null }
+  // Set when the AR/AP aging pull failed on the last sync — that subledger may
+  // read $0 when it isn't. Null/absent = the pull succeeded.
+  ar_error?:       string | null
+  ap_error?:       string | null
 }
 
 export interface SubledgerRow {

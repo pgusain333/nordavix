@@ -154,8 +154,8 @@ async def sync_overview(
     tb_balanced = (tb_balances.get("rows", 0) > 0 and abs(tb_diff) <= RECON_TOLERANCE)
 
     # Pull AR / AP aging totals + persist for instant subsequent reads.
-    ar_aging_sum = await _aging_total(conn, session, "AgedReceivables", period_end)
-    ap_aging_sum = await _aging_total(conn, session, "AgedPayables", period_end)
+    ar_aging_sum, ar_error = await _aging_total(conn, session, "AgedReceivables", period_end)
+    ap_aging_sum, ap_error = await _aging_total(conn, session, "AgedPayables", period_end)
 
     # Pull YTD Net Income for the TB check (independent cross-check
     # against our summed BS account balances).
@@ -196,6 +196,8 @@ async def sync_overview(
             ap_aging_total=ap_aging_sum.quantize(Decimal("0.01")),
             actual_net_income=actual_ni.quantize(Decimal("0.01")) if actual_ni is not None else None,
             pl_error=pl_error,
+            ar_error=ar_error,
+            ap_error=ap_error,
             tb_balanced=tb_balanced,
             tb_diff=tb_diff,
         ))
@@ -204,6 +206,8 @@ async def sync_overview(
         existing.ap_aging_total = ap_aging_sum.quantize(Decimal("0.01"))
         existing.actual_net_income = actual_ni.quantize(Decimal("0.01")) if actual_ni is not None else None
         existing.pl_error = pl_error
+        existing.ar_error = ar_error
+        existing.ap_error = ap_error
         existing.tb_balanced = tb_balanced
         existing.tb_diff = tb_diff
         existing.synced_at = datetime.utcnow()
@@ -226,6 +230,10 @@ async def sync_overview(
         period_end=period_end,
     )
     overview["sync_health"] = {"tb_balanced": tb_balanced, "tb_diff": str(tb_diff)}
+    # Surface aging-pull failures so the dashboard never shows a failed pull as a
+    # real $0 subledger (None = pull succeeded).
+    overview["ar_error"] = ar_error
+    overview["ap_error"] = ap_error
     return overview
 
 
@@ -322,6 +330,8 @@ async def read_overview_from_snapshots(
         "tb_balanced": ps.tb_balanced,
         "tb_diff": str(ps.tb_diff) if ps.tb_diff is not None else None,
     }
+    overview["ar_error"] = ps.ar_error
+    overview["ap_error"] = ps.ap_error
     return overview
 
 
@@ -989,8 +999,12 @@ async def _aging_total(
     session: AsyncSession,
     report_name: str,
     period_end: date,
-) -> Decimal:
-    """Total of the aging report (AR or AP) at period_end."""
+) -> tuple[Decimal, str | None]:
+    """Total of the aging report (AR or AP) at period_end.
+
+    Returns (total, error). On a QBO pull failure the total is 0 and error is a
+    human message; the caller persists it so a failed pull surfaces as an error
+    instead of a silent $0 subledger balance."""
     try:
         report = await _qbo_get(
             conn, session, f"/reports/{report_name}",
@@ -998,7 +1012,7 @@ async def _aging_total(
         )
     except Exception:
         logger.exception("%s pull failed for %s", report_name, period_end)
-        return Decimal("0")
+        return Decimal("0"), f"Could not pull the {report_name} report from QuickBooks."
 
     rows = _flatten_report_rows(report)
     total = Decimal("0")
@@ -1014,7 +1028,7 @@ async def _aging_total(
         if v is None:
             v = r.get("col_6", "")  # positional fallback (aging Total column)
         total += _dec(v)
-    return total
+    return total, None
 
 
 def _subledger_for_account(
