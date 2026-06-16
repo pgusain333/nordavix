@@ -66,3 +66,24 @@ def reset_tenant_context():
     token = current_tenant_id.set(None)
     yield
     current_tenant_id.reset(token)
+
+
+# ── Deploy-gating "invariant" suites ───────────────────────────────────────────
+# These pure, deterministic accounting-correctness tests BLOCK the deploy in CI
+# (`pytest -m invariant`). They're tagged here by filename — rather than a
+# per-file `pytestmark` — so the test modules stay import-light and still run
+# standalone (`python tests/<file>.py`) in envs without pytest installed (this
+# repo's runtime venv is one). Keep this set in sync when adding a gating suite.
+_INVARIANT_FILES = {
+    "test_expectation.py",        # expectation tolerance / NaN+∞ safety
+    "test_proposed_entries.py",   # JE balance (Σ debit == Σ credit)
+    "test_cash_flow_tieout.py",   # CFS ↔ BS cash tie-out
+    "test_gl_accuracy_engine.py", # misclassification detector (no false positives)
+    "test_memory_context.py",     # memory note matcher (no cross-account bleed)
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if item.path.name in _INVARIANT_FILES:
+            item.add_marker(pytest.mark.invariant)

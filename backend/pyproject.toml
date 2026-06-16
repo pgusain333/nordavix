@@ -128,6 +128,9 @@ check_untyped_defs = false
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "invariant: deterministic accounting-correctness checks (pure, no DB) that BLOCK deploy",
+]
 
 [tool.coverage.run]
 source = ["."]

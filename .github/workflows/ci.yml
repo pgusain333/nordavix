@@ -79,12 +79,19 @@ jobs:
       - name: Run migrations
         run: alembic upgrade head
 
-      # Tests run but don't block — the tenant_isolation suite has a
-      # flaky asyncio event-loop bug with the newer pytest-asyncio that
-      # needs a dedicated fix sprint. Real correctness lives in lint
-      # (which IS blocking) and the e2e smoke runs on staging.
-      - name: Test (non-blocking)
-        run: pytest --cov=. --cov-report=xml -q || true
+      # Accuracy invariants — the pure, deterministic accounting-correctness
+      # checks (JE balance, cash-flow tie-out, expectation/memory tolerance
+      # safety, GL-accuracy detectors). These BLOCK: a regression here fails CI
+      # and the backend never deploys. No DB/async, so they're fast + stable.
+      - name: Accuracy invariants (blocking)
+        run: pytest -m invariant -q
+
+      # The rest (DB + async integration) stay non-blocking for now — the
+      # tenant_isolation suite has a flaky asyncio event-loop bug with the
+      # newer pytest-asyncio that needs a dedicated fix. Promote to blocking
+      # once that's fixed.
+      - name: Integration + async tests (non-blocking)
+        run: pytest -m "not invariant" --cov=. --cov-report=xml -q || true
 
   frontend:
     name: Frontend — typecheck, build
