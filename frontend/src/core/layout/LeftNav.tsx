@@ -8,15 +8,15 @@
  * native `title` tooltip so labels are one hover away. The mobile slide-in
  * drawer (onClose present) is always full-width — collapse is desktop-only.
  */
-import { useEffect, useRef, useState } from "react"
-import { NavLink, useNavigate } from "react-router-dom"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
   LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
-  Plug, Users, X, Pencil, Check, CheckSquare, BookOpen,
+  Plug, X, Pencil, Check, CheckSquare, BookOpen,
   MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList, Search,
   PanelLeft, PanelLeftClose, Sparkles, ShieldCheck, Target, Rocket, ListChecks,
-  ScanSearch,
+  ScanSearch, ChevronDown,
   type LucideIcon,
 } from "lucide-react"
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
@@ -33,6 +33,7 @@ import { CMDK_EVENT } from "@/core/ui/CommandPalette"
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
 
 const COLLAPSE_KEY = "ndvx.nav.collapsed"
+const GROUPS_KEY = "ndvx.nav.groups"
 
 interface NavItem {
   label:     string
@@ -105,34 +106,47 @@ function prefetchData(qc: QueryClient, path: string): void {
   }
 }
 
-// Order (per spec):
-//   Dashboard → Tasks → Connections → Schedules → Flux → Intercompany
-//   → Reconciliations → Insights → Financial Package → Team
-// Rationale: connections sets up data sources, then the close mechanics
-// flow in the order they typically run during a month-end: schedules
-// (commit prepaid/accrual/etc balances), flux (variance analysis on
-// the synced TB), intercompany (eliminate IC), reconciliations (tie
-// out balance-sheet accounts), insights (analytical review), then
-// the financial package (output deliverable). Team is admin / settings-
-// adjacent and sits last.
-const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard",          path: "/app",                 icon: LayoutDashboard, available: true  },
-  { label: "Close Autopilot",    path: "/app/autopilot",       icon: Rocket,          available: true  },
-  { label: "Close Workflow",     path: "/app/close",           icon: ListChecks,      available: true  },
-  { label: "Close Tasks",        path: "/app/tasks",           icon: CheckSquare,     available: true  },
-  { label: "Connections",        path: "/app/connections",     icon: Plug,            available: true  },
-  { label: "Schedules",          path: "/app/schedules",       icon: ClipboardList,   available: true  },
-  { label: "Flux Analysis",      path: "/app/flux",            icon: BarChart3,       available: true  },
-  { label: "Intercompany",       path: "/app/intercompany",    icon: ArrowLeftRight,  available: true  },
-  { label: "Reconciliations",    path: "/app/reconciliations", icon: Scale,           available: true  },
-  { label: "Adjustments",        path: "/app/adjustments",     icon: Sparkles,        available: true  },
-  { label: "Risk Radar",         path: "/app/gl-accuracy",     icon: ScanSearch,      available: true  },
-  { label: "Close Review",       path: "/app/review",          icon: ShieldCheck,     available: true  },
-  { label: "Insights",           path: "/app/insights",        icon: Lightbulb,       available: true  },
-  { label: "Advisory",           path: "/app/advisory",        icon: Target,          available: true  },
-  { label: "Financial Statements", path: "/app/financials",     icon: BookOpen,        available: true  },
-  { label: "Team",               path: "/app/team",            icon: Users,           available: true  },
-  { label: "Workpapers",         path: "/app/workpapers",      icon: FileText,        available: true  },
+// Dashboard is pinned at the top on its own. Everything else is grouped by the
+// PHASE of the close, in the order a month-end runs:
+//   Close (orchestrate) → Reconcile (the tie-out work) → Review (quality) →
+//   Report (deliverables) → Workspace (setup). Settings / Help / Feedback are
+//   pinned at the very bottom; Team now lives under Settings, not the rail.
+const DASHBOARD_ITEM: NavItem = {
+  label: "Dashboard", path: "/app", icon: LayoutDashboard, available: true,
+}
+
+interface NavGroup {
+  id:    string
+  label: string
+  items: NavItem[]
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  { id: "close", label: "Close", items: [
+    { label: "Close Autopilot", path: "/app/autopilot", icon: Rocket,      available: true },
+    { label: "Close Workflow",  path: "/app/close",     icon: ListChecks,  available: true },
+    { label: "Close Tasks",     path: "/app/tasks",     icon: CheckSquare, available: true },
+  ]},
+  { id: "reconcile", label: "Reconcile", items: [
+    { label: "Schedules",       path: "/app/schedules",       icon: ClipboardList,  available: true },
+    { label: "Reconciliations", path: "/app/reconciliations", icon: Scale,          available: true },
+    { label: "Flux Analysis",   path: "/app/flux",            icon: BarChart3,      available: true },
+    { label: "Intercompany",    path: "/app/intercompany",    icon: ArrowLeftRight, available: true },
+    { label: "Adjustments",     path: "/app/adjustments",     icon: Sparkles,       available: true },
+  ]},
+  { id: "review", label: "Review", items: [
+    { label: "Risk Radar",   path: "/app/gl-accuracy", icon: ScanSearch,  available: true },
+    { label: "Close Review", path: "/app/review",      icon: ShieldCheck, available: true },
+    { label: "Workpapers",   path: "/app/workpapers",  icon: FileText,    available: true },
+  ]},
+  { id: "report", label: "Report", items: [
+    { label: "Financial Statements", path: "/app/financials", icon: BookOpen,  available: true },
+    { label: "Insights",             path: "/app/insights",   icon: Lightbulb, available: true },
+    { label: "Advisory",             path: "/app/advisory",   icon: Target,    available: true },
+  ]},
+  { id: "workspace", label: "Workspace", items: [
+    { label: "Connections", path: "/app/connections", icon: Plug, available: true },
+  ]},
 ]
 
 interface Props {
@@ -143,6 +157,7 @@ export function LeftNav({ onClose }: Props) {
   const { organization } = useOrganization()
   const { user } = useUser()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const qc = useQueryClient()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
 
@@ -193,6 +208,22 @@ export function LeftNav({ onClose }: Props) {
     })
   }
 
+  // Per-group collapse (the phase sections) — persisted as a set of collapsed
+  // group ids. The group holding the active route always renders open regardless,
+  // so the current page is never hidden behind a collapsed header.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set()
+    try { return new Set(JSON.parse(localStorage.getItem(GROUPS_KEY) || "[]")) } catch { return new Set() }
+  })
+  function toggleGroup(id: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      try { localStorage.setItem(GROUPS_KEY, JSON.stringify([...next])) } catch { /* private mode */ }
+      return next
+    })
+  }
+
   // Open-tasks count for the Tasks nav badge. Lightweight call — server
   // returns just the numbers, not the full list. 30-second staleness +
   // refetch-on-navigation keeps the badge current without re-firing on
@@ -208,6 +239,123 @@ export function LeftNav({ onClose }: Props) {
     reviewer: { label: "Reviewer", bg: "#e9eef3",                  fg: "#3c5a76" },
     preparer: { label: "Preparer", bg: "var(--surface-2)",         fg: "var(--text-muted)" },
   } as const)[me.role as "admin" | "reviewer" | "preparer"] : null
+
+  // Which phase-group holds the current route — its header lights up so you always
+  // know where you are. (Dashboard + utilities sit outside the groups.)
+  const activeGroupId = useMemo(() => {
+    for (const g of NAV_GROUPS) {
+      if (g.items.some((it) => pathname === it.path || pathname.startsWith(it.path + "/"))) return g.id
+    }
+    return null
+  }, [pathname])
+
+  // One nav row — shared by the pinned Dashboard, the grouped items, and the
+  // icon-only rail. Carries the coming-soon state, hover-prefetch, active styling,
+  // and the Tasks count badge.
+  const renderItem = (item: NavItem) => {
+    const Icon = item.icon
+
+    if (!item.available) {
+      if (isCollapsed) {
+        return (
+          <div
+            key={item.path}
+            className="flex items-center justify-center h-10 rounded-md opacity-35 cursor-not-allowed"
+            style={{ color: "var(--nav-text)" }}
+            title={`${item.label} (coming soon)`}
+          >
+            <Icon size={23} strokeWidth={1.6} />
+          </div>
+        )
+      }
+      return (
+        <div
+          key={item.path}
+          className="flex items-center justify-between rounded-md px-3 py-2 text-sm cursor-not-allowed opacity-35"
+          style={{ color: "var(--nav-text)" }}
+        >
+          <span className="flex items-center gap-2.5">
+            <Icon size={24} strokeWidth={1.6} className="shrink-0" />
+            {item.label}
+          </span>
+          <Badge variant="soon">soon</Badge>
+        </div>
+      )
+    }
+
+    return (
+      <NavLink
+        key={item.path}
+        to={item.path}
+        end={item.path === "/app"}
+        onClick={() => onClose?.()}
+        // Prefetch the destination's lazy chunk on hover/focus so the
+        // click renders immediately instead of waiting for JS.
+        onMouseEnter={() => { prefetchRoute(item.path); prefetchData(qc, item.path) }}
+        onFocus={() => { prefetchRoute(item.path); prefetchData(qc, item.path) }}
+        title={isCollapsed ? item.label : undefined}
+        className={({ isActive }) =>
+          cn("flex items-center rounded-md text-sm transition-colors duration-150",
+            isCollapsed ? "relative justify-center h-10" : "gap-2.5 px-3 py-2",
+            // Hover = simple row highlight only — no slide / motion.
+            "hover:bg-[var(--nav-hover)]",
+            isActive ? "font-medium" : "")
+        }
+        style={({ isActive }) => isActive
+          ? { background: "var(--nav-active)", color: "var(--nav-text-act)" }
+          : { color: "var(--nav-text)" }
+        }
+      >
+        {({ isActive }) => {
+          // Tasks nav item gets a count badge when there's open work.
+          const isTasksItem = item.path === "/app/tasks"
+          const taskBadge = isTasksItem && tasksCount
+            ? (tasksCount.critical > 0
+                ? { count: tasksCount.open, bg: "#f4e9e7", fg: "#9b3d37" }
+                : tasksCount.open > 0
+                  ? { count: tasksCount.open, bg: "var(--green-subtle)", fg: "var(--green)" }
+                  : null)
+            : null
+
+          if (isCollapsed) {
+            return (
+              <>
+                <Icon size={23} strokeWidth={1.8}
+                  style={{ color: isActive ? "var(--nav-text-act)" : "var(--nav-text)" }} />
+                {taskBadge && (
+                  <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center min-w-[15px] h-[15px] rounded-full px-1 text-[9px] font-bold tabular-nums"
+                    style={{ background: taskBadge.bg, color: taskBadge.fg }}
+                    title={`${tasksCount?.open ?? 0} open tasks`}>
+                    {taskBadge.count > 9 ? "9+" : taskBadge.count}
+                  </span>
+                )}
+              </>
+            )
+          }
+          return (
+            <>
+              <Icon size={24} strokeWidth={1.6} className="shrink-0"
+                style={{ color: isActive ? "var(--nav-text-act)" : "var(--nav-text)" }} />
+              <span className="truncate flex-1">{item.label}</span>
+              {taskBadge && (
+                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold tabular-nums shrink-0"
+                  style={{ background: taskBadge.bg, color: taskBadge.fg }}
+                  title={tasksCount?.critical
+                    ? `${tasksCount.critical} critical of ${tasksCount.open} open tasks`
+                    : `${tasksCount?.open ?? 0} open tasks`}>
+                  {taskBadge.count > 99 ? "99+" : taskBadge.count}
+                </span>
+              )}
+              {isActive && !taskBadge && (
+                <span className="ml-auto h-1.5 w-1.5 rounded-full shrink-0"
+                  style={{ background: "var(--nav-text-act)" }} />
+              )}
+            </>
+          )
+        }}
+      </NavLink>
+    )
+  }
 
   return (
     <>
@@ -336,108 +484,42 @@ export function LeftNav({ onClose }: Props) {
       )}
 
       <nav className="shrink-0 px-2 py-3 space-y-0.5">
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon
+        {/* Dashboard — pinned above the phase groups. */}
+        {renderItem(DASHBOARD_ITEM)}
 
-          if (!item.available) {
-            if (isCollapsed) {
-              return (
-                <div
-                  key={item.path}
-                  className="flex items-center justify-center h-10 rounded-md opacity-35 cursor-not-allowed"
-                  style={{ color: "var(--nav-text)" }}
-                  title={`${item.label} (coming soon)`}
-                >
-                  <Icon size={23} strokeWidth={1.6} />
-                </div>
-              )
-            }
+        {NAV_GROUPS.map((group) => {
+          // Icon-only rail: no headers — a thin divider separates each phase and
+          // every item shows as an icon (hover-peek reveals the labelled groups).
+          if (isCollapsed) {
             return (
-              <div
-                key={item.path}
-                className="flex items-center justify-between rounded-md px-3 py-2 text-sm cursor-not-allowed opacity-35"
-                style={{ color: "var(--nav-text)" }}
-              >
-                <span className="flex items-center gap-2.5">
-                  <Icon size={24} strokeWidth={1.6} className="shrink-0" />
-                  {item.label}
-                </span>
-                <Badge variant="soon">soon</Badge>
+              <div key={group.id} className="space-y-0.5">
+                <div className="mx-2 my-1.5" aria-hidden
+                  style={{ borderTop: "1px solid var(--nav-border)" }} />
+                {group.items.map(renderItem)}
               </div>
             )
           }
-
+          // Full rail: collapsible section header + items. The active group always
+          // renders open so the current page is never hidden behind a collapsed head.
+          const open = !collapsedGroups.has(group.id) || activeGroupId === group.id
+          const activeGroup = activeGroupId === group.id
           return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === "/app"}
-              onClick={() => onClose?.()}
-              // Prefetch the destination's lazy chunk on hover/focus so the
-              // click renders immediately instead of waiting for JS.
-              onMouseEnter={() => { prefetchRoute(item.path); prefetchData(qc, item.path) }}
-              onFocus={() => { prefetchRoute(item.path); prefetchData(qc, item.path) }}
-              title={isCollapsed ? item.label : undefined}
-              className={({ isActive }) =>
-                cn("flex items-center rounded-md text-sm transition-colors duration-150",
-                  isCollapsed ? "relative justify-center h-10" : "gap-2.5 px-3 py-2",
-                  // Hover = simple row highlight only — no slide / motion.
-                  "hover:bg-[var(--nav-hover)]",
-                  isActive ? "font-medium" : "")
-              }
-              style={({ isActive }) => isActive
-                ? { background: "var(--nav-active)", color: "var(--nav-text-act)" }
-                : { color: "var(--nav-text)" }
-              }
-            >
-              {({ isActive }) => {
-                // Tasks nav item gets a count badge when there's open work.
-                const isTasksItem = item.path === "/app/tasks"
-                const taskBadge = isTasksItem && tasksCount
-                  ? (tasksCount.critical > 0
-                      ? { count: tasksCount.open, bg: "#f4e9e7", fg: "#9b3d37" }
-                      : tasksCount.open > 0
-                        ? { count: tasksCount.open, bg: "var(--green-subtle)", fg: "var(--green)" }
-                        : null)
-                  : null
-
-                if (isCollapsed) {
-                  return (
-                    <>
-                      <Icon size={23} strokeWidth={1.8}
-                        style={{ color: isActive ? "var(--nav-text-act)" : "var(--nav-text)" }} />
-                      {taskBadge && (
-                        <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center min-w-[15px] h-[15px] rounded-full px-1 text-[9px] font-bold tabular-nums"
-                          style={{ background: taskBadge.bg, color: taskBadge.fg }}
-                          title={`${tasksCount?.open ?? 0} open tasks`}>
-                          {taskBadge.count > 9 ? "9+" : taskBadge.count}
-                        </span>
-                      )}
-                    </>
-                  )
-                }
-                return (
-                  <>
-                    <Icon size={24} strokeWidth={1.6} className="shrink-0"
-                      style={{ color: isActive ? "var(--nav-text-act)" : "var(--nav-text)" }} />
-                    <span className="truncate flex-1">{item.label}</span>
-                    {taskBadge && (
-                      <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold tabular-nums shrink-0"
-                        style={{ background: taskBadge.bg, color: taskBadge.fg }}
-                        title={tasksCount?.critical
-                          ? `${tasksCount.critical} critical of ${tasksCount.open} open tasks`
-                          : `${tasksCount?.open ?? 0} open tasks`}>
-                        {taskBadge.count > 99 ? "99+" : taskBadge.count}
-                      </span>
-                    )}
-                    {isActive && !taskBadge && (
-                      <span className="ml-auto h-1.5 w-1.5 rounded-full shrink-0"
-                        style={{ background: "var(--nav-text-act)" }} />
-                    )}
-                  </>
-                )
-              }}
-            </NavLink>
+            <div key={group.id} className="pt-1">
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.id)}
+                aria-expanded={open}
+                title={open ? `Collapse ${group.label}` : `Expand ${group.label}`}
+                className="w-full flex items-center justify-between rounded-md px-3 pt-2.5 pb-1 text-[11px] font-medium tracking-wide transition-opacity"
+                style={{ color: "var(--nav-text-act)", opacity: activeGroup ? 0.9 : 0.5 }}
+              >
+                <span>{group.label}</span>
+                <ChevronDown size={13} strokeWidth={2}
+                  className="shrink-0 transition-transform duration-150"
+                  style={{ transform: open ? "none" : "rotate(-90deg)", opacity: 0.7 }} />
+              </button>
+              {open && <div className="space-y-0.5">{group.items.map(renderItem)}</div>}
+            </div>
           )
         })}
       </nav>
