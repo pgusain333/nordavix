@@ -133,9 +133,6 @@ def render_welcome_email(*, name: str | None, cta_url: str) -> tuple[str, str, s
 
         <!-- footer -->
         <tr><td align="center" style="padding:16px 34px 30px;">
-          <p style="margin:0 0 5px;font-family:{_FONT};font-size:12px;line-height:1.55;color:{_MUTED};">
-            Questions? Just reply to this email — a real person reads it.
-          </p>
           <p style="margin:0;font-family:{_FONT};font-size:11px;line-height:1.5;color:#c4c4c8;">
             Nordavix &middot; AI-native month-end close
           </p>
@@ -156,7 +153,6 @@ def render_welcome_email(*, name: str | None, cta_url: str) -> tuple[str, str, s
         "  2. Set your books start date — Nordavix rolls opening balances forward.\n"
         "  3. Reconcile & explain — AI drafts the workpapers; you review and approve.\n\n"
         f"Open your dashboard: {cta_url}\n\n"
-        "Questions? Just reply to this email — a real person reads it.\n"
         "Nordavix · AI-native month-end close"
     )
 

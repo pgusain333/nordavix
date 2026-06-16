@@ -71,6 +71,20 @@ def render_notification_email(
     origin = f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
     settings_url = escape((origin + "/app/settings") if origin else cta_url, quote=True)
 
+    # Brand mark: the real logo image (served from the frontend origin, same as
+    # the welcome / re-engagement emails) with the text wordmark as a fallback
+    # if we can't derive an origin. Versioned query defeats stale CDN/proxy caches.
+    logo_url = escape((origin + "/email-logo.png?v=2") if origin else "", quote=True)
+    wordmark = (
+        f'<span class="nv-ink" style="color:{_INK};">nordavix</span>'
+        f'<span style="color:{_GREEN};">.</span>'
+    )
+    brand = (
+        f'<img src="{logo_url}" width="156" height="44" alt="Nordavix" '
+        f'style="display:block;border:0;outline:none;text-decoration:none;width:156px;height:44px;">'
+        if logo_url else wordmark
+    )
+
     # Inbox-preview text, then zero-width spacers so the client doesn't pull the
     # body/quoted-text into the preview line.
     preheader = escape((body or title).strip()[:140])
@@ -120,7 +134,7 @@ def render_notification_email(
         <tr><td class="nv-pad" style="padding:26px 34px 0;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
             <td align="left" style="font-family:{_FONT};font-size:20px;font-weight:700;letter-spacing:-0.02em;">
-              <span class="nv-ink" style="color:{_INK};">nordavix</span><span style="color:{_GREEN};">.</span>
+              {brand}
             </td>
             <td align="right">{badge}</td>
           </tr></table>

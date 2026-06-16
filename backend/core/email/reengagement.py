@@ -235,9 +235,6 @@ def render_reengagement_email(
 
         <!-- footer -->
         <tr><td align="center" style="padding:16px 34px 30px;">
-          <p style="margin:0 0 8px;font-family:{_FONT};font-size:12px;line-height:1.55;color:{_MUTED};">
-            Questions? Just reply to this email — a real person reads every one.
-          </p>
           <p style="margin:0 0 5px;font-family:{_FONT};font-size:11px;line-height:1.5;color:{_MUTED};">
             You're receiving this because you signed up for Nordavix.
             <a href="{safe_unsub}" style="color:{_MUTED};text-decoration:underline;">Unsubscribe</a>
@@ -260,7 +257,6 @@ def render_reengagement_email(
         "",
         f"{cta_label}: {cta_url}",
         "",
-        "Questions? Just reply to this email — a real person reads every one.",
         f"Unsubscribe: {unsubscribe_url}",
         _POSTAL_ADDRESS,
     ]
