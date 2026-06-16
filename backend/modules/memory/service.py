@@ -1052,6 +1052,64 @@ async def account_memory_context(
     return notes
 
 
+async def account_ai_guidance(
+    db: AsyncSession, *,
+    qbo_account_id: str | None,
+    account_number: str | None = None,
+    offset_source: str | None = None,
+) -> str | None:
+    """The 'Confirmed firm guidance' block injected into the flux + recon AI prompts
+    so the model's analysis reflects what the firm has CONFIRMED about this account —
+    recurring expectations, vendor/schedule conventions, recurring reconciling items,
+    and (for adjusting entries) the preferred offset account.
+
+    Confirm-first: only `active` facts. Best-effort — returns None on any failure so a
+    memory lookup can never break an AI run. Framed as guidance to WEIGH, never an
+    instruction to obey, so memory can never silence a genuine exception.
+
+    `offset_source` ('flux'|'recon') selects the offset fact's source for the stronger,
+    action-oriented offset directive; pass None to omit it (the passive offset note
+    still appears via account_memory_context when present).
+    """
+    try:
+        lines: list[str] = []
+        offset_label: str | None = None
+        if offset_source and (qbo_account_id or "").strip():
+            fact = await active_offset_fact(db, source=offset_source, source_ref=qbo_account_id)
+            if fact:
+                v = fact.value or {}
+                num = (v.get("to_account_number") or "").strip()
+                nm = (v.get("to_account_name") or "").strip()
+                offset_label = f"{num} · {nm}".strip(" ·") if num else nm
+        notes = await account_memory_context(
+            db, qbo_account_id=qbo_account_id, account_number=account_number,
+        )
+        for n in notes:
+            # The offset gets a stronger, action-oriented directive below when an
+            # offset_source is supplied — don't also list its passive note then.
+            if offset_source and n.get("kind") == "offset_account":
+                continue
+            txt = (n.get("text") or "").strip()
+            if txt:
+                lines.append(f"- {txt}")
+        directive = ""
+        if offset_label:
+            directive = (
+                f"\n- When an adjusting entry is warranted, book the offset to {offset_label} "
+                f"(use it for the offset line unless the evidence clearly points elsewhere)."
+            )
+        if not lines and not directive:
+            return None
+        return (
+            "Confirmed firm guidance for this account (reviewer-approved — weigh it, "
+            "but still flag any genuine exception):\n"
+            + "\n".join(lines) + directive
+        )
+    except Exception:  # pragma: no cover - defensive; AI run proceeds without memory
+        logger.exception("account_ai_guidance lookup failed (qbo=%s)", qbo_account_id)
+        return None
+
+
 # ── Recurring reconciling items (Slice C — learn period-over-period recon items) ─
 #
 # When an accountant marks a reconciling item as RECURRING, capture it confirm-

@@ -846,24 +846,16 @@ async def build_variance_commentary(
     except Exception:
         logger.exception("Loading chart for proposed entries failed (acct=%s)", qid)
 
-    # Client Memory (apply step): if the firm has CONFIRMED an offset convention
-    # for this account, tell the model to honour it. Confirm-first — only active
-    # facts reach here; suggested/dismissed ones never influence output.
+    # Client Memory (apply step): inject CONFIRMED conventions for this account —
+    # preferred offset for adjusting entries PLUS recurring expectations / vendor /
+    # recurring-item notes — so the AI reflects what the firm has taught. Confirm-
+    # first — only active facts reach here. Best-effort (never breaks the run).
     memory_hint = None
     try:
-        from modules.memory.service import active_offset_fact
-        fact = await active_offset_fact(db, source="recon", source_ref=qid)
-        if fact:
-            v = fact.value or {}
-            num = v.get("to_account_number") or ""
-            nm = v.get("to_account_name") or ""
-            label = f"{num} · {nm}".strip(" ·") if num else nm
-            if label:
-                memory_hint = (
-                    f"Firm convention for this account (confirmed by the reviewer): when an "
-                    f"adjusting entry is warranted, book the offset to {label}. Use that account "
-                    f"for the offset line unless the evidence clearly points elsewhere."
-                )
+        from modules.memory.service import account_ai_guidance
+        memory_hint = await account_ai_guidance(
+            db, qbo_account_id=qid, account_number=account_number, offset_source="recon",
+        )
     except Exception:
         logger.exception("memory hint lookup failed (acct=%s)", qid)
 
@@ -1172,11 +1164,24 @@ async def build_ai_commentary(
     except Exception:
         logger.exception("Loading chart for proposed entries failed (acct=%s)", qid)
 
+    # Client Memory (apply step): same confirmed firm guidance the untied path uses,
+    # so even a clean tie-out's narrative + flags reflect what the firm has taught
+    # about this account. Confirm-first; best-effort.
+    memory_hint = None
+    try:
+        from modules.memory.service import account_ai_guidance
+        memory_hint = await account_ai_guidance(
+            db, qbo_account_id=qid, account_number=account_number, offset_source="recon",
+        )
+    except Exception:
+        logger.exception("memory hint lookup failed (acct=%s)", qid)
+
     actions = _generate_recon_actions(
         account_name=account_name, account_number=account_number,
         account_type=account_type, period_end=period_end,
         opening=opening, gl_balance=gl_balance, target=computed,
         items=items, tied_out=True, accounts=accounts,
+        memory_hint=memory_hint,
     )
     await _persist_recon_proposals(
         db, tenant_id=conn.tenant_id, qid=qid, period_end=period_end,
@@ -1227,6 +1232,7 @@ def _generate_recon_actions(
     This is the "if a transaction in the ledger seems not related or there
     is any doubt, tell me what to do" layer. Falls back to empty lists on
     any failure so it never blocks the rest of the commentary."""
+    import hashlib as _hashlib
     import json as _json
 
     empty = {"headline": "", "recommendations": [], "item_flags": [], "proposed_entries": []}
@@ -1312,12 +1318,13 @@ def _generate_recon_actions(
             + (f"{memory_hint}\n\n" if memory_hint else "")
             + "Review and return the JSON."
         )
+        mem_tag = _hashlib.sha256(memory_hint.encode()).hexdigest()[:10] if memory_hint else ""
         key = compute_cache_key(
             account_number or account_name, str(gl_balance), str(target),
-            # v3 = prompt may now carry a confirmed Client Memory hint; the
-            # 'mem' suffix keeps a memory-influenced run from serving (or
-            # poisoning) the memoryless cached answer. v2 added proposed_entries.
-            f"recon-actions-v3-{period_end.isoformat()}-{len(items)}-{'mem' if memory_hint else ''}",
+            # v3 added proposed_entries. The mem_tag keys the cache to the exact
+            # confirmed guidance carried in the prompt, so changing what the firm
+            # taught never serves a stale (memoryless or differently-taught) answer.
+            f"recon-actions-v3-{period_end.isoformat()}-{len(items)}-{mem_tag}",
         )
         resp = generate_narrative(system_prompt, user_prompt, key, max_tokens=1100)
         raw = resp.content.strip()
