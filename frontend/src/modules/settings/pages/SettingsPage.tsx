@@ -1553,15 +1553,21 @@ function Toggle({
       </div>
       <button
         type="button"
+        role="switch"
+        aria-checked={value}
         onClick={(e) => { e.preventDefault(); onChange(!value) }}
         className="relative h-5 w-9 rounded-full transition-colors shrink-0 mt-0.5"
         style={{
           background: value ? "var(--green)" : "var(--border-strong)",
         }}
       >
+        {/* Thumb anchored with an explicit left+top inset so its travel is
+            self-contained: x 0 → 16 keeps it 2px inside the 36px track at both
+            ends. (Relying on `absolute` auto-left let the knob overflow the
+            right edge.) 2px inset + 16px thumb + 16px travel + 2px = 36px. */}
         <motion.span
-          className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow"
-          animate={{ x: value ? 18 : 2 }}
+          className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm"
+          animate={{ x: value ? 16 : 0 }}
           transition={{ type: "spring", stiffness: 500, damping: 30 }}
         />
       </button>
