@@ -78,6 +78,8 @@ _INVARIANT_FILES = {
     "test_cash_flow_tieout.py",   # CFS ↔ BS cash tie-out
     "test_gl_accuracy_engine.py", # misclassification detector (no false positives)
     "test_memory_context.py",     # memory note matcher (no cross-account bleed)
+    "test_recon_tieout.py",       # recon tie-out gate (RECON_TOLERANCE + is_reconciled)
+    "test_schedule_rollforward.py", # loan/lease inception-month interest accrual
 }
 
 
