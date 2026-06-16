@@ -632,6 +632,14 @@ async def _build_statement(
     # comparative_label was computed once above and is shared by both sources.
     merged = _merge_periods(cur_rows, prior_rows)
     closed = await _is_period_closed(db, pe)
+    # Statement-integrity cross-check against the period's GL snapshot — same as
+    # the nordavix path. statement_validation returns trivially-balanced when no
+    # snapshot exists, so this is a no-op for unsynced periods; but a synced or
+    # closed period whose snapshot is out of balance now reports it, which drives
+    # the DRAFT watermark. Previously the QBO path left validation=None and the
+    # watermark treated None as "balanced" — a broken statement could ship clean.
+    from modules.financials.internal import statement_validation
+    _val = await statement_validation(db, tenant_id, pe)
     return StatementOut(
         statement=statement_kind,
         title=title,
@@ -645,6 +653,7 @@ async def _build_statement(
         is_closed=closed is not None,
         closed_at=closed.closed_at.isoformat() if closed and closed.closed_at else None,
         notes=notes,
+        validation=_val,
     )
 
 

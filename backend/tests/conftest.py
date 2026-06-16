@@ -1,4 +1,3 @@
-import asyncio
 import os
 import uuid
 from collections.abc import AsyncGenerator
@@ -17,14 +16,13 @@ TEST_DATABASE_URL = os.environ.get(
 )
 
 
-@pytest.fixture(scope="session")
-def event_loop() -> asyncio.AbstractEventLoop:
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest_asyncio.fixture(scope="session")
+# NOTE: no custom `event_loop` fixture. pytest-asyncio >= 0.23 with
+# `asyncio_mode = "auto"` manages the loop itself; a hand-rolled session-scoped
+# event_loop is deprecated and was the source of the intermittent
+# "ScopeMismatch / Future attached to a different loop" flake in the async
+# (tenant-isolation) suite. Keeping every async fixture function-scoped means
+# they all share that auto-managed per-test loop — no scope mismatch.
+@pytest_asyncio.fixture
 async def test_engine():
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     async with engine.begin() as conn:

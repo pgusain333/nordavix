@@ -526,7 +526,14 @@ def roll_leases(items: Iterable[ScheduleLease], period_end: date) -> SnapshotMat
         if _is_active_in_period(it.lease_start, it.lease_end, p_start, p_end):
             payments += Decimal(it.monthly_payment)
             monthly_rate = Decimal(it.discount_rate_pct) / Decimal("100") / Decimal("12")
-            interest += beg * monthly_rate
+            # When the lease commences this period (beg == 0), accrue interest on
+            # the newly-recognized liability so the inception month still books a
+            # month of interest instead of $0 — mirrors the roll_loans fix below.
+            booked_this_period = (
+                Decimal(it.initial_liability) if (p_start <= it.lease_start <= p_end) else ZERO
+            )
+            base = beg if beg > ZERO else booked_this_period
+            interest += base * monthly_rate
             item_count += 1
     return SnapshotMath(
         beginning_balance=beginning,
