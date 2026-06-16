@@ -23,8 +23,10 @@ import * as intercompanyConsolidationQbo    from "@/marketing/blog/posts/interco
 import * as aiAccounting2026                from "@/marketing/blog/posts/ai-in-accounting-2026"
 import * as prepaidAmortizationSchedule     from "@/marketing/blog/posts/prepaid-expense-amortization-schedule"
 import * as makerCheckerControls            from "@/marketing/blog/posts/maker-checker-accounting-controls"
+import * as compoundingMemory              from "@/marketing/blog/posts/compounding-memory"
 
 const RAW_POSTS: BlogPostModule[] = [
+  compoundingMemory               as BlogPostModule,
   catchGlCodingErrors             as BlogPostModule,
   prepaidAmortizationSchedule     as BlogPostModule,
   makerCheckerControls            as BlogPostModule,
