@@ -235,8 +235,8 @@ export function LeftNav({ onClose }: Props) {
     enabled:  !!organization,
   })
   const roleMeta = me ? ({
-    admin:    { label: "Admin",    bg: "rgba(199, 154, 82, 0.15)", fg: "#c79a52" },
-    reviewer: { label: "Reviewer", bg: "#e9eef3",                  fg: "#3c5a76" },
+    admin:    { label: "Admin",    bg: "var(--warn-subtle)", fg: "var(--warn)" },
+    reviewer: { label: "Reviewer", bg: "var(--info-subtle)", fg: "var(--info)" },
     preparer: { label: "Preparer", bg: "var(--surface-2)",         fg: "var(--text-muted)" },
   } as const)[me.role as "admin" | "reviewer" | "preparer"] : null
 

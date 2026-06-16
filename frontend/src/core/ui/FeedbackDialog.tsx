@@ -54,15 +54,15 @@ interface CategoryMeta {
 }
 
 const CATEGORIES: CategoryMeta[] = [
-  { key: "bug",         label: "Bug",         icon: Bug,         fg: "#9b3d37", bg: "rgba(155, 61, 55, 0.10)",
+  { key: "bug",         label: "Bug",         icon: Bug,         fg: "var(--danger)",     bg: "var(--danger-subtle)",
     helper: "Something's broken — describe what you did, what you expected, what happened." },
-  { key: "feature",     label: "Feature",     icon: Lightbulb,   fg: "#3c5a76", bg: "rgba(60, 90, 118, 0.10)",
+  { key: "feature",     label: "Feature",     icon: Lightbulb,   fg: "var(--info)",       bg: "var(--info-subtle)",
     helper: "An idea for something new — what problem would it solve?" },
-  { key: "improvement", label: "Improvement", icon: Sparkles,    fg: "#8a6326", bg: "rgba(180, 83, 9, 0.10)",
+  { key: "improvement", label: "Improvement", icon: Sparkles,    fg: "var(--warn)",       bg: "var(--warn-subtle)",
     helper: "A tweak to something that already works — what would make it better?" },
-  { key: "praise",      label: "Praise",      icon: Heart,       fg: "#2E7A55", bg: "rgba(46, 122, 85, 0.12)",
+  { key: "praise",      label: "Praise",      icon: Heart,       fg: "var(--positive)",   bg: "var(--positive-subtle)",
     helper: "What's working well? We genuinely read these." },
-  { key: "other",       label: "Other",       icon: HelpCircle,  fg: "#6b7280", bg: "rgba(107, 114, 128, 0.10)",
+  { key: "other",       label: "Other",       icon: HelpCircle,  fg: "var(--text-muted)", bg: "var(--surface-2)",
     helper: "Anything else on your mind." },
 ]
 

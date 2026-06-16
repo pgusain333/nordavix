@@ -293,8 +293,8 @@ export function FluxMonthIndex() {
             <div className="flex items-center gap-2 text-[11px] flex-wrap" style={{ color: "var(--text-muted)" }}>
               <Chip label={`${totals.months} month${totals.months === 1 ? "" : "s"}`} />
               <Chip label={`${totals.withFlux} with flux`} fg="var(--green)" bg="var(--green-subtle)" />
-              {totals.inflight > 0 && <Chip label={`${totals.inflight} running`} fg="#7a5622" bg="#f4eddf" />}
-              {totals.error > 0 && <Chip label={`${totals.error} error`} fg="#9b3d37" bg="#f7eeec" />}
+              {totals.inflight > 0 && <Chip label={`${totals.inflight} running`} fg="var(--warn)" bg="var(--warn-subtle)" />}
+              {totals.error > 0 && <Chip label={`${totals.error} error`} fg="var(--danger)" bg="var(--danger-subtle)" />}
               <Chip label={`${totals.totalTbs} total`} />
             </div>
           </div>

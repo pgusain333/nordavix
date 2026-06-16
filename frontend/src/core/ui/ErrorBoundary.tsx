@@ -43,13 +43,13 @@ export class ErrorBoundary extends Component<Props, { error: unknown }> {
     if (this.props.fallback !== undefined) return this.props.fallback
     return (
       <div className="rounded-lg p-4 text-sm"
-        style={{ background: "#f7eeec", border: "1px solid #ecd7d3", color: "#86332e" }}>
+        style={{ background: "var(--danger-subtle)", border: "1px solid var(--danger-border)", color: "var(--danger)" }}>
         <p className="font-semibold">
           Something on this panel hit an error{this.props.label ? ` (${this.props.label})` : ""}.
         </p>
         <p className="mt-1 text-[13px]">The rest of your work is safe — reload the page to retry.</p>
         <p className="mt-2 font-mono text-[11px] leading-relaxed rounded px-2 py-1.5"
-          style={{ background: "#fff", border: "1px solid #ecd7d3", color: "#7a2f2a", wordBreak: "break-word" }}>
+          style={{ background: "var(--surface)", border: "1px solid var(--danger-border)", color: "var(--danger)", wordBreak: "break-word" }}>
           {errMsg(this.state.error)}
         </p>
       </div>

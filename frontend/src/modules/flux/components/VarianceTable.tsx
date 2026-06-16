@@ -761,8 +761,8 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   // Open (red) / Prepared (blue) / Approved (green) / All (neutral).
   // Same labels, same colors, same chrome.
   const FILTER_BUCKETS = [
-    { key: "open",     label: "Open",     fg: "#9b3d37",      bg: "#f7eeec",        count: bucketCounts.open },
-    { key: "prepared", label: "Prepared", fg: "#3c5a76",      bg: "#e9eef3",        count: bucketCounts.prepared },
+    { key: "open",     label: "Open",     fg: "var(--danger)", bg: "var(--danger-subtle)", count: bucketCounts.open },
+    { key: "prepared", label: "Prepared", fg: "var(--info)",   bg: "var(--info-subtle)",   count: bucketCounts.prepared },
     { key: "approved", label: "Approved", fg: "var(--green)", bg: "var(--green-subtle)", count: bucketCounts.approved },
     { key: "all",      label: "All",      fg: "var(--text)",  bg: "var(--surface)", count: bucketCounts.all },
   ] as const
