@@ -323,41 +323,21 @@ async def fetch_qbo_trial_balance(
 
 
 async def _get_valid_token(conn: QboConnection, db: AsyncSession) -> str:
-    """Return a valid access token, refreshing if close to expiry."""
-    now = datetime.now(UTC)
-    if conn.token_expires_at and conn.token_expires_at > now + timedelta(minutes=5):
+    """Return a valid access token, refreshing if close to expiry. Delegates to
+    the shared, per-realm-serialized refresh (avoids the concurrent-refresh race
+    that rotates Intuit's refresh token out from under a parallel sync) and adds
+    the request timeout the inline version was missing."""
+    from core.qbo_auth import refresh_access_token, token_is_fresh
+    if token_is_fresh(conn):
         return conn.access_token
-
     if not settings.qbo_enabled:
         raise HTTPException(status_code=503, detail="QBO not configured.")
-
-    credentials = base64.b64encode(
-        f"{settings.qbo_client_id}:{settings.qbo_client_secret}".encode()
-    ).decode()
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            _TOKEN_URL,
-            headers={
-                "Authorization": f"Basic {credentials}",
-                "Content-Type":  "application/x-www-form-urlencoded",
-            },
-            data={
-                "grant_type":    "refresh_token",
-                "refresh_token": conn.refresh_token,
-            },
-        )
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Failed to refresh QBO token. Please reconnect.")
-
-    data = resp.json()
-    conn.access_token     = data["access_token"]
-    conn.refresh_token    = data.get("refresh_token", conn.refresh_token)
-    conn.token_expires_at = now + timedelta(seconds=int(data.get("expires_in", 3600)))
-    await db.commit()
-
-    return conn.access_token
+    try:
+        return await refresh_access_token(conn, db)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=401, detail="Failed to refresh QBO token. Please reconnect."
+        ) from exc
 
 
 async def revoke_qbo_token(conn: QboConnection) -> bool:

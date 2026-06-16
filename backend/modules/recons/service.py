@@ -20,11 +20,10 @@ key on the inputs — same data, same AI output, no extra spend.
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import logging
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -47,36 +46,13 @@ logger = logging.getLogger(__name__)
 
 # ── QBO helpers ────────────────────────────────────────────────────────────────
 
-_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
-
-
 async def _refresh_token_if_needed(conn: QboConnection, db: AsyncSession) -> str:
-    """Refresh the access token if it's within 5 minutes of expiry."""
-    now = datetime.now(UTC)
-    if conn.token_expires_at and conn.token_expires_at > now + timedelta(minutes=5):
-        return conn.access_token
-
-    credentials = base64.b64encode(
-        f"{settings.qbo_client_id}:{settings.qbo_client_secret}".encode()
-    ).decode()
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        resp = await client.post(
-            _TOKEN_URL,
-            headers={
-                "Authorization": f"Basic {credentials}",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-            data={"grant_type": "refresh_token", "refresh_token": conn.refresh_token},
-        )
-    if resp.status_code != 200:
-        raise RuntimeError(f"QBO token refresh failed ({resp.status_code}): {resp.text[:300]}")
-    data = resp.json()
-    conn.access_token = data["access_token"]
-    conn.refresh_token = data.get("refresh_token", conn.refresh_token)
-    conn.token_expires_at = now + timedelta(seconds=int(data.get("expires_in", 3600)))
-    await db.commit()
-    return conn.access_token
+    """Refresh the access token if it's within 5 minutes of expiry. Delegates to
+    the shared, per-realm-serialized refresh so concurrent syncs (the 4-way
+    evidence pulls, or Autopilot + a manual sync) can't double-refresh and
+    corrupt Intuit's rotating refresh token."""
+    from core.qbo_auth import refresh_access_token
+    return await refresh_access_token(conn, db)
 
 
 async def _qbo_get(conn: QboConnection, db: AsyncSession, path: str, params: dict | None = None) -> dict:
