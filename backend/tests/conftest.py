@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from core.db.base import Base, current_tenant_id
@@ -30,8 +31,15 @@ async def test_engine():
         import models  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
     yield engine
+    # Tear down with DROP SCHEMA ... CASCADE rather than Base.metadata.drop_all:
+    # CI runs `alembic upgrade head` first, which builds FK constraints that are
+    # NOT declared on the ORM models, so metadata-ordered drop_all can't drop a
+    # parent table whose children it doesn't know about ("cannot drop table
+    # variances because other objects depend on it"). CASCADE drops the whole
+    # dependency graph regardless of where each constraint came from.
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
     await engine.dispose()
 
 
