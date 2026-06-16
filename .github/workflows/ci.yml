@@ -81,17 +81,28 @@ jobs:
 
       # Accuracy invariants — the pure, deterministic accounting-correctness
       # checks (JE balance, cash-flow tie-out, expectation/memory tolerance
-      # safety, GL-accuracy detectors). These BLOCK: a regression here fails CI
-      # and the backend never deploys. No DB/async, so they're fast + stable.
+      # safety, GL-accuracy detectors, recon tie-out, schedule roll-forward,
+      # TB integrity, sign conventions, QBO retry). These BLOCK: a regression
+      # here fails CI and the backend never deploys.
       - name: Accuracy invariants (blocking)
         run: pytest -m invariant -q
 
-      # The rest (DB + async integration) stay non-blocking for now — the
-      # tenant_isolation suite has a flaky asyncio event-loop bug with the
-      # newer pytest-asyncio that needs a dedicated fix. Promote to blocking
-      # once that's fixed.
+      # Tenant isolation — the multi-tenant SELECT guard is a security
+      # guarantee, so it BLOCKS on its own. (The asyncio event-loop flake that
+      # once forced it non-blocking is fixed: no custom event_loop fixture, and
+      # a DROP SCHEMA CASCADE teardown that the alembic-built FK graph can't
+      # trip.) Runs the whole file. Kept as its own step — separate from the
+      # broad integration tier below — so a future flaky integration test can
+      # never block a deploy on isolation's behalf.
+      - name: Tenant isolation (blocking)
+        run: pytest tests/test_tenant_isolation.py -q
+
+      # The rest (DB + async integration) stay non-blocking — useful signal, but
+      # we don't want a flaky integration test to block a deploy. Tenant
+      # isolation is covered by its own blocking step above, so it's excluded
+      # here to avoid running twice.
       - name: Integration + async tests (non-blocking)
-        run: pytest -m "not invariant" --cov=. --cov-report=xml -q || true
+        run: pytest -m "not invariant" --ignore=tests/test_tenant_isolation.py --cov=. --cov-report=xml -q || true
 
   frontend:
     name: Frontend — typecheck, build
