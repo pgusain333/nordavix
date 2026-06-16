@@ -10,11 +10,12 @@ name: Close Autopilot
 # note and exits green (never red-X's).
 
 on:
-  # Daily schedule PAUSED 2026-06-15: the synchronous sweep was exceeding the
-  # curl 590s budget and failing the job. Re-enable by uncommenting once the
-  # /run-autopilot endpoint kicks the sweep off in the background (or chunks it).
-  # schedule:
-  #   - cron: "30 11 * * *"   # 11:30 UTC daily (~6:30-7:30am US Eastern)
+  # Daily heartbeat. /run-autopilot now validates the secret and kicks the
+  # sweep off in the BACKGROUND, returning instantly — so this no longer risks
+  # the curl timeout that paused it on 2026-06-15. The backend runs the close
+  # only for workspaces whose run_day matches today (idempotent, demo excluded).
+  schedule:
+    - cron: "30 11 * * *"   # 11:30 UTC daily (~6:30-7:30am US Eastern)
   workflow_dispatch: {}      # manual runs from the Actions tab still work
 
 jobs:

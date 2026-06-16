@@ -13,7 +13,7 @@ secret can never leave them publicly callable.
 import hmac
 import logging
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 
 from core.config import settings
 from modules.reengagement.service import run_reengagement
@@ -70,18 +70,15 @@ async def run_reengagement_endpoint(
     return summary
 
 
-@router.post("/run-autopilot")
-async def run_autopilot_endpoint(
-    x_internal_secret: str | None = Header(default=None),
-) -> dict:
-    """
-    Daily Autopilot sweep (hit by the GitHub Actions cron). For every
-    enabled workspace whose run_day matches today (UTC), runs the close
-    kickoff for the focus period — unless a completed/partial run for
-    that period already exists (scheduled runs are idempotent; only the
-    in-app "Run now" repeats a period). Demo workspaces never run.
-    Tenants run SEQUENTIALLY: each is fenced, one failure can't stop the
-    sweep, and the QBO/AI load stays gentle.
+async def _run_autopilot_sweep() -> dict:
+    """The actual daily sweep — runs in the BACKGROUND (the synchronous version
+    blew past the cron's curl timeout when several workspaces were due). Opens
+    its own session. For every enabled workspace whose run_day matches today
+    (UTC), runs the close kickoff for the focus period — unless a
+    completed/partial/running run for that period already exists (scheduled runs
+    are idempotent; only the in-app "Run now" repeats a period). Demo workspaces
+    never run. Tenants run SEQUENTIALLY: each is fenced, one failure can't stop
+    the sweep, and the QBO/AI load stays gentle.
     """
     from datetime import date as _date
 
@@ -93,7 +90,6 @@ async def run_autopilot_endpoint(
     from models.tenant import Tenant
     from modules.autopilot.engine import focus_period_for, run_autopilot_for_tenant
 
-    _require_internal_secret(x_internal_secret)
     today = _date.today()
     ran, skipped, failed = [], 0, 0
 
@@ -149,3 +145,23 @@ async def run_autopilot_endpoint(
     summary = {"ran": ran, "skipped": skipped, "failed": failed, "day": today.day}
     logger.info("Autopilot sweep done: %s", summary)
     return summary
+
+
+@router.post("/run-autopilot")
+async def run_autopilot_endpoint(
+    background_tasks: BackgroundTasks,
+    x_internal_secret: str | None = Header(default=None),
+) -> dict:
+    """
+    Daily Autopilot trigger (hit by the GitHub Actions cron). Validates the
+    secret, then kicks the sweep off in the BACKGROUND and returns immediately
+    so the cron's HTTP request never times out — the prior synchronous version
+    awaited every due workspace's full close inline and exceeded the 590s curl
+    budget. The sweep ([_run_autopilot_sweep]) does the real work: every enabled
+    workspace whose run_day matches today, idempotent per period, demo excluded.
+    """
+    from datetime import date as _date
+
+    _require_internal_secret(x_internal_secret)
+    background_tasks.add_task(_run_autopilot_sweep)
+    return {"scheduled": True, "day": _date.today().day}
