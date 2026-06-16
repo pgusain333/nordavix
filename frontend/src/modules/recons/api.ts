@@ -1064,7 +1064,13 @@ async function bulkUpdateAccountReviewStatus(
   periodEnd: string,
   status: AccountReviewStatus,
   qboAccountIds: string[],
-): Promise<{ updated: number; status: AccountReviewStatus }> {
+): Promise<{
+  updated: number
+  status: AccountReviewStatus
+  // Accounts left un-approved because they failed a gate (not reconciled,
+  // missing statement, maker/checker). Empty for non-approve flips.
+  skipped: { qbo_account_id: string; reason: string }[]
+}> {
   const { data } = await apiClient.post(
     "/api/reconciliations/account/bulk-status",
     { period_end: periodEnd, status, qbo_account_ids: qboAccountIds },

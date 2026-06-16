@@ -845,7 +845,23 @@ export function ReconciliationsDashboard() {
       }
       return { prev }
     },
-    onSuccess: () => setSelected(new Set()),
+    onSuccess: (res, _status, ctx) => {
+      setSelected(new Set())
+      // Partial success: the backend approves every account that passes its
+      // gates and skips the rest (un-reconciled / missing statement / maker-
+      // checker) instead of failing the whole batch. Name the skipped ones so
+      // the reviewer knows exactly what's left and why.
+      const skipped = res?.skipped ?? []
+      if (skipped.length > 0) {
+        const nameById = new Map(
+          (ctx?.prev?.accounts ?? []).map((a) => [a.qbo_id, a.account_name]),
+        )
+        const detail = skipped
+          .map((s) => `${nameById.get(s.qbo_account_id) ?? s.qbo_account_id}: ${s.reason}`)
+          .join(" · ")
+        setSyncMsg(`Approved ${res.updated} · Skipped ${skipped.length} — ${detail}`)
+      }
+    },
     onError: (err: unknown, _v, ctx) => {
       if (ctx?.prev) qc.setQueryData(["recons-overview", periodEnd], ctx.prev)
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }

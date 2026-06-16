@@ -1256,57 +1256,42 @@ async def bulk_update_account_review_status(
                 ),
             )
 
-    # Maker/checker — block bulk approval of any account whose override the
-    # current user entered. Bulk action either fully succeeds or fails as a
-    # set, so we surface every conflict in the error message.
-    # Admins bypass the rule (master access).
-    if status_value == "approved" and user.role != "admin":
-        own_overrides = [
-            qid for qid, r in by_id.items()
-            if r.subledger_total is not None
-            and r.subledger_entered_by is not None
-            and r.subledger_entered_by == user.id
-        ]
-        if own_overrides:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "You entered the manual subledger for "
-                    f"{len(own_overrides)} account(s) in this batch — "
-                    "approval must come from a different user (maker/checker). "
-                    f"Conflicting account IDs: {', '.join(own_overrides)}."
-                ),
-            )
-
-    # Bank/Credit-Card accounts: every account being approved must have a
-    # statement or evidence attached. Fail the batch as a set, naming offenders.
+    # Approve gates, per account. Unlike a single approve (which 422s the one
+    # account), the BULK action approves every account that passes and SKIPS the
+    # ones that don't — reporting each skip + reason — so one un-reconciled or
+    # statement-less account can't sink the whole batch. Non-approve statuses
+    # (reviewed / pending / flagged) act on every selected account.
+    skipped: list[dict[str, str]] = []
+    approvable_ids: list[str] = ids
     if status_value == "approved":
-        blocked: list[str] = []
+        # 1. Maker/checker: a non-admin can't approve an account whose manual
+        #    subledger they entered themselves. Admins bypass (master access).
+        own_overrides: set[str] = set()
+        if user.role != "admin":
+            own_overrides = {
+                qid for qid, r in by_id.items()
+                if r.subledger_total is not None
+                and r.subledger_entered_by is not None
+                and r.subledger_entered_by == user.id
+            }
+        # 2. Bank/Credit-Card accounts need a statement (or evidence) attached.
+        missing_statement: set[str] = set()
         for qid in ids:
             if await _bank_acct_missing_statement(db, tenant_id, qid, pe):
-                blocked.append(qid)
-        if blocked:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Attach the bank statement (or supporting evidence) before "
-                    "approving these bank reconciliations: "
-                    + ", ".join(blocked) + "."
-                ),
-            )
-
-    # Reconciliation gate (bulk): every account being approved must tie out.
-    if status_value == "approved":
+                missing_statement.add(qid)
+        # 3. GL must tie to the subledger within the materiality floor.
         unrec = await _unreconciled_accounts(db, pe, ids)
-        if unrec:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Can't approve — these accounts aren't reconciled: "
-                    + "; ".join(f"{qid} ({reason})" for qid, reason in list(unrec.items())[:10])
-                    + (" …" if len(unrec) > 10 else "")
-                ),
-            )
+
+        reasons: dict[str, str] = {}
+        for qid in ids:
+            if qid in own_overrides:
+                reasons[qid] = "you entered the subledger — a different user must approve (maker/checker)"
+            elif qid in missing_statement:
+                reasons[qid] = "attach the bank statement (or supporting evidence)"
+            elif qid in unrec:
+                reasons[qid] = f"isn't reconciled ({unrec[qid]})"
+        skipped = [{"qbo_account_id": qid, "reason": reason} for qid, reason in reasons.items()]
+        approvable_ids = [qid for qid in ids if qid not in reasons]
 
     now = datetime.now(UTC)
     is_reviewed = status_value != "pending"
@@ -1315,7 +1300,7 @@ async def bulk_update_account_review_status(
     # if prepare hasn't happened yet.
     rows_for_freeze: list[tuple[str, AccountReviewStatus]] = []
     approved_preparer_ids: set[uuid.UUID] = set()
-    for qid in ids:
+    for qid in approvable_ids:
         if qid in by_id:
             r = by_id[qid]
             r.status = status_value
@@ -1381,8 +1366,10 @@ async def bulk_update_account_review_status(
         action=f"recon.bulk_{status_value}",
         entity_type="account_review_status", entity_id=None,
         metadata={
-            "summary": f"Bulk set {len(ids)} accounts → {status_value} for {body.get('period_end')}",
-            "count": len(ids),
+            "summary": f"Bulk set {len(approvable_ids)} accounts → {status_value} for {body.get('period_end')}"
+                       + (f" ({len(skipped)} skipped)" if skipped else ""),
+            "count": len(approvable_ids),
+            "skipped": len(skipped),
             "status": status_value,
         },
     )
@@ -1427,7 +1414,7 @@ async def bulk_update_account_review_status(
         except Exception:
             logger.warning("recon bulk approved notifications failed", exc_info=True)
 
-    return {"updated": len(ids), "status": status_value}
+    return {"updated": len(approvable_ids), "status": status_value, "skipped": skipped}
 
 
 @router.post("/account/{qbo_account_id}/subledger")
