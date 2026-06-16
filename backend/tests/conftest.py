@@ -92,6 +92,7 @@ _INVARIANT_FILES = {
     "test_sign_conventions.py",   # statement sign convention (_signed_for_display)
     "test_qbo_retry.py",          # QBO 429 / 5xx retry-backoff contract
     "test_qbo_token_refresh.py",  # per-realm serialized token refresh (no race)
+    "test_autopilot_watchdog.py", # stale autopilot-run reclaim (no permanent lock-out)
 }
 
 

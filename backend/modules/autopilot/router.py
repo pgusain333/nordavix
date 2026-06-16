@@ -14,7 +14,7 @@ whose run_day matches today.
 """
 import logging
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -32,6 +32,24 @@ from models.user import User
 from modules.autopilot.engine import focus_period_for, run_autopilot_for_tenant
 
 logger = logging.getLogger(__name__)
+
+
+# A run left "running" longer than this is treated as dead — an interrupted
+# process / Fly restart never set finished_at. Autopilot runs take minutes, so
+# 30 min is comfortably beyond the slowest real run: the watchdog never kills a
+# live run, it only stops a crashed one from locking out every future run.
+_STALE_RUN_AFTER = timedelta(minutes=30)
+
+
+def _run_is_live(run: AutopilotRun, now: datetime) -> bool:
+    """True when a run is actually still executing (status 'running' and started
+    within the stale window). A 'running' row older than that is a crash that
+    never finished."""
+    return (
+        run.status == "running"
+        and run.started_at is not None
+        and (now - run.started_at) < _STALE_RUN_AFTER
+    )
 
 router = APIRouter()
 
@@ -89,7 +107,7 @@ async def get_autopilot(
         "runs":   [_serialize_run(r) for r in runs],
         "next_period": focus.isoformat() if focus else None,
         "next_period_label": focus.strftime("%b %Y") if focus else None,
-        "running": any(r.status == "running" for r in runs),
+        "running": any(_run_is_live(r, datetime.now(UTC)) for r in runs),
     }
 
 
@@ -201,11 +219,27 @@ async def run_now(
             status_code=409,
             detail="Nothing to run — every elapsed month is closed (or books aren't set up).",
         )
-    already_running = (await db.execute(
-        select(AutopilotRun).where(AutopilotRun.status == "running").limit(1)
-    )).scalar_one_or_none()
-    if already_running:
+    # Block only if a run is GENUINELY live. A row left "running" past the stale
+    # window is a crashed/interrupted process (Fly restart never set finished_at)
+    # — reclaim it (mark failed) so it can't lock the workspace out of every
+    # future run.
+    running_runs = list((await db.execute(
+        select(AutopilotRun).where(AutopilotRun.status == "running")
+    )).scalars().all())
+    now = datetime.now(UTC)
+    if any(_run_is_live(r, now) for r in running_runs):
         raise HTTPException(status_code=409, detail="An Autopilot run is already in progress.")
+    for r in running_runs:  # all remaining are stale → reclaim
+        r.status = "failed"
+        r.finished_at = now
+        errors = [
+            *((r.results or {}).get("errors") or []),
+            "Run did not complete (interrupted process); reclaimed by the stale-run watchdog.",
+        ]
+        r.results = {**(r.results or {}), "errors": errors}
+        logger.warning("Autopilot watchdog: reclaimed stale run %s (started %s)", r.id, r.started_at)
+    if running_runs:
+        await db.commit()
 
     background_tasks.add_task(_run_in_background, tenant_id, focus, user.id)
     return {"started": True, "period_end": focus.isoformat(), "period_label": focus.strftime("%b %Y")}
