@@ -271,7 +271,7 @@ export function LeftNav({ onClose }: Props) {
       return (
         <div
           key={item.path}
-          className="flex items-center justify-between rounded-md px-3 py-2 text-sm cursor-not-allowed opacity-35"
+          className="flex items-center justify-between rounded-md px-3 py-2 text-[13px] cursor-not-allowed opacity-35"
           style={{ color: "var(--nav-text)" }}
         >
           <span className="flex items-center gap-2.5">
@@ -295,7 +295,7 @@ export function LeftNav({ onClose }: Props) {
         onFocus={() => { prefetchRoute(item.path); prefetchData(qc, item.path) }}
         title={isCollapsed ? item.label : undefined}
         className={({ isActive }) =>
-          cn("flex items-center rounded-md text-sm transition-colors duration-150",
+          cn("flex items-center rounded-md text-[13px] transition-colors duration-150",
             isCollapsed ? "relative justify-center h-10" : "gap-2.5 px-3 py-2",
             // Hover = simple row highlight only — no slide / motion.
             "hover:bg-[var(--nav-hover)]",
@@ -552,7 +552,7 @@ export function LeftNav({ onClose }: Props) {
           <button
             type="button"
             onClick={() => setFeedbackOpen(true)}
-            className="w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-all"
+            className="w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-all"
             style={{
               color: "var(--nav-text)",
               background: "transparent",
@@ -643,7 +643,7 @@ function UtilLink({ to, icon: Icon, label, title, isCollapsed, onClose }: {
       title={isCollapsed ? label : title}
       className={({ isActive }) =>
         cn(
-          "w-full inline-flex items-center rounded-md text-sm font-medium transition-colors duration-150",
+          "w-full inline-flex items-center rounded-md text-[13px] font-medium transition-colors duration-150",
           isCollapsed ? "justify-center h-10" : "gap-2.5 px-3 py-2",
           isActive ? "" : "hover:bg-[var(--nav-hover)]",
         )
