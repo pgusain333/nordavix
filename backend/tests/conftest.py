@@ -90,6 +90,7 @@ _INVARIANT_FILES = {
     "test_schedule_rollforward.py", # loan/lease inception-month interest accrual
     "test_tb_integrity.py",       # trial-balance ingest tie-out (tb_imbalance)
     "test_sign_conventions.py",   # statement sign convention (_signed_for_display)
+    "test_qbo_retry.py",          # QBO 429 / 5xx retry-backoff contract
 }
 
 

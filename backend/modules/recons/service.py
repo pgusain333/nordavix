@@ -80,16 +80,15 @@ async def _refresh_token_if_needed(conn: QboConnection, db: AsyncSession) -> str
 
 
 async def _qbo_get(conn: QboConnection, db: AsyncSession, path: str, params: dict | None = None) -> dict:
+    from core.qbo_http import request_with_retry
+
     token = await _refresh_token_if_needed(conn, db)
     url = f"{settings.qbo_base_url}/v3/company/{conn.realm_id}{path}"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
-            url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-            },
-            params=params or {},
+        resp = await request_with_retry(
+            lambda: client.get(url, headers=headers, params=params or {}),
+            label=f"QBO GET {path}",
         )
     if resp.status_code == 401:
         raise RuntimeError("QBO returned 401 — reconnect QuickBooks.")

@@ -28,6 +28,7 @@ from typing import TypedDict
 import httpx
 
 from core.config import settings
+from core.qbo_http import request_with_retry
 from models.qbo_connection import QboConnection
 
 logger = logging.getLogger(__name__)
@@ -77,11 +78,11 @@ async def fetch_trial_balance(
         "minorversion":        "65",
     }
     url = f"{settings.qbo_base_url}/v3/company/{conn.realm_id}/reports/TrialBalance"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
-            url,
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            params=params,
+        resp = await request_with_retry(
+            lambda: client.get(url, headers=headers, params=params),
+            label="QBO TrialBalance",
         )
     if resp.status_code == 401:
         raise RuntimeError("QBO returned 401 — reconnect QuickBooks.")
