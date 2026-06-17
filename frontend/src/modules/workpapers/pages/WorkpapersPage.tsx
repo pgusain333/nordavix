@@ -18,7 +18,7 @@ import { useNavigate } from "react-router-dom"
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import {
   AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Circle, Clock,
-  Download, ExternalLink, FileImage, FileSpreadsheet, FileText, FolderOpen,
+  Download, Eye, ExternalLink, FileImage, FileSpreadsheet, FileText, FolderOpen,
   Lock, Paperclip, Scale, Search, ShieldCheck, Trash2, UploadCloud,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
@@ -30,6 +30,7 @@ import { closeApi } from "@/modules/close/api"
 import { reconsApi, type OverviewAccount } from "@/modules/recons/api"
 import { financialsApi } from "@/modules/financials/api"
 import { workpapersApi, type WpEvidence, type WpRefType } from "@/modules/workpapers/api"
+import { DocumentViewer } from "@/modules/workpapers/components/DocumentViewer"
 
 type RowState = "done" | "review" | "flag" | "open" | "section" | "system"
 
@@ -127,6 +128,7 @@ export function WorkpapersPage() {
   const [dragOver, setDragOver] = useState(false)
   const [justUploaded, setJustUploaded] = useState(false)
   const [binderErr, setBinderErr] = useState<string | null>(null)
+  const [viewerStartId, setViewerStartId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const activePeriod = period || fallback
@@ -205,6 +207,10 @@ export function WorkpapersPage() {
     queryFn:  () => workpapersApi.listEvidence(activePeriod, selected!.refType, selected!.refId),
     enabled:  !!organization && !!activePeriod && !!selected && selected.uploadable,
   })
+
+  // Only rows backed by a real file are viewable (skip "awaiting client" PBC
+  // request placeholders). Drives the in-app document viewer's gallery.
+  const viewerItems = useMemo(() => (evidence ?? []).filter((e) => e.source !== "request"), [evidence])
 
   const invalidate = useCallback(() => {
     qc.invalidateQueries({ queryKey: ["workpapers", "evidence", activePeriod] })
@@ -554,7 +560,12 @@ export function WorkpapersPage() {
                         <div className="space-y-1.5">
                           {(evidence ?? []).map((e: WpEvidence) => (
                             <div key={e.id} className="group flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors"
-                              style={{ border: "1px solid var(--border)" }}
+                              style={{ border: "1px solid var(--border)", cursor: e.source !== "request" ? "pointer" : "default" }}
+                              role={e.source !== "request" ? "button" : undefined}
+                              tabIndex={e.source !== "request" ? 0 : undefined}
+                              title={e.source !== "request" ? "Click to view" : undefined}
+                              onClick={() => { if (e.source !== "request") setViewerStartId(e.id) }}
+                              onKeyDown={(ev) => { if (e.source !== "request" && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); setViewerStartId(e.id) } }}
                               onMouseEnter={(ev) => (ev.currentTarget.style.background = "var(--surface-2)")}
                               onMouseLeave={(ev) => (ev.currentTarget.style.background = "transparent")}>
                               {e.source === "request"
@@ -590,12 +601,16 @@ export function WorkpapersPage() {
                               </div>
                               {e.source !== "request" && (
                                 <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button onClick={() => workpapersApi.downloadEvidence(e.id)} title="Download"
+                                  <button onClick={(ev) => { ev.stopPropagation(); setViewerStartId(e.id) }} title="View"
+                                    className="p-1.5 rounded-md" style={{ color: "var(--text-muted)" }}
+                                    onMouseEnter={(ev) => (ev.currentTarget.style.background = "var(--surface)")}
+                                    onMouseLeave={(ev) => (ev.currentTarget.style.background = "transparent")}><Eye size={14} strokeWidth={2} /></button>
+                                  <button onClick={(ev) => { ev.stopPropagation(); workpapersApi.downloadEvidence(e.id) }} title="Download"
                                     className="p-1.5 rounded-md" style={{ color: "var(--text-muted)" }}
                                     onMouseEnter={(ev) => (ev.currentTarget.style.background = "var(--surface)")}
                                     onMouseLeave={(ev) => (ev.currentTarget.style.background = "transparent")}><Download size={14} strokeWidth={2} /></button>
                                   {e.source !== "recon" && (
-                                    <button onClick={() => deleteMut.mutate(e.id)} disabled={deleteMut.isPending} title="Remove"
+                                    <button onClick={(ev) => { ev.stopPropagation(); deleteMut.mutate(e.id) }} disabled={deleteMut.isPending} title="Remove"
                                       className="p-1.5 rounded-md disabled:opacity-50" style={{ color: "var(--text-muted)" }}
                                       onMouseEnter={(ev) => (ev.currentTarget.style.color = "var(--danger)")}
                                       onMouseLeave={(ev) => (ev.currentTarget.style.color = "var(--text-muted)")}><Trash2 size={14} strokeWidth={2} /></button>
@@ -647,6 +662,15 @@ export function WorkpapersPage() {
           </div>
         </div>
       </div>
+
+      {viewerStartId && (
+        <DocumentViewer
+          items={viewerItems}
+          startId={viewerStartId}
+          onClose={() => setViewerStartId(null)}
+          onDownload={(id) => workpapersApi.downloadEvidence(id)}
+        />
+      )}
     </div>
   )
 }

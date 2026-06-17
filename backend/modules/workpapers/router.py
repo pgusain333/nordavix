@@ -348,15 +348,20 @@ async def workpaper_evidence_summary(
 async def download_workpaper_evidence(
     evidence_id: uuid.UUID,
     tenant_id: CurrentTenantId,
+    disposition: str = Query("attachment", description="attachment (download) | inline (in-browser view)"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Short-lived signed URL for the browser to fetch the file. Tenant-scoped
-    SELECT means a user can only ever reach their own org's files."""
+    """Short-lived signed URL for the browser to fetch the file. `disposition=
+    inline` returns a URL that renders the file in place (the in-app document
+    viewer); `attachment` downloads it. Tenant-scoped SELECT means a user can
+    only ever reach their own org's files."""
+    disp = "inline" if disposition == "inline" else "attachment"
     row = (await db.execute(
         select(WorkpaperEvidence).where(WorkpaperEvidence.id == evidence_id)
     )).scalar_one_or_none()
     r2_key = row.r2_key if row else None
     file_name = row.file_name if row else None
+    mime = row.mime_type if row else None
     if row is None:
         # Merged-in reconciliation evidence (incl. PBC client uploads) lives in
         # SubledgerEvidence — resolve it here so one download endpoint serves
@@ -366,9 +371,14 @@ async def download_workpaper_evidence(
         )).scalar_one_or_none()
         if sub is None:
             raise HTTPException(status_code=404, detail="Evidence not found.")
-        r2_key, file_name = sub.r2_key, sub.file_name
-    url = r2_storage.generate_presigned_download_url(r2_key, expires_in=300)
-    return {"url": url, "file_name": file_name}
+        r2_key, file_name, mime = sub.r2_key, sub.file_name, sub.mime_type
+    # Inline CSV/TXT: serve as text/plain so the browser renders the text rather
+    # than downloading it; every other type keeps its stored MIME.
+    ext = file_name.rsplit(".", 1)[-1].lower() if file_name and "." in file_name else ""
+    ctype = "text/plain; charset=utf-8" if (disp == "inline" and ext in ("csv", "txt")) else mime
+    url = r2_storage.generate_presigned_download_url(
+        r2_key, expires_in=300, disposition=disp, filename=file_name, content_type=ctype)
+    return {"url": url, "file_name": file_name, "mime_type": mime}
 
 
 @router.delete("/evidence/{evidence_id}")

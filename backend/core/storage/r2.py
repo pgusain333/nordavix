@@ -39,18 +39,38 @@ def upload_file(key: str, file_obj: BinaryIO, content_type: str = "application/o
     return key
 
 
-def generate_presigned_download_url(key: str, expires_in: int = 3600) -> str:
+def generate_presigned_download_url(
+    key: str,
+    expires_in: int = 3600,
+    *,
+    disposition: str | None = None,
+    filename: str | None = None,
+    content_type: str | None = None,
+) -> str:
     """
     Generate a signed URL for temporary read access to a stored file.
 
     expires_in: seconds until the URL expires (default 1 hour).
+    disposition: when set ("inline" | "attachment"), overrides the response
+        Content-Disposition so the browser either renders the file in place
+        (inline — the in-app document viewer) or downloads it (attachment).
+        `filename` labels the download; `content_type` overrides the served
+        MIME (e.g. force text/plain so CSV/TXT render inline instead of
+        downloading). Omit all three for the original behaviour.
     URLs are per-object and carry no tenant information in the URL itself —
     access is controlled by the signature, not by the path.
     """
+    params: dict[str, str] = {"Bucket": settings.r2_bucket_name, "Key": key}
+    if disposition:
+        if filename:
+            safe = filename.replace('"', "").replace("\n", " ").replace("\r", " ")
+            params["ResponseContentDisposition"] = f'{disposition}; filename="{safe}"'
+        else:
+            params["ResponseContentDisposition"] = disposition
+    if content_type:
+        params["ResponseContentType"] = content_type
     url: str = _s3.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": settings.r2_bucket_name, "Key": key},
-        ExpiresIn=expires_in,
+        "get_object", Params=params, ExpiresIn=expires_in,
     )
     return url
 

@@ -62,11 +62,35 @@ async function uploadEvidence(args: {
   return data
 }
 
-async function downloadEvidence(id: string): Promise<void> {
-  const { data } = await apiClient.get<{ url: string; file_name: string }>(
-    `/api/workpapers/evidence/${id}/download`,
+export interface WpEvidenceUrl {
+  url:        string
+  file_name:  string
+  mime_type?: string | null
+}
+
+/** Short-lived signed URL that renders the file IN PLACE (Content-Disposition:
+ *  inline) — for the in-app document viewer. */
+async function viewEvidence(id: string): Promise<WpEvidenceUrl> {
+  const { data } = await apiClient.get<WpEvidenceUrl>(
+    `/api/workpapers/evidence/${id}/download`, { params: { disposition: "inline" } },
   )
-  window.open(data.url, "_blank", "noopener,noreferrer")
+  return data
+}
+
+/** Download to disk (Content-Disposition: attachment). The signed URL carries
+ *  the attachment header so the anchor downloads rather than navigating, even
+ *  cross-origin. */
+async function downloadEvidence(id: string): Promise<void> {
+  const { data } = await apiClient.get<WpEvidenceUrl>(
+    `/api/workpapers/evidence/${id}/download`, { params: { disposition: "attachment" } },
+  )
+  const a = document.createElement("a")
+  a.href = data.url
+  a.download = data.file_name || ""
+  a.rel = "noopener"
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
 }
 
 async function deleteEvidence(id: string): Promise<void> {
@@ -74,5 +98,5 @@ async function deleteEvidence(id: string): Promise<void> {
 }
 
 export const workpapersApi = {
-  listEvidence, evidenceSummary, uploadEvidence, downloadEvidence, deleteEvidence,
+  listEvidence, evidenceSummary, uploadEvidence, viewEvidence, downloadEvidence, deleteEvidence,
 }
