@@ -120,6 +120,18 @@ async function commitSnapshot(
   return data
 }
 
+/** Commit the period roll-forward for every GL account with active items in
+ *  this schedule (one click). committed_count is 0 when the schedule is empty. */
+async function commitAllSnapshots(
+  type: ScheduleType,
+  periodEnd: string,
+): Promise<{ schedule_type: ScheduleType; period_end: string; committed_count: number; accounts: string[] }> {
+  const { data } = await apiClient.post(`/api/schedules/${type}/snapshot/commit-all`, {
+    period_end: periodEnd,
+  })
+  return data
+}
+
 // ── Per-item suggestions for the recon inline accordion ─────────────────
 
 /**
@@ -651,6 +663,7 @@ export const schedulesApi = {
   deleteItem,
   previewSnapshot,
   commitSnapshot,
+  commitAllSnapshots,
   getPrepaidSuggestions,
   getAccrualSuggestions,
   getFixedAssetSuggestions,

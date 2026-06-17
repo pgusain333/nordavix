@@ -14,6 +14,7 @@ import { Download, Plus } from "lucide-react"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Button } from "@/core/ui/components"
 import { PageHeader } from "@/core/ui/PageHeader"
+import { CommitPeriodButton } from "@/modules/schedules/components/CommitPeriodButton"
 import { SCHEDULE_BLURB, SCHEDULE_HUMAN, type ScheduleType } from "@/modules/schedules/types"
 
 interface Props {
@@ -55,6 +56,7 @@ export function SchedulePageHeader({
               Excel
             </Button>
           )}
+          <CommitPeriodButton scheduleType={type} periodEnd={periodEnd} />
           <Button size="sm" icon={<Plus size={14} strokeWidth={2} />} onClick={onAddItem}>
             {addLabel ?? "Add item"}
           </Button>

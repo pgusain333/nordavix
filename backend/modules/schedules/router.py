@@ -752,44 +752,22 @@ async def snapshot(
     }
 
 
-@router.post("/{schedule_type}/snapshot/commit", dependencies=[Depends(require_role("preparer"))])
-async def commit_snapshot(
+async def _commit_one_snapshot(
+    db: AsyncSession,
+    tenant_id,
     schedule_type: str,
-    tenant_id: CurrentTenantId,
-    user: CurrentUser,
-    body: dict = Body(...),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """
-    Persist the period snapshot. Does NOT modify the recon's subledger
-    value automatically — the recon stays in control of its SL logic.
-
-    Once a snapshot is committed, the recon UI surfaces the individual
-    schedule items as selectable line items in the inline accordion
-    (via GET /{type}/suggestions) so the preparer can pick which ones
-    contribute to the account's subledger balance.
-
-    Body: { qbo_account_id: str, period_end: str, notes?: str }
-    """
+    qbo_account_id: str,
+    pe,
+    user_id,
+    *,
+    notes: str | None = None,
+) -> tuple[ScheduleSnapshot, dict]:
+    """Roll forward + upsert the committed snapshot for one (type, account, period),
+    then re-flag that account's approved recon (the subledger just moved). Mutates
+    rows in the caller's transaction WITHOUT committing — the caller owns commit +
+    audit. Shared by the single-account and commit-all endpoints so both behave
+    identically. Returns (snapshot row, snapshot dict)."""
     Model = _model_for(schedule_type)
-    qbo_account_id = (body.get("qbo_account_id") or "").strip()
-    if not qbo_account_id:
-        raise HTTPException(status_code=400, detail="qbo_account_id is required.")
-    pe = _parse_date(body.get("period_end"), "period_end")
-    if pe is None:
-        raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
-    # Books locked for this period → can't commit a schedule into it.
-    is_closed = (await db.execute(
-        select(ClosedPeriod).where(
-            ClosedPeriod.tenant_id == tenant_id, ClosedPeriod.period_end == pe,
-        ),
-        execution_options={"skip_tenant_filter": True},
-    )).scalar_one_or_none() is not None
-    if is_closed:
-        raise HTTPException(
-            status_code=423,
-            detail=f"Books are closed for {pe.isoformat()}. Reopen the period before committing a schedule.",
-        )
     items = (await db.execute(
         select(Model).where(
             Model.tenant_id == tenant_id,
@@ -800,7 +778,6 @@ async def commit_snapshot(
     snap = roller([i for i in items if i.is_active], pe)
     snap_d = snap.as_dict()
 
-    # Upsert the snapshot row
     existing = (await db.execute(
         select(ScheduleSnapshot).where(
             ScheduleSnapshot.tenant_id == tenant_id,
@@ -826,15 +803,58 @@ async def commit_snapshot(
     existing.ending_balance    = Decimal(snap_d["ending_balance"])
     existing.item_count        = snap.item_count
     existing.status            = "committed"
-    existing.committed_by      = user.id
+    existing.committed_by      = user_id
     existing.committed_at      = _datetime.utcnow()
-    if body.get("notes"):
-        existing.notes = body.get("notes")
+    if notes:
+        existing.notes = notes
 
     # Committing a schedule moves the account's subledger — un-approve any
     # already-approved recon on this account so it's re-reviewed before close.
     await _reflag_approved_recons(
-        db, tenant_id, {qbo_account_id}, user_id=user.id, reason="schedule committed",
+        db, tenant_id, {qbo_account_id}, user_id=user_id, reason="schedule committed",
+    )
+    return existing, snap_d
+
+
+@router.post("/{schedule_type}/snapshot/commit", dependencies=[Depends(require_role("preparer"))])
+async def commit_snapshot(
+    schedule_type: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Persist the period snapshot. Does NOT modify the recon's subledger
+    value automatically — the recon stays in control of its SL logic.
+
+    Once a snapshot is committed, the recon UI surfaces the individual
+    schedule items as selectable line items in the inline accordion
+    (via GET /{type}/suggestions) so the preparer can pick which ones
+    contribute to the account's subledger balance.
+
+    Body: { qbo_account_id: str, period_end: str, notes?: str }
+    """
+    qbo_account_id = (body.get("qbo_account_id") or "").strip()
+    if not qbo_account_id:
+        raise HTTPException(status_code=400, detail="qbo_account_id is required.")
+    pe = _parse_date(body.get("period_end"), "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
+    # Books locked for this period → can't commit a schedule into it.
+    is_closed = (await db.execute(
+        select(ClosedPeriod).where(
+            ClosedPeriod.tenant_id == tenant_id, ClosedPeriod.period_end == pe,
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none() is not None
+    if is_closed:
+        raise HTTPException(
+            status_code=423,
+            detail=f"Books are closed for {pe.isoformat()}. Reopen the period before committing a schedule.",
+        )
+    existing, snap_d = await _commit_one_snapshot(
+        db, tenant_id, schedule_type, qbo_account_id, pe, user.id, notes=body.get("notes"),
     )
 
     await write_audit_event(
@@ -842,7 +862,7 @@ async def commit_snapshot(
         action="schedule.snapshot_committed", entity_type="schedule_snapshot", entity_id=existing.id,
         metadata={"summary": (
             f"Committed {schedule_type} snapshot for account {qbo_account_id} "
-            f"({pe.isoformat()}), {snap.item_count} item(s)"
+            f"({pe.isoformat()}), {existing.item_count} item(s)"
         )},
     )
     await db.commit()
@@ -855,6 +875,65 @@ async def commit_snapshot(
         "committed":       True,
         "committed_at":    existing.committed_at.isoformat() if existing.committed_at else None,
         "pushed_to_recon": False,
+    }
+
+
+@router.post("/{schedule_type}/snapshot/commit-all", dependencies=[Depends(require_role("preparer"))])
+async def commit_all_snapshots(
+    schedule_type: str,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Commit the period roll-forward for EVERY GL account that has active items
+    in this schedule — one click instead of drilling into each account. Skips a
+    locked period (423) and re-flags each committed account's approved recon (the
+    same maker/checker control as a single commit). When the schedule has no items
+    it's a no-op (committed_count=0): an empty schedule never needs a commit and
+    never blocks the close.
+
+    Body: { period_end: str }
+    """
+    Model = _model_for(schedule_type)
+    pe = _parse_date(body.get("period_end"), "period_end")
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
+    is_closed = (await db.execute(
+        select(ClosedPeriod).where(
+            ClosedPeriod.tenant_id == tenant_id, ClosedPeriod.period_end == pe,
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none() is not None
+    if is_closed:
+        raise HTTPException(
+            status_code=423,
+            detail=f"Books are closed for {pe.isoformat()}. Reopen the period before committing a schedule.",
+        )
+    # Distinct GL accounts with at least one active item for this schedule type.
+    rows = (await db.execute(
+        select(Model.qbo_account_id).where(
+            Model.tenant_id == tenant_id, Model.is_active.is_(True),
+        )
+    )).scalars().all()
+    accounts = sorted({(a or "").strip() for a in rows if (a or "").strip()})
+    for acct in accounts:
+        await _commit_one_snapshot(db, tenant_id, schedule_type, acct, pe, user.id)
+    if accounts:
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user.id,
+            action="schedule.snapshot_committed_all",
+            entity_type="schedule_snapshot", entity_id=None,
+            metadata={"summary": (
+                f"Committed {len(accounts)} {schedule_type} snapshot(s) for {pe.isoformat()}"
+            )},
+        )
+    await db.commit()
+    return {
+        "schedule_type":   schedule_type,
+        "period_end":      pe.isoformat(),
+        "committed_count": len(accounts),
+        "accounts":        accounts,
     }
 
 
