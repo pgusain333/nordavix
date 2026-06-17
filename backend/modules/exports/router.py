@@ -268,6 +268,7 @@ async def export_financials(
     period_start: str | None = Query(None, description="Optional custom start (defaults to YTD/Jan 1)"),
     comparative: bool = Query(True),
     source: str = Query("nordavix", description="nordavix | quickbooks"),
+    comparative_basis: str = Query("prior_year", description="prior_year | prior_month"),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Full financial-package workbook — statements + the complete schedule set."""
@@ -279,6 +280,7 @@ async def export_financials(
             db=db, tenant_id=tenant_id, period_end=pe, period_start=ps,
             comparative=comparative, source=source,
             company_name=company_name, generated_by_name=generated_by,
+            comparative_basis=comparative_basis,
         )
     except Exception as exc:
         logger.exception("Financials workbook build failed")

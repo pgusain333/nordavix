@@ -196,6 +196,15 @@ def _prior_year_period(pe: date) -> date:
     return date(yr, pe.month, min(pe.day, last))
 
 
+def _prior_month_period(pe: date) -> tuple[date, date]:
+    """The full calendar month immediately before pe's month, as
+    (first_day, last_day). Drives the month-over-month comparative used by the
+    close binder + executive report (range for IS/CF, month-end for BS)."""
+    y = pe.year if pe.month > 1 else pe.year - 1
+    m = pe.month - 1 if pe.month > 1 else 12
+    return date(y, m, 1), date(y, m, monthrange(y, m)[1])
+
+
 def _ytd_start(pe: date) -> date:
     return date(pe.year, 1, 1)
 
@@ -454,8 +463,17 @@ def _prior_year_range(ps: date, pe: date) -> tuple[date, date]:
 async def _build_statement(
     tenant_id, db, pe: date, statement_kind: str, comparative: bool,
     source: str = "quickbooks", period_start: date | None = None,
+    comparative_basis: str = "prior_year",
 ) -> StatementOut:
     """
+    `comparative_basis` controls the comparative column:
+      • "prior_year"  — same period last year (default; matches QBO and the
+        custom-range Financial Package).
+      • "prior_month" — the immediately preceding calendar month. Used by the
+        close binder + executive report, which are monthly deliverables: the
+        current IS/CF column becomes the single close month (not YTD) and the
+        comparative is the prior month — true month-over-month.
+
     `source` controls where the underlying data comes from:
       • "quickbooks" — live QBO Reports API (default). Always matches
         what QBO would show; requires QBO to be reachable.
@@ -484,11 +502,23 @@ async def _build_statement(
     is_period_based = statement_kind in ("income_statement", "cash_flow")
     effective_ps: date | None = period_start if is_period_based else None
     if is_period_based and effective_ps is None:
-        effective_ps = _ytd_start(pe)
+        # Month-over-month reports show the single close month; everything
+        # else defaults to year-to-date.
+        effective_ps = pe.replace(day=1) if comparative_basis == "prior_month" else _ytd_start(pe)
+    # A "single full month" current period (1st → month-end) gets clean
+    # "For the Month Ended" wording instead of the range / YTD label.
+    single_month = (
+        is_period_based and effective_ps is not None
+        and effective_ps == pe.replace(day=1)
+        and pe.day == monthrange(pe.year, pe.month)[1]
+    )
 
     if statement_kind == "income_statement":
         title = "Income Statement"
-        if period_start is not None:
+        if single_month:
+            subtitle = f"For the Month Ended {pe.strftime('%B %d, %Y')}"
+            period_label = pe.strftime("%b %Y")
+        elif period_start is not None:
             subtitle = (
                 f"For the Period from {effective_ps.strftime('%B %d, %Y')} "
                 f"to {pe.strftime('%B %d, %Y')}"
@@ -503,7 +533,10 @@ async def _build_statement(
         period_label = pe.strftime("%b %d, %Y")
     elif statement_kind == "cash_flow":
         title = "Statement of Cash Flows"
-        if period_start is not None:
+        if single_month:
+            subtitle = f"For the Month Ended {pe.strftime('%B %d, %Y')}"
+            period_label = pe.strftime("%b %Y")
+        elif period_start is not None:
             subtitle = (
                 f"For the Period from {effective_ps.strftime('%B %d, %Y')} "
                 f"to {pe.strftime('%B %d, %Y')}"
@@ -514,10 +547,16 @@ async def _build_statement(
             period_label = f"YTD {pe.strftime('%b %Y')}"
     else:
         raise HTTPException(400, f"Unknown statement: {statement_kind}")
-    # Prior-period mapping for the comparative column. For custom ranges,
-    # mirror the EXACT range to the prior calendar year; for YTD, use
-    # the prior YTD (same month-end last year).
-    if period_start is not None and is_period_based:
+    # Prior-period mapping for the comparative column.
+    #   • prior_month  — month-over-month (close binder + exec report): the full
+    #     calendar month before pe (range for IS/CF, month-end for BS).
+    #   • custom range — mirror the EXACT range to the prior calendar year.
+    #   • YTD          — prior YTD (same month-end last year).
+    if comparative_basis == "prior_month":
+        pm_ps, pm_pe = _prior_month_period(pe)
+        prior_pe = pm_pe
+        prior_ps = pm_ps if is_period_based else None
+    elif period_start is not None and is_period_based:
         prior_ps, prior_pe = _prior_year_range(effective_ps, pe)
     else:
         prior_pe = _prior_year_period(pe)
@@ -529,6 +568,8 @@ async def _build_statement(
         comparative_label = None
     elif statement_kind == "balance_sheet":
         comparative_label = prior_pe.strftime("%b %d, %Y")
+    elif comparative_basis == "prior_month":
+        comparative_label = prior_pe.strftime("%b %Y")
     elif period_start is not None:
         comparative_label = f"{prior_ps.strftime('%b %d')} – {prior_pe.strftime('%b %d, %Y')}"
     else:
@@ -627,7 +668,7 @@ async def _build_statement(
         except Exception:
             logger.warning("Comparative fetch failed for %s @ %s — continuing without it",
                             statement_kind, prior_pe)
-            notes.append("Prior-year comparative could not be loaded.")
+            notes.append("Comparative period could not be loaded.")
 
     # comparative_label was computed once above and is shared by both sources.
     merged = _merge_periods(cur_rows, prior_rows)
@@ -682,6 +723,7 @@ async def get_income_statement(
     period_start: str | None = Query(None, description="Optional custom start date (defaults to YTD)"),
     comparative:  bool       = Query(True),
     source:       str        = Query("quickbooks", description="quickbooks | nordavix"),
+    comparative_basis: str   = Query("prior_year", description="prior_year | prior_month"),
     db: AsyncSession = Depends(get_db),
 ) -> StatementOut:
     try: pe = date.fromisoformat(period_end)
@@ -689,7 +731,7 @@ async def get_income_statement(
     ps = _parse_period_start(period_start, pe)
     return await _build_statement(
         tenant_id, db, pe, "income_statement", comparative,
-        source=source, period_start=ps,
+        source=source, period_start=ps, comparative_basis=comparative_basis,
     )
 
 
@@ -699,6 +741,7 @@ async def get_balance_sheet(
     period_end: str = Query(...),
     comparative: bool = Query(True),
     source: str = Query("quickbooks", description="quickbooks | nordavix"),
+    comparative_basis: str = Query("prior_year", description="prior_year | prior_month"),
     db: AsyncSession = Depends(get_db),
 ) -> StatementOut:
     # Balance Sheet is point-in-time — no period_start. Anyone passing
@@ -706,7 +749,8 @@ async def get_balance_sheet(
     # consistent when the same UI submits all three together).
     try: pe = date.fromisoformat(period_end)
     except ValueError: raise HTTPException(400, "period_end must be YYYY-MM-DD.")
-    return await _build_statement(tenant_id, db, pe, "balance_sheet", comparative, source=source)
+    return await _build_statement(tenant_id, db, pe, "balance_sheet", comparative,
+                                  source=source, comparative_basis=comparative_basis)
 
 
 @router.get("/cash-flow", response_model=StatementOut)
@@ -716,6 +760,7 @@ async def get_cash_flow(
     period_start: str | None = Query(None, description="Optional custom start date (defaults to YTD)"),
     comparative:  bool       = Query(True),
     source:       str        = Query("quickbooks", description="quickbooks | nordavix"),
+    comparative_basis: str   = Query("prior_year", description="prior_year | prior_month"),
     db: AsyncSession = Depends(get_db),
 ) -> StatementOut:
     try: pe = date.fromisoformat(period_end)
@@ -723,7 +768,7 @@ async def get_cash_flow(
     ps = _parse_period_start(period_start, pe)
     return await _build_statement(
         tenant_id, db, pe, "cash_flow", comparative,
-        source=source, period_start=ps,
+        source=source, period_start=ps, comparative_basis=comparative_basis,
     )
 
 
@@ -736,6 +781,7 @@ async def export_pdf(
     comparative: bool = Query(True),
     draft: bool = Query(False, description="Allow draft export for unclosed period; PDF will be watermarked"),
     source: str = Query("quickbooks", description="quickbooks | nordavix"),
+    comparative_basis: str = Query("prior_year", description="prior_year | prior_month"),
     db: AsyncSession = Depends(get_db),
 ):
     """Returns a audit-ready styled PDF. Closed periods produce a clean final
@@ -775,7 +821,8 @@ async def export_pdf(
         statements: list[StatementOut] = []
         for k in kinds:
             logger.info("PDF export: building %s", k)
-            statements.append(await _build_statement(tenant_id, db, pe, k, comparative, source=source))
+            statements.append(await _build_statement(tenant_id, db, pe, k, comparative,
+                                                     source=source, comparative_basis=comparative_basis))
 
         logger.info("PDF export: rendering PDF (%d statements)", len(statements))
         from modules.financials.pdf import build_pdf

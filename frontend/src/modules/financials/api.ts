@@ -48,37 +48,43 @@ export interface Statement {
 }
 
 export type FinancialSource = "quickbooks" | "nordavix"
+// Comparative column basis: prior calendar year (default / custom ranges) vs the
+// immediately preceding month (month-over-month, for single-month views).
+export type ComparativeBasis = "prior_year" | "prior_month"
 
 async function getIncomeStatement(
   periodEnd: string, comparative = true, source: FinancialSource = "quickbooks",
-  periodStart?: string,
+  periodStart?: string, comparativeBasis: ComparativeBasis = "prior_year",
 ): Promise<Statement> {
   const { data } = await apiClient.get<Statement>("/api/financials/income-statement", {
     params: {
       period_end: periodEnd,
       ...(periodStart ? { period_start: periodStart } : {}),
-      comparative, source,
+      comparative, source, comparative_basis: comparativeBasis,
     },
   })
   return data
 }
-async function getBalanceSheet(periodEnd: string, comparative = true, source: FinancialSource = "quickbooks"): Promise<Statement> {
+async function getBalanceSheet(
+  periodEnd: string, comparative = true, source: FinancialSource = "quickbooks",
+  comparativeBasis: ComparativeBasis = "prior_year",
+): Promise<Statement> {
   // Balance Sheet is point-in-time — period_start would be ignored
   // server-side, so we don't accept it here.
   const { data } = await apiClient.get<Statement>("/api/financials/balance-sheet", {
-    params: { period_end: periodEnd, comparative, source },
+    params: { period_end: periodEnd, comparative, source, comparative_basis: comparativeBasis },
   })
   return data
 }
 async function getCashFlow(
   periodEnd: string, comparative = true, source: FinancialSource = "quickbooks",
-  periodStart?: string,
+  periodStart?: string, comparativeBasis: ComparativeBasis = "prior_year",
 ): Promise<Statement> {
   const { data } = await apiClient.get<Statement>("/api/financials/cash-flow", {
     params: {
       period_end: periodEnd,
       ...(periodStart ? { period_start: periodStart } : {}),
-      comparative, source,
+      comparative, source, comparative_basis: comparativeBasis,
     },
   })
   return data
@@ -98,10 +104,11 @@ async function exportPdf(
   comparative = true,
   draft = false,
   source: FinancialSource = "quickbooks",
+  comparativeBasis: ComparativeBasis = "prior_year",
 ): Promise<void> {
   try {
     const resp = await apiClient.get("/api/financials/pdf", {
-      params: { statement, period_end: periodEnd, comparative, draft, source },
+      params: { statement, period_end: periodEnd, comparative, draft, source, comparative_basis: comparativeBasis },
       responseType: "blob",
       // PDF generation can take ~10-30s on the "full" package while
       // QBO reports come back. Override axios's per-instance default
@@ -253,8 +260,11 @@ async function downloadXlsx(
 async function exportFinancialsExcel(
   periodEnd: string, periodStart: string | undefined,
   comparative: boolean, source: FinancialSource,
+  comparativeBasis: ComparativeBasis = "prior_year",
 ): Promise<void> {
-  const params: Record<string, string | boolean> = { period_end: periodEnd, comparative, source }
+  const params: Record<string, string | boolean> = {
+    period_end: periodEnd, comparative, source, comparative_basis: comparativeBasis,
+  }
   if (periodStart) params.period_start = periodStart
   await downloadXlsx("/api/exports/financials", params, `financial-package-${periodEnd}.xlsx`)
 }

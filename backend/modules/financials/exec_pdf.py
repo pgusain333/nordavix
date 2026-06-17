@@ -959,8 +959,9 @@ def _notes_section(story: list, styles: dict, data: ExecReportData) -> None:
         "are built from Nordavix's synced GL snapshots — captured on each reconciliation "
         "sync — so they reflect the same balances the reconciliation work signed off on. "
         "The Cash Flow statement is pulled live from QuickBooks.",
-        "<b>Comparative.</b> Period-over-period comparisons use the prior calendar "
-        "year ending in the same month (e.g. April 2026 vs April 2025).",
+        "<b>Comparative.</b> Period-over-period comparisons use the prior month "
+        "(e.g. April 2026 vs March 2026). The Income Statement and Cash Flow show "
+        "the close month versus the month before; the Balance Sheet compares month-ends.",
         "<b>Runway.</b> Computed as cash balance ÷ rolling 3-month average burn. "
         "Reported as 'indefinite' when the business is cash-positive over the trailing 3 months.",
         "<b>AI-generated content.</b> The executive summary, key highlights, risks, "

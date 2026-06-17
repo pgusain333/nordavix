@@ -627,16 +627,17 @@ async def gather_report_data(
     warnings: list[str] = []
     income_stmt = await _build_statement(
         tenant_id, db, period_end, "income_statement",
-        comparative=True, source="nordavix",
+        comparative=True, source="nordavix", comparative_basis="prior_month",
     )
     balance_sheet = await _build_statement(
         tenant_id, db, period_end, "balance_sheet",
-        comparative=True, source="nordavix",
+        comparative=True, source="nordavix", comparative_basis="prior_month",
     )
     try:
         cash_flow = await _build_statement(
             tenant_id, db, period_end, "cash_flow",
             comparative=True, source="quickbooks",   # CF always live
+            comparative_basis="prior_month",
         )
     except Exception as e:
         logger.warning("Cash flow statement unavailable for exec report: %s", e)

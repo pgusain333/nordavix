@@ -89,6 +89,7 @@ class _Ctx:
     period_start: date | None
     comparative: bool
     source: str
+    comparative_basis: str = "prior_year"
     _stmts: dict = field(default_factory=dict)
     _end_snap: list | None = None
     _beg_snap: tuple | None = None  # (rows, snapshot_date)
@@ -108,6 +109,7 @@ class _Ctx:
             self._stmts[kind] = await _build_statement(
                 self.tenant_id, self.db, self.period_end, kind, self.comparative,
                 source=self.source, period_start=ps,
+                comparative_basis=self.comparative_basis,
             )
         return self._stmts[kind]
 
@@ -466,11 +468,13 @@ async def build_financials_workbook(
     source: str,
     company_name: str,
     generated_by_name: str,
+    comparative_basis: str = "prior_year",
 ) -> bytes:
     """Full GAAP close binder. Each sheet is isolated — one failure becomes a
     placeholder sheet so the rest of the workbook still downloads."""
     ctx = _Ctx(db=db, tenant_id=tenant_id, period_end=period_end,
-               period_start=period_start, comparative=comparative, source=source)
+               period_start=period_start, comparative=comparative, source=source,
+               comparative_basis=comparative_basis)
     wb = _new_wb()
     build_cover_sheet(
         wb,

@@ -45,7 +45,7 @@ import { DatePicker } from "@/core/ui/DatePicker"
 import { PageHeader } from "@/core/ui/PageHeader"
 import {
   financialsApi, FINANCIAL_SCHEDULES, SCHEDULE_GROUPS,
-  type Statement, type FinancialRow, type FinancialSource,
+  type Statement, type FinancialRow, type FinancialSource, type ComparativeBasis,
 } from "@/modules/financials/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { reconsApi } from "@/modules/recons/api"
@@ -194,14 +194,26 @@ export function FinancialsPage() {
   const effectivePeriodStart: string | undefined =
     isPeriodBased && periodMode === "custom" ? periodStart : undefined
 
+  // Comparative basis: month-over-month when the selection is exactly one
+  // calendar month (the default + the "Last month" preset), else prior-year
+  // (YTD, quarter, year, or any multi-month custom range). Computed once and
+  // applied to all three statements + Excel + PDF so the whole package uses a
+  // single, consistent comparative — same logic as the close binder / exec report.
+  const _peDate = new Date(periodEnd + "T00:00:00")
+  const isSingleMonthView =
+    periodMode === "custom" &&
+    periodStart === firstDayOfMonth(periodEnd) &&
+    periodEnd === lastDayOfMonth(_peDate.getFullYear(), _peDate.getMonth() + 1)
+  const comparativeBasis: ComparativeBasis = isSingleMonthView ? "prior_month" : "prior_year"
+
   const queryClient = useQueryClient()
 
   const { data: stmt, isLoading, error, refetch } = useQuery({
-    queryKey: ["financial-statement", tab, periodEnd, comparative, effectiveSource, effectivePeriodStart],
+    queryKey: ["financial-statement", tab, periodEnd, comparative, effectiveSource, effectivePeriodStart, comparativeBasis],
     queryFn:  () => {
-      if (tab === "is") return financialsApi.getIncomeStatement(periodEnd, comparative, effectiveSource, effectivePeriodStart)
-      if (tab === "bs") return financialsApi.getBalanceSheet(periodEnd, comparative, effectiveSource)
-      return financialsApi.getCashFlow(periodEnd, comparative, effectiveSource, effectivePeriodStart)
+      if (tab === "is") return financialsApi.getIncomeStatement(periodEnd, comparative, effectiveSource, effectivePeriodStart, comparativeBasis)
+      if (tab === "bs") return financialsApi.getBalanceSheet(periodEnd, comparative, effectiveSource, comparativeBasis)
+      return financialsApi.getCashFlow(periodEnd, comparative, effectiveSource, effectivePeriodStart, comparativeBasis)
     },
     // Nordavix mode reads from our DB so QBO connection isn't strictly
     // required (snapshot may exist from past syncs even after disconnect).
@@ -221,11 +233,11 @@ export function FinancialsPage() {
     const src: FinancialSource = key === "cf" ? "quickbooks" : source
     if (!(hasLoaded && (src === "nordavix" || !!qbo))) return
     queryClient.prefetchQuery({
-      queryKey: ["financial-statement", key, periodEnd, comparative, src, ps],
+      queryKey: ["financial-statement", key, periodEnd, comparative, src, ps, comparativeBasis],
       queryFn: () => {
-        if (key === "is") return financialsApi.getIncomeStatement(periodEnd, comparative, src, ps)
-        if (key === "bs") return financialsApi.getBalanceSheet(periodEnd, comparative, src)
-        return financialsApi.getCashFlow(periodEnd, comparative, src, ps)
+        if (key === "is") return financialsApi.getIncomeStatement(periodEnd, comparative, src, ps, comparativeBasis)
+        if (key === "bs") return financialsApi.getBalanceSheet(periodEnd, comparative, src, comparativeBasis)
+        return financialsApi.getCashFlow(periodEnd, comparative, src, ps, comparativeBasis)
       },
       staleTime: 5 * 60_000,
     })
@@ -233,7 +245,7 @@ export function FinancialsPage() {
 
   const exportMut = useMutation({
     mutationFn: ({ kind, draft }: { kind: "is" | "bs" | "cf" | "full"; draft: boolean }) =>
-      financialsApi.exportPdf(kind, periodEnd, comparative, draft, source),
+      financialsApi.exportPdf(kind, periodEnd, comparative, draft, source, comparativeBasis),
     onMutate: () => setExportError(null),
     onError: (e: Error) => setExportError(e.message),
   })
@@ -590,6 +602,7 @@ export function FinancialsPage() {
               periodStart={periodMode === "custom" ? periodStart : undefined}
               comparative={comparative}
               source={source}
+              comparativeBasis={comparativeBasis}
             />
 
             {/* (Executive Report card moved above the Load gate so
@@ -795,12 +808,13 @@ function ExecutiveReportCard({
 // Monochrome (neutral theme tokens), consistent with the no-color statements.
 
 function SchedulesExportCard({
-  periodEnd, periodStart, comparative, source,
+  periodEnd, periodStart, comparative, source, comparativeBasis,
 }: {
   periodEnd: string
   periodStart: string | undefined
   comparative: boolean
   source: FinancialSource
+  comparativeBasis: ComparativeBasis
 }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -810,7 +824,7 @@ function SchedulesExportCard({
     setErr(null)
     try {
       if (slug === "__full__") {
-        await financialsApi.exportFinancialsExcel(periodEnd, periodStart, comparative, source)
+        await financialsApi.exportFinancialsExcel(periodEnd, periodStart, comparative, source, comparativeBasis)
       } else {
         await financialsApi.exportScheduleExcel(slug, periodEnd, periodStart, comparative, source)
       }
