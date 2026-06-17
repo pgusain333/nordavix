@@ -26,6 +26,7 @@ import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { RenewalAlertsBanner } from "@/modules/schedules/components/RenewalAlertsBanner"
 import { AiDetectBanner } from "@/modules/schedules/components/AiDetectBanner"
 import { ImportPrepaidsFromQboBanner } from "@/modules/schedules/components/ImportPrepaidsFromQboBanner"
+import { ScheduleToolsLayout } from "@/modules/schedules/components/ScheduleToolsLayout"
 import { ClosedPeriodBanner } from "@/modules/schedules/components/ClosedPeriodBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
@@ -280,37 +281,33 @@ export function PrepaidsPage() {
         exporting={exportMut.isPending}
       />
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
-        {/* Suggestion banners create items directly — hide them on a closed period. */}
-        {!isClosed && (<>
-        {/* First-month onboarding — pull existing prepaid items from
-            the QBO BS account and bulk-create them as Nordavix
-            schedule items. Only visible when an account is selected
-            (the import is per-account scoped). Shown as a prominent
-            CTA when there are zero items for this account; demotes
-            to a quieter secondary action once items exist. */}
-        <ImportPrepaidsFromQboBanner
-          qboAccountId={filterAccount}
-          existingItemCount={items.length}
-        />
-
-        {/* AI detect banner (Phase 2) — scans expense GL for likely
-            prepaid items hiding as one-time expenses. User-triggered. */}
-        <AiDetectBanner
-          periodEnd={periodEnd}
-          onAccept={handleAcceptCandidate}
-        />
-
-        {/* Renewal alerts (Phase 1) — surfaces items expiring soon /
-            past end-date so the user doesn't have to scan the table. */}
-        <RenewalAlertsBanner
-          periodEnd={periodEnd}
-          onAddRenewal={handleAddRenewal}
-        />
-
-        {/* Filter + KPIs */}
-        </>)}
+        {/* Import-from-QBO + AI-detect tools move into a sticky right rail
+            so they stay reachable without pushing the table down. Hidden on a
+            closed period — passing undefined renders the body full-width. */}
+        <ScheduleToolsLayout
+          tools={!isClosed ? (
+            <>
+              <ImportPrepaidsFromQboBanner
+                qboAccountId={filterAccount}
+                existingItemCount={items.length}
+              />
+              <AiDetectBanner
+                periodEnd={periodEnd}
+                onAccept={handleAcceptCandidate}
+              />
+            </>
+          ) : undefined}
+        >
+        {/* Renewal alerts stay in the main column — a data alert tied to the
+            table, not an import tool. */}
+        {!isClosed && (
+          <RenewalAlertsBanner
+            periodEnd={periodEnd}
+            onAddRenewal={handleAddRenewal}
+          />
+        )}
         <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker
@@ -425,6 +422,7 @@ export function PrepaidsPage() {
             </div>
           )}
         </div>
+        </ScheduleToolsLayout>
       </div>
 
       <AnimatePresence>

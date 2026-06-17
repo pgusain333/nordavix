@@ -103,10 +103,13 @@ export function LoansPage() {
         exporting={exportMut.isPending}
       />
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
-        {/* Suggestion banners create items directly — hide them on a closed period. */}
-        {!isClosed && (<>
+        {/* Import-from-QBO tool moves into a sticky right rail so it doesn't
+            push the table down. Single column on a closed period (no rail). */}
+        <div className={isClosed ? "" : "flex flex-col lg:flex-row-reverse lg:items-start gap-5"}>
+        {!isClosed && (
+        <aside className="lg:w-80 lg:shrink-0 lg:sticky lg:top-4 space-y-4">
         {/* First-month onboarding — pull loans from QBO BS liability
             account. Each credit becomes a loan with placeholder rate +
             term — the user MUST fill in real terms before any close. */}
@@ -160,8 +163,9 @@ export function LoansPage() {
             },
           }}
         />
-
-        </>)}
+        </aside>
+        )}
+        <div className={isClosed ? "space-y-5" : "flex-1 min-w-0 space-y-5"}>
         <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker value={filterAccount} onChange={setFilterAccount} mode="filter" label="Loan liability GL account" />
@@ -244,6 +248,8 @@ export function LoansPage() {
               </table>
             </div>
           )}
+        </div>
+        </div>
         </div>
       </div>
 
