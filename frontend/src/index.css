@@ -420,3 +420,12 @@
    0.32s slide. Respects prefers-reduced-motion via the global reduce rule. */
 @keyframes ndvx-fade-in { from { opacity: 0; } to { opacity: 1; } }
 .ndvx-fade-in { animation: ndvx-fade-in 0.28s ease-out both; }
+
+/* Compact app density — the authenticated shell (ThreePaneLayout) adds
+   `app-dense` to <html> while mounted, shrinking the ROOT font size a notch.
+   Every rem-based size (Tailwind text-*, p-*, m-*, gap-*, w-*, h-*, …) scales
+   with it, so the whole app reads a little smaller and more content fits on
+   screen — a gentle zoom-out. Marketing pages keep the default 16px (the class
+   is removed when the app shell unmounts). Tune the one value below to taste:
+   15px ≈ 94% (gentle), 14px ≈ 88%, 13px ≈ 81% (aggressive). */
+html.app-dense { font-size: 15px; }

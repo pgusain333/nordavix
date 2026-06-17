@@ -27,6 +27,15 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
     return () => { document.body.style.overflow = prev }
   }, [mobileNavOpen])
 
+  // Compact density — shrink the authenticated app a notch (type + rem-based
+  // spacing) so more fits on screen, like a gentle zoom-out. Scoped to the app
+  // shell: the class is removed on unmount, so the marketing site keeps its full
+  // size. See `html.app-dense` in index.css for the actual scale.
+  useEffect(() => {
+    document.documentElement.classList.add("app-dense")
+    return () => document.documentElement.classList.remove("app-dense")
+  }, [])
+
   return (
     <DemoModeProvider>
     <div className="flex h-screen overflow-hidden bg-theme">
