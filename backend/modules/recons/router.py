@@ -2663,8 +2663,14 @@ async def seed_books(
     # Replace any pre-existing review rows at this seed_date for safety —
     # tenant-scoped delete then bulk insert. (Pre-seed values shouldn't
     # exist, but be defensive in case someone manually wrote one.)
+    # The session tenant filter does NOT scope DELETEs, so the tenant_id
+    # predicate is required here — without it this clears rows for this
+    # period_end across every tenant, not just the caller's workspace.
     await db.execute(
-        delete(AccountReviewStatus).where(AccountReviewStatus.period_end == seed_date)
+        delete(AccountReviewStatus).where(
+            AccountReviewStatus.tenant_id == tenant_id,
+            AccountReviewStatus.period_end == seed_date,
+        )
     )
 
     count = 0
@@ -3205,7 +3211,21 @@ async def download_account_evidence(
         if wp is None:
             raise HTTPException(status_code=404, detail="Evidence not found.")
         r2_key, file_name, mime_type = wp.r2_key, wp.file_name, wp.mime_type
-    url = r2_storage.generate_presigned_download_url(r2_key, expires_in=300)
+    # Serve inline only for known-safe, non-scriptable types (keyed by file
+    # extension, never the stored/client MIME). Anything else is forced to
+    # download, so a file uploaded with a spoofed text/html MIME can never be
+    # rendered as live HTML from the storage origin. Mirrors the workpapers
+    # download hardening via the shared INLINE_SAFE_TYPES allowlist.
+    ext = file_name.rsplit(".", 1)[-1].lower() if file_name and "." in file_name else ""
+    safe_ctype = r2_storage.INLINE_SAFE_TYPES.get(ext)
+    if safe_ctype is not None:
+        disposition, content_type = "inline", safe_ctype
+    else:
+        disposition, content_type = "attachment", mime_type
+    url = r2_storage.generate_presigned_download_url(
+        r2_key, expires_in=300,
+        disposition=disposition, filename=file_name, content_type=content_type,
+    )
     return {"download_url": url, "file_name": file_name, "mime_type": mime_type}
 
 
@@ -3398,7 +3418,11 @@ async def list_overrides(
     return {"overrides": out}
 
 
-@router.post("/clear-synced-data", status_code=status.HTTP_200_OK)
+@router.post(
+    "/clear-synced-data",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def clear_synced_data(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
@@ -3411,11 +3435,16 @@ async def clear_synced_data(
     The QBO connection itself is preserved — only Nordavix-side cached
     reconciliation records are deleted.
     """
-    # Delete in FK-safe order: notes → transactions → items → reconciliations
-    await db.execute(delete(ReconNote))
-    await db.execute(delete(ReconTransaction))
-    await db.execute(delete(ReconciliationItem))
-    await db.execute(delete(Reconciliation))
+    # Delete in FK-safe order: notes → transactions → items → reconciliations.
+    # CRITICAL: every DELETE must be scoped to the caller's tenant. The session
+    # tenant filter (core/db/session.py) only rewrites SELECTs — it returns early
+    # for INSERT/UPDATE/DELETE — and the backend connects as the table owner, so
+    # Postgres RLS does NOT scope it either. Without these explicit .where()s an
+    # unscoped delete() would wipe EVERY tenant's reconciliation data.
+    await db.execute(delete(ReconNote).where(ReconNote.tenant_id == tenant_id))
+    await db.execute(delete(ReconTransaction).where(ReconTransaction.tenant_id == tenant_id))
+    await db.execute(delete(ReconciliationItem).where(ReconciliationItem.tenant_id == tenant_id))
+    await db.execute(delete(Reconciliation).where(Reconciliation.tenant_id == tenant_id))
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
         action="recon.synced_data_cleared", entity_type="reconciliation", entity_id=None,
@@ -3578,7 +3607,11 @@ async def sync_reconciliation(
 
 # ── Approve / assign ──────────────────────────────────────────────────────────
 
-@router.post("/{recon_id}/approve", response_model=ReconciliationResponse)
+@router.post(
+    "/{recon_id}/approve",
+    response_model=ReconciliationResponse,
+    dependencies=[Depends(require_role("reviewer"))],
+)
 async def approve_reconciliation(
     recon_id: uuid.UUID,
     tenant_id: CurrentTenantId,
@@ -3686,6 +3719,13 @@ async def set_item_status(
     )).scalar_one_or_none()
     if recon is not None:
         await _block_if_closed(db, recon.period_end)
+    # Maker/checker: signing off (approving) an item is a reviewer/admin action.
+    # A preparer can move items through other statuses but cannot self-approve.
+    if body.status == "approved" and user.role == "preparer":
+        raise HTTPException(
+            status_code=403,
+            detail="Only a reviewer or admin can approve a reconciliation item.",
+        )
     item.status = body.status
     if body.status == "approved":
         item.approved_by = user.id
@@ -3762,7 +3802,11 @@ async def explain_recon_endpoint(
 
 # ── Delete ────────────────────────────────────────────────────────────────────
 
-@router.delete("/{recon_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{recon_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("reviewer"))],
+)
 async def delete_reconciliation(
     recon_id: uuid.UUID,
     tenant_id: CurrentTenantId,

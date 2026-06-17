@@ -7,6 +7,14 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+# Import core.db.session for its REGISTRATION side effects: it attaches the
+# production SQLAlchemy Session event listeners — the tenant-isolation SELECT
+# filter and the read-only/demo write guard — to the global Session class. Tests
+# build their own sessionmaker, so without this import those listeners are only
+# present when some other collected module happens to import core.db.session
+# first, which made the tenant-isolation invariants pass/fail by collection
+# order. Importing it here guarantees the security invariants are always tested.
+import core.db.session  # noqa: F401
 from core.db.base import Base, current_tenant_id
 
 # Tests run against a dedicated test database — never the dev or prod DB.

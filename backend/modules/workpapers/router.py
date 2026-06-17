@@ -106,17 +106,9 @@ _REF_TYPES = {"account", "schedule", "adjustment", "flux", "financials", "genera
 # EXTENSION, never the client-supplied MIME, and limited to non-scriptable
 # types. This stops a file uploaded with a spoofed text/html MIME from being
 # served as live HTML from the storage origin. Anything not listed is forced to
-# download (Content-Disposition: attachment).
-_INLINE_SAFE_TYPES = {
-    "pdf":  "application/pdf",
-    "png":  "image/png",
-    "jpg":  "image/jpeg",
-    "jpeg": "image/jpeg",
-    "gif":  "image/gif",
-    "webp": "image/webp",
-    "csv":  "text/plain; charset=utf-8",
-    "txt":  "text/plain; charset=utf-8",
-}
+# download (Content-Disposition: attachment). Single source of truth lives in
+# core.storage.r2 so the workpaper + recon download paths can't drift apart.
+_INLINE_SAFE_TYPES = r2_storage.INLINE_SAFE_TYPES
 
 
 def _parse_period(period_end: str) -> date:

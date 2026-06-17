@@ -1109,21 +1109,25 @@ export function ReconciliationsDashboard() {
                       onClick={() => { handleAgenticReset(); close() }}
                     />
                   )}
-                  <OverflowMenuItem
-                    danger
-                    icon={<Trash2 size={15} strokeWidth={1.8} />}
-                    label="Clear cached data"
-                    onClick={() => {
-                      close()
-                      setConfirmState({
-                        title: "Clear all cached reconciliation data?",
-                        body: "Wipes every synced snapshot for all periods. Your QuickBooks connection stays — you'll just need to re-sync the periods you're working on.",
-                        confirmLabel: "Clear data",
-                        variant: "danger",
-                        onConfirm: () => clearMut.mutate(),
-                      })
-                    }}
-                  />
+                  {/* Destructive cross-period wipe — admin only (the backend
+                      also enforces require_role("admin")). */}
+                  {isAdmin && (
+                    <OverflowMenuItem
+                      danger
+                      icon={<Trash2 size={15} strokeWidth={1.8} />}
+                      label="Clear cached data"
+                      onClick={() => {
+                        close()
+                        setConfirmState({
+                          title: "Clear all cached reconciliation data?",
+                          body: "Wipes every synced snapshot for all periods. Your QuickBooks connection stays — you'll just need to re-sync the periods you're working on.",
+                          confirmLabel: "Clear data",
+                          variant: "danger",
+                          onConfirm: () => clearMut.mutate(),
+                        })
+                      }}
+                    />
+                  )}
                 </>
               )}
             </OverflowMenu>

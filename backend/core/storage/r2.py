@@ -18,6 +18,25 @@ _s3 = boto3.client(
 )
 
 
+# Content-Types we will serve INLINE (browser-rendered), keyed by file
+# EXTENSION — never the client-supplied MIME — and limited to non-scriptable
+# types. Serving an uploaded file under its client-declared MIME would let a
+# file uploaded as text/html (or image/svg+xml) run as script from the storage
+# origin (stored XSS). Any extension not in this map must be served as an
+# attachment (download), never inline. Single source of truth shared by every
+# evidence/download endpoint so they can't drift apart.
+INLINE_SAFE_TYPES: dict[str, str] = {
+    "pdf":  "application/pdf",
+    "png":  "image/png",
+    "jpg":  "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif":  "image/gif",
+    "webp": "image/webp",
+    "csv":  "text/plain; charset=utf-8",
+    "txt":  "text/plain; charset=utf-8",
+}
+
+
 def tenant_key(tenant_id: uuid.UUID, resource_type: str, filename: str) -> str:
     """
     Constructs a tenant-isolated R2 object key.
