@@ -12,7 +12,7 @@ import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   Target, TrendingUp, TrendingDown, Minus, CheckCircle2, AlertTriangle,
-  Lightbulb, ChevronDown, type LucideIcon,
+  Lightbulb, ChevronDown, FileText, type LucideIcon,
 } from "lucide-react"
 
 import { PageHeader } from "@/core/ui/PageHeader"
@@ -21,6 +21,8 @@ import { Spinner } from "@/core/ui/components"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { formatDate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
+import { financialsApi } from "@/modules/financials/api"
+import { closeApi } from "@/modules/close/api"
 import {
   advisoryApi, formatKpi,
   type Comparator, type Kpi, type RecStatus, type TrackedRec,
@@ -30,6 +32,13 @@ function defaultPeriod(): string {
   const d = new Date()
   const last = new Date(d.getFullYear(), d.getMonth(), 0)
   return last.toISOString().slice(0, 10)
+}
+
+/** "2026-04-30" → "April 2026" for the empty-state CTA copy. */
+function monthLabel(period: string): string {
+  const d = new Date(period + "T00:00:00")
+  if (Number.isNaN(d.getTime())) return "the period"
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" })
 }
 
 const COMPARATOR_LABEL: Record<Comparator, string> = {
@@ -63,6 +72,26 @@ export function AdvisoryPage() {
     queryKey: ["advisory-recs"],
     queryFn:  () => advisoryApi.getRecommendations(),
     staleTime: 60_000,
+  })
+
+  // Tracked recommendations are produced by the internal executive report.
+  // When none exist yet, the empty state offers to generate it right here — but
+  // the report endpoint requires locked books, so we check the (cached) period
+  // close state to either enable the button or explain why it's not ready.
+  const { data: periodsData } = useQuery({
+    queryKey: ["close", "periods"],
+    queryFn:  closeApi.getPeriods,
+    staleTime: 60_000,
+  })
+  const periodClosed = periodsData?.periods.some((p) => p.period_end === period && p.closed)
+
+  const [genError, setGenError] = useState<string | null>(null)
+  const generateReport = useMutation({
+    mutationFn: () => financialsApi.exportExecutiveReport(period, "internal"),
+    onMutate:   () => setGenError(null),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ["advisory-recs"] }),
+    onError:    (e: unknown) =>
+      setGenError(e instanceof Error ? e.message : "Could not generate the executive report."),
   })
 
   return (
@@ -122,9 +151,30 @@ export function AdvisoryPage() {
               <div className="rounded-2xl px-4 py-8 text-center"
                 style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                 <p className="text-sm font-medium" style={{ color: "var(--text-2)" }}>No recommendations tracked yet</p>
-                <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>
-                  Generate an executive report for a closed period — its recommendations land here to track.
+                <p className="text-[12px] mt-1 max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+                  Generate the executive report for {monthLabel(period)} — its AI board
+                  recommendations land here as trackable items.
                 </p>
+                {periodClosed === false ? (
+                  <p className="text-[12px] mt-3 inline-flex items-center gap-1.5" style={{ color: "var(--warn)" }}>
+                    <AlertTriangle size={12} strokeWidth={2.2} />
+                    Books for {monthLabel(period)} aren't closed yet — close them on the dashboard first.
+                  </p>
+                ) : (
+                  <button onClick={() => generateReport.mutate()} disabled={generateReport.isPending}
+                    className="mt-3 inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] font-semibold text-white disabled:opacity-60"
+                    style={{ background: "var(--green)" }}
+                    title="Generates the board PDF and tracks its recommendations here — typically 10–30 seconds">
+                    {generateReport.isPending ? <Spinner className="h-4 w-4" /> : <FileText size={14} strokeWidth={1.9} />}
+                    {generateReport.isPending ? "Generating…" : "Generate executive report"}
+                  </button>
+                )}
+                {generateReport.isPending && (
+                  <p className="text-[11px] mt-2 italic" style={{ color: "var(--text-muted)" }}>
+                    Pulling financials + insights + flux, then asking Claude for the narrative…
+                  </p>
+                )}
+                {genError && <p className="text-[12px] mt-2" style={{ color: "var(--danger)" }}>{genError}</p>}
               </div>
             ) : (
               <div className="space-y-2">
