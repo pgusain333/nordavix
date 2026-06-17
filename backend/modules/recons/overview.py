@@ -271,7 +271,7 @@ async def sync_overview(
 # $1.00; $1 here is the hard backend floor — it never blocks a legitimate UI
 # approval but catches a material gap pushed through the API or a bulk action.
 # (A configurable per-workspace materiality threshold is a future enhancement.)
-RECON_TOLERANCE = Decimal("1.00")
+RECON_TOLERANCE = Decimal("1.00")  # GL↔subledger tie-out threshold (also used by the binder lead schedule)
 
 
 def is_reconciled(gl_balance: Decimal, subledger_balance: Decimal) -> bool:

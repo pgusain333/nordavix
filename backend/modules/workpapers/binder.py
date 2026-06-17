@@ -27,6 +27,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import LETTER
@@ -43,10 +44,13 @@ from modules.workpapers.pdf_pages import (
     AuditRow,
     BinderContext,
     EvidenceRow,
+    LeadGroup,
+    LeadRow,
     TocEntry,
     render_audit_appendix,
     render_evidence_appendix,
     render_front_matter,
+    render_recon_lead_schedule,
 )
 
 logger = logging.getLogger(__name__)
@@ -186,7 +190,8 @@ async def _render_financials(
         statements = []
         for kind in ("income_statement", "balance_sheet", "cash_flow"):
             statements.append(await _build_statement(
-                tenant_id, db, period_end, kind, True, source="nordavix"))
+                tenant_id, db, period_end, kind, True, source="nordavix",
+                comparative_basis="prior_month"))
         buf = io.BytesIO()
         build_pdf(buf, company=company, period_end=period_end,
                   statements=statements, prepared_by="", is_draft=False)
@@ -319,12 +324,89 @@ async def _render_evidence(
     return buf.getvalue(), len(rows)
 
 
+def _build_recon_lead_schedule(
+    ov: dict, accts: list[dict], ctx: BinderContext,
+) -> bytes | None:
+    """Render the recon lead schedule (summary table) from the committed
+    overview — every account's GL vs subledger, variance and status, grouped by
+    balance-sheet category (Assets / Liabilities / Equity) with subtotals and a
+    grand total. Returns None when there are no accounts. Pure CPU + the
+    overview dict the caller already fetched (no extra DB/QBO)."""
+    if not accts:
+        return None
+    from modules.recons.overview import RECON_TOLERANCE, _classify
+    from modules.recons.pdf import _fmt_money
+
+    def _dec(v) -> Decimal:
+        try:
+            return Decimal(str(v if v not in (None, "") else "0"))
+        except Exception:
+            return Decimal("0")
+
+    def _status(a: dict, var: Decimal) -> tuple[str, bool]:
+        bad = abs(var) > RECON_TOLERANCE
+        rs = a.get("review_status") or "pending"
+        if rs == "flagged":
+            return "Flagged", bad
+        if bad:
+            return "Variance", True
+        if rs in ("approved", "reviewed"):
+            return "Reconciled", False
+        return "Open", False
+
+    buckets: dict[str, list[dict]] = {"asset": [], "liability": [], "equity": [], "other": []}
+    for a in accts:
+        buckets[_classify(a.get("group_label") or "") or "other"].append(a)
+
+    groups: list[LeadGroup] = []
+    reconciled = 0
+    for key, label in (("asset", "Assets"), ("liability", "Liabilities"),
+                       ("equity", "Equity"), ("other", "Other")):
+        items = sorted(buckets[key], key=lambda a: (a.get("account_number") or "",
+                                                    a.get("account_name") or ""))
+        if not items:
+            continue
+        rows: list[LeadRow] = []
+        g_gl = g_sub = g_var = Decimal("0")
+        for a in items:
+            gl, sub = _dec(a.get("gl_balance")), _dec(a.get("subledger_balance"))
+            var = _dec(a.get("variance"))
+            st, bad = _status(a, var)
+            if st == "Reconciled":
+                reconciled += 1
+            g_gl += gl
+            g_sub += sub
+            g_var += var
+            rows.append(LeadRow(
+                number=a.get("account_number") or "",
+                name=a.get("account_name") or "",
+                gl=_fmt_money(gl), sub=_fmt_money(sub), variance=_fmt_money(var),
+                status=st, variance_bad=bad,
+            ))
+        groups.append(LeadGroup(
+            label=label, rows=rows,
+            gl=_fmt_money(g_gl), sub=_fmt_money(g_sub), variance=_fmt_money(g_var)))
+
+    totals = ov.get("totals") or {}
+    buf = io.BytesIO()
+    render_recon_lead_schedule(
+        buf, ctx=ctx, groups=groups,
+        total_gl=_fmt_money(totals.get("gl") or "0"),
+        total_sub=_fmt_money(totals.get("subledger") or "0"),
+        total_variance=_fmt_money(totals.get("variance") or "0"),
+        reconciled_count=reconciled, total_count=len(accts),
+        tolerance_label=f"{RECON_TOLERANCE:.2f}",
+    )
+    return buf.getvalue()
+
+
 async def _render_recon_packets(
     db: AsyncSession, tenant_id: uuid.UUID, period_end: date, company: str,
-    user_email: str,
+    user_email: str, ctx: BinderContext,
 ) -> tuple[bytes | None, int]:
-    """One reconciliation working paper per balance-sheet account in the
-    period, in the same packet style as the per-account download."""
+    """The recon section: a lead schedule (summary of every account's GL vs
+    subledger, variance + status) followed by one full working paper per
+    balance-sheet account, in the per-account download style."""
     try:
         from modules.recons.pdf import build_account_pdf
         from modules.recons.pdf_data import gather_account_pdf_data
@@ -334,6 +416,15 @@ async def _render_recon_packets(
             ov.get("accounts") or [],
             key=lambda a: (a.get("account_number") or "", a.get("account_name") or ""),
         )
+
+        # Lead schedule first — the at-a-glance tie-out for the whole period.
+        try:
+            lead_pdf = _build_recon_lead_schedule(ov, accts, ctx)
+        except Exception:
+            logger.warning("binder: recon lead schedule failed; skipping", exc_info=True)
+            lead_pdf = None
+
+        # Then the full working paper for each account.
         pdfs: list[bytes] = []
         for a in accts:
             qid = a.get("qbo_id") or a.get("qbo_account_id")
@@ -350,9 +441,11 @@ async def _render_recon_packets(
                 pdfs.append(buf.getvalue())
             except Exception:
                 logger.debug("binder: recon packet failed for %s", qid, exc_info=True)
-        if not pdfs:
+
+        parts = ([lead_pdf] if lead_pdf else []) + pdfs
+        if not parts:
             return None, 0
-        return _merge(pdfs), len(pdfs)
+        return _merge(parts), len(pdfs)
     except Exception:
         logger.warning("binder: recon packets section failed; skipping", exc_info=True)
         return None, 0
@@ -493,11 +586,13 @@ async def build_close_binder(
             "Income statement · Balance sheet · Cash flow", fin, _count(fin)))
 
     recon_pdf, recon_n = await _render_recon_packets(
-        db, tenant_id, period_end, company, generated_by_name)
+        db, tenant_id, period_end, company, generated_by_name, ctx)
     if recon_pdf:
+        recon_note = "Lead schedule" + (
+            f" + {recon_n} account{'' if recon_n == 1 else 's'}" if recon_n else "")
         sections.append(_Section(
             "recons", "Reconciliation working papers",
-            f"{recon_n} account{'' if recon_n == 1 else 's'}", recon_pdf, _count(recon_pdf)))
+            recon_note, recon_pdf, _count(recon_pdf)))
 
     flux_pdf, flux_n = await _render_flux_packets(
         db, tenant_id, period_end, company, generated_by_name)

@@ -119,6 +119,30 @@ class EvidenceRow:
     when: str
 
 
+@dataclass
+class LeadRow:
+    """One account line on the reconciliation lead schedule. Money fields are
+    pre-formatted strings (binder.py formats via _fmt_money)."""
+    number: str
+    name: str
+    gl: str
+    sub: str
+    variance: str
+    status: str            # "Reconciled" | "Flagged" | "Variance" | "Open"
+    variance_bad: bool = False   # variance outside tolerance → render in red
+
+
+@dataclass
+class LeadGroup:
+    """A balance-sheet category block (Assets / Liabilities / Equity) with its
+    account rows and a subtotal."""
+    label: str
+    rows: list[LeadRow]
+    gl: str
+    sub: str
+    variance: str
+
+
 # ── Small helpers ────────────────────────────────────────────────────────────
 def _label(text: str, color: colors.Color = GREY_MID) -> ParagraphStyle:
     return ParagraphStyle("lab", fontName="Helvetica-Bold", fontSize=6.5,
@@ -277,7 +301,7 @@ def _draw_cover(canvas, ctx: BinderContext) -> None:
     inside = [
         "Close certificate — sign-off, findings cleared, checks passed",
         "Financial statements — income statement, balance sheet, cash flow",
-        "Reconciliation working papers — one per balance-sheet account",
+        "Reconciliation working papers — lead schedule, then one per account",
         "Flux analysis — every material variance, explained",
         "Supporting evidence — every attached document, indexed",
         "Audit trail — every prepare, approve and sign-off action",
@@ -567,4 +591,137 @@ def render_evidence_appendix(buffer, *, ctx: BinderContext,
             ts.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#FAF9F6")))
     t.setStyle(TableStyle(ts))
     story.append(t)
+    doc.build(story)
+
+
+# ── Public: reconciliation lead schedule ─────────────────────────────────────
+_LEAD_STATUS_COLOR = {
+    "Reconciled": GREEN,
+    "Flagged":    AMBER,
+    "Variance":   RED,
+    "Open":       GREY_MID,
+}
+
+
+def _csshex(c: colors.Color) -> str:
+    """ReportLab Color → CSS '#rrggbb' for inline <font color> tags."""
+    return "#" + c.hexval()[2:]
+
+
+def render_recon_lead_schedule(
+    buffer, *, ctx: BinderContext, groups: list[LeadGroup],
+    total_gl: str, total_sub: str, total_variance: str,
+    reconciled_count: int, total_count: int, tolerance_label: str = "1.00",
+) -> None:
+    """The recon section's lead schedule: every balance-sheet account with its
+    GL balance, subledger balance, variance and reconciliation status, grouped
+    by category with subtotals and a grand total. Sits in front of the
+    per-account working papers so a reviewer sees the whole tie-out at a glance."""
+    doc = _make_doc(
+        buffer, ctx,
+        title=f"Reconciliation Lead Schedule — {ctx.company} — {ctx.period_end.isoformat()}",
+        with_cover=False)
+    s = _styles()
+    story: list = [
+        Paragraph("RECONCILIATION LEAD SCHEDULE", s["eyebrow"]),
+        Paragraph("Every account, tied to its subledger", s["title"]),
+        Paragraph(
+            f"{reconciled_count} of {total_count} balance-sheet account"
+            f"{'' if total_count == 1 else 's'} reconciled to subledger within "
+            f"${tolerance_label}. GL balance versus subledger by account, with the "
+            f"variance and status. Full working papers for each account follow.",
+            s["subtitle"]),
+        Spacer(1, 12),
+    ]
+
+    head = ParagraphStyle("lh", fontName="Helvetica-Bold", fontSize=7.5,
+                          leading=10, textColor=colors.white)
+    head_r = ParagraphStyle("lhr", parent=head, alignment=2)
+    head_c = ParagraphStyle("lhc", parent=head, alignment=1)
+    num = ParagraphStyle("ln", fontName="Helvetica", fontSize=8, leading=11,
+                         textColor=GREY_DARK, alignment=2)
+    num_bad = ParagraphStyle("lnb", parent=num, textColor=RED)
+    acct_no = ParagraphStyle("lano", fontName="Helvetica", fontSize=8,
+                             leading=11, textColor=GREY_MID)
+    acct_nm = ParagraphStyle("lanm", fontName="Helvetica", fontSize=8,
+                             leading=11, textColor=INK)
+    grp = ParagraphStyle("lg", fontName="Helvetica-Bold", fontSize=7,
+                         leading=11, textColor=GREY_MID)
+    sub_lab = ParagraphStyle("lsl", fontName="Helvetica-Bold", fontSize=8,
+                             leading=11, textColor=INK)
+    sub_num = ParagraphStyle("lsn", parent=sub_lab, alignment=2)
+    gt_lab = ParagraphStyle("lgl", fontName="Helvetica-Bold", fontSize=9,
+                            leading=12, textColor=INK)
+    gt_num = ParagraphStyle("lgn", parent=gt_lab, alignment=2)
+
+    def _status_para(st: str) -> Paragraph:
+        return Paragraph(st, ParagraphStyle(
+            f"lst{st}", fontName="Helvetica-Bold", fontSize=7.5, leading=10,
+            textColor=_LEAD_STATUS_COLOR.get(st, GREY_MID), alignment=1))
+
+    data: list = [[
+        Paragraph("ACCT", head), Paragraph("ACCOUNT", head),
+        Paragraph("GL BALANCE", head_r), Paragraph("SUBLEDGER", head_r),
+        Paragraph("VARIANCE", head_r), Paragraph("STATUS", head_c),
+    ]]
+    cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), INK),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]
+    ri = 1
+    for g in groups:
+        data.append([Paragraph(_xml_escape(g.label.upper()), grp), "", "", "", "", ""])
+        cmds += [("SPAN", (0, ri), (-1, ri)),
+                 ("TOPPADDING", (0, ri), (-1, ri), 9),
+                 ("BOTTOMPADDING", (0, ri), (-1, ri), 2)]
+        ri += 1
+        for r in g.rows:
+            data.append([
+                Paragraph(_xml_escape(r.number), acct_no),
+                Paragraph(_xml_escape(r.name[:48]), acct_nm),
+                Paragraph(r.gl, num), Paragraph(r.sub, num),
+                Paragraph(r.variance, num_bad if r.variance_bad else num),
+                _status_para(r.status),
+            ])
+            cmds.append(("LINEBELOW", (0, ri), (-1, ri), 0.4, BORDER))
+            ri += 1
+        data.append([
+            "", Paragraph(f"Total {_xml_escape(g.label.lower())}", sub_lab),
+            Paragraph(g.gl, sub_num), Paragraph(g.sub, sub_num),
+            Paragraph(g.variance, sub_num), "",
+        ])
+        cmds += [("LINEABOVE", (0, ri), (-1, ri), 0.5, GREY_MID),
+                 ("TOPPADDING", (0, ri), (-1, ri), 5),
+                 ("BOTTOMPADDING", (0, ri), (-1, ri), 7)]
+        ri += 1
+
+    data.append([
+        "", Paragraph("Grand total", gt_lab),
+        Paragraph(total_gl, gt_num), Paragraph(total_sub, gt_num),
+        Paragraph(total_variance, gt_num), "",
+    ])
+    cmds += [("LINEABOVE", (0, ri), (-1, ri), 1.0, INK),
+             ("TOPPADDING", (0, ri), (-1, ri), 7),
+             ("BOTTOMPADDING", (0, ri), (-1, ri), 7)]
+
+    t = Table(data, colWidths=[
+        _BODY_W * 0.09, _BODY_W * 0.33, _BODY_W * 0.17,
+        _BODY_W * 0.17, _BODY_W * 0.13, _BODY_W * 0.11,
+    ], repeatRows=1)
+    t.setStyle(TableStyle(cmds))
+    story.append(t)
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(
+        f"<font color='{_csshex(GREEN)}'>Reconciled</font> — GL ties to subledger "
+        f"within ${tolerance_label} and reviewed   {_DOT}   "
+        f"<font color='{_csshex(AMBER)}'>Flagged</font> — variance noted, "
+        f"follow-up attached   {_DOT}   "
+        f"<font color='{_csshex(RED)}'>Variance</font> — outside tolerance",
+        ParagraphStyle("leg", fontName="Helvetica", fontSize=7.5, leading=11,
+                       textColor=GREY_MID)))
     doc.build(story)
