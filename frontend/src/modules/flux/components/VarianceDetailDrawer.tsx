@@ -79,14 +79,15 @@ interface Props {
 
 // ── Width persistence ─────────────────────────────────────────────────
 
-// v3 — bumped so the new (narrower) default takes effect once.
-const WIDTH_KEY = "nordavix:variance-drawer-width:v3"
+// v4 — bumped so the new (wider table) default takes effect once.
+const WIDTH_KEY = "nordavix:variance-drawer-width:v4"
 const MIN_WIDTH = 400
 const MAX_WIDTH_VW = 0.85
-// Default: open the drawer but leave the variance table a COMFORTABLE ~RAIL px
-// so its account · $ change · % · status columns aren't squeezed. (The drawer
-// takes the rest.) Clamped to [MIN_WIDTH, 85vw]. Drag persists.
-const RAIL = 680
+// Default: leave the variance table a generous ~RAIL px so (a) its account ·
+// $ change · % · status columns aren't squeezed and (b) the tabs + lens (vs
+// Prior / vs Expected) + Export row stays on ONE line instead of wrapping. The
+// drawer takes the rest. Clamped to [MIN_WIDTH, 85vw]. Drag persists.
+const RAIL = 780
 function defaultWidth(): number {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1440
   return Math.round(Math.min(Math.max(vw - RAIL, MIN_WIDTH), vw * MAX_WIDTH_VW))
