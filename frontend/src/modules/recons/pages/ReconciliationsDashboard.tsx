@@ -1439,7 +1439,7 @@ export function ReconciliationsDashboard() {
               const varianceVal   = parseFloat(overview?.totals.variance ?? "0")
               const varianceTone  = Math.abs(varianceVal) > 0.5 ? "var(--danger)" : "var(--green)"
               return (
-                <div className="sticky top-0 z-20 -mx-4 sm:-mx-5 px-4 sm:px-5 pt-1 pb-2"
+                <div className="ndvx-hide-when-drawer sticky top-0 z-20 -mx-4 sm:-mx-5 px-4 sm:px-5 pt-1 pb-2"
                   style={{ background: "var(--bg)" }}>
                   {/* Default mode="sync" (no `mode` prop) lets the
                       exiting + entering motion.divs animate
@@ -1520,7 +1520,9 @@ export function ReconciliationsDashboard() {
                 Financial-side cards (Assets / Liab / Equity / Implied NI)
                 live inside the accordion body alongside the equation. */}
             {overview?.tb_check && (
-              <TrialBalanceCheckCard check={overview.tb_check} breakdown={breakdown} />
+              <div className="ndvx-hide-when-drawer">
+                <TrialBalanceCheckCard check={overview.tb_check} breakdown={breakdown} />
+              </div>
             )}
 
             {/* Status buckets — clicking Approve on a row moves it from

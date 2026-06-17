@@ -403,3 +403,14 @@
   text-align: center !important;
   margin: 0.25rem 0 1.25rem !important;
 }
+
+/* ── Master–detail focus ───────────────────────────────────────────────────
+   When an account / variance detail drawer is open on desktop, Recons + Flux
+   collapse their wide table to a slim list. Hide the big KPI strips and the
+   sync-verification card too so the drawer owns the screen instead of fighting
+   squeezed chrome above the list. The drawers add `body.detail-drawer-open`
+   ONLY on desktop (lg+), so this never affects the mobile bottom-sheet. The
+   media query keeps it desktop-scoped even if the class ever lingered. */
+@media (min-width: 1024px) {
+  body.detail-drawer-open .ndvx-hide-when-drawer { display: none; }
+}

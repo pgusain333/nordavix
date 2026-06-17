@@ -719,7 +719,7 @@ export function FluxDashboard() {
             <div ref={pageScrollRef} className="absolute inset-0 overflow-y-auto">
               {/* Sticky KPI cards — full-grid layout collapses to a
                   compact horizontal bar after ~140px of scroll. */}
-              <div className="sticky top-0 z-20 px-4 sm:px-6 pt-3 pb-2"
+              <div className="ndvx-hide-when-drawer sticky top-0 z-20 px-4 sm:px-6 pt-3 pb-2"
                 style={{ background: "var(--bg)" }}>
                 <FluxKpiStrip rows={variances} compact={isKpiCompact} />
               </div>
