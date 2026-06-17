@@ -30,6 +30,7 @@ from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, req
 from core.config import settings
 from core.db.session import get_db
 from models.account import Account
+from models.closed_period import ClosedPeriod
 from models.narrative import Narrative
 from models.qbo_connection import QboConnection
 from models.trial_balance import TrialBalance
@@ -94,6 +95,29 @@ async def list_trial_balances(
         select(TrialBalance).order_by(TrialBalance.created_at.desc())
     )
     return list(result.scalars().all())
+
+
+async def _require_tb_open(tb_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
+    """Dependency: block writes to a trial balance whose period is closed (423).
+    The period is TrialBalance.period_current; an admin must reopen first. A
+    missing TB / missing period falls through to the endpoint's own 404 handling.
+    Keeps flux's backend in lockstep with the dashboard's closed-period lockdown."""
+    tb = (await db.execute(
+        select(TrialBalance).where(TrialBalance.id == tb_id)
+    )).scalar_one_or_none()
+    if tb is None or tb.period_current is None:
+        return
+    cp = (await db.execute(
+        select(ClosedPeriod).where(ClosedPeriod.period_end == tb.period_current)
+    )).scalar_one_or_none()
+    if cp is not None:
+        raise HTTPException(
+            status_code=423,
+            detail=(
+                f"Books are closed for period {tb.period_current}. "
+                "An admin must reopen the period before edits are allowed."
+            ),
+        )
 
 
 @router.post(
@@ -278,7 +302,8 @@ async def get_trial_balance(
     return tb
 
 
-@router.post("/trial-balances/{tb_id}/comparison-mode", response_model=TrialBalanceResponse)
+@router.post("/trial-balances/{tb_id}/comparison-mode", response_model=TrialBalanceResponse,
+             dependencies=[Depends(_require_tb_open)])
 async def set_comparison_mode(
     tb_id: uuid.UUID,
     body: ComparisonModeBody,
@@ -302,7 +327,8 @@ async def set_comparison_mode(
 
 # ── Upload & Parse ──────────────────────────────────────────────────────────────
 
-@router.post("/trial-balances/{tb_id}/upload", response_model=UploadPreview)
+@router.post("/trial-balances/{tb_id}/upload", response_model=UploadPreview,
+             dependencies=[Depends(_require_tb_open)])
 async def upload_trial_balance(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
@@ -358,7 +384,8 @@ async def upload_trial_balance(
     )
 
 
-@router.post("/trial-balances/{tb_id}/parse", response_model=ParseResult)
+@router.post("/trial-balances/{tb_id}/parse", response_model=ParseResult,
+             dependencies=[Depends(_require_tb_open)])
 async def parse_trial_balance(
     tb_id: uuid.UUID,
     body: ColumnMappingBody,
@@ -457,7 +484,7 @@ async def parse_trial_balance(
 # ── Run ─────────────────────────────────────────────────────────────────────────
 
 @router.post("/trial-balances/{tb_id}/run", response_model=FluxRunResponse,
-             dependencies=[Depends(enforce_ai_limits)])
+             dependencies=[Depends(enforce_ai_limits), Depends(_require_tb_open)])
 async def run_flux(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
@@ -611,7 +638,7 @@ async def _maybe_mark_complete(
 
 @router.post(
     "/trial-balances/{tb_id}/variances/{var_id}/approve",
-    dependencies=[Depends(require_role("reviewer"))],
+    dependencies=[Depends(require_role("reviewer")), Depends(_require_tb_open)],
 )
 async def approve_variance(
     tb_id: uuid.UUID,
@@ -650,7 +677,8 @@ async def approve_variance(
     }
 
 
-@router.post("/trial-balances/{tb_id}/variances/{var_id}/save-expectation")
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/save-expectation",
+             dependencies=[Depends(_require_tb_open)])
 async def save_variance_expectation(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
@@ -742,7 +770,8 @@ async def save_variance_expectation(
 _ALLOWED_STATUS_FLIPS = {"pending", "generated", "edited", "flagged"}
 
 
-@router.post("/trial-balances/{tb_id}/variances/{var_id}/status")
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/status",
+             dependencies=[Depends(_require_tb_open)])
 async def set_variance_status(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
@@ -826,7 +855,7 @@ async def set_variance_status(
 
 
 @router.post("/trial-balances/{tb_id}/agentic/run",
-             dependencies=[Depends(enforce_ai_limits)])
+             dependencies=[Depends(enforce_ai_limits), Depends(_require_tb_open)])
 async def run_agentic_flux_endpoint(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
@@ -882,7 +911,7 @@ async def cancel_agentic_flux_endpoint(
 
 
 @router.post("/trial-balances/{tb_id}/variances/{var_id}/agentic/run",
-             dependencies=[Depends(enforce_ai_limits)])
+             dependencies=[Depends(enforce_ai_limits), Depends(_require_tb_open)])
 async def run_deep_agentic_on_variance(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
@@ -940,7 +969,7 @@ async def run_deep_agentic_on_variance(
 @router.post(
     "/trial-balances/{tb_id}/approve",
     response_model=TrialBalanceResponse,
-    dependencies=[Depends(require_role("reviewer"))],
+    dependencies=[Depends(require_role("reviewer")), Depends(_require_tb_open)],
 )
 async def approve_trial_balance(
     tb_id: uuid.UUID,
@@ -1087,7 +1116,8 @@ async def list_variance_transactions(
     }
 
 
-@router.post("/trial-balances/{tb_id}/variances/{var_id}/transactions/{txn_id}/check")
+@router.post("/trial-balances/{tb_id}/variances/{var_id}/transactions/{txn_id}/check",
+             dependencies=[Depends(_require_tb_open)])
 async def toggle_variance_transaction_check(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
@@ -1136,7 +1166,7 @@ async def toggle_variance_transaction_check(
 
 
 @router.post("/trial-balances/{tb_id}/variances/{var_id}/regenerate",
-             dependencies=[Depends(enforce_ai_limits)])
+             dependencies=[Depends(enforce_ai_limits), Depends(_require_tb_open)])
 async def regenerate_variance(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
@@ -1176,7 +1206,8 @@ async def regenerate_variance(
     return {"id": str(var_id), "status": "queued"}
 
 
-@router.put("/trial-balances/{tb_id}/variances/{var_id}/narrative")
+@router.put("/trial-balances/{tb_id}/variances/{var_id}/narrative",
+            dependencies=[Depends(_require_tb_open)])
 async def update_narrative(
     tb_id: uuid.UUID,
     var_id: uuid.UUID,
@@ -1451,7 +1482,8 @@ async def _wipe_tb_children(tb_id: uuid.UUID, db: AsyncSession) -> None:
     await db.execute(delete(Account).where(Account.trial_balance_id == tb_id))
 
 
-@router.post("/trial-balances/{tb_id}/accounts/{qbo_account_id}/sync")
+@router.post("/trial-balances/{tb_id}/accounts/{qbo_account_id}/sync",
+             dependencies=[Depends(_require_tb_open)])
 async def sync_one_account_from_qbo(
     tb_id: uuid.UUID,
     qbo_account_id: str,
@@ -1621,7 +1653,8 @@ async def sync_one_account_from_qbo(
     }
 
 
-@router.post("/trial-balances/{tb_id}/reset", status_code=status.HTTP_200_OK)
+@router.post("/trial-balances/{tb_id}/reset", status_code=status.HTTP_200_OK,
+             dependencies=[Depends(_require_tb_open)])
 async def reset_trial_balance(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,
@@ -1657,7 +1690,8 @@ async def reset_trial_balance(
     return {"id": str(tb_id), "status": "pending", "message": "Analysis reset — ready for re-upload."}
 
 
-@router.delete("/trial-balances/{tb_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/trial-balances/{tb_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(_require_tb_open)])
 async def delete_trial_balance(
     tb_id: uuid.UUID,
     tenant_id: CurrentTenantId,

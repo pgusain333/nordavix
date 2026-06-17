@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.session import get_db
+from models.closed_period import ClosedPeriod
 from models.gl_accuracy_finding import GlAccuracyFinding
 from models.qbo_connection import QboConnection
 from models.user import User
@@ -50,6 +51,23 @@ async def _load_finding(db: AsyncSession, finding_id: str) -> GlAccuracyFinding:
     return row
 
 
+async def _block_if_closed(db: AsyncSession, period_end: date) -> None:
+    """423 if the period is closed — no scanning/accepting/dismissing into a
+    locked month (an admin must reopen first). Keeps GL-accuracy consistent with
+    the rest of the close lockdown."""
+    cp = (await db.execute(
+        select(ClosedPeriod).where(ClosedPeriod.period_end == period_end)
+    )).scalar_one_or_none()
+    if cp is not None:
+        raise HTTPException(
+            status_code=423,
+            detail=(
+                f"Books are closed for period {period_end}. "
+                "An admin must reopen the period before edits are allowed."
+            ),
+        )
+
+
 @router.post("/scan")
 async def scan(
     tenant_id: CurrentTenantId,
@@ -60,6 +78,7 @@ async def scan(
     """Run the accuracy check for a period: pull the GL + a trailing window,
     compare each vendor's coding to its own history, and persist the flags."""
     pe = _parse_period(period_end)
+    await _block_if_closed(db, pe)
     conn = (await db.execute(
         select(QboConnection).where(QboConnection.tenant_id == tenant_id),
         execution_options={"skip_tenant_filter": True},
@@ -103,6 +122,7 @@ async def accept(
     """File the reclass as a draft adjusting entry in the Adjustments queue and
     link it back to this finding. Never posts to QuickBooks — the human does."""
     finding = await _load_finding(db, finding_id)
+    await _block_if_closed(db, finding.period_end)
     if finding.status != "open":
         raise HTTPException(status_code=400, detail="This finding has already been actioned.")
     if (finding.action_kind or "reclass") == "flag":
@@ -151,6 +171,11 @@ async def bulk_accept(
         )
     )).scalars().all()
 
+    # Closed-period guard: a closed month is locked — refuse the whole batch if
+    # any selected finding belongs to one (reopen first).
+    for finding in rows:
+        await _block_if_closed(db, finding.period_end)
+
     accepted = 0
     period_end: date | None = None
     for finding in rows:
@@ -186,6 +211,7 @@ async def dismiss(
     recording a classification exception would wrongly mark the pairing 'correct'.
     Reviewer+ (a standing decision)."""
     finding = await _load_finding(db, finding_id)
+    await _block_if_closed(db, finding.period_end)
     if finding.status != "open":
         raise HTTPException(status_code=400, detail="This finding has already been actioned.")
     await service.dismiss_finding(db, tenant_id=tenant_id, finding=finding, user_id=user.id)
@@ -216,6 +242,7 @@ async def acknowledge(
     findings whose fix is to investigate, not reclass (duplicates, missing memos,
     …). Distinct from dismiss ('this isn't a problem')."""
     finding = await _load_finding(db, finding_id)
+    await _block_if_closed(db, finding.period_end)
     if finding.status != "open":
         raise HTTPException(status_code=400, detail="This finding has already been actioned.")
     await service.acknowledge_finding(db, finding=finding, user_id=user.id)

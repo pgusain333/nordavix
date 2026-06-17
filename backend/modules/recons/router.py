@@ -294,6 +294,7 @@ async def run_agentic_endpoint(
         pe = _date.fromisoformat(period_end)
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    await _block_if_closed(db, pe)  # don't let AI re-prepare a locked period
 
     logger.info(
         "Agentic prep run start: tenant=%s user=%s period=%s",
@@ -352,6 +353,7 @@ async def run_agentic_on_one_account_endpoint(
         pe = _date.fromisoformat(period_end)
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    await _block_if_closed(db, pe)  # don't let AI re-prepare a locked period
 
     logger.info(
         "Per-account agentic start: tenant=%s user=%s period=%s qbo_account=%s",
@@ -429,6 +431,9 @@ async def sync_overview_endpoint(
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
     await _enforce_books_floor(db, tenant_id, pe)
+    # Re-pulling QBO into a closed period would overwrite its locked balances.
+    # An admin must reopen first.
+    await _block_if_closed(db, pe)
 
     conn = (await db.execute(
         select(QboConnection).where(QboConnection.tenant_id == tenant_id),
@@ -493,6 +498,7 @@ async def sync_one_account_from_qbo(
         pe = date.fromisoformat(period_end)
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    await _block_if_closed(db, pe)  # locked period — reopen before re-pulling QBO
 
     conn = (await db.execute(
         select(QboConnection).where(QboConnection.tenant_id == tenant_id),
@@ -1542,6 +1548,7 @@ async def save_recurring_reconciling_item(
         pe = _date.fromisoformat(str(body.get("period_end", "")))
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+    await _block_if_closed(db, pe)
     label = str(body.get("label") or "").strip()
     if not label:
         raise HTTPException(status_code=400, detail="A label is required to learn a recurring item.")
@@ -3187,6 +3194,7 @@ async def verify_account_evidence(
     )).scalar_one_or_none()
     if ev is None:
         raise HTTPException(status_code=404, detail="Evidence not found.")
+    await _block_if_closed(db, ev.period_end)  # locked period — reopen to re-verify
 
     # Fetch the bytes from R2 via signed URL → download.
     # Avoid pulling the full file through this process if cache exists.
@@ -3522,6 +3530,7 @@ async def sync_reconciliation(
     )).scalar_one_or_none()
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    await _block_if_closed(db, recon.period_end)
     recon.status = "syncing"
     recon.error_detail = None
     await db.commit()
@@ -3544,6 +3553,7 @@ async def approve_reconciliation(
     )).scalar_one_or_none()
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    await _block_if_closed(db, recon.period_end)
     recon.approved_by = user.id
     recon.approved_at = datetime.now(UTC)
     recon.status = "approved"
@@ -3569,6 +3579,7 @@ async def assign_reconciliation(
     )).scalar_one_or_none()
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    await _block_if_closed(db, recon.period_end)
     recon.assigned_to = body.user_id
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
@@ -3594,6 +3605,7 @@ async def add_note(
     )).scalar_one_or_none()
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    await _block_if_closed(db, recon.period_end)
     note = ReconNote(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
@@ -3632,6 +3644,11 @@ async def set_item_status(
     )).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
+    recon = (await db.execute(
+        select(Reconciliation).where(Reconciliation.id == recon_id)
+    )).scalar_one_or_none()
+    if recon is not None:
+        await _block_if_closed(db, recon.period_end)
     item.status = body.status
     if body.status == "approved":
         item.approved_by = user.id
@@ -3671,6 +3688,7 @@ async def explain_item_endpoint(
     )).scalar_one_or_none()
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    await _block_if_closed(db, recon.period_end)
 
     commentary = await explain_item(db, recon, item)
     if commentary:
@@ -3696,6 +3714,7 @@ async def explain_recon_endpoint(
     )).scalar_one_or_none()
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    await _block_if_closed(db, recon.period_end)
     summary = await explain_recon_summary(db, recon)
     if summary:
         recon.ai_summary = summary
@@ -3718,6 +3737,7 @@ async def delete_reconciliation(
     )).scalar_one_or_none()
     if recon is None:
         raise HTTPException(status_code=404, detail="Reconciliation not found")
+    await _block_if_closed(db, recon.period_end)
     recon_name = recon.name
     await db.delete(recon)
     await write_audit_event(
