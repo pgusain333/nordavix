@@ -29,6 +29,7 @@ import { workspaceApi } from "@/modules/workspace/api"
 import { tasksApi } from "@/modules/tasks/api"
 import { reconsApi } from "@/modules/recons/api"
 import { api as fluxApi } from "@/modules/flux/api"
+import { closeApi } from "@/modules/close/api"
 import { CMDK_EVENT } from "@/core/ui/CommandPalette"
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
 
@@ -103,6 +104,25 @@ function prefetchData(qc: QueryClient, path: string): void {
     case "adjustments":    books(); tracker();           return
     case "flux":           books(); tracker(); fluxTBs(); return
     case "tasks":          tasks();                      return
+    case "close": {
+      // Close Workflow was the only heavy page prefetching nothing — its checklist
+      // fans out a per-step status query per linked module, so a cold click waited
+      // on the whole chain. Warm periods first, then (once we know the focus month)
+      // the checklist for it + the analytics rail, using the page's exact query keys
+      // so the figures are already cached when the page mounts.
+      void qc
+        .prefetchQuery({ queryKey: ["close", "periods"], queryFn: closeApi.getPeriods, staleTime: 60_000 })
+        .then(() => {
+          const pr = qc.getQueryData(["close", "periods"]) as
+            | { focus?: string; periods?: Array<{ period_end?: string }> }
+            | undefined
+          const focus = pr?.focus || pr?.periods?.[0]?.period_end
+          if (focus) warm(["close", "checklist", focus], () => closeApi.getChecklist(focus), 30_000)
+        })
+        .catch(() => {})
+      warm(["close", "analytics"], closeApi.getAnalytics, 60_000)
+      return
+    }
   }
 }
 

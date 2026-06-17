@@ -211,9 +211,14 @@ async def _active_schedule_kinds(db: AsyncSession) -> set[str]:
     return kinds
 
 
-async def _schedule_status(db: AsyncSession, pe: date) -> tuple[str, datetime | None]:
+async def _schedule_status(
+    db: AsyncSession, pe: date, *, active_kinds: set[str] | None = None,
+) -> tuple[str, datetime | None]:
     # Only kinds with committable items (active + a GL account) gate the close.
-    active_kinds = await _active_schedule_kinds(db)
+    # build_checklist resolves the active set once and passes it in, so the close
+    # checklist doesn't re-run the 5-table scan for both the status and the chips.
+    if active_kinds is None:
+        active_kinds = await _active_schedule_kinds(db)
     if not active_kinds:
         # Nothing committable to schedule for this client — step not applicable.
         return "done", None
@@ -233,14 +238,20 @@ async def _schedule_status(db: AsyncSession, pe: date) -> tuple[str, datetime | 
     return "pending", None
 
 
-async def _schedule_detail(db: AsyncSession, pe: date) -> dict[str, Any]:
+async def _schedule_detail(
+    db: AsyncSession, pe: date, *, active_set: set[str] | None = None,
+) -> dict[str, Any]:
     """Per-kind commit state for the schedule step, scoped to the EXACT close
     period `pe`. Powers the dynamic description + per-kind chips so a stuck
     schedule step is never a mystery: which kind still needs a commit, which went
     stale (committed, then items changed) and needs a re-commit, and — the common
     gotcha — which was committed for a DIFFERENT month than the one being closed.
-    Pure reads; never mutates a row, so it's safe on the read-only (demo) path."""
-    active_set = await _active_schedule_kinds(db)
+    Pure reads; never mutates a row, so it's safe on the read-only (demo) path.
+
+    `active_set` is the precomputed active-kind set from build_checklist; when
+    omitted (other callers) it's resolved here."""
+    if active_set is None:
+        active_set = await _active_schedule_kinds(db)
     active_kinds = [_SCHEDULE_KIND_FOR[m] for m in _SCHEDULE_MODELS if _SCHEDULE_KIND_FOR[m] in active_set]
     if not active_kinds:
         return {"applicable": False, "kinds": []}
@@ -355,6 +366,16 @@ async def build_checklist(
         )).scalars().all()
     }
 
+    # Resolve the two fan-out inputs ONCE and reuse them everywhere below. The
+    # checklist used to recompute the schedule's 5-table active-kinds scan twice
+    # (for the step status AND the per-kind chips) and query the closed-period flag
+    # twice (the Close step + the template overlay). On a small instance those
+    # redundant round-trips were a meaningful slice of the page's load time.
+    sched_active = await _active_schedule_kinds(db)
+    closed_row = (await db.execute(
+        select(ClosedPeriod).where(ClosedPeriod.period_end == pe)
+    )).scalar_one_or_none()
+
     out: list[dict[str, Any]] = []
     for step in active_steps:
         linked = step.linked_module in VALID_LINKED
@@ -370,7 +391,14 @@ async def build_checklist(
             )
 
         if linked:
-            live, completed_at = await linked_status(db, step.linked_module, pe)
+            # Schedule + close reuse the values resolved once above; the rest still
+            # dispatch through linked_status (one query each, distinct modules).
+            if step.linked_module == "schedule":
+                live, completed_at = await _schedule_status(db, pe, active_kinds=sched_active)
+            elif step.linked_module == "close":
+                live, completed_at = ("done", closed_row.closed_at) if closed_row else ("pending", None)
+            else:
+                live, completed_at = await linked_status(db, step.linked_module, pe)
             done_stamp = completed_at if live == "done" else None
             if readonly:
                 # NEVER mutate a session-tracked row on a read-only request — a
@@ -401,9 +429,7 @@ async def build_checklist(
     # and re-categorising in "Customize the checklist" show up on the live
     # checklist right away instead of being frozen at the period's snapshot.
     # (Per-instance fields — status, owner, due date, notes — are never touched.)
-    period_is_closed = (await db.execute(
-        select(ClosedPeriod).where(ClosedPeriod.period_end == pe)
-    )).scalar_one_or_none() is not None
+    period_is_closed = closed_row is not None
     for o in out:
         if not period_is_closed:
             t = tmpl_by_key.get(o["step_key"])
@@ -427,7 +453,7 @@ async def build_checklist(
     # committed for the wrong month. Pure reads (safe on the read-only path).
     for o in out:
         if o.get("linked_module") == "schedule":
-            detail = await _schedule_detail(db, pe)
+            detail = await _schedule_detail(db, pe, active_set=sched_active)
             o["schedule_detail"] = detail
             if not detail["applicable"]:
                 o["description"] = "No supporting schedules in use for this client — nothing to commit."
