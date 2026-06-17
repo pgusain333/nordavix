@@ -148,6 +148,16 @@ export function CloseReviewPage() {
     return g
   }, [findings])
 
+  // Master-detail selection for the desktop split view. Auto-select the top
+  // finding; when the selected one is cleared/accepted it drops out of
+  // `findings`, so this advances to the next — a natural triage flow.
+  const [selId, setSelId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!findings.length) { if (selId !== null) setSelId(null); return }
+    if (!selId || !findings.some((f) => f.id === selId)) setSelId(findings[0].id)
+  }, [findings, selId])
+  const selectedFinding = findings.find((f) => f.id === selId) ?? null
+
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: "var(--bg)" }}>
       <PageHeader
@@ -262,21 +272,56 @@ export function CloseReviewPage() {
                   <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>This close passed every review check.</p>
                 </div>
               ) : (
-                SEVERITY_ORDER.filter((s) => grouped[s].length > 0).map((sev) => (
-                  <div key={sev}>
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider mb-2 px-1" style={{ color: "var(--text-muted)" }}>
-                      {SEVERITY_META[sev].label} · {grouped[sev].length}
-                    </h3>
-                    <div className="space-y-2.5">
-                      {grouped[sev].map((f) => (
-                        <FindingCard key={f.id} f={f} canReview={canReview}
-                          busy={actM.isPending}
-                          onAct={(action) => actM.mutate({ id: f.id, action })}
-                          onNavigate={(p) => navigate(p)} />
+                <>
+                  {/* Narrow screens: stacked full cards. */}
+                  <div className="lg:hidden space-y-5">
+                    {SEVERITY_ORDER.filter((s) => grouped[s].length > 0).map((sev) => (
+                      <div key={sev}>
+                        <h3 className="text-[11px] font-bold uppercase tracking-wider mb-2 px-1" style={{ color: "var(--text-muted)" }}>
+                          {SEVERITY_META[sev].label} · {grouped[sev].length}
+                        </h3>
+                        <div className="space-y-2.5">
+                          {grouped[sev].map((f) => (
+                            <FindingCard key={f.id} f={f} canReview={canReview} busy={actM.isPending}
+                              onAct={(action) => actM.mutate({ id: f.id, action })}
+                              onNavigate={(p) => navigate(p)} />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Desktop: master-detail split — findings list ↔ detail pane. */}
+                  <div className="hidden lg:grid gap-4 items-start"
+                    style={{ gridTemplateColumns: "minmax(0,340px) minmax(0,1fr)" }}>
+                    <div className="rounded-2xl overflow-hidden"
+                      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+                      {SEVERITY_ORDER.filter((s) => grouped[s].length > 0).map((sev, gi) => (
+                        <div key={sev}>
+                          <div className="px-3 pt-3 pb-1.5 text-[10px] font-bold uppercase tracking-wider"
+                            style={{ color: SEVERITY_META[sev].fg, borderTop: gi > 0 ? "1px solid var(--border)" : undefined }}>
+                            {SEVERITY_META[sev].label} · {grouped[sev].length}
+                          </div>
+                          {grouped[sev].map((f) => (
+                            <FindingRow key={f.id} f={f} selected={f.id === selId} onSelect={() => setSelId(f.id)} />
+                          ))}
+                        </div>
                       ))}
                     </div>
+                    <div className="lg:sticky lg:top-0 self-start">
+                      {selectedFinding ? (
+                        <FindingCard f={selectedFinding} canReview={canReview} busy={actM.isPending}
+                          onAct={(action) => actM.mutate({ id: selectedFinding.id, action })}
+                          onNavigate={(p) => navigate(p)} />
+                      ) : (
+                        <div className="rounded-xl px-4 py-10 text-center"
+                          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                          <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>Select a finding to see its detail.</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                ))
+                </>
               )}
 
               {/* Resolved */}
@@ -359,6 +404,34 @@ function Metric({ label, value, color }: { label: string; value: number; color?:
       <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{label}</p>
       <p className="text-xl font-bold mt-0.5" style={{ color: color ?? "var(--text)" }}>{value}</p>
     </div>
+  )
+}
+
+// Compact row for the desktop split-view list (left pane).
+function FindingRow({ f, selected, onSelect }: {
+  f: ReviewFinding; selected: boolean; onSelect: () => void
+}) {
+  const meta = SEVERITY_META[f.severity]
+  const je = f.meta?.kind === "journal_entry" ? f.meta : null
+  const title = je ? f.title.replace(/\s*—\s*JE\s+.*$/i, "") : f.title
+  const sub = je
+    ? [`$${fmtMoney(je.amount)}`, f.account_label].filter(Boolean).join(" · ")
+    : (f.account_label ?? (CATEGORY_LABEL[f.category] ?? f.category))
+  return (
+    <button type="button" onClick={onSelect}
+      className="w-full text-left flex items-start gap-2.5 px-3 py-2.5 transition-colors"
+      style={{
+        background: selected ? "var(--surface-2)" : "transparent",
+        borderLeft: `2px solid ${selected ? meta.fg : "transparent"}`,
+      }}
+      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "var(--surface-2)" }}
+      onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "transparent" }}>
+      <span className="mt-1.5 h-2 w-2 rounded-full shrink-0" style={{ background: meta.fg }} aria-hidden />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-medium truncate" style={{ color: selected ? "var(--text)" : "var(--text-2)" }}>{title}</span>
+        {sub && <span className="block text-[11px] truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{sub}</span>}
+      </span>
+    </button>
   )
 }
 
