@@ -976,11 +976,14 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
                 drawer is a bottom sheet there). Reuses the SAME filtered + sorted
                 rows, selection state and setDrawerRowId — pure layout swap. */}
             {drawerRowId !== null && filtered.length > 0 && (
-              <div className="hidden lg:block">
-                <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
+              <div className="ndvx-fade-in hidden lg:block">
+                {/* Column headings on the slim rail (account · $ change · % · status). */}
+                <div className="flex items-center gap-3 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
                   style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
-                  <span>Variances</span>
-                  <span className="tabular-nums">{filtered.length}</span>
+                  <span className="flex-1">Account · {filtered.length}</span>
+                  <span className="text-right shrink-0" style={{ minWidth: 72 }}>$ Change</span>
+                  <span className="text-right shrink-0" style={{ minWidth: 46 }}>%</span>
+                  <span className="shrink-0" style={{ minWidth: 64 }}>Status</span>
                 </div>
                 <div>
                   {table.getRowModel().rows.map((row) => {

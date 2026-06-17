@@ -110,13 +110,20 @@ export interface FooterCtx {
 
 // ── Width persistence ─────────────────────────────────────────────────
 
-const WIDTH_KEY = "nordavix:recons-drawer-width"
-// Wider default — the deep reconcile workflow (build-up + items + evidence)
-// breathes much better at 720px. Users can drag narrower if they want
-// more list visibility, or wider if they want more form room.
-const DEFAULT_WIDTH = 720
+// v2 — bumped so the new master-detail default (open WIDE) takes effect once,
+// even for users who never dragged the old 720px drawer.
+const WIDTH_KEY = "nordavix:recons-drawer-width:v2"
 const MIN_WIDTH = 400
 const MAX_WIDTH_VW = 0.85   // 85% of viewport — leaves the list visible
+// Open WIDE by default so the drawer dominates and the page's account table
+// collapses to a slim master rail. We leave ~RAIL px for that rail (it shows
+// account · GL · subledger · variance), clamped to [MIN_WIDTH, 85vw]. Users
+// can still drag to taste — their choice persists.
+const RAIL = 460
+function defaultWidth(): number {
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1440
+  return Math.round(Math.min(Math.max(vw - RAIL, MIN_WIDTH), vw * MAX_WIDTH_VW))
+}
 
 function loadWidth(): number {
   try {
@@ -124,7 +131,7 @@ function loadWidth(): number {
     const n = raw ? parseInt(raw, 10) : NaN
     if (Number.isFinite(n) && n >= MIN_WIDTH) return n
   } catch { /* private mode */ }
-  return DEFAULT_WIDTH
+  return defaultWidth()
 }
 
 function persistWidth(w: number): void {

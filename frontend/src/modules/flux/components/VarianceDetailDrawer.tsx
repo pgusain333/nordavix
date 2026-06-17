@@ -79,11 +79,18 @@ interface Props {
 
 // ── Width persistence ─────────────────────────────────────────────────
 
-const WIDTH_KEY = "nordavix:variance-drawer-width"
-// Wider default so commentary + transactions tab tables breathe.
-const DEFAULT_WIDTH = 720
+// v2 — bumped so the new master-detail default (open WIDE) takes effect once.
+const WIDTH_KEY = "nordavix:variance-drawer-width:v2"
 const MIN_WIDTH = 400
 const MAX_WIDTH_VW = 0.85
+// Open WIDE by default so the drawer dominates and the variance table collapses
+// to a slim master rail. Leave ~RAIL px for that rail (account · $ · % · status),
+// clamped to [MIN_WIDTH, 85vw]. Drag persists.
+const RAIL = 380
+function defaultWidth(): number {
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1440
+  return Math.round(Math.min(Math.max(vw - RAIL, MIN_WIDTH), vw * MAX_WIDTH_VW))
+}
 
 function loadWidth(): number {
   try {
@@ -91,7 +98,7 @@ function loadWidth(): number {
     const n = raw ? parseInt(raw, 10) : NaN
     if (Number.isFinite(n) && n >= MIN_WIDTH) return n
   } catch { /* private mode */ }
-  return DEFAULT_WIDTH
+  return defaultWidth()
 }
 
 function persistWidth(w: number): void {

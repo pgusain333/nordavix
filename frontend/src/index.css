@@ -414,3 +414,9 @@
 @media (min-width: 1024px) {
   body.detail-drawer-open .ndvx-hide-when-drawer { display: none; }
 }
+
+/* Master-detail rail ease-in — the slim list fades in as the drawer slides,
+   so the table→list swap eases rather than pops. Pairs with the drawer's
+   0.32s slide. Respects prefers-reduced-motion via the global reduce rule. */
+@keyframes ndvx-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.ndvx-fade-in { animation: ndvx-fade-in 0.28s ease-out both; }

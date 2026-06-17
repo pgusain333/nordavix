@@ -1607,12 +1607,17 @@ export function ReconciliationsDashboard() {
                 the SAME filtered set, selection state and setDrawerAcctId — it's
                 a pure layout swap, no new data or logic. */}
             {drawerAcctId !== null && filteredAccounts.length > 0 && (
-              <div className="hidden lg:block rounded-xl overflow-hidden"
+              <div className="ndvx-fade-in hidden lg:block rounded-xl overflow-hidden"
                 style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-                <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
+                {/* Column headings — the slim rail now carries GL / subledger /
+                    variance so it reads like a mini balance-sheet tie-out. */}
+                <div className="flex items-center gap-2.5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
                   style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
-                  <span>Accounts</span>
-                  <span className="tabular-nums">{filteredAccounts.length}</span>
+                  <span className="shrink-0" style={{ width: 6 }} aria-hidden="true" />
+                  <span className="flex-1">Account · {filteredAccounts.length}</span>
+                  <span className="text-right shrink-0" style={{ minWidth: 80 }}>GL</span>
+                  <span className="text-right shrink-0" style={{ minWidth: 80 }}>Subledger</span>
+                  <span className="text-right shrink-0" style={{ minWidth: 80 }}>Variance</span>
                 </div>
                 <div>
                   {filteredAccounts.map((a) => {
@@ -1641,9 +1646,9 @@ export function ReconciliationsDashboard() {
                           <span className="block truncate text-sm font-medium text-theme">{a.account_name}</span>
                           <span className="block font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>{a.account_number || "—"}</span>
                         </span>
-                        {hasVar
-                          ? <span className="tabular-nums text-xs font-medium shrink-0" style={{ color: "var(--danger)" }}>{fmtMoney(a.variance)}</span>
-                          : <CheckCircle2 size={14} strokeWidth={2} className="shrink-0" style={{ color: "var(--green)" }} />}
+                        <span className="tabular-nums text-xs text-right shrink-0" style={{ minWidth: 80, color: "var(--text-2)" }}>{fmtMoney(a.gl_balance)}</span>
+                        <span className="tabular-nums text-xs text-right shrink-0" style={{ minWidth: 80, color: "var(--text-2)" }}>{fmtMoney(a.subledger_balance)}</span>
+                        <span className="tabular-nums text-xs font-medium text-right shrink-0" style={{ minWidth: 80, color: hasVar ? "var(--danger)" : "var(--green)" }}>{hasVar ? fmtMoney(a.variance) : "—"}</span>
                       </button>
                     )
                   })}

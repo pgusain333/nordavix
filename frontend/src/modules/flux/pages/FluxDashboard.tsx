@@ -42,6 +42,7 @@ import { useQboConnection } from "@/modules/flux/hooks"
 import { UploadFlow } from "@/modules/flux/components/UploadFlow"
 import { VarianceTable } from "@/modules/flux/components/VarianceTable"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { OverflowMenu, OverflowMenuItem } from "@/core/ui/OverflowMenu"
 import { Button, Spinner } from "@/core/ui/components"
 import { AgenticRunningOverlay } from "@/modules/recons/components/AgenticRunningOverlay"
 import { reconsApi } from "@/modules/recons/api"
@@ -86,9 +87,6 @@ export function FluxDashboard() {
   const navigate   = useNavigate()
   const qc         = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
-
-  /** Two-step confirm for destructive actions: null | "reset" | "delete" */
-  const [pendingAction, setPendingAction] = useState<"reset" | "delete" | null>(null)
 
   /** Transient banner shown after Find-reasons runs ("Queued X analyses…") */
   const [runMsg, setRunMsg] = useState<{ kind: "ok" | "info" | "err"; text: string } | null>(null)
@@ -232,10 +230,8 @@ export function FluxDashboard() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["trial-balances"] })
       qc.invalidateQueries({ queryKey: ["variances", tbId] })
-      setPendingAction(null)
       navigate("/app/flux?new=1", { replace: true })
     },
-    onError: () => setPendingAction(null),
   })
 
   // Delete removes the analysis entirely; we navigate away.
@@ -243,10 +239,8 @@ export function FluxDashboard() {
     mutationFn: (id: string) => api.deleteTrialBalance(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["trial-balances"] })
-      setPendingAction(null)
       navigate("/app/flux", { replace: true })
     },
-    onError: () => setPendingAction(null),
   })
 
   // TB-level "Sign off on this analysis" — separate from per-variance
@@ -364,23 +358,14 @@ export function FluxDashboard() {
     return () => clearTimeout(t)
   }, [runMsg])
 
-  // Auto-clear the pending-confirm state after 4s of inactivity
-  useEffect(() => {
-    if (!pendingAction) return
-    const t = setTimeout(() => setPendingAction(null), 4_000)
-    return () => clearTimeout(t)
-  }, [pendingAction])
-
   function handleReset() {
     if (!tbId) return
-    if (pendingAction === "reset") resetMut.mutate(tbId)
-    else setPendingAction("reset")
+    if (window.confirm("Reset this analysis? This wipes its uploaded/synced data but keeps the analysis so you can re-pull.")) resetMut.mutate(tbId)
   }
 
   function handleDelete() {
     if (!tbId) return
-    if (pendingAction === "delete") deleteMut.mutate(tbId)
-    else setPendingAction("delete")
+    if (window.confirm("Delete this analysis permanently? This can't be undone.")) deleteMut.mutate(tbId)
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -506,39 +491,30 @@ export function FluxDashboard() {
                 {STATUS_LABELS[selectedTb.status] ?? selectedTb.status}
               </span>
             )}
-            {/* Reset: only meaningful when the TB has data to wipe */}
-            {selectedTb && selectedTb.status !== "pending" && (
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<RotateCcw size={14} strokeWidth={1.6} />}
-                onClick={handleReset}
-                title={pendingAction === "reset" ? "Click again to confirm" : "Wipe uploaded data — keeps the analysis, lets you re-upload"}
-                style={pendingAction === "reset"
-                  ? { borderColor: "#c79a52", color: "#7a5622" }
-                  : undefined}
-              >
-                <span className="hidden sm:inline">
-                  {pendingAction === "reset" ? "Confirm reset?" : "Reset"}
-                </span>
-              </Button>
-            )}
-            {/* Delete: always available on a selected TB */}
+            {/* Secondary actions collapse behind a "..." menu so the toolbar
+                stays calm and matches the Reconciliations header. Reset (wipe
+                data, keep the analysis) + Delete (remove permanently) each
+                confirm before running. */}
             {selectedTb && (
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<Trash2 size={14} strokeWidth={1.6} />}
-                onClick={handleDelete}
-                title={pendingAction === "delete" ? "Click again to confirm" : "Delete this analysis permanently"}
-                style={pendingAction === "delete"
-                  ? { borderColor: "#9b3d37", color: "#9b3d37" }
-                  : undefined}
-              >
-                <span className="hidden sm:inline">
-                  {pendingAction === "delete" ? "Confirm delete?" : "Delete"}
-                </span>
-              </Button>
+              <OverflowMenu>
+                {(close) => (
+                  <>
+                    {selectedTb.status !== "pending" && (
+                      <OverflowMenuItem
+                        icon={<RotateCcw size={15} strokeWidth={1.8} />}
+                        label="Reset analysis"
+                        onClick={() => { close(); handleReset() }}
+                      />
+                    )}
+                    <OverflowMenuItem
+                      danger
+                      icon={<Trash2 size={15} strokeWidth={1.8} />}
+                      label="Delete analysis"
+                      onClick={() => { close(); handleDelete() }}
+                    />
+                  </>
+                )}
+              </OverflowMenu>
             )}
             {/* Agentic Mode — AI writes commentary on every material
                 variance in one shot. Mirrors the Reconciliations
