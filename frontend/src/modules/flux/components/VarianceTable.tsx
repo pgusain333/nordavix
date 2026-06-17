@@ -970,7 +970,59 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
               </div>
             )}
 
-            <div className="overflow-x-auto">
+            {/* Master list — when the detail drawer is open on desktop, the wide
+                variance table collapses to a slim, scannable list so the drawer
+                isn't fighting a squeezed table. Mobile keeps the full table (the
+                drawer is a bottom sheet there). Reuses the SAME filtered + sorted
+                rows, selection state and setDrawerRowId — pure layout swap. */}
+            {drawerRowId !== null && filtered.length > 0 && (
+              <div className="hidden lg:block">
+                <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
+                  style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                  <span>Variances</span>
+                  <span className="tabular-nums">{filtered.length}</span>
+                </div>
+                <div>
+                  {table.getRowModel().rows.map((row) => {
+                    const r = row.original
+                    const active = drawerRowId === r.id
+                    const rawDv  = expectedView ? r.dollar_variance_expected : r.dollar_variance
+                    const rawPct = expectedView ? r.pct_variance_expected   : r.pct_variance
+                    const dv = rawDv != null ? parseFloat(rawDv) : null
+                    const acctNo = (!r.account_number || r.account_number.startsWith("qbo-")) ? "—" : r.account_number
+                    return (
+                      <button
+                        key={r.id}
+                        onClick={() => setDrawerRowId(r.id)}
+                        className="w-full flex items-center gap-3 px-3 py-2 text-left transition-colors"
+                        style={{
+                          borderBottom: "1px solid var(--border)",
+                          borderLeft: active ? "2px solid var(--green)" : "2px solid transparent",
+                          background: active ? "var(--surface-2)" : "transparent",
+                        }}
+                        onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                        onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent" }}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-theme">{r.account_name}</span>
+                          <span className="block font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>{acctNo}</span>
+                        </span>
+                        <span className="tabular-nums text-xs font-medium text-right shrink-0"
+                          style={{ minWidth: 72, color: dv != null && dv > 0 ? "var(--green)" : dv != null && dv < 0 ? "#9b3d37" : "var(--text-muted)" }}>
+                          {rawDv != null ? formatAccounting(rawDv, 0) : "—"}
+                        </span>
+                        <span className="tabular-nums text-[11px] text-right shrink-0" style={{ minWidth: 46, color: "var(--text-muted)" }}>
+                          {formatPct(rawPct ?? null)}
+                        </span>
+                        <span className="shrink-0"><StatusBadge status={r.status} /></span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className={`overflow-x-auto ${drawerRowId !== null && filtered.length > 0 ? "lg:hidden" : ""}`}>
               <table className="w-full min-w-[900px] text-sm border-separate border-spacing-0">
                 <thead>
                   <tr style={{ background: "var(--surface-2)" }}>

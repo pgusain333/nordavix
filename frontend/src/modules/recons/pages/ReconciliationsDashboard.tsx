@@ -1598,8 +1598,59 @@ export function ReconciliationsDashboard() {
               </label>
             </div>
 
+            {/* Master list — when the detail drawer is open on desktop, the wide
+                table collapses to a slim, scannable account list so the drawer
+                isn't fighting a squeezed table. Mobile keeps the full table (the
+                drawer is a bottom sheet there, so nothing to collapse). Reuses
+                the SAME filtered set, selection state and setDrawerAcctId — it's
+                a pure layout swap, no new data or logic. */}
+            {drawerAcctId !== null && filteredAccounts.length > 0 && (
+              <div className="hidden lg:block rounded-xl overflow-hidden"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+                <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
+                  style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+                  <span>Accounts</span>
+                  <span className="tabular-nums">{filteredAccounts.length}</span>
+                </div>
+                <div>
+                  {filteredAccounts.map((a) => {
+                    const v = parseFloat(a.variance)
+                    const hasVar = Math.abs(v) >= 0.5
+                    const active = drawerAcctId === a.qbo_id
+                    const dot = a.review_status === "approved" ? "var(--green)"
+                      : a.review_status === "flagged" ? "var(--danger)"
+                      : a.review_status === "reviewed" ? "var(--info)"
+                      : "var(--text-muted)"
+                    return (
+                      <button
+                        key={a.qbo_id}
+                        onClick={() => setDrawerAcctId(a.qbo_id)}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors"
+                        style={{
+                          borderBottom: "1px solid var(--border)",
+                          borderLeft: active ? "2px solid var(--green)" : "2px solid transparent",
+                          background: active ? "var(--surface-2)" : "transparent",
+                        }}
+                        onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+                        onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent" }}
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: dot }} title={a.review_status} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-theme">{a.account_name}</span>
+                          <span className="block font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>{a.account_number || "—"}</span>
+                        </span>
+                        {hasVar
+                          ? <span className="tabular-nums text-xs font-medium shrink-0" style={{ color: "var(--danger)" }}>{fmtMoney(a.variance)}</span>
+                          : <CheckCircle2 size={14} strokeWidth={2} className="shrink-0" style={{ color: "var(--green)" }} />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Main table */}
-            <div className="rounded-xl overflow-hidden"
+            <div className={`rounded-xl overflow-hidden ${drawerAcctId !== null && filteredAccounts.length > 0 ? "lg:hidden" : ""}`}
               style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
               {isFetching && !overview ? (
                 <div className="py-16 flex items-center justify-center">
