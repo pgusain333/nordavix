@@ -829,7 +829,7 @@ export const HELP_SECTIONS: Section[] = [
             "Prepaid + accrual schedules (auto-amortization)",
             "Saved AI preferences per workspace",
             "Email digests of close progress",
-            "Public status page + SOC 2 attestation",
+            "Public status page + SOC 2 readiness (not yet certified)",
             "Xero + NetSuite integrations",
           ] },
         ],

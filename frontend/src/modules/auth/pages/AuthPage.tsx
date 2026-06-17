@@ -210,7 +210,7 @@ export function AuthPage({ mode }: Props) {
             <div className="mt-7 flex items-center gap-2 text-[10.5px] uppercase"
               style={{ fontFamily: MONO, color: CREAM_45, letterSpacing: "0.1em" }}>
               <ShieldCheck size={12} strokeWidth={1.8} style={{ color: SAGE }} />
-              Encrypted at rest · Read-only QuickBooks · SOC 2 in progress
+              Encrypted at rest · Read-only QuickBooks
             </div>
           </div>
         </div>

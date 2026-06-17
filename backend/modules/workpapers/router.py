@@ -102,6 +102,22 @@ _ALLOWED_EVIDENCE_EXTS = {"pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg", "do
 _MAX_EVIDENCE_BYTES = 15 * 1024 * 1024  # 15 MB
 _REF_TYPES = {"account", "schedule", "adjustment", "flux", "financials", "general"}
 
+# Content-Types we will serve INLINE (browser-rendered) — keyed by file
+# EXTENSION, never the client-supplied MIME, and limited to non-scriptable
+# types. This stops a file uploaded with a spoofed text/html MIME from being
+# served as live HTML from the storage origin. Anything not listed is forced to
+# download (Content-Disposition: attachment).
+_INLINE_SAFE_TYPES = {
+    "pdf":  "application/pdf",
+    "png":  "image/png",
+    "jpg":  "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif":  "image/gif",
+    "webp": "image/webp",
+    "csv":  "text/plain; charset=utf-8",
+    "txt":  "text/plain; charset=utf-8",
+}
+
 
 def _parse_period(period_end: str) -> date:
     try:
@@ -372,10 +388,18 @@ async def download_workpaper_evidence(
         if sub is None:
             raise HTTPException(status_code=404, detail="Evidence not found.")
         r2_key, file_name, mime = sub.r2_key, sub.file_name, sub.mime_type
-    # Inline CSV/TXT: serve as text/plain so the browser renders the text rather
-    # than downloading it; every other type keeps its stored MIME.
+    # For an inline preview, derive the Content-Type from the file extension via
+    # the safe allowlist (never the client-supplied MIME). If the type isn't a
+    # known-safe previewable one, fall back to a download so nothing scriptable
+    # is ever served inline from the storage origin.
     ext = file_name.rsplit(".", 1)[-1].lower() if file_name and "." in file_name else ""
-    ctype = "text/plain; charset=utf-8" if (disp == "inline" and ext in ("csv", "txt")) else mime
+    ctype = mime
+    if disp == "inline":
+        safe = _INLINE_SAFE_TYPES.get(ext)
+        if safe is None:
+            disp = "attachment"
+        else:
+            ctype = safe
     url = r2_storage.generate_presigned_download_url(
         r2_key, expires_in=300, disposition=disp, filename=file_name, content_type=ctype)
     return {"url": url, "file_name": file_name, "mime_type": mime}

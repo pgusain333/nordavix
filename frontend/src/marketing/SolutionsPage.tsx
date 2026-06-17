@@ -1021,7 +1021,7 @@ export function SolutionsPage() {
             </div>
             <div className="mt-7 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] text-white/80">
               <span className="inline-flex items-center gap-1"><ShieldCheck size={11} /> Read-only QBO scope</span>
-              <span className="inline-flex items-center gap-1"><BookOpen size={11} /> SOC 2 (in progress)</span>
+              <span className="inline-flex items-center gap-1"><BookOpen size={11} /> SOC 2 (planned)</span>
               <span className="inline-flex items-center gap-1"><CheckSquare size={11} /> Audit-log on every action</span>
             </div>
           </div>
