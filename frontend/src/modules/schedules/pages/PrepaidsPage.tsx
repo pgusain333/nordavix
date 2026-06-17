@@ -282,6 +282,8 @@ export function PrepaidsPage() {
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
+        {/* Suggestion banners create items directly — hide them on a closed period. */}
+        {!isClosed && (<>
         {/* First-month onboarding — pull existing prepaid items from
             the QBO BS account and bulk-create them as Nordavix
             schedule items. Only visible when an account is selected
@@ -308,6 +310,7 @@ export function PrepaidsPage() {
         />
 
         {/* Filter + KPIs */}
+        </>)}
         <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker

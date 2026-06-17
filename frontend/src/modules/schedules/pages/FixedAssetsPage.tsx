@@ -173,6 +173,8 @@ export function FixedAssetsPage() {
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
+        {/* Suggestion banners create items directly — hide them on a closed period. */}
+        {!isClosed && (<>
         {/* AI capitalization-miss detection — scans expense GL for items
             that should have been capitalized rather than expensed. */}
         <AiDetectFixedAssetBanner
@@ -234,6 +236,7 @@ export function FixedAssetsPage() {
           }}
         />
 
+        </>)}
         <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker value={filterAccount} onChange={setFilterAccount} mode="filter" label="Cost (asset) GL account" />
