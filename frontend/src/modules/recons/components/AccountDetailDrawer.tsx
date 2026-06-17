@@ -110,16 +110,16 @@ export interface FooterCtx {
 
 // ── Width persistence ─────────────────────────────────────────────────
 
-// v2 — bumped so the new master-detail default (open WIDE) takes effect once,
-// even for users who never dragged the old 720px drawer.
-const WIDTH_KEY = "nordavix:recons-drawer-width:v2"
+// v3 — bumped so the new (narrower) default takes effect once, even for users
+// who already have a saved width.
+const WIDTH_KEY = "nordavix:recons-drawer-width:v3"
 const MIN_WIDTH = 400
 const MAX_WIDTH_VW = 0.85   // 85% of viewport — leaves the list visible
-// Open WIDE by default so the drawer dominates and the page's account table
-// collapses to a slim master rail. We leave ~RAIL px for that rail (it shows
-// account · GL · subledger · variance), clamped to [MIN_WIDTH, 85vw]. Users
+// Default: open the drawer but leave the account table a COMFORTABLE ~RAIL px
+// so its account · GL · subledger · variance columns read clearly and aren't
+// squeezed. (The drawer takes the rest.) Clamped to [MIN_WIDTH, 85vw]. Users
 // can still drag to taste — their choice persists.
-const RAIL = 460
+const RAIL = 680
 function defaultWidth(): number {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1440
   return Math.round(Math.min(Math.max(vw - RAIL, MIN_WIDTH), vw * MAX_WIDTH_VW))
