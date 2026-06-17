@@ -28,7 +28,7 @@ import {
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
-import { writeSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
+import { writeSelectedPeriod, useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { workspaceApi, type WorkspaceMember } from "@/modules/workspace/api"
 import { closeApi, type CloseStep, type TemplateStep, type PrefillItem, type ScheduleKindDetail } from "@/modules/close/api"
 import { glAccuracyApi } from "@/modules/gl_accuracy/api"
@@ -120,7 +120,14 @@ export function CloseWorkflowPage() {
     queryKey: ["close", "periods"], queryFn: closeApi.getPeriods, enabled: !!organization,
   })
 
-  const [period, setPeriod] = useState<string>("")
+  // Seed from the cross-app selected period (localStorage) so the checklist can
+  // fire in PARALLEL with the periods fetch on revisit — instead of waiting for
+  // periods to resolve AND a render cycle to set the month, which serialised the
+  // two calls into a staircase. This matches how Recons / Schedules / Insights
+  // already open. On a first-ever visit (nothing stored yet) it's "" and the
+  // effect below fills it from the backend's focus period as before.
+  const seededPeriod = useSelectedPeriodDefault("")
+  const [period, setPeriod] = useState<string>(seededPeriod)
   useEffect(() => {
     if (!period && periodsResp) {
       setPeriod(periodsResp.focus || periodsResp.periods[0]?.period_end || "")
