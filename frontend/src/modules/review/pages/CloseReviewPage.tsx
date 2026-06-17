@@ -182,7 +182,7 @@ export function CloseReviewPage() {
       />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 space-y-5">
+        <div className="max-w-6xl mx-auto px-4 sm:px-8 py-5 space-y-5">
           {err && (
             <div className="rounded-lg px-3 py-2.5 text-[12px] inline-flex items-start gap-1.5"
               style={{ background: "var(--danger-subtle)", color: "var(--danger)", border: "1px solid var(--danger-border)" }}>
