@@ -46,6 +46,7 @@ def _serialize_finding(f: CloseReviewFinding) -> dict:
         "account_label": f.account_label,
         "entity_ref":    f.entity_ref,
         "link_hint":     f.link_hint,
+        "meta":          f.meta,
         "status":        f.status,
         "note":          f.note,
         "status_changed_at": f.status_changed_at.isoformat() if f.status_changed_at else None,

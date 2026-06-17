@@ -81,6 +81,11 @@ class CloseReviewFinding(TenantBase):
     # frontend nav hint: recon | flux | adjustments | schedules | sync
     link_hint:  Mapped[str | None] = mapped_column(String(60), nullable=True)
 
+    # Structured extras for rich rendering — e.g. a manual-JE anomaly carries
+    # {lines:[{account,debit,credit}], amount, txn_date, flags, memo} so the UI
+    # shows the entry's account breakdown. Null on findings that don't need it.
+    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     # open | cleared | actioned | accepted
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open", index=True)
     status_changed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

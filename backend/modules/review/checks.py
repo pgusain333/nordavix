@@ -38,12 +38,13 @@ def _label(account_number: str | None, account_name: str | None) -> str:
 
 
 def _f(code, category, severity, title, detail, *, action=None,
-       qbo_account_id=None, account_label=None, entity_ref=None, link_hint=None) -> dict:
+       qbo_account_id=None, account_label=None, entity_ref=None, link_hint=None,
+       meta=None) -> dict:
     return {
         "code": code, "category": category, "severity": severity,
         "title": title, "detail": detail, "recommended_action": action,
         "qbo_account_id": qbo_account_id, "account_label": account_label,
-        "entity_ref": entity_ref, "link_hint": link_hint,
+        "entity_ref": entity_ref, "link_hint": link_hint, "meta": meta,
     }
 
 
@@ -298,6 +299,7 @@ def check_je_anomalies(ctx: ReviewContext) -> list[dict]:
         doc = a.get("doc") or a.get("je_id") or "?"
         amt = _dec(a.get("amount"))
         flags = a.get("flags") or []
+        lines = a.get("lines") or []
         bits = [f"${abs(amt):,.2f}"]
         if a.get("poster"):
             bits.append(f"last touched by {a['poster']}")
@@ -306,12 +308,31 @@ def check_je_anomalies(ctx: ReviewContext) -> list[dict]:
         detail = "; ".join(bits) + "."
         if flags:
             detail += " Flagged: " + ", ".join(flags) + "."
+        # Affected accounts → a compact label ("Rent Expense → Accrued Liab +1 more")
+        # so the finding shows which accounts the entry hit, like every other check.
+        names: list[str] = []
+        for ln in lines:
+            nm = (ln.get("account") or "").strip()
+            if nm and nm not in names:
+                names.append(nm)
+        if not names:
+            account_label = None
+        elif len(names) == 1:
+            account_label = names[0]
+        else:
+            account_label = f"{names[0]} → {names[1]}" + (f" +{len(names) - 2} more" if len(names) > 2 else "")
         out.append(_f(
             "anomaly.manual_je", "anomaly", sev,
             f"Unusual journal entry — JE {doc}",
             detail[:1000],
             action="Open the entry in QuickBooks and confirm it's expected.",
+            account_label=account_label,
             entity_ref=str(a.get("je_id") or "") or None,
+            meta={
+                "kind": "journal_entry", "doc": doc, "amount": str(amt),
+                "txn_date": a.get("txn_date"), "poster": a.get("poster"),
+                "memo": a.get("memo"), "flags": flags, "lines": lines[:20],
+            },
         ))
     return out
 

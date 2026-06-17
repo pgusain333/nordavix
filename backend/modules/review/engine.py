@@ -124,13 +124,25 @@ def _classify_je(je: dict, period_end: date) -> dict | None:
     JournalEntry entity itself is the manual-entry proxy."""
     debit = Decimal("0")
     credit = Decimal("0")
+    lines: list[dict] = []
     for line in je.get("Line", []) or []:
         d = line.get("JournalEntryLineDetail") or {}
         line_amt = _dec(line.get("Amount"))
-        if d.get("PostingType") == "Debit":
+        posting = d.get("PostingType")
+        if posting == "Debit":
             debit += line_amt
-        elif d.get("PostingType") == "Credit":
+        elif posting == "Credit":
             credit += line_amt
+        # Capture the account each line hits (QBO gives name + id on AccountRef)
+        # so the finding can show the entry's Dr/Cr breakdown. Cap the count so a
+        # pathological split entry can't bloat the stored meta.
+        if posting in ("Debit", "Credit") and len(lines) < 20:
+            acct = d.get("AccountRef") or {}
+            lines.append({
+                "account": str(acct.get("name") or acct.get("value") or "(unspecified account)")[:120],
+                "debit":  str(line_amt) if posting == "Debit" else None,
+                "credit": str(line_amt) if posting == "Credit" else None,
+            })
     # Balanced JE: debits == credits. Take the larger so a credit-only or
     # PostingType-less line set still yields the right entry magnitude.
     amt = max(debit, credit)
@@ -169,6 +181,7 @@ def _classify_je(je: dict, period_end: date) -> dict | None:
         "memo":     je.get("PrivateNote"),
         "flags":    flags,
         "severity": severity,
+        "lines":    lines,
     }
 
 
@@ -395,7 +408,8 @@ async def run_close_review(
             title=f["title"][:300], detail=(f["detail"] or "")[:1000],
             recommended_action=(f["recommended_action"] or None),
             qbo_account_id=f["qbo_account_id"], account_label=f["account_label"],
-            entity_ref=f["entity_ref"], link_hint=f["link_hint"], status="open",
+            entity_ref=f["entity_ref"], link_hint=f["link_hint"],
+            meta=f.get("meta"), status="open",
         ))
         if f["severity"] == "high":
             high += 1

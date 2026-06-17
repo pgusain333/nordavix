@@ -5,6 +5,26 @@ export type Severity = "high" | "review" | "info"
 export type FindingStatus = "open" | "cleared" | "actioned" | "accepted"
 export type FindingAction = "clear" | "action" | "accept" | "reopen"
 
+/** One line of a flagged journal entry — which account it hit, and on which side. */
+export interface FindingJeLine {
+  account: string
+  debit:   string | null
+  credit:  string | null
+}
+
+/** Structured extras for rich rendering. Present on manual-JE anomalies; the
+ *  Dr/Cr `lines` show exactly which accounts the entry touched. */
+export interface FindingMeta {
+  kind?:     string
+  doc?:      string | null
+  amount?:   string | null
+  txn_date?: string | null
+  poster?:   string | null
+  memo?:     string | null
+  flags?:    string[]
+  lines?:    FindingJeLine[]
+}
+
 export interface ReviewFinding {
   id:                 string
   code:               string
@@ -17,6 +37,7 @@ export interface ReviewFinding {
   account_label:      string | null
   entity_ref:         string | null
   link_hint:          string | null
+  meta:               FindingMeta | null
   status:             FindingStatus
   note:               string | null
   status_changed_at:  string | null

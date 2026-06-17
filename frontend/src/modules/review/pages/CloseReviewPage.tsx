@@ -7,12 +7,12 @@
  * the exceptions grouped by severity, each with its evidence and a
  * clear / accept lifecycle, ending in a reviewer sign-off.
  */
-import { useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ShieldCheck, Sparkles, RefreshCw, Play, CheckCircle2, AlertTriangle,
-  PenLine, ArrowRight, Lock, Bot, type LucideIcon,
+  PenLine, ArrowRight, ExternalLink, Lock, Bot, type LucideIcon,
 } from "lucide-react"
 
 import { PageHeader } from "@/core/ui/PageHeader"
@@ -49,6 +49,22 @@ function defaultPeriod(): string {
   const last = new Date(d.getFullYear(), d.getMonth(), 0)
   return last.toISOString().slice(0, 10)
 }
+
+// ── JE-anomaly helpers (the rich finding card) ──────────────────────────────────
+function fmtMoney(s?: string | null): string {
+  if (s == null || s === "") return "—"
+  const n = Number(s)
+  if (Number.isNaN(n)) return "—"
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+function fmtTxn(s?: string | null): string {
+  if (!s) return ""
+  const d = new Date(s + "T00:00:00")
+  if (Number.isNaN(+d)) return s
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+}
+// Standard QuickBooks Online deep link to a journal entry by transaction id.
+const qboJournalUrl = (id: string) => `https://app.qbo.intuit.com/app/journal?txnId=${encodeURIComponent(id)}`
 
 export function CloseReviewPage() {
   const qc = useQueryClient()
@@ -356,46 +372,113 @@ function FindingCard({
   onNavigate: (path: string) => void
 }) {
   const meta = SEVERITY_META[f.severity]
-  const Icon = meta.icon
   const link = f.link_hint ? LINK_META[f.link_hint] : undefined
+  // Journal-entry anomalies carry structured extras (amount/date/flags + the
+  // Dr/Cr lines that show which accounts the entry hit).
+  const je = f.meta?.kind === "journal_entry" ? f.meta : null
+  const lines = je?.lines ?? []
+  // The JE id is already shown as a fact; drop the redundant "— JE 0243" suffix.
+  const title = je ? f.title.replace(/\s*—\s*JE\s+.*$/i, "") : f.title
+
   return (
-    <div className="rounded-xl p-4 flex items-start gap-3.5"
+    <div className="relative rounded-xl overflow-hidden"
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-      <span className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-        style={{ background: meta.bg, color: meta.fg }}>
-        <Icon size={16} strokeWidth={1.9} />
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1 flex-wrap">
-          <span className="rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: meta.bg, color: meta.fg }}>
-            {meta.label}
-          </span>
-          <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-            {CATEGORY_LABEL[f.category] ?? f.category}
-          </span>
+      <span aria-hidden className="absolute left-0 top-0 bottom-0" style={{ width: 3, background: meta.fg }} />
+      <div className="p-4 pl-5">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: meta.bg, color: meta.fg }}>
+                {meta.label}
+              </span>
+              <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                {CATEGORY_LABEL[f.category] ?? f.category}{je ? " · Manual JE" : ""}
+              </span>
+            </div>
+            <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>{title}</p>
+          </div>
+          {je && (
+            <div className="text-right shrink-0">
+              <div className="text-[15px] font-bold tabular-nums" style={{ color: "var(--text)" }}>${fmtMoney(je.amount)}</div>
+              <div className="text-[10px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>
+                {[je.doc ? `JE ${je.doc}` : "", fmtTxn(je.txn_date)].filter(Boolean).join(" · ")}
+              </div>
+            </div>
+          )}
         </div>
-        <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>{f.title}</p>
-        <p className="text-[12px] mt-1 leading-relaxed font-mono" style={{ color: "var(--text-2)" }}>{f.detail}</p>
-        {f.account_label && (
-          <span className="inline-flex items-center mt-2 rounded px-2 py-0.5 text-[10px] font-mono"
-            style={{ background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
-            {f.account_label}
-          </span>
+
+        {/* JE flag chips */}
+        {je && ((je.flags?.length ?? 0) > 0 || je.poster) && (
+          <div className="flex flex-wrap gap-1.5 mt-2.5">
+            {(je.flags ?? []).map((fl, i) => (
+              <span key={i} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
+                style={{ background: "var(--warn-subtle)", color: "var(--warn)" }}>
+                <AlertTriangle size={10} strokeWidth={2.4} />{fl}
+              </span>
+            ))}
+            {je.poster && (
+              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px]"
+                style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+                by {je.poster}
+              </span>
+            )}
+          </div>
         )}
+
+        {/* JE debit/credit account breakdown */}
+        {lines.length > 0 && (
+          <div className="mt-3 rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+            <div className="grid text-[12px]" style={{ gridTemplateColumns: "1fr auto auto" }}>
+              <div className="px-2.5 py-1.5 text-[10px] uppercase tracking-wider" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>Account</div>
+              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-right" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>Debit</div>
+              <div className="px-2.5 py-1.5 pl-3 text-[10px] uppercase tracking-wider text-right" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>Credit</div>
+              {lines.map((ln, i) => (
+                <Fragment key={i}>
+                  <div className="px-2.5 py-1.5" style={{ borderTop: "1px solid var(--border)", color: "var(--text)" }}>{ln.account}</div>
+                  <div className="px-3 py-1.5 text-right tabular-nums" style={{ borderTop: "1px solid var(--border)", color: ln.debit ? "var(--text)" : "var(--text-tertiary)" }}>{ln.debit ? fmtMoney(ln.debit) : "—"}</div>
+                  <div className="px-2.5 py-1.5 pl-3 text-right tabular-nums" style={{ borderTop: "1px solid var(--border)", color: ln.credit ? "var(--text)" : "var(--text-tertiary)" }}>{ln.credit ? fmtMoney(ln.credit) : "—"}</div>
+                </Fragment>
+              ))}
+            </div>
+          </div>
+        )}
+        {je?.memo && <p className="text-[11px] mt-1.5 italic" style={{ color: "var(--text-muted)" }}>Memo: “{je.memo}”</p>}
+
+        {/* Non-JE findings: plain detail + account chip */}
+        {!je && (
+          <>
+            <p className="text-[12px] mt-1 leading-relaxed" style={{ color: "var(--text-2)" }}>{f.detail}</p>
+            {f.account_label && (
+              <span className="inline-flex items-center mt-2 rounded px-2 py-0.5 text-[10px] font-mono"
+                style={{ background: "var(--surface-2)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
+                {f.account_label}
+              </span>
+            )}
+          </>
+        )}
+
         {f.recommended_action && (
-          <p className="text-[12px] mt-1.5 inline-flex items-center gap-1.5" style={{ color: "var(--text-2)" }}>
-            <ArrowRight size={12} strokeWidth={2} style={{ color: "var(--green)" }} />{f.recommended_action}
+          <p className="text-[12px] mt-2.5 inline-flex items-start gap-1.5" style={{ color: "var(--text-2)" }}>
+            <ArrowRight size={12} strokeWidth={2} className="mt-0.5 shrink-0" style={{ color: "var(--green)" }} />{f.recommended_action}
           </p>
         )}
+
         {canReview && (
           <div className="flex items-center gap-2 mt-3 flex-wrap">
-            {link && (
+            {je && f.entity_ref ? (
+              <a href={qboJournalUrl(f.entity_ref)} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                Open in QuickBooks <ExternalLink size={11} strokeWidth={2.4} />
+              </a>
+            ) : link ? (
               <button onClick={() => onNavigate(link.path)}
                 className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
                 style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
                 Open {link.label} <ArrowRight size={11} strokeWidth={2.4} />
               </button>
-            )}
+            ) : null}
             <button onClick={() => onAct("clear")} disabled={busy}
               className="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50"
               style={{ border: "1px solid var(--border-strong)", color: "var(--text-2)" }}>
