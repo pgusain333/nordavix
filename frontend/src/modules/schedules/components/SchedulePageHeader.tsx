@@ -15,6 +15,7 @@ import { DatePicker } from "@/core/ui/DatePicker"
 import { Button } from "@/core/ui/components"
 import { PageHeader } from "@/core/ui/PageHeader"
 import { CommitPeriodButton } from "@/modules/schedules/components/CommitPeriodButton"
+import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
 import { SCHEDULE_BLURB, SCHEDULE_HUMAN, type ScheduleType } from "@/modules/schedules/types"
 
 interface Props {
@@ -36,6 +37,7 @@ interface Props {
 export function SchedulePageHeader({
   type, periodEnd, onPeriod, onAddItem, addLabel, onExport, exporting,
 }: Props) {
+  const isClosed = useIsPeriodClosed(periodEnd)
   return (
     <PageHeader
       title={SCHEDULE_HUMAN[type]}
@@ -57,7 +59,9 @@ export function SchedulePageHeader({
             </Button>
           )}
           <CommitPeriodButton scheduleType={type} periodEnd={periodEnd} />
-          <Button size="sm" icon={<Plus size={14} strokeWidth={2} />} onClick={onAddItem}>
+          <Button size="sm" icon={<Plus size={14} strokeWidth={2} />} onClick={onAddItem}
+            disabled={isClosed}
+            title={isClosed ? "This period is closed — reopen to edit" : undefined}>
             {addLabel ?? "Add item"}
           </Button>
         </>

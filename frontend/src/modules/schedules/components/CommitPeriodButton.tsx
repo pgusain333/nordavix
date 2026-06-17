@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useOrganization } from "@clerk/clerk-react"
 import { CheckCircle2, FileCheck2 } from "lucide-react"
 import { Button } from "@/core/ui/components"
+import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { ScheduleType } from "@/modules/schedules/types"
 
@@ -27,6 +28,7 @@ export function CommitPeriodButton({
 }) {
   const qc = useQueryClient()
   const { organization } = useOrganization()
+  const isClosed = useIsPeriodClosed(periodEnd)
   const [justDone, setJustDone] = useState(false)
 
   // Unfiltered item list → the distinct GL accounts that actually have active
@@ -58,6 +60,15 @@ export function CommitPeriodButton({
       setTimeout(() => setJustDone(false), 2500)
     },
   })
+
+  if (isClosed) {
+    return (
+      <Button size="sm" variant="outline" disabled
+        title="This period is closed — reopen it from the Close Workflow to commit.">
+        Books closed
+      </Button>
+    )
+  }
 
   if (accountCount === 0) {
     return (

@@ -24,6 +24,8 @@ import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
+import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
+import { ClosedPeriodBanner } from "@/modules/schedules/components/ClosedPeriodBanner"
 import { schedulesApi } from "@/modules/schedules/api"
 import type { LoanItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
@@ -51,6 +53,7 @@ function computePMT(principal: string, ratePct: string, term: string): string {
 export function LoansPage() {
   const qc = useQueryClient()
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
+  const isClosed = useIsPeriodClosed(periodEnd)
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [dialog, setDialog] = useState<{ open: boolean; item?: LoanItem }>({ open: false })
   const [drawerItem, setDrawerItem] = useState<LoanItem | null>(null)
@@ -101,6 +104,7 @@ export function LoansPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        <ClosedPeriodBanner periodEnd={periodEnd} />
         {/* First-month onboarding — pull loans from QBO BS liability
             account. Each credit becomes a loan with placeholder rate +
             term — the user MUST fill in real terms before any close. */}
@@ -226,6 +230,7 @@ export function LoansPage() {
                             <FileText size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
                           </button>
                           <RowActions
+                            disabled={isClosed}
                             onEdit={() => setDialog({ open: true, item: it })}
                             onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} />
                         </div>
@@ -282,13 +287,13 @@ function Empty({ onAdd, verb }: { onAdd: () => void; verb: string }) {
     </div>
   )
 }
-function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
+function RowActions({ onEdit, onDelete, disabled }: { onEdit: () => void; onDelete: () => void; disabled?: boolean }) {
   return (
     <div className="inline-flex items-center gap-1.5 justify-end w-full">
-      <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Edit">
+      <button onClick={onEdit} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Edit"}>
         <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
       </button>
-      <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--surface-2)]" title="Delete">
+      <button onClick={onDelete} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Delete"}>
         <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
       </button>
     </div>

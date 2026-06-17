@@ -26,7 +26,9 @@ import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
 import { RenewalAlertsBanner } from "@/modules/schedules/components/RenewalAlertsBanner"
 import { AiDetectBanner } from "@/modules/schedules/components/AiDetectBanner"
 import { ImportPrepaidsFromQboBanner } from "@/modules/schedules/components/ImportPrepaidsFromQboBanner"
+import { ClosedPeriodBanner } from "@/modules/schedules/components/ClosedPeriodBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
+import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
 import { schedulesApi } from "@/modules/schedules/api"
 import { memoryApi } from "@/modules/memory/api"
 import { formatDate } from "@/core/lib/dates"
@@ -125,6 +127,7 @@ function rateLabelForMethod(item: PrepaidItem): string {
 export function PrepaidsPage() {
   const qc = useQueryClient()
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
+  const isClosed = useIsPeriodClosed(periodEnd)
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [dialogState, setDialogState] = useState<{
     open: boolean
@@ -278,6 +281,7 @@ export function PrepaidsPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+        <ClosedPeriodBanner periodEnd={periodEnd} />
         {/* First-month onboarding — pull existing prepaid items from
             the QBO BS account and bulk-create them as Nordavix
             schedule items. Only visible when an account is selected
@@ -351,7 +355,7 @@ export function PrepaidsPage() {
               <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
                 Add your first prepaid invoice — Nordavix will compute the monthly amortization automatically.
               </p>
-              <Button size="sm" onClick={() => setDialogState({ open: true })}>Add prepaid</Button>
+              <Button size="sm" disabled={isClosed} onClick={() => setDialogState({ open: true })}>Add prepaid</Button>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -397,14 +401,16 @@ export function PrepaidsPage() {
                           </button>
                           <button
                             onClick={() => setDialogState({ open: true, item: it })}
-                            className="p-1 rounded hover:bg-[var(--surface-2)]"
-                            title="Edit">
+                            disabled={isClosed}
+                            className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={isClosed ? "Period closed" : "Edit"}>
                             <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
                           </button>
                           <button
                             onClick={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
-                            className="p-1 rounded hover:bg-[var(--surface-2)]"
-                            title="Delete">
+                            disabled={isClosed}
+                            className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={isClosed ? "Period closed" : "Delete"}>
                             <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
                           </button>
                         </div>
