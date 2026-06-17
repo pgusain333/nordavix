@@ -271,11 +271,11 @@ export function LeftNav({ onClose }: Props) {
       return (
         <div
           key={item.path}
-          className="flex items-center justify-between rounded-md px-3 py-2 text-[13px] cursor-not-allowed opacity-35"
+          className="flex items-center justify-between rounded-md px-3 py-1.5 text-[13px] cursor-not-allowed opacity-35"
           style={{ color: "var(--nav-text)" }}
         >
           <span className="flex items-center gap-2.5">
-            <Icon size={24} strokeWidth={1.6} className="shrink-0" />
+            <Icon size={20} strokeWidth={1.6} className="shrink-0" />
             {item.label}
           </span>
           <Badge variant="soon">soon</Badge>
@@ -296,7 +296,7 @@ export function LeftNav({ onClose }: Props) {
         title={isCollapsed ? item.label : undefined}
         className={({ isActive }) =>
           cn("flex items-center rounded-md text-[13px] transition-colors duration-150",
-            isCollapsed ? "relative justify-center h-10" : "gap-2.5 px-3 py-2",
+            isCollapsed ? "relative justify-center h-10" : "gap-2.5 px-3 py-1.5",
             // Hover = simple row highlight only — no slide / motion.
             "hover:bg-[var(--nav-hover)]",
             isActive ? "font-medium" : "")
@@ -334,7 +334,7 @@ export function LeftNav({ onClose }: Props) {
           }
           return (
             <>
-              <Icon size={24} strokeWidth={1.6} className="shrink-0"
+              <Icon size={20} strokeWidth={1.6} className="shrink-0"
                 style={{ color: isActive ? "var(--nav-text-act)" : "var(--nav-text)" }} />
               <span className="truncate flex-1">{item.label}</span>
               {taskBadge && (
