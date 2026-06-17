@@ -21,7 +21,7 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -195,21 +195,27 @@ async def _flux_status(db: AsyncSession, pe: date) -> tuple[str, datetime | None
     return "in_progress", None
 
 
-async def _schedule_status(db: AsyncSession, pe: date) -> tuple[str, datetime | None]:
-    # Which schedule kinds have at least one active item for this tenant?
-    active_kinds: set[str] = set()
-    kind_for = {
-        SchedulePrepaid: "prepaid", ScheduleAccrual: "accrual",
-        ScheduleFixedAsset: "fixed_asset", ScheduleLease: "lease", ScheduleLoan: "loan",
-    }
+async def _active_schedule_kinds(db: AsyncSession) -> set[str]:
+    """Schedule kinds with at least one active item that HAS a GL account — i.e.
+    something the commit flow can actually roll forward. A kind whose only active
+    items lack a GL account isn't committable (the schedule page shows "Nothing to
+    commit"), so it must never be required by the close — this keeps the close
+    requirement and the per-schedule commit button in lockstep."""
+    kinds: set[str] = set()
     for model in _SCHEDULE_MODELS:
-        n = (await db.execute(
-            select(func.count()).select_from(model).where(model.is_active.is_(True))
-        )).scalar_one()
-        if n:
-            active_kinds.add(kind_for[model])
+        accts = (await db.execute(
+            select(model.qbo_account_id).where(model.is_active.is_(True))
+        )).scalars().all()
+        if any((a or "").strip() for a in accts):
+            kinds.add(_SCHEDULE_KIND_FOR[model])
+    return kinds
+
+
+async def _schedule_status(db: AsyncSession, pe: date) -> tuple[str, datetime | None]:
+    # Only kinds with committable items (active + a GL account) gate the close.
+    active_kinds = await _active_schedule_kinds(db)
     if not active_kinds:
-        # Nothing to schedule for this client — the step is not applicable.
+        # Nothing committable to schedule for this client — step not applicable.
         return "done", None
 
     snaps = list((await db.execute(
@@ -234,13 +240,8 @@ async def _schedule_detail(db: AsyncSession, pe: date) -> dict[str, Any]:
     stale (committed, then items changed) and needs a re-commit, and — the common
     gotcha — which was committed for a DIFFERENT month than the one being closed.
     Pure reads; never mutates a row, so it's safe on the read-only (demo) path."""
-    active_kinds: list[str] = []
-    for model in _SCHEDULE_MODELS:
-        n = (await db.execute(
-            select(func.count()).select_from(model).where(model.is_active.is_(True))
-        )).scalar_one()
-        if n:
-            active_kinds.append(_SCHEDULE_KIND_FOR[model])
+    active_set = await _active_schedule_kinds(db)
+    active_kinds = [_SCHEDULE_KIND_FOR[m] for m in _SCHEDULE_MODELS if _SCHEDULE_KIND_FOR[m] in active_set]
     if not active_kinds:
         return {"applicable": False, "kinds": []}
 
