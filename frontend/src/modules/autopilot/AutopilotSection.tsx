@@ -786,11 +786,16 @@ function SwitchOnly({ value, onChange, disabled, ariaLabel }: { value: boolean; 
       aria-label={ariaLabel}
       onClick={() => !disabled && onChange(!value)}
       disabled={disabled}
-      className="relative h-5 w-9 rounded-full transition-colors shrink-0 mt-0.5 disabled:opacity-60 disabled:cursor-not-allowed"
-      style={{ background: value ? "var(--green)" : "var(--border-strong)" }}
+      className="relative rounded-full transition-colors shrink-0 mt-0.5 disabled:opacity-60 disabled:cursor-not-allowed"
+      // Fixed pixel geometry (not rem) so the knob always lines up with the
+      // track — the app shell runs at a reduced root font-size (compact
+      // density), which would otherwise shrink a rem-sized track while the
+      // pixel knob offset stayed put, pushing the knob past the edge.
+      style={{ width: 36, height: 20, padding: 0, border: "none", background: value ? "var(--green)" : "var(--border-strong)" }}
     >
       <motion.span
-        className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow"
+        className="absolute rounded-full bg-white shadow"
+        style={{ top: 2, left: 0, width: 16, height: 16 }}
         animate={{ x: value ? 18 : 2 }}
         transition={{ type: "spring", stiffness: 500, damping: 30 }}
       />
