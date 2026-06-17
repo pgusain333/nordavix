@@ -73,20 +73,39 @@ def _grade(value: float, target: KpiTarget) -> str:
 
 
 async def kpi_overview(db: AsyncSession, tenant_id, period_end: date, n: int = 6) -> dict:
-    # Only the canonical calendar-month snapshot (period_start IS NULL) — the
-    # custom-range snapshots compute P&L over arbitrary windows, so mixing them
-    # in would compare a 7-day revenue against a full month. period_start NULL
-    # also guarantees exactly one row per period_end (deterministic trend).
+    # The trend is one point per CALENDAR MONTH. A "monthly" snapshot is one
+    # whose window spans a full month: period_start is the 1st of the period_end's
+    # month (how Insights "Month mode" saves them today) OR NULL (legacy snapshots
+    # saved before Month mode began sending period_start). Custom date-range
+    # snapshots (an arbitrary period_start) are excluded so we never compare, say,
+    # a 10-day revenue against a full month. Among multiple snapshots for the same
+    # month we keep the freshest (most recently computed). We fetch recent rows
+    # and reduce to the newest n months. (Tenant snapshot counts are small, so a
+    # broad fetch + in-Python reduce is cheaper than per-month SQL date math.)
     rows = list((await db.execute(
         select(InsightsSnapshot)
-        .where(
-            InsightsSnapshot.period_end <= period_end,
-            InsightsSnapshot.period_start.is_(None),
-        )
-        .order_by(desc(InsightsSnapshot.period_end))
-        .limit(n)
+        .where(InsightsSnapshot.period_end <= period_end)
+        .order_by(desc(InsightsSnapshot.period_end), desc(InsightsSnapshot.computed_at))
     )).scalars().all())
-    ordered = sorted(rows, key=lambda r: r.period_end)
+
+    def _is_full_month(r: InsightsSnapshot) -> bool:
+        if r.period_start is None:
+            return True
+        return r.period_start == date(r.period_end.year, r.period_end.month, 1)
+
+    seen: set[tuple[int, int]] = set()
+    monthly: list[InsightsSnapshot] = []
+    for r in rows:  # newest first (period_end desc, then computed_at desc)
+        if not _is_full_month(r):
+            continue
+        month_key = (r.period_end.year, r.period_end.month)
+        if month_key in seen:
+            continue
+        seen.add(month_key)
+        monthly.append(r)
+        if len(monthly) >= n:
+            break
+    ordered = sorted(monthly, key=lambda r: r.period_end)
 
     targets = {t.kpi_key: t for t in (await db.execute(select(KpiTarget))).scalars().all()}
 
