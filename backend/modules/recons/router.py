@@ -2228,6 +2228,43 @@ async def close_period(
     except Exception:
         logger.warning("period-closed notifications failed for %s", pe, exc_info=True)
 
+    # Best-effort: snapshot this month's Insights so the Advisory KPI trend gets
+    # a point for the closed month automatically — no separate Insights run
+    # needed. Mirrors Insights "Month mode" exactly (period_start = 1st of the
+    # month, period_end = the close date) so advisory.kpi_overview reads it as a
+    # full-calendar-month point. Runs after the close commit in its own
+    # try/except + commit; a QBO/compute failure here must never undo the close.
+    try:
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+
+        from models.insights_snapshot import InsightsSnapshot
+        from modules.insights.service import compute_overview
+
+        _month_start = pe.replace(day=1)
+        _payload = await compute_overview(db, tenant_id, pe, period_start=_month_start)
+        _existing = (await db.execute(
+            select(InsightsSnapshot).where(
+                InsightsSnapshot.period_end == pe,
+                InsightsSnapshot.period_start == _month_start,
+            )
+        )).scalar_one_or_none()
+        _now = _dt.now(_UTC)
+        if _existing is not None:
+            _existing.payload = _payload
+            _existing.computed_at = _now
+        else:
+            db.add(InsightsSnapshot(
+                tenant_id=tenant_id,
+                period_end=pe,
+                period_start=_month_start,
+                payload=_payload,
+                computed_at=_now,
+            ))
+        await db.commit()
+    except Exception:
+        logger.warning("close-period insights snapshot failed for %s", pe, exc_info=True)
+
     return {
         "period_end": pe.isoformat(),
         "closed_at":  row.closed_at.isoformat() if row.closed_at else None,
