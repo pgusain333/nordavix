@@ -21,12 +21,13 @@ import {
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import { workspaceApi } from "@/modules/workspace/api"
+import { formatDate } from "@/core/lib/dates"
 import { memoryApi, type MemoryFact } from "@/modules/memory/api"
 
 function fmtWhen(iso: string | null): string {
   if (!iso) return ""
   try {
-    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    return formatDate(iso)
   } catch {
     return ""
   }

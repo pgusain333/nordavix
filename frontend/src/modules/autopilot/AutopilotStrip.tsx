@@ -19,17 +19,12 @@ import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { Rocket, Zap, Clock, ArrowRight, CheckCircle2 } from "lucide-react"
 import { autopilotApi } from "@/modules/autopilot/api"
+import { formatDateTime } from "@/core/lib/dates"
 import { workspaceApi, hasPower } from "@/modules/workspace/api"
 
 function fmtRunTime(iso: string | null): string {
   if (!iso) return "—"
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-    })
-  } catch {
-    return "—"
-  }
+  return formatDateTime(iso) || "—"
 }
 
 export function AutopilotStrip() {

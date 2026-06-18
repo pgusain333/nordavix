@@ -10,6 +10,7 @@
 import { useMemo, useRef, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Send, Trash2, AtSign } from "lucide-react"
+import { formatDate } from "@/core/lib/dates"
 import { Button, Spinner } from "@/core/ui/components"
 import { workspaceApi } from "@/modules/workspace/api"
 import { useUserNames } from "@/modules/workspace/hooks"
@@ -34,7 +35,7 @@ function timeAgo(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`
   const days = Math.floor(hrs / 24)
   if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+  return formatDate(iso)
 }
 
 function initials(name: string): string {

@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
+import { formatDateTime } from "@/core/lib/dates"
 import {
   TrendingUp, TrendingDown, Wallet, ReceiptText, ArrowDownToLine,
   ArrowUpFromLine, LineChart as LineIcon, Sparkles, AlertTriangle,
@@ -63,9 +64,7 @@ function monthOptions(): { value: string; label: string }[] {
 function fmtSyncedAt(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ""
-  return d.toLocaleString("en-US", {
-    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-  })
+  return formatDateTime(d)
 }
 
 // Section anchor registry

@@ -19,7 +19,7 @@ import { PageHeader } from "@/core/ui/PageHeader"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Spinner } from "@/core/ui/components"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
-import { formatDateTime } from "@/core/lib/dates"
+import { formatDate, formatDateTime } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import { reviewApi, type ReviewFinding, type ReviewState, type Severity } from "../api"
 
@@ -61,7 +61,7 @@ function fmtTxn(s?: string | null): string {
   if (!s) return ""
   const d = new Date(s + "T00:00:00")
   if (Number.isNaN(+d)) return s
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+  return formatDate(d)
 }
 // Standard QuickBooks Online deep link to a journal entry by transaction id.
 const qboJournalUrl = (id: string) => `https://app.qbo.intuit.com/app/journal?txnId=${encodeURIComponent(id)}`

@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useOrganization } from "@clerk/clerk-react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
+import { formatDateTime } from "@/core/lib/dates"
 import {
   Rocket, Sparkles, RefreshCw, TrendingUp, Mail, Send,
   CheckCircle2, AlertTriangle, ShieldCheck, Clock, Play, Zap, Bot,
@@ -40,13 +41,7 @@ function ordinal(n: number): string {
 
 function fmtRunTime(iso: string | null): string {
   if (!iso) return "—"
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-    })
-  } catch {
-    return "—"
-  }
+  return formatDateTime(iso) || "—"
 }
 
 // ── Root ─────────────────────────────────────────────────────────────────────

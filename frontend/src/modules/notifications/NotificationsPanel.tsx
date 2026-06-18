@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Bell, X, CheckCheck } from "lucide-react"
+import { formatDate } from "@/core/lib/dates"
 import { notificationsApi, NOTIF_EVENT, type NotificationItem } from "./api"
 
 /** Compact "2h ago" / "3d ago" relative time, falling back to a short date. */
@@ -26,7 +27,7 @@ function timeAgo(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`
   const days = Math.floor(hrs / 24)
   if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+  return formatDate(iso)
 }
 
 export function NotificationsPanel() {

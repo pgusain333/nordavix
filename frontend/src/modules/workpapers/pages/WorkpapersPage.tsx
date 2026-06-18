@@ -16,6 +16,7 @@ import { useOrganization } from "@clerk/clerk-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { formatDate } from "@/core/lib/dates"
 import {
   AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Circle, Clock,
   Download, Eye, ExternalLink, FileImage, FileSpreadsheet, FileText, FolderOpen,
@@ -63,7 +64,7 @@ function fmtDate(s: string | null | undefined): string {
   if (!s) return ""
   const d = new Date(s)
   if (Number.isNaN(+d)) return ""
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+  return formatDate(d)
 }
 function acctState(s: string): RowState {
   return s === "approved" ? "done" : s === "flagged" ? "flag" : s === "reviewed" ? "review" : "open"
