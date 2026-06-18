@@ -132,6 +132,7 @@ export function AdjustmentsPage() {
           const k = q.queryKey
           const head = Array.isArray(k) && typeof k[0] === "string" ? k[0] : ""
           return head === "adjustments" || head.includes("recon") || head.includes("dashboard")
+            || head.includes("trial-balance") || head.includes("flux") || head.includes("variance")
         },
       })
     },
@@ -258,11 +259,16 @@ export function AdjustmentsPage() {
               <div className="min-w-0">
                 <p className="text-[12.5px] font-semibold" style={{ color: "var(--text)" }}>
                   {checkResult.posted_count} of {checkResult.total} found in QuickBooks
-                  {checkResult.all_posted
-                    ? checkResult.reopened_accounts.length > 0
-                      ? ` · all posted — ${checkResult.reopened_accounts.length} reconciliation${checkResult.reopened_accounts.length === 1 ? "" : "s"} reopened to reconcile`
+                  {checkResult.all_posted && (() => {
+                    const r = checkResult.reopened_accounts.length
+                    const f = checkResult.reopened_flux_accounts?.length ?? 0
+                    const parts: string[] = []
+                    if (r) parts.push(`${r} reconciliation${r === 1 ? "" : "s"}`)
+                    if (f) parts.push(`${f} flux analys${f === 1 ? "is" : "es"}`)
+                    return parts.length
+                      ? ` · all posted — ${parts.join(" + ")} reopened to redo`
                       : " · all posted"
-                    : ""}
+                  })()}
                 </p>
                 {!checkResult.all_posted && (
                   <>

@@ -25,6 +25,9 @@ Lifecycle:
   accepted   — a reviewer approved it as the right entry to post
   posted     — the human booked it in QBO and marked it done
   dismissed  — rejected / not applicable
+A reviewer/admin can reopen an `accepted` entry back to `open` (to change an
+account, then re-approve) — even after it's been saved, which pulls it back
+out of the saved batch.
 
 Idempotency: regenerating the source (re-run AI, re-pull bank GL) replaces
 only the OPEN proposals for a given (tenant_id, source, source_ref,

@@ -3,10 +3,11 @@ Adjustments API — review queue + actions for AI-proposed journal entries.
 
   GET    /adjustments                 list proposals (filter by period/source/status/source_ref)
   GET    /adjustments/accounts        chart of accounts for the JE-line editor
-  POST   /adjustments/{id}/accept     reviewer approves the draft       (reviewer+)
-  POST   /adjustments/{id}/dismiss    reject / not applicable           (preparer+)
-  POST   /adjustments/{id}/mark-posted  human booked it in QBO          (preparer+)
-  PATCH  /adjustments/{id}            edit lines/memo before accepting  (preparer+, open only)
+  POST   /adjustments/{id}/accept     reviewer approves the draft        (reviewer+)
+  POST   /adjustments/{id}/reopen     pull an approved entry back to open (admin + reviewer)
+  POST   /adjustments/{id}/dismiss    reject / not applicable            (reviewer+)
+  POST   /adjustments/{id}/mark-posted  human booked it in QBO           (reviewer+)
+  PATCH  /adjustments/{id}            edit lines/memo before accepting   (preparer+, open only)
 
 Backs both the inline proposed-entry cards (filtered by source_ref) and the
 consolidated review queue. We never write to QuickBooks — accept/post only
@@ -24,11 +25,14 @@ from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
 from core.db.base import current_request_readonly
 from core.db.session import get_db
+from models.account import Account
 from models.account_review_status import AccountReviewStatus
 from models.closed_period import ClosedPeriod
 from models.proposed_entry import ProposedEntry
 from models.qbo_connection import QboConnection
+from models.trial_balance import TrialBalance
 from models.user import User
+from models.variance import Variance
 from modules.adjustments.service import (
     VALID_SOURCES,
     VALID_STATUSES,
@@ -139,6 +143,7 @@ async def _transition(
     new_status: str,
     action: str,
     enforce_maker_checker: bool = False,
+    clear_saved: bool = False,
 ) -> dict:
     entry = await _load(db, entry_id)
     if await _is_closed(db, tenant_id, entry.period_end):
@@ -173,6 +178,13 @@ async def _transition(
                 "from a different reviewer (maker/checker control). Admins can bypass."
             ),
         )
+    if clear_saved:
+        # Reopen out of a saved batch: the entry leaves the locked/finalized
+        # batch and returns to an editable open draft (it re-Saves with the
+        # batch once re-approved). Until then it drops out of the CSV export +
+        # posting check, which both select on saved_at.
+        entry.saved_at = None
+        entry.saved_by = None
     prev = entry.status
     entry.status = new_status
     entry.status_changed_at = datetime.now(UTC)
@@ -231,6 +243,34 @@ async def mark_posted(
     asserting "this is in the books now" is checker territory."""
     return await _transition(
         db, tenant_id, user, entry_id, new_status="posted", action="adjustment.posted"
+    )
+
+
+@router.post("/{entry_id}/reopen")
+async def reopen_proposal(
+    entry_id: str,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("reviewer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Pull an approved entry back to 'open' so its accounts can be changed and
+    it can be re-approved. Admin + reviewer only — un-approving is a reviewer
+    decision. Works even after the batch is saved: reopening pulls the entry
+    back out of the saved batch (it re-Saves with the batch once re-approved),
+    so it drops out of the CSV export + posting check until then. The reopen
+    itself doesn't enforce maker/checker (it's not a sign-off); re-approval
+    still does, so whoever edits the account can't self-approve (admins bypass).
+    Posted entries are already in QuickBooks and can't be reopened — post a new
+    correcting entry instead. Closed periods are blocked (via _transition)."""
+    entry = await _load(db, entry_id)
+    if entry.status != "accepted":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Only approved entries can be reopened (this one is {entry.status}).",
+        )
+    return await _transition(
+        db, tenant_id, user, entry_id, new_status="open", action="adjustment.reopen",
+        clear_saved=True,
     )
 
 
@@ -487,6 +527,68 @@ async def _reopen_recons(
     return reopened
 
 
+async def _reopen_flux(
+    db: AsyncSession,
+    tenant_id,
+    qbo_account_ids: set[str],
+    period_end: date,
+    *,
+    user_id,
+) -> list[str]:
+    """Reset the flux variances for the given accounts at this period back to
+    'open' (pending) so they're re-analyzed against the post-adjustment GL — the
+    flux mirror of _reopen_recons. Clears the per-line sign-off and the now-stale
+    AI commentary, and un-signs the analysis itself (TrialBalance.approved_by) so
+    the close gate re-blocks. Caller commits. Returns the account ids reopened."""
+    ids = {a for a in qbo_account_ids if a}
+    if not ids:
+        return []
+    rows = (await db.execute(
+        select(Variance, Account.qbo_account_id, Account.trial_balance_id)
+        .join(Account, Account.id == Variance.account_id)
+        .join(TrialBalance, TrialBalance.id == Account.trial_balance_id)
+        .where(
+            TrialBalance.period_current == period_end,
+            Account.qbo_account_id.in_(ids),
+        )
+    )).all()
+    reopened: list[str] = []
+    touched_tbs: set = set()
+    for var, qbo_id, tb_id in rows:
+        # Skip variances with no prepared/approved work to undo.
+        if var.status == "pending" and var.approved_by is None and var.ai_commentary is None:
+            continue
+        var.status = "pending"
+        var.approved_by = None
+        var.approved_at = None
+        var.ai_commentary = None
+        touched_tbs.add(tb_id)
+        await write_audit_event(
+            db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            action="flux.reopen_after_adjustment",
+            entity_type="variance",
+            entity_id=var.id,
+            metadata={
+                "qbo_account_id": qbo_id,
+                "period_end": period_end.isoformat(),
+                "trial_balance_id": str(tb_id),
+            },
+        )
+        reopened.append(qbo_id)
+    # The analysis is no longer fully signed off once an account reopened.
+    if touched_tbs:
+        tbs = (await db.execute(
+            select(TrialBalance).where(TrialBalance.id.in_(touched_tbs))
+        )).scalars().all()
+        for tb in tbs:
+            if tb.approved_by is not None or tb.approved_at is not None:
+                tb.approved_by = None
+                tb.approved_at = None
+    return reopened
+
+
 @router.post("/check-posted")
 async def check_posted(
     tenant_id: CurrentTenantId,
@@ -496,10 +598,10 @@ async def check_posted(
 ) -> dict:
     """Read QuickBooks (read-only) and check whether each saved adjustment has
     been posted, matching by account + amount + posting type within the period.
-    When every saved entry is found, reopen the reconciliations for the accounts
-    those entries hit so they can be reconciled against the new GL. This is a
-    read-only check (it only marks entries posted when actually found in QBO),
-    so any workspace member (preparer+) can run it."""
+    When every saved entry is found, reopen the reconciliations and flux
+    analyses for the accounts those entries hit so they're redone against the
+    new GL. This is a read-only check (it only marks entries posted when
+    actually found in QBO), so any workspace member (preparer+) can run it."""
     pe = _parse_period(period_end)
     if pe is None:
         raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
@@ -563,6 +665,7 @@ async def check_posted(
 
     all_posted = bool(results) and all(r["posted"] for r in results)
     reopened: list[str] = []
+    reopened_flux: list[str] = []
     if all_posted:
         affected = {
             str(ln.get("account_qbo_id"))
@@ -570,6 +673,7 @@ async def check_posted(
             if ln.get("account_qbo_id")
         }
         reopened = await _reopen_recons(db, tenant_id, affected, pe, user_id=user.id)
+        reopened_flux = await _reopen_flux(db, tenant_id, affected, pe, user_id=user.id)
 
     await db.commit()
     return {
@@ -579,4 +683,5 @@ async def check_posted(
         "posted_count": sum(1 for r in results if r["posted"]),
         "all_posted": all_posted,
         "reopened_accounts": reopened,
+        "reopened_flux_accounts": reopened_flux,
     }

@@ -29,6 +29,7 @@ export function patchAdjustments(
       if (!match(e)) return e
       const next = { ...e, ...patch } as ProposedEntry
       if (e.status === "open" && next.status !== "open") openDelta -= 1
+      else if (e.status !== "open" && next.status === "open") openDelta += 1
       return next
     })
     return { ...old, items, open_count: Math.max(0, (old.open_count ?? 0) + openDelta) }

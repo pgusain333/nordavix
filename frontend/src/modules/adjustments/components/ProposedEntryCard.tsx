@@ -6,6 +6,7 @@
  *
  *   Copy JE  → clipboard (paste into QuickBooks)   — always available
  *   Approve  → reviewer marks it the right entry   — reviewer+, open only → Approved
+ *   Reopen   → pull an approved entry back to open  — reviewer+, any approved (even saved)
  *   Dismiss  → not applicable                      — open / accepted
  *
  * Posting is NOT a per-card action: once approved + saved, the batch
@@ -19,7 +20,7 @@
  */
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, Copy, Lock, Sparkles, ThumbsDown } from "lucide-react"
+import { Check, Copy, Lock, RotateCcw, Sparkles, ThumbsDown } from "lucide-react"
 
 import {
   adjustmentsApi,
@@ -74,6 +75,14 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
     mutationFn: () => adjustmentsApi.dismiss(entry.id),
     ...optimisticAdjust(qc, (e) => e.id === entry.id, { status: "dismissed" }),
   })
+  // Reopen → Open tab. Un-approves an accepted entry so its accounts can be
+  // re-pointed, then re-approved. Works even on a saved entry — reopening pulls
+  // it back out of the batch, so clear saved_at optimistically too (the lock
+  // badge drops in the same paint). Like accept/dismiss.
+  const reopenMut  = useMutation({
+    mutationFn: () => adjustmentsApi.reopen(entry.id),
+    ...optimisticAdjust(qc, (e) => e.id === entry.id, { status: "open", saved_at: null }),
+  })
   const editMut    = useMutation({
     mutationFn: (lines: ProposedEntryLine[]) => adjustmentsApi.edit(entry.id, { lines }),
     onMutate: async (lines: ProposedEntryLine[]) => {
@@ -85,7 +94,7 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
     onError: (_e, _v, ctx) => { ctx?.prev?.forEach(([k, d]) => qc.setQueryData(k, d)) },
     onSettled: () => { qc.invalidateQueries({ queryKey: ["adjustments"] }) },
   })
-  const busy = acceptMut.isPending || dismissMut.isPending
+  const busy = acceptMut.isPending || dismissMut.isPending || reopenMut.isPending
 
   // Open drafts let the user re-point any line to a different GL account — the
   // chart for the entry's period feeds the per-line dropdown. Re-pointing keeps
@@ -144,6 +153,10 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
   // Saved entries are a locked batch and can't be dismissed. Dismissing is a
   // review decision (mirror of accept) — reviewer/admin only, like the API.
   const showDismiss = (isOpen || entry.status === "accepted") && !readOnly && !saved && !!canReview
+  // Reopen un-approves: accepted → open, so the account can be changed and the
+  // entry re-approved. Reviewer/admin only; works even on a saved entry (it's
+  // pulled back out of the batch).
+  const showReopen = entry.status === "accepted" && !readOnly && !!canReview
 
   return (
     <div
@@ -299,6 +312,19 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
 
         <div className="flex-1" />
 
+        {showReopen && (
+          <button
+            type="button"
+            onClick={() => reopenMut.mutate()}
+            disabled={busy}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50"
+            style={{ background: "var(--surface-2)", color: "var(--text)" }}
+            title="Reopen this approved entry to change an account, then re-approve"
+          >
+            <RotateCcw size={12} strokeWidth={2} />
+            Reopen
+          </button>
+        )}
         {showDismiss && (
           <button
             type="button"

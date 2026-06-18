@@ -91,6 +91,14 @@ async function markPosted(id: string): Promise<ProposedEntry> {
   return data
 }
 
+/** Pull an approved entry back to 'open' so its accounts can be changed, then
+ *  re-approved (admin + reviewer; works even after saving — pulls the entry
+ *  back out of the saved batch). */
+async function reopen(id: string): Promise<ProposedEntry> {
+  const { data } = await apiClient.post<ProposedEntry>(`/api/adjustments/${id}/reopen`)
+  return data
+}
+
 interface EditBody {
   lines?:       ProposedEntryLine[]
   description?: string
@@ -147,6 +155,7 @@ export interface CheckPostedResult {
   posted_count:      number
   all_posted:        boolean
   reopened_accounts: string[]
+  reopened_flux_accounts: string[]
 }
 
 /** Read QuickBooks (read-only) and check whether each saved adjustment was
@@ -159,7 +168,7 @@ async function checkPosted(periodEnd: string): Promise<CheckPostedResult> {
 }
 
 export const adjustmentsApi = {
-  list, accounts, accept, dismiss, markPosted, edit, save, downloadCsv, checkPosted,
+  list, accounts, accept, dismiss, markPosted, reopen, edit, save, downloadCsv, checkPosted,
 }
 
 /** Plain-text rendering of a proposed entry for the clipboard, so the user can
