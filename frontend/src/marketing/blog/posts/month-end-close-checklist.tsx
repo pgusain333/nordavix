@@ -25,6 +25,13 @@ export function Body() {
         senior accountant on day one of a real close, with the order, the gating
         rules, and the gotchas that aren&apos;t in textbooks.
       </p>
+      <p>
+        One checklist, but every seat runs it toward a different goal — speed,
+        accuracy, or scale. For that view, see{" "}
+        <Link to="/blog/month-end-close-cfo-controller-outsourced-accounting" className="text-[var(--green)] underline">
+          how CFOs, controllers, and outsourced accounting teams each approach the close
+        </Link>.
+      </p>
 
       <h2>Why most checklists fail</h2>
       <p>

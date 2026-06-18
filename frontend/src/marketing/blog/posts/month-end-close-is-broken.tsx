@@ -108,7 +108,11 @@ export function Body() {
         for the Fortune 500, priced for the Fortune 500, and it takes a six-month
         implementation and a dedicated admin to stand up. If you&apos;re a controller at
         a $20M company, a CPA firm running close for thirty clients, or a fractional CFO
-        juggling five sets of books, that world was never built with you in mind.
+        juggling five sets of books, that world was never built with you in mind. Each of
+        those roles feels the close differently — here&apos;s{" "}
+        <Link to="/blog/month-end-close-cfo-controller-outsourced-accounting" className="text-[var(--green)] underline">
+          how CFOs, controllers, and outsourced accounting teams each fix it
+        </Link>.
       </p>
       <p>
         So you do what everyone does. QuickBooks holds the ledger, but it doesn&apos;t
