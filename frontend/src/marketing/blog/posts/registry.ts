@@ -24,8 +24,10 @@ import * as aiAccounting2026                from "@/marketing/blog/posts/ai-in-a
 import * as prepaidAmortizationSchedule     from "@/marketing/blog/posts/prepaid-expense-amortization-schedule"
 import * as makerCheckerControls            from "@/marketing/blog/posts/maker-checker-accounting-controls"
 import * as compoundingMemory              from "@/marketing/blog/posts/compounding-memory"
+import * as closeByRole                    from "@/marketing/blog/posts/month-end-close-cfo-controller-outsourced-accounting"
 
 const RAW_POSTS: BlogPostModule[] = [
+  closeByRole                     as BlogPostModule,
   compoundingMemory               as BlogPostModule,
   catchGlCodingErrors             as BlogPostModule,
   prepaidAmortizationSchedule     as BlogPostModule,
