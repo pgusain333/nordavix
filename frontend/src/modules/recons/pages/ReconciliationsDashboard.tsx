@@ -542,6 +542,11 @@ export function ReconciliationsDashboard() {
     mutationFn: () => reconsApi.syncPeriod(periodEnd),
     onSuccess: (data) => {
       qc.setQueryData(["recons-overview", periodEnd], data)
+      // Sync re-pulls fresh data from QBO, but the per-account GL transaction
+      // drill-in (recon-period-entries) is a LIVE QBO pull cached for 5 min —
+      // without this it kept showing the pre-sync transactions until a hard
+      // refresh. Invalidate so any open/next drawer reflects the fresh pull.
+      qc.invalidateQueries({ queryKey: ["recon-period-entries"] })
       const n = data.accounts.length
       const when = new Date().toLocaleTimeString()
       const r = data.reflagged ?? 0
