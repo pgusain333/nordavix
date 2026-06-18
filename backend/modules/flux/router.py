@@ -659,6 +659,21 @@ async def approve_variance(
     if var is None:
         raise HTTPException(status_code=404, detail="Variance not found")
 
+    # Maker/checker: the user who created (ran) this flux analysis can't also
+    # sign off its variance lines — self-approval defeats the control. Admins
+    # bypass (master access / solo firms), mirroring the recon subledger rule.
+    tb = (await db.execute(
+        select(TrialBalance).where(TrialBalance.id == tb_id)
+    )).scalar_one_or_none()
+    if tb is not None and user.role != "admin" and tb.created_by == user.id:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You created this flux analysis — variance sign-off must come "
+                "from a different user (maker/checker control). Admins can bypass."
+            ),
+        )
+
     var.status = "approved"
     var.approved_by = user.id
     var.approved_at = datetime.now(UTC)
@@ -990,6 +1005,16 @@ async def approve_trial_balance(
     )).scalar_one_or_none()
     if tb is None:
         raise HTTPException(status_code=404, detail="Trial balance not found")
+    # Maker/checker: whoever created (ran) this analysis can't sign it off — the
+    # TB approval gates the month-end close. Admins bypass, mirroring recon.
+    if user.role != "admin" and tb.created_by == user.id:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You created this flux analysis — sign-off must come from a "
+                "different user (maker/checker control). Admins can bypass."
+            ),
+        )
     tb.approved_by = user.id
     tb.approved_at = datetime.now(UTC)
     tb.status = "complete"

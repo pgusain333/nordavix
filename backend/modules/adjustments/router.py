@@ -138,6 +138,7 @@ async def _transition(
     *,
     new_status: str,
     action: str,
+    enforce_maker_checker: bool = False,
 ) -> dict:
     entry = await _load(db, entry_id)
     if await _is_closed(db, tenant_id, entry.period_end):
@@ -154,6 +155,23 @@ async def _transition(
         raise HTTPException(
             status_code=409,
             detail="This entry is part of a saved batch and is locked — saved adjustments can't be dismissed.",
+        )
+    # Maker/checker: the user who last prepared/edited this draft can't also be
+    # the one who signs it off. status_changed_by holds the last human to modify
+    # the entry (the edit endpoint stamps it too). Admins bypass — master access
+    # for solo firms — mirroring the recon subledger control.
+    if (
+        enforce_maker_checker
+        and user.role != "admin"
+        and entry.status_changed_by is not None
+        and entry.status_changed_by == user.id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You prepared/edited this adjusting entry — approval must come "
+                "from a different reviewer (maker/checker control). Admins can bypass."
+            ),
         )
     prev = entry.status
     entry.status = new_status
@@ -183,7 +201,8 @@ async def accept_proposal(
     """Approve the draft. Reviewer+ — accepting an adjusting entry is an
     approval, mirroring the recon/flux approve gates."""
     return await _transition(
-        db, tenant_id, user, entry_id, new_status="accepted", action="adjustment.accept"
+        db, tenant_id, user, entry_id, new_status="accepted", action="adjustment.accept",
+        enforce_maker_checker=True,
     )
 
 
@@ -255,6 +274,11 @@ async def edit_proposal(
         entry.description = str(payload["description"]).strip()[:500]
     if "memo" in payload:
         entry.memo = (str(payload["memo"]).strip()[:500] or None) if payload["memo"] else None
+
+    # Record the last human to substantively modify this draft so the approval
+    # gate can enforce maker/checker (the editor can't self-approve). This field
+    # is not serialized to the client; the full audit trail is the event below.
+    entry.status_changed_by = user.id
 
     await write_audit_event(
         db,
