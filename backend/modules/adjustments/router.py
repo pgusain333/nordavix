@@ -446,20 +446,29 @@ async def export_csv(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Download the saved adjustments for a period as a QuickBooks Online
-    Accountant 'Import journal entries' CSV. Only saved (approved + locked)
-    entries are included — open/dismissed drafts are excluded."""
+    Accountant 'Import journal entries' CSV. Only entries that are saved
+    (locked) AND still 'accepted' are included: open / dismissed drafts are
+    excluded, and entries already 'posted' (found in QBO by the posting check)
+    are dropped so they can't be re-imported and double-booked."""
     pe = _parse_period(period_end)
     if pe is None:
         raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
     rows = (await db.execute(
         select(ProposedEntry)
-        .where(ProposedEntry.period_end == pe, ProposedEntry.saved_at.isnot(None))
+        .where(
+            ProposedEntry.period_end == pe,
+            ProposedEntry.saved_at.isnot(None),
+            ProposedEntry.status == "accepted",
+        )
         .order_by(ProposedEntry.created_at.asc())
     )).scalars().all()
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail="No saved entries for this period. Approve the entries and click Save first.",
+            detail=(
+                "No entries to import for this period — approve and Save entries "
+                "first, or they may already be posted in QuickBooks."
+            ),
         )
     csv_text = build_qbo_je_csv(rows)
     filename = f"nordavix_adjustments_{pe.isoformat()}.csv"

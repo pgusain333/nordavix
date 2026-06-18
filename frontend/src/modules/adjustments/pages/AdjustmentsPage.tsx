@@ -97,6 +97,9 @@ export function AdjustmentsPage() {
   const hasOpen = periodActive.some((e) => e.status === "open")
   const readyToSave = !!period && periodActive.length > 0 && !hasOpen && periodActive.some((e) => !e.saved_at)
   const savedCount = base.filter((e) => !!e.saved_at).length
+  // Only saved entries still 'accepted' are importable — posted ones are
+  // already in QBO and the CSV excludes them (re-importing would double-book).
+  const importableCount = base.filter((e) => !!e.saved_at && e.status === "accepted").length
   const allSaved = !!period && periodActive.length > 0 && periodActive.every((e) => !!e.saved_at)
 
   const saveMut = useMutation({
@@ -220,10 +223,16 @@ export function AdjustmentsPage() {
                   )}
                   <button
                     onClick={() => downloadMut.mutate()}
-                    disabled={savedCount === 0 || downloadMut.isPending}
+                    disabled={importableCount === 0 || downloadMut.isPending}
                     className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40"
                     style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border-strong)" }}
-                    title={savedCount === 0 ? "Save the batch first" : "Download QBO journal-entry CSV"}
+                    title={
+                      savedCount === 0
+                        ? "Save the batch first"
+                        : importableCount === 0
+                          ? "All saved entries are already posted in QuickBooks"
+                          : "Download QBO journal-entry CSV"
+                    }
                   >
                     <Download size={13} strokeWidth={2.2} />
                     {downloadMut.isPending ? "Preparing…" : "Download QBO CSV"}
