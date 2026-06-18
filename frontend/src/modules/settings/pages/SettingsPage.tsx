@@ -809,13 +809,20 @@ function AiUsageCard() {
   const barColor = over ? "#9b3d37" : near ? "#9a6b2e" : "var(--green)"
   const resetLabel = data?.resets_at ? formatDate(data.resets_at) : "—"
 
+  // Show the meter in abstract "credits" rather than raw dollars. 1 credit = $0.01,
+  // so a $25 monthly cap reads as 2,500 credits. Purely presentational — the
+  // backend still tracks and enforces in USD. Change CREDITS_PER_USD to re-scale.
+  const CREDITS_PER_USD = 100
+  const creditsSpent = spent > 0 ? Math.max(1, Math.round(spent * CREDITS_PER_USD)) : 0
+  const creditsCap = Math.round(cap * CREDITS_PER_USD)
+
   return (
     <div className="rounded-xl p-4"
       style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2">
           <Sparkles size={14} strokeWidth={1.8} style={{ color: "var(--green)" }} />
-          <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>AI usage this month</p>
+          <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>AI credits this month</p>
         </div>
         {hasCap && (
           <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
@@ -838,8 +845,8 @@ function AiUsageCard() {
           </div>
           <div className="flex items-center justify-between mt-2">
             <p className="text-[12px]" style={{ color: "var(--text-2)" }}>
-              <span className="font-semibold" style={{ color: "var(--text)" }}>${spent.toFixed(2)}</span>
-              {" "}of ${cap.toFixed(2)}
+              <span className="font-semibold" style={{ color: "var(--text)" }}>{creditsSpent.toLocaleString()}</span>
+              {" "}of {creditsCap.toLocaleString()} credits
             </p>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
               Resets {resetLabel}
@@ -854,8 +861,8 @@ function AiUsageCard() {
         </>
       ) : (
         <p className="text-[12px]" style={{ color: "var(--text-2)" }}>
-          <span className="font-semibold" style={{ color: "var(--text)" }}>${spent.toFixed(2)}</span>
-          {" "}spent this month. No spend limit set — usage is tracked only.
+          <span className="font-semibold" style={{ color: "var(--text)" }}>{creditsSpent.toLocaleString()}</span>
+          {" "}credits used this month. No limit set — usage is tracked only.
         </p>
       )}
     </div>
