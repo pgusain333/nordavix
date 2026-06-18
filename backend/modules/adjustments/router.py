@@ -491,13 +491,15 @@ async def _reopen_recons(
 async def check_posted(
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
-    user: User = Depends(require_role("reviewer")),
+    user: User = Depends(require_role("preparer")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Read QuickBooks (read-only) and check whether each saved adjustment has
     been posted, matching by account + amount + posting type within the period.
     When every saved entry is found, reopen the reconciliations for the accounts
-    those entries hit so they can be reconciled against the new GL. Reviewer+."""
+    those entries hit so they can be reconciled against the new GL. This is a
+    read-only check (it only marks entries posted when actually found in QBO),
+    so any workspace member (preparer+) can run it."""
     pe = _parse_period(period_end)
     if pe is None:
         raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")

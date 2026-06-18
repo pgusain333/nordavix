@@ -227,18 +227,17 @@ export function AdjustmentsPage() {
                     <Download size={13} strokeWidth={2.2} />
                     {downloadMut.isPending ? "Preparing…" : "Download QBO CSV"}
                   </button>
-                  {canReview && (
-                    <button
-                      onClick={() => checkMut.mutate()}
-                      disabled={savedCount === 0 || checkMut.isPending}
-                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40"
-                      style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border-strong)" }}
-                      title={savedCount === 0 ? "Save the batch first" : "Read QuickBooks and check whether these entries are posted"}
-                    >
-                      <RefreshCw size={13} strokeWidth={2.2} className={checkMut.isPending ? "animate-spin" : ""} />
-                      {checkMut.isPending ? "Checking…" : "Check posted in QBO"}
-                    </button>
-                  )}
+                  {/* Read-only posting check — available to every role (preparer+). */}
+                  <button
+                    onClick={() => checkMut.mutate()}
+                    disabled={savedCount === 0 || checkMut.isPending}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40"
+                    style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border-strong)" }}
+                    title={savedCount === 0 ? "Save the batch first" : "Read QuickBooks and check whether these entries are posted"}
+                  >
+                    <RefreshCw size={13} strokeWidth={2.2} className={checkMut.isPending ? "animate-spin" : ""} />
+                    {checkMut.isPending ? "Checking…" : "Check posted in QBO"}
+                  </button>
                 </div>
               </>
             )}
