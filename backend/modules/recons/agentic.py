@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -1615,11 +1615,15 @@ async def _schedule_backed_subledger(
     )
 
     p_start = period_end.replace(day=1)
+    prior_end = p_start - timedelta(days=1)  # prior period-end → roll-forward opening
 
-    # Per-item subledger BALANCE components (signed, debit-positive) for the
-    # "Nordavix vs QuickBooks" side-by-side match view in the recon drawer.
-    # Sum(sl_entries[*].amount) == sl_signed by construction. Entries below the
-    # half-cent floor (e.g. a fully-amortized prepaid) are skipped as noise.
+    # The left "Per Nordavix schedule" column is a roll-forward: an Opening
+    # balance line (the schedule's balance at the prior period-end) followed by
+    # this period's activity per item (amortization, depreciation, accretion,
+    # payments, additions / disposals…). Sum(sl_entries[*].amount) == sl_signed
+    # by construction — opening + Σ activity = closing — so the tie-out is
+    # unchanged. Activity below the half-cent floor is skipped as noise; the
+    # opening line always shows as the roll-forward anchor.
     _ENTRY_FLOOR = Decimal("0.005")
 
     def _sl_entry(label: str, signed: Decimal, when) -> dict:
@@ -1637,15 +1641,33 @@ async def _schedule_backed_subledger(
         )
     )).scalars().all())
     if prepaids:
+        # Roll-forward: Opening + Additions − Amortization = Closing (sl_signed).
         sl = ZERO
+        opening_total = ZERO
         je: list[dict] = []
-        sl_entries: list[dict] = []
+        amort_entries: list[dict] = []
+        addition_entries: list[dict] = []
         for it in prepaids:
-            _bal = _prepaid_unamortized_as_of(it, period_end)
-            sl += _bal
-            if _bal > _ENTRY_FLOOR:
-                sl_entries.append(_sl_entry(it.description, _bal, it.invoice_date))
-            if p_start <= it.invoice_date <= period_end:
+            closing_bal = _prepaid_unamortized_as_of(it, period_end)
+            sl += closing_bal
+            amort = _prepaid_period_expense(it, p_start, period_end)
+            recorded_this_period = (
+                it.invoice_date is not None and p_start <= it.invoice_date <= period_end
+            )
+            if recorded_this_period:
+                # First recorded this period — show it as an addition (its gross
+                # = what's left on the BS + what already amortized this period),
+                # not as part of the opening it was never in.
+                added = closing_bal + amort
+                if added > _ENTRY_FLOOR:
+                    addition_entries.append(
+                        _sl_entry(f"{it.description} — added this period", added, it.invoice_date)
+                    )
+            else:
+                opening_total += _prepaid_unamortized_as_of(it, prior_end)
+            if amort > _ENTRY_FLOOR:
+                amort_entries.append(_sl_entry(f"Amortization — {it.description}", -amort, period_end))
+            if recorded_this_period:
                 je.append({
                     "txn_id":     f"prepaid-init-{it.id}",
                     "txn_type":   "Schedule (Initial)",
@@ -1656,7 +1678,6 @@ async def _schedule_backed_subledger(
                     "offset_qbo_account_id": it.offset_qbo_account_id,
                     "offset_account_name":   it.offset_account_name,
                 })
-            amort = _prepaid_period_expense(it, p_start, period_end)
             if amort > ZERO:
                 je.append({
                     "txn_id":     f"prepaid-amort-{it.id}-{period_end.isoformat()}",
@@ -1668,6 +1689,13 @@ async def _schedule_backed_subledger(
                     "offset_qbo_account_id": it.offset_qbo_account_id,
                     "offset_account_name":   it.offset_account_name,
                 })
+        # Roll-forward order: Opening → Additions → Amortization. The opening
+        # line always shows (even $0) as the roll-forward anchor.
+        sl_entries: list[dict] = [
+            _sl_entry("Opening balance (per schedule)", opening_total, prior_end)
+        ]
+        sl_entries.extend(addition_entries)
+        sl_entries.extend(amort_entries)
         return {"schedule_type": "prepaid", "sl_signed": _q(sl), "item_count": len(prepaids), "je_items": je, "sl_entries": sl_entries}
 
     # ── Accrual (credit-natural liability) ───────────────────────────
@@ -1679,13 +1707,17 @@ async def _schedule_backed_subledger(
     )).scalars().all())
     if accruals:
         sl_pos = ZERO
+        opening_signed = ZERO
         je = []
-        sl_entries = []
+        activity_entries: list[dict] = []
         for it in accruals:
             _bal = _accrual_balance_as_of(it, period_end)
+            _open = _accrual_balance_as_of(it, prior_end)
             sl_pos += _bal
-            if _bal > _ENTRY_FLOOR:
-                sl_entries.append(_sl_entry(it.description, -_bal, it.accrual_date))
+            opening_signed += -_open
+            _act = _open - _bal  # signed net movement (credit-natural)
+            if abs(_act) > _ENTRY_FLOOR:
+                activity_entries.append(_sl_entry(f"Accrual / reversal — {it.description}", _act, period_end))
             if p_start <= it.accrual_date <= period_end:
                 je.append({
                     "txn_id":     f"accrual-book-{it.id}",
@@ -1708,6 +1740,8 @@ async def _schedule_backed_subledger(
                     "offset_qbo_account_id": it.offset_qbo_account_id,
                     "offset_account_name":   it.offset_account_name,
                 })
+        sl_entries = [_sl_entry("Opening balance (per schedule)", opening_signed, prior_end)]
+        sl_entries.extend(activity_entries)
         return {"schedule_type": "accrual", "sl_signed": _q(-sl_pos), "item_count": len(accruals), "je_items": je, "sl_entries": sl_entries}
 
     # ── Fixed Asset COST account (debit-natural asset) ───────────────
@@ -1719,14 +1753,24 @@ async def _schedule_backed_subledger(
     )).scalars().all())
     if fas_cost:
         sl = ZERO
+        opening_signed = ZERO
         je = []
-        sl_entries = []
+        activity_entries: list[dict] = []
         for it in fas_cost:
             in_svc = it.in_service_date <= period_end
             disposed = it.disposed_on is not None and it.disposed_on <= period_end
             if in_svc and not disposed:
                 sl += Decimal(it.cost)
-                sl_entries.append(_sl_entry(it.description, Decimal(it.cost), it.in_service_date))
+            _open = Decimal(it.cost) if (
+                it.in_service_date <= prior_end
+                and not (it.disposed_on is not None and it.disposed_on <= prior_end)
+            ) else ZERO
+            _close = Decimal(it.cost) if (in_svc and not disposed) else ZERO
+            opening_signed += _open
+            _act = _close - _open  # + on addition, − on disposal (debit-natural)
+            if abs(_act) > _ENTRY_FLOOR:
+                _lbl = "Addition" if _act > ZERO else "Disposal"
+                activity_entries.append(_sl_entry(f"{_lbl} — {it.description}", _act, period_end))
             if p_start <= it.in_service_date <= period_end:
                 je.append({
                     "txn_id":     f"fa-add-{it.id}",
@@ -1745,6 +1789,8 @@ async def _schedule_backed_subledger(
                     "amount":     str(_q(-Decimal(it.cost))),
                     "memo":       f"{it.description} — disposed per Nordavix Schedule",
                 })
+        sl_entries = [_sl_entry("Opening balance (per schedule)", opening_signed, prior_end)]
+        sl_entries.extend(activity_entries)
         return {"schedule_type": "fixed_asset_cost", "sl_signed": _q(sl), "item_count": len(fas_cost), "je_items": je, "sl_entries": sl_entries}
 
     # ── Fixed Asset ACCUMULATED DEP contra-asset (credit-natural) ────
@@ -1756,13 +1802,17 @@ async def _schedule_backed_subledger(
     )).scalars().all())
     if fas_dep:
         sl_pos = ZERO
+        opening_signed = ZERO
         je = []
-        sl_entries = []
+        activity_entries: list[dict] = []
         for it in fas_dep:
             _bal = _fa_accumulated_dep_as_of(it, period_end)
+            _open = _fa_accumulated_dep_as_of(it, prior_end)
             sl_pos += _bal
-            if _bal > _ENTRY_FLOOR:
-                sl_entries.append(_sl_entry(f"{it.description} — accum. dep.", -_bal, it.in_service_date))
+            opening_signed += -_open
+            _act = _open - _bal  # negative = depreciation booked this period
+            if abs(_act) > _ENTRY_FLOOR:
+                activity_entries.append(_sl_entry(f"Depreciation — {it.description}", _act, period_end))
             dep = fa_period_depreciation(it, p_start, period_end)
             if dep > ZERO:
                 je.append({
@@ -1773,6 +1823,8 @@ async def _schedule_backed_subledger(
                     "amount":     str(_q(-dep)),
                     "memo":       f"{it.description} — period depreciation per Nordavix Schedule",
                 })
+        sl_entries = [_sl_entry("Opening balance (per schedule)", opening_signed, prior_end)]
+        sl_entries.extend(activity_entries)
         return {"schedule_type": "fixed_asset_accdep", "sl_signed": _q(-sl_pos), "item_count": len(fas_dep), "je_items": je, "sl_entries": sl_entries}
 
     # ── Lease LIABILITY (credit-natural) ─────────────────────────────
@@ -1784,18 +1836,22 @@ async def _schedule_backed_subledger(
     )).scalars().all())
     if leases_liab:
         sl_pos = ZERO
+        opening_signed = ZERO
         je = []
         pay_entries = []
-        sl_entries = []
+        activity_entries: list[dict] = []
         active_count = 0
         for it in leases_liab:
             if it.initial_liability is None or it.discount_rate_pct is None:
                 continue  # cash-basis lease — no BS liability
             active_count += 1
             _bal = _lease_liability_as_of(it, period_end)
+            _open = _lease_liability_as_of(it, prior_end)
             sl_pos += _bal
-            if _bal > _ENTRY_FLOOR:
-                sl_entries.append(_sl_entry(it.description, -_bal, it.lease_start))
+            opening_signed += -_open
+            _act = _open - _bal  # signed net movement (accretion less payments)
+            if abs(_act) > _ENTRY_FLOOR:
+                activity_entries.append(_sl_entry(f"Accretion / payments — {it.description}", _act, period_end))
             if p_start <= it.lease_start <= period_end:
                 je.append({
                     "txn_id":     f"lease-init-{it.id}",
@@ -1830,6 +1886,8 @@ async def _schedule_backed_subledger(
                     "offset_account_name":   it.offset_account_name,
                 })
         if active_count > 0:
+            sl_entries = [_sl_entry("Opening balance (per schedule)", opening_signed, prior_end)]
+            sl_entries.extend(activity_entries)
             return {"schedule_type": "lease_liability", "sl_signed": _q(-sl_pos), "item_count": active_count, "je_items": je, "payment_entries": pay_entries, "sl_entries": sl_entries}
 
     # ── Lease ROU asset (debit-natural) ──────────────────────────────
@@ -1841,8 +1899,9 @@ async def _schedule_backed_subledger(
     )).scalars().all())
     if leases_rou:
         sl = ZERO
+        opening_signed = ZERO
         je = []
-        sl_entries = []
+        activity_entries: list[dict] = []
         active_count = 0
         for it in leases_rou:
             if it.initial_rou_asset is None:
@@ -1855,8 +1914,15 @@ async def _schedule_backed_subledger(
             monthly_amort = Decimal(it.initial_rou_asset) / Decimal(total_months)
             rou_remaining = max(ZERO, Decimal(it.initial_rou_asset) - monthly_amort * Decimal(months_elapsed))
             sl += rou_remaining
-            if rou_remaining > _ENTRY_FLOOR:
-                sl_entries.append(_sl_entry(f"{it.description} — ROU asset", rou_remaining, it.lease_start))
+            if prior_end < it.lease_start:
+                rou_opening = ZERO
+            else:
+                _mp = min(_months_between(it.lease_start, prior_end), total_months)
+                rou_opening = max(ZERO, Decimal(it.initial_rou_asset) - monthly_amort * Decimal(_mp))
+            opening_signed += rou_opening
+            _act = rou_remaining - rou_opening  # negative = ROU amortization
+            if abs(_act) > _ENTRY_FLOOR:
+                activity_entries.append(_sl_entry(f"ROU amortization — {it.description}", _act, period_end))
             if p_start <= it.lease_start <= period_end:
                 je.append({
                     "txn_id":     f"lease-rou-init-{it.id}",
@@ -1886,6 +1952,8 @@ async def _schedule_backed_subledger(
                     "memo":       f"{it.description} — ROU period amortization per Nordavix Schedule",
                 })
         if active_count > 0:
+            sl_entries = [_sl_entry("Opening balance (per schedule)", opening_signed, prior_end)]
+            sl_entries.extend(activity_entries)
             return {"schedule_type": "lease_rou", "sl_signed": _q(sl), "item_count": active_count, "je_items": je, "sl_entries": sl_entries}
 
     # ── Loan (credit-natural liability) ──────────────────────────────
@@ -1897,14 +1965,18 @@ async def _schedule_backed_subledger(
     )).scalars().all())
     if loans:
         sl_pos = ZERO
+        opening_signed = ZERO
         je = []
         pay_entries = []
-        sl_entries = []
+        activity_entries: list[dict] = []
         for it in loans:
             _bal = _loan_principal_as_of(it, period_end)
+            _open = _loan_principal_as_of(it, prior_end)
             sl_pos += _bal
-            if _bal > _ENTRY_FLOOR:
-                sl_entries.append(_sl_entry(it.description, -_bal, it.loan_date))
+            opening_signed += -_open
+            _act = _open - _bal  # signed net movement (draws less principal paid)
+            if abs(_act) > _ENTRY_FLOOR:
+                activity_entries.append(_sl_entry(f"Principal / draws — {it.description}", _act, period_end))
             if p_start <= it.loan_date <= period_end:
                 je.append({
                     "txn_id":     f"loan-orig-{it.id}",
@@ -1939,6 +2011,8 @@ async def _schedule_backed_subledger(
                     "offset_qbo_account_id": it.offset_qbo_account_id,
                     "offset_account_name":   it.offset_account_name,
                 })
+        sl_entries = [_sl_entry("Opening balance (per schedule)", opening_signed, prior_end)]
+        sl_entries.extend(activity_entries)
         return {"schedule_type": "loan", "sl_signed": _q(-sl_pos), "item_count": len(loans), "je_items": je, "payment_entries": pay_entries, "sl_entries": sl_entries}
 
     return None
