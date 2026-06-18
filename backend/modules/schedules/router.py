@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from calendar import monthrange
 from datetime import date as _date
 from datetime import datetime as _datetime
 from datetime import timedelta as _timedelta
@@ -1442,6 +1443,17 @@ def _serialize_candidate(row: PrepaidCandidate) -> dict:
 # the import doesn't duplicate.
 
 
+def _minus_months(d: _date, n: int) -> _date:
+    """Subtract n calendar months from d, clamping the day to the target
+    month's length (e.g., Mar 31 − 1 month → Feb 28/29). Anchors the import
+    lookback window to true calendar months instead of an approximate
+    30-day-per-month count."""
+    total = d.year * 12 + (d.month - 1) - n
+    year, month = divmod(total, 12)
+    month += 1
+    return _date(year, month, min(d.day, monthrange(year, month)[1]))
+
+
 def _next_year_minus_one_day(d: _date) -> _date:
     """End date for a 1-year prepaid starting on `d`. Lands on the
     same calendar day next year minus one (so Jan 15 → Jan 14 next
@@ -1490,7 +1502,7 @@ async def prepaid_import_qbo(
     from core.qbo_gl import pull_gl_transactions
 
     end = _date.today()
-    start = end - _timedelta(days=lookback * 30)
+    start = _minus_months(end, lookback)
 
     try:
         txns = await pull_gl_transactions(conn, db, qbo_id, start, end)
@@ -1724,7 +1736,7 @@ async def accrual_import_qbo(
     from core.qbo_gl import pull_gl_transactions
 
     end = _date.today()
-    start = end - _timedelta(days=lookback * 30)
+    start = _minus_months(end, lookback)
 
     try:
         txns = await pull_gl_transactions(conn, db, qbo_id, start, end)
@@ -1877,7 +1889,7 @@ async def fixed_asset_import_qbo(
     from core.qbo_gl import pull_gl_transactions
 
     end = _date.today()
-    start = end - _timedelta(days=lookback * 30)
+    start = _minus_months(end, lookback)
 
     try:
         txns = await pull_gl_transactions(conn, db, qbo_id, start, end)
@@ -2030,7 +2042,7 @@ async def loan_import_qbo(
     from core.qbo_gl import pull_gl_transactions
 
     end = _date.today()
-    start = end - _timedelta(days=lookback * 30)
+    start = _minus_months(end, lookback)
 
     try:
         txns = await pull_gl_transactions(conn, db, qbo_id, start, end)
