@@ -32,6 +32,7 @@ import { useQboConnection } from "@/modules/flux/hooks"
 import {
   autopilotApi, type AutopilotRun, type AutopilotRunResults, type AutopilotState,
 } from "@/modules/autopilot/api"
+import { AutopilotRunOverlay, type RunStage } from "@/modules/autopilot/AutopilotRunOverlay"
 
 function ordinal(n: number): string {
   const s = ["th", "st", "nd", "rd"]
@@ -70,6 +71,9 @@ export function AutopilotSection() {
   // inserting the running row, so the live poll starts even before the GET
   // reports running=true. Epoch-ms; polling stays on while now < pollUntil.
   const [pollUntil, setPollUntil] = useState(0)
+  // The "wow" run overlay — open from clicking Run now until the user dismisses.
+  const [overlayOpen, setOverlayOpen] = useState(false)
+  const priorRunId = useRef<string | null>(null)
 
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
@@ -113,6 +117,24 @@ export function AutopilotSection() {
       pbcEmail.trim() !== (cfg.pbc_recipient_email ?? "")
     )
   }, [cfg, enabled, runDay, runFlux, runReview, attachReports, sendPbc, pbcEmail])
+
+  // The stages the overlay animates — gated by the SAVED config (a manual run
+  // uses the saved settings, not the unsaved form). Declared before the early
+  // returns to keep hook order stable.
+  const runStages: RunStage[] = useMemo(() => {
+    const flux = cfg?.run_flux ?? true
+    const review = cfg?.run_review ?? true
+    const pbc = cfg?.send_pbc_requests ?? false
+    const s: RunStage[] = [
+      { key: "sync",    label: "Sync QuickBooks",         working: "Syncing balances & aging from QuickBooks…",       icon: RefreshCw },
+      { key: "prepare", label: "Prepare reconciliations", working: "AI preparing every reconciliation…",               icon: Bot },
+    ]
+    if (flux)   s.push({ key: "flux",     label: "Flux analysis",   working: "Explaining the material variances…",               icon: TrendingUp })
+    if (review) s.push({ key: "review",   label: "AI Close Review", working: "The AI reviewing-partner is checking the close…",  icon: ShieldCheck })
+    if (pbc)    s.push({ key: "evidence", label: "Client evidence", working: "Requesting missing statements from your client…",  icon: Mail })
+    s.push({ key: "digest", label: "Digest", working: "Writing your close digest…", icon: Send })
+    return s
+  }, [cfg])
 
   // Seed the form from the saved config. First appearance always seeds; after
   // that we only adopt a NEW server version when the form has no unsaved edits,
@@ -179,6 +201,7 @@ export function AutopilotSection() {
       qc.invalidateQueries({ queryKey: ["autopilot"] })
     },
     onError: (e: unknown) => {
+      setOverlayOpen(false)  // drop the overlay so the inline error is visible
       const ax = e as { response?: { data?: { detail?: string } } }
       setRunErr(ax?.response?.data?.detail ?? "Could not start a run.")
     },
@@ -225,6 +248,28 @@ export function AutopilotSection() {
   const nextLabel = state?.next_period_label ?? null
   const lastRun = state?.runs?.[0] ?? null
 
+  // Show the finale only once OUR run has truly finished: a new run row (a
+  // different id than the latest one present when Run now was clicked) that is
+  // no longer "running". Prevents flashing the previous run's results.
+  const overlayFinished =
+    overlayOpen && !running && !starting && !!lastRun &&
+    lastRun.id !== priorRunId.current && lastRun.status !== "running"
+  const overlayStatus = overlayFinished
+    ? (lastRun!.status as "completed" | "partial" | "failed")
+    : null
+  const overlayChips = overlayFinished ? resultChips(lastRun!.results || {}) : []
+  const overlayErrCount = overlayFinished ? (lastRun!.results?.errors?.length ?? 0) : 0
+  const overlayPeriod =
+    (overlayFinished ? lastRun?.period_label : (run.data?.period_label ?? nextLabel ?? lastRun?.period_label)) ?? null
+
+  function startRun() {
+    if (running || starting || !qboConnected) return
+    setRunErr(null)
+    priorRunId.current = state?.runs?.[0]?.id ?? null
+    setOverlayOpen(true)
+    run.mutate()
+  }
+
   return (
     <div className="space-y-5">
       {isError && (
@@ -268,7 +313,7 @@ export function AutopilotSection() {
                 syncing the period from QBO). */}
             {isAdmin && (
               <button
-                onClick={() => run.mutate()}
+                onClick={startRun}
                 disabled={running || starting || !qboConnected}
                 title={!qboConnected ? "Connect QuickBooks first — Autopilot syncs the period from QBO." : undefined}
                 className="shrink-0 inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] font-bold transition-all disabled:cursor-not-allowed"
@@ -572,6 +617,18 @@ export function AutopilotSection() {
           )}
         </div>
       </Card>
+
+      <AutopilotRunOverlay
+        open={overlayOpen}
+        finished={overlayFinished}
+        status={overlayStatus}
+        periodLabel={overlayPeriod}
+        stages={runStages}
+        chips={overlayChips}
+        errorCount={overlayErrCount}
+        reduce={!!reduce}
+        onClose={() => setOverlayOpen(false)}
+      />
     </div>
   )
 }
