@@ -50,6 +50,8 @@ const TOOL_LABEL: Record<string, string> = {
   get_reconciliations_overview: "Reconciliations",
   get_account_balance: "Account balance",
   get_close_status: "Close status",
+  get_adjustments_queue: "Adjustments",
+  get_financial_insights: "Insights",
   get_account_guidance: "Client memory",
   recall: "Past records",
   draft_journal_entry: "Drafted entry",
@@ -269,9 +271,11 @@ export default function AssistantPage() {
   )
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-3xl flex-col">
-      {/* Header: controls always; brand shown only once a conversation is active */}
-      <div className="relative flex shrink-0 items-center justify-between gap-2 px-1 pb-3">
+    <div className="flex h-[calc(100vh-7rem)] flex-col">
+      {/* Header: controls always; brand shown only once a conversation is active.
+          Centered to the same max width as the messages + composer; the scroll
+          area below is full-width so its scrollbar sits at the far right edge. */}
+      <div className="relative mx-auto flex w-full max-w-3xl shrink-0 items-center justify-between gap-2 px-1 pb-3">
         <div className="flex items-center gap-2.5" style={{ visibility: empty ? "hidden" : "visible" }}>
           <div
             className="flex h-8 w-8 items-center justify-center rounded-lg"
@@ -392,13 +396,16 @@ export default function AssistantPage() {
       ) : (
         /* ── Active conversation ── */
         <>
-          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-1 pb-4">
-            {messages.map((m, i) => (
-              <MessageBubble key={i} msg={m} status={i === messages.length - 1 ? status : null} />
-            ))}
-            <div ref={bottomRef} />
+          {/* Full-width scroll area → scrollbar at the far right; messages centered. */}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-3xl space-y-5 px-1 pb-4">
+              {messages.map((m, i) => (
+                <MessageBubble key={i} msg={m} status={i === messages.length - 1 ? status : null} />
+              ))}
+              <div ref={bottomRef} />
+            </div>
           </div>
-          <div className="shrink-0 px-1 pt-1">{composer}</div>
+          <div className="mx-auto w-full max-w-3xl shrink-0 px-1 pt-1">{composer}</div>
         </>
       )}
     </div>

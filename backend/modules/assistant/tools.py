@@ -19,7 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.account import Account
 from models.account_review_status import AccountReviewStatus
 from models.gl_balance_snapshot import GlBalanceSnapshot
+from models.insights_snapshot import InsightsSnapshot
 from models.narrative import Narrative
+from models.proposed_entry import ProposedEntry
 from models.trial_balance import TrialBalance
 from models.variance import Variance
 from modules.adjustments.service import parse_ai_entries, period_accounts
@@ -130,6 +132,47 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 }
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "get_adjustments_queue",
+        "description": (
+            "List the adjusting journal entries already in the Adjustments queue "
+            "for the period — proposed by reconciliations, flux, the bank match, or "
+            "the assistant — with each one's status (open/accepted/posted/dismissed), "
+            "source, dollar amount, and confidence. Use for 'what's in adjustments', "
+            "'what entries are pending', 'how many adjustments', 'what's left to "
+            "approve'. Returns status counts plus the entries themselves (newest "
+            "first); show a few and point to the Adjustments screen for the full list."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "description": "Optional filter: open | accepted | posted | dismissed.",
+                },
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+            },
+        },
+    },
+    {
+        "name": "get_financial_insights",
+        "description": (
+            "The client's financial health and business outlook for the period: a "
+            "management summary (headline, health rating, 0-100 score, strengths, "
+            "watch items, priorities) plus key metrics — cash balance, runway, "
+            "operating burn, current/quick ratio, gross & net margin, revenue — and "
+            "the top recommendations. Use for 'how are we doing', 'business outlook', "
+            "'are we healthy', 'what's our runway/cash', 'profitability', 'is the "
+            "business growing'. Reads the saved Insights snapshot (no live pull); if "
+            "none exists yet, say so and suggest opening Insights and clicking Sync."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+            },
         },
     },
     {
@@ -364,6 +407,102 @@ async def dispatch_tool(
             })
 
         return {"query": q, "results": results}
+
+    if name == "get_adjustments_queue":
+        from decimal import Decimal
+        stmt = select(ProposedEntry).where(ProposedEntry.period_end == pe)
+        st = (ti.get("status") or "").strip().lower()
+        if st in {"open", "accepted", "posted", "dismissed"}:
+            stmt = stmt.where(ProposedEntry.status == st)
+        rows = (await db.execute(
+            stmt.order_by(ProposedEntry.created_at.desc())
+        )).scalars().all()
+        counts = {"open": 0, "accepted": 0, "posted": 0, "dismissed": 0}
+        for r in rows:
+            counts[r.status] = counts.get(r.status, 0) + 1
+
+        def _amount(lines: list[dict] | None) -> str:
+            tot = Decimal("0")
+            for ln in (lines or []):
+                try:
+                    tot += Decimal(str(ln.get("debit") or "0"))
+                except Exception:
+                    pass
+            return f"{tot:.2f}"
+
+        items = [
+            {
+                "description": r.description,
+                "source": r.source,
+                "status": r.status,
+                "amount": _amount(r.lines),
+                "confidence": r.confidence,
+                "memo": r.memo,
+                "line_count": len(r.lines or []),
+            }
+            for r in rows[:12]
+        ]
+        return {
+            "period_end": pe.isoformat(),
+            "counts": counts,
+            "total": len(rows),
+            "shown": len(items),
+            "items": items,
+        }
+
+    if name == "get_financial_insights":
+        snap = (await db.execute(
+            select(InsightsSnapshot).where(
+                InsightsSnapshot.period_end == pe,
+                InsightsSnapshot.period_start.is_(None),
+            )
+        )).scalar_one_or_none()
+        if snap is None:
+            return {
+                "ok": False,
+                "period_end": pe.isoformat(),
+                "note": (
+                    "No saved insights for this period yet. Open the Insights screen "
+                    "and click Sync, then ask again."
+                ),
+            }
+        p = snap.payload or {}
+        ms = p.get("management_summary") or {}
+        liq = p.get("liquidity") or {}
+        prof = p.get("profitability") or {}
+        recs = p.get("recommendations") or []
+        return {
+            "ok": True,
+            "period_end": pe.isoformat(),
+            "computed_at": snap.computed_at.isoformat() if snap.computed_at else None,
+            "management_summary": {
+                "headline": ms.get("headline"),
+                "health": ms.get("health"),
+                "score": ms.get("score"),
+                "strengths": ms.get("strengths"),
+                "watch_items": ms.get("watch_items"),
+                "priorities": ms.get("priorities"),
+            },
+            "liquidity": {
+                "cash_balance": liq.get("cash_balance"),
+                "operating_burn": liq.get("operating_burn"),
+                "runway_months": liq.get("runway_months"),
+                "operating_cash_flow": liq.get("operating_cash_flow"),
+                "current_ratio": liq.get("current_ratio"),
+                "quick_ratio": liq.get("quick_ratio"),
+                "working_capital": liq.get("working_capital"),
+            },
+            "profitability": {
+                "revenue": prof.get("revenue"),
+                "gross_margin_pct": prof.get("gross_margin_pct"),
+                "net_margin_pct": prof.get("net_margin_pct"),
+                "revenue_change_str": prof.get("revenue_change_str"),
+            },
+            "recommendations": [
+                {"priority": r.get("priority"), "title": r.get("title")}
+                for r in recs[:5]
+            ],
+        }
 
     if name == "draft_journal_entry":
         # Validate + map onto real accounts + enforce Σdebit == Σcredit using the

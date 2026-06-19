@@ -57,6 +57,8 @@ _STEP_LABEL: dict[str, str] = {
     "get_reconciliations_overview": "Reading reconciliations",
     "get_account_balance": "Looking up balances",
     "get_close_status": "Checking close status",
+    "get_adjustments_queue": "Reading the Adjustments queue",
+    "get_financial_insights": "Reviewing financial health",
     "get_account_guidance": "Recalling what you taught us",
     "recall": "Searching past records",
     "draft_journal_entry": "Drafting an entry",
@@ -82,6 +84,10 @@ _SYSTEM_STATIC = (
     "- balance of an account → get_account_balance\n"
     "- unreconciled / variances / does it tie out → get_reconciliations_overview\n"
     "- what's blocking / can we close → get_close_status\n"
+    "- what's in the Adjustments queue / pending or proposed entries / what's left "
+    "to approve → get_adjustments_queue\n"
+    "- how are we doing / business outlook / financial health / cash / runway / "
+    "profitability / margins / growth → get_financial_insights\n"
     "- what do we know or expect for an account → get_account_guidance\n"
     "- how did we explain or handle X before → recall\n"
     "- book / record / reclassify / accrue something → draft_journal_entry. This "
@@ -89,7 +95,12 @@ _SYSTEM_STATIC = (
     "post; you NEVER post to QuickBooks and NEVER approve.\n"
     "- point the user to a screen → suggest_link\n"
     "Use the active period given below unless the user names a different month. Do "
-    "NOT ask which month when an active period is set.\n\n"
+    "NOT ask which month when an active period is set. You are NOT limited to "
+    "close mechanics — you can also report the Adjustments queue and the financial "
+    "outlook with the tools above.\n"
+    "When the user asks what's in the Adjustments queue, give the status counts and "
+    "list a few of the entries inline, then offer the Adjustments screen "
+    "(suggest_link) for the full list — don't just send them away.\n\n"
     "STYLE:\n"
     "- Do NOT narrate your actions (no \"let me check…\"). Either call a tool with no "
     "accompanying text, or write the final answer.\n"
