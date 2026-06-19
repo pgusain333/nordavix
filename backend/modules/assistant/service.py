@@ -65,6 +65,7 @@ _STEP_LABEL: dict[str, str] = {
     "get_close_tasks": "Reading the close checklist",
     "get_financial_statements": "Pulling the financial statements",
     "get_intercompany": "Checking intercompany",
+    "get_team": "Looking up the team",
     "get_account_guidance": "Recalling what you taught us",
     "recall": "Searching past records",
     "draft_journal_entry": "Drafting an entry",
@@ -105,6 +106,7 @@ _SYSTEM_STATIC = (
     "- financial health / business outlook / cash / runway / margins / growth → "
     "get_financial_insights\n"
     "- intercompany / related-party accounts → get_intercompany\n"
+    "- who's on the team / reviewers / who can approve / who is <name> → get_team\n"
     "- what's blocking / can we close → get_close_status\n"
     "- what we know or expect for an account → get_account_guidance\n"
     "- how we explained or handled X before → recall\n"

@@ -58,6 +58,7 @@ const TOOL_LABEL: Record<string, string> = {
   get_close_tasks: "Close tasks",
   get_financial_statements: "Financials",
   get_intercompany: "Intercompany",
+  get_team: "Team",
   get_account_guidance: "Client memory",
   recall: "Past records",
   draft_journal_entry: "Drafted entry",

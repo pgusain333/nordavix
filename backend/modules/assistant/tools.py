@@ -25,6 +25,7 @@ from models.proposed_entry import ProposedEntry
 from models.trial_balance import TrialBalance
 from models.variance import Variance
 from modules.adjustments.service import parse_ai_entries, period_accounts
+from modules.assistant.people import name_map, workspace_members
 from modules.close_workflow.service import build_checklist, linked_status
 from modules.memory.service import account_memory_context
 from modules.recons.overview import read_overview_from_snapshots
@@ -262,6 +263,17 @@ TOOL_DEFS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_team",
+        "description": (
+            "Who is on this workspace's team — every member with their name, role "
+            "(admin / reviewer / preparer), email, and whether they're active. Use "
+            "for 'who's on our team', 'who are the reviewers', 'who can approve', or "
+            "'who is <name>'. These names also identify task assignees and "
+            "preparers/approvers elsewhere in the close."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "draft_journal_entry",
         "description": (
             "Draft a balanced adjusting journal entry from the user's request "
@@ -379,6 +391,12 @@ async def dispatch_tool(
     what actually enforces isolation — tenant_id is accepted only for clarity.
     """
     ti = tool_input or {}
+
+    # Workspace-level (period-independent) — handle before the period guard.
+    if name == "get_team":
+        members = await workspace_members(db, tenant_id)
+        return {"members": members, "count": len(members)}
+
     pe = _parse_period(ti.get("period_end"), default_period)
     if pe is None:
         return {"error": "No period specified and no active period is set. Ask the user which month (YYYY-MM-DD)."}
@@ -703,11 +721,13 @@ async def dispatch_tool(
 
     if name == "get_close_tasks":
         steps = await build_checklist(db, tenant_id, pe, None)
+        names = await name_map(db, tenant_id)
         items = [
             {
                 "title": s.get("title"),
                 "category": s.get("category"),
                 "status": s.get("status"),
+                "assignee": names.get(str(s.get("assignee_id"))) if s.get("assignee_id") else None,
                 "due_date": s.get("due_date"),
                 "completed_pct": s.get("completed_pct"),
                 "linked_module": s.get("linked_module"),
