@@ -1,22 +1,27 @@
 /**
- * Client Assistant — grounded, tenant-scoped Q&A (Tier 3 Phase 0).
+ * Client Assistant — grounded, tenant-scoped Q&A with conversation memory
+ * (Tier 3 Phase 0 + Phase 1).
  *
- * A chat surface that answers questions about the ACTIVE client by calling
- * read-only backend tools (reconciliations, balances, close status, taught
- * expectations). Every answer is grounded in the client's real synced data —
- * the model can't reach another client's books, and it can only read. The
- * "Sources" chips under each answer show which data it consulted.
+ * Answers questions about the ACTIVE client by calling read-only backend tools
+ * (reconciliations, balances, close status, taught expectations) and recalling
+ * past narratives/notes. Every answer is grounded in the client's real data —
+ * the model can't reach another client's books, and it can only read. Threads
+ * are saved per client so conversations persist and can be resumed.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
-import { Bot, ArrowUp, Sparkles } from "lucide-react"
-import { assistantApi, type AssistantSource, type AssistantTurn } from "@/modules/assistant/api"
+import { Bot, ArrowUp, Sparkles, Plus, History, Clock } from "lucide-react"
+import {
+  assistantApi,
+  type AssistantSource,
+  type AssistantTurn,
+} from "@/modules/assistant/api"
 
 interface ChatMsg {
   role: "user" | "assistant"
   content: string
-  sources?: AssistantSource[]
+  sources?: AssistantSource[] | null
   error?: boolean
 }
 
@@ -27,15 +32,15 @@ const SUGGESTIONS = [
   "Are there any accounts that don't tie out?",
 ]
 
-// Friendly labels for the tool a source came from.
 const TOOL_LABEL: Record<string, string> = {
   get_reconciliations_overview: "Reconciliations",
   get_account_balance: "Account balance",
   get_close_status: "Close status",
   get_account_guidance: "Client memory",
+  recall: "Past records",
 }
 
-function sourceLabels(sources: AssistantSource[] | undefined): string[] {
+function sourceLabels(sources: AssistantSource[] | null | undefined): string[] {
   if (!sources?.length) return []
   const seen = new Set<string>()
   const out: string[] = []
@@ -50,14 +55,22 @@ function sourceLabels(sources: AssistantSource[] | undefined): string[] {
 }
 
 export default function AssistantPage() {
+  const qc = useQueryClient()
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [input, setInput] = useState("")
+  const [threadId, setThreadId] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const taRef = useRef<HTMLTextAreaElement>(null)
+
+  const { data: threads } = useQuery({
+    queryKey: ["assistant-threads"],
+    queryFn: assistantApi.listThreads,
+    staleTime: 30_000,
+  })
 
   const askMut = useMutation({
-    mutationFn: (v: { q: string; history: AssistantTurn[] }) =>
-      assistantApi.ask(v.q, null, v.history),
+    mutationFn: (v: { q: string; history: AssistantTurn[]; threadId: string | null }) =>
+      assistantApi.ask(v.q, null, v.history, v.threadId),
   })
 
   useEffect(() => {
@@ -73,11 +86,13 @@ export default function AssistantPage() {
     setMessages((prev) => [...prev, { role: "user", content: q }])
     setInput("")
     try {
-      const res = await askMut.mutateAsync({ q, history })
+      const res = await askMut.mutateAsync({ q, history, threadId })
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: res.answer, sources: res.sources },
       ])
+      if (res.thread_id) setThreadId(res.thread_id)
+      void qc.invalidateQueries({ queryKey: ["assistant-threads"] })
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -87,6 +102,23 @@ export default function AssistantPage() {
           error: true,
         },
       ])
+    }
+  }
+
+  function newChat() {
+    setMessages([])
+    setThreadId(null)
+    setHistoryOpen(false)
+  }
+
+  async function loadThread(id: string) {
+    setHistoryOpen(false)
+    try {
+      const msgs = await assistantApi.getThread(id)
+      setMessages(msgs.map((m) => ({ role: m.role, content: m.content, sources: m.sources })))
+      setThreadId(id)
+    } catch {
+      /* leave current conversation in place on failure */
     }
   }
 
@@ -102,7 +134,7 @@ export default function AssistantPage() {
   return (
     <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-3xl flex-col">
       {/* Header */}
-      <div className="shrink-0 px-1 pb-4">
+      <div className="relative flex shrink-0 items-center justify-between gap-2 px-1 pb-4">
         <div className="flex items-center gap-2.5">
           <div
             className="flex h-9 w-9 items-center justify-center rounded-lg"
@@ -115,9 +147,66 @@ export default function AssistantPage() {
               Assistant
             </h1>
             <p className="text-[12.5px]" style={{ color: "var(--text-muted)" }}>
-              Grounded in this client's synced data · read-only
+              Grounded in this client's data · remembers across periods · read-only
             </p>
           </div>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setHistoryOpen((o) => !o)}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] transition-colors"
+            style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            title="Recent conversations"
+          >
+            <History size={15} strokeWidth={1.8} /> History
+          </button>
+          <button
+            onClick={newChat}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium transition-colors"
+            style={{ background: "var(--green)", color: "#fff" }}
+            title="Start a new conversation"
+          >
+            <Plus size={15} strokeWidth={2} /> New
+          </button>
+
+          {historyOpen && (
+            <>
+              {/* click-away */}
+              <div className="fixed inset-0 z-10" onClick={() => setHistoryOpen(false)} />
+              <div
+                className="absolute right-0 top-11 z-20 max-h-80 w-72 overflow-y-auto rounded-xl p-1.5 shadow-xl"
+                style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
+              >
+                {!threads?.length ? (
+                  <p className="px-2 py-3 text-center text-[12.5px]" style={{ color: "var(--text-muted)" }}>
+                    No past conversations yet.
+                  </p>
+                ) : (
+                  threads.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => void loadThread(t.id)}
+                      className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors"
+                      style={{ background: t.id === threadId ? "var(--surface-2)" : "transparent" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background =
+                          t.id === threadId ? "var(--surface-2)" : "transparent")
+                      }
+                    >
+                      <Clock size={13} strokeWidth={1.7} className="mt-0.5 shrink-0" style={{ color: "var(--text-muted)" }} />
+                      <span className="line-clamp-2 text-[12.5px]" style={{ color: "var(--text)" }}>
+                        {t.title}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -136,7 +225,7 @@ export default function AssistantPage() {
             </p>
             <p className="mt-1 max-w-sm text-[13px]" style={{ color: "var(--text-muted)" }}>
               I'll pull the answer from your reconciliations, balances, close status,
-              and what you've taught me — never guessing.
+              what you've taught me, and past explanations — never guessing.
             </p>
             <div className="mt-5 flex flex-wrap justify-center gap-2">
               {SUGGESTIONS.map((s) => (
@@ -181,7 +270,6 @@ export default function AssistantPage() {
           style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
         >
           <textarea
-            ref={taRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}

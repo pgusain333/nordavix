@@ -4,6 +4,7 @@ from models.account import Account
 from models.account_review_status import AccountReviewStatus
 from models.advisory import KpiTarget, TrackedRecommendation
 from models.ai_usage import AIUsage
+from models.assistant_conversation import AssistantMessage, AssistantThread
 from models.audit_log import AuditLog
 from models.autopilot import AutopilotConfig, AutopilotRun
 from models.bank_statement import BankStatement
@@ -47,6 +48,8 @@ __all__ = [
     "Account",
     "AccountReviewStatus",
     "AIUsage",
+    "AssistantMessage",
+    "AssistantThread",
     "KpiTarget",
     "TrackedRecommendation",
     "AuditLog",

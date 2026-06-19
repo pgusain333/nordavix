@@ -16,7 +16,12 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.account import Account
+from models.account_review_status import AccountReviewStatus
 from models.gl_balance_snapshot import GlBalanceSnapshot
+from models.narrative import Narrative
+from models.trial_balance import TrialBalance
+from models.variance import Variance
 from modules.close_workflow.service import linked_status
 from modules.memory.service import account_memory_context
 from modules.recons.overview import read_overview_from_snapshots
@@ -91,6 +96,26 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
             },
             "required": ["account_number"],
+        },
+    },
+    {
+        "name": "recall",
+        "description": (
+            "Search this client's PAST records — prior flux narratives (variance "
+            "explanations) and reconciliation notes — by topic/keywords, ACROSS all "
+            "periods. Use to remember how something was explained or handled before "
+            "(e.g. 'why does rent spike in March', 'how did we treat the insurance "
+            "prepaid'). Returns matching snippets with their account and period."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Topic or keywords to recall, e.g. 'rent variance' or 'insurance prepaid'.",
+                }
+            },
+            "required": ["query"],
         },
     },
 ]
@@ -210,5 +235,63 @@ async def dispatch_tool(
                 for n in notes
             ],
         }
+
+    if name == "recall":
+        q = (ti.get("query") or "").strip()
+        if not q:
+            return {"error": "query is required."}
+        tsq = func.plainto_tsquery("english", q)
+        results: list[dict] = []
+
+        # 1) Past flux narratives (variance explanations) — joined to account + period.
+        ndoc = func.to_tsvector("english", Narrative.content)
+        nrows = (await db.execute(
+            select(
+                Narrative.content,
+                Account.account_number,
+                Account.account_name,
+                TrialBalance.period_current,
+                Narrative.generated_at,
+            )
+            .join(Variance, Variance.id == Narrative.variance_id)
+            .join(Account, Account.id == Variance.account_id)
+            .join(TrialBalance, TrialBalance.id == Account.trial_balance_id)
+            .where(ndoc.op("@@")(tsq))
+            .order_by(func.ts_rank(ndoc, tsq).desc())
+            .limit(6)
+        )).all()
+        for r in nrows:
+            results.append({
+                "source": "flux narrative",
+                "account": f"{r.account_number or ''} {r.account_name or ''}".strip(),
+                "period": r.period_current.isoformat() if r.period_current else None,
+                "text": r.content,
+                "when": r.generated_at.isoformat() if r.generated_at else None,
+            })
+
+        # 2) Past reconciliation notes (human notes per account/period).
+        adoc = func.to_tsvector("english", func.coalesce(AccountReviewStatus.notes, ""))
+        arows = (await db.execute(
+            select(
+                AccountReviewStatus.qbo_account_id,
+                AccountReviewStatus.period_end,
+                AccountReviewStatus.notes,
+                AccountReviewStatus.updated_at,
+            )
+            .where(AccountReviewStatus.notes.is_not(None))
+            .where(adoc.op("@@")(tsq))
+            .order_by(func.ts_rank(adoc, tsq).desc())
+            .limit(6)
+        )).all()
+        for r in arows:
+            results.append({
+                "source": "recon note",
+                "account": r.qbo_account_id,
+                "period": r.period_end.isoformat() if r.period_end else None,
+                "text": r.notes,
+                "when": r.updated_at.isoformat() if r.updated_at else None,
+            })
+
+        return {"query": q, "results": results}
 
     return {"error": f"Unknown tool: {name}"}

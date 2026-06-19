@@ -11,15 +11,17 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import anthropic
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ai.usage import record_call
 from core.config import settings
 from core.db.base import current_request_readonly
+from models.assistant_conversation import AssistantMessage, AssistantThread
 from modules.assistant.tools import TOOL_DEFS, dispatch_tool, latest_synced_period
 
 logger = logging.getLogger(__name__)
@@ -140,3 +142,48 @@ async def answer_question(
         }
     finally:
         current_request_readonly.reset(ro_token)
+
+
+def _title_from(question: str) -> str:
+    t = " ".join((question or "").split())
+    return (t[:80] + "…") if len(t) > 80 else (t or "New conversation")
+
+
+async def persist_turn(
+    *,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    thread_id: uuid.UUID | None,
+    question: str,
+    answer: str,
+    sources: list[dict] | None,
+) -> uuid.UUID:
+    """Save one Q&A turn into a thread (creating it if needed) and return the
+    thread id. The caller commits. MUST run outside answer_question's read-only
+    window (the loop sets current_request_readonly, which would block these
+    writes). Tenant-scoped: thread/message rows carry tenant_id = the caller's."""
+    thread = None
+    if thread_id is not None:
+        thread = (await db.execute(
+            select(AssistantThread).where(AssistantThread.id == thread_id)
+        )).scalar_one_or_none()
+    if thread is None:
+        thread = AssistantThread(
+            id=uuid.uuid4(), tenant_id=tenant_id, created_by=user_id,
+            title=_title_from(question),
+        )
+        db.add(thread)
+        await db.flush()
+    else:
+        thread.updated_at = datetime.now(UTC)
+
+    db.add(AssistantMessage(
+        id=uuid.uuid4(), tenant_id=tenant_id, thread_id=thread.id,
+        role="user", content=question,
+    ))
+    db.add(AssistantMessage(
+        id=uuid.uuid4(), tenant_id=tenant_id, thread_id=thread.id,
+        role="assistant", content=answer, sources=sources or None,
+    ))
+    return thread.id

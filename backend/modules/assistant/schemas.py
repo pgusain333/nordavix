@@ -1,9 +1,10 @@
-from datetime import date
+import uuid
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
 
-class AssistantMessage(BaseModel):
+class AssistantMessageIn(BaseModel):
     role: str  # "user" | "assistant"
     content: str
 
@@ -11,7 +12,8 @@ class AssistantMessage(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     period_end: date | None = None  # active period for context; tools default to it
-    history: list[AssistantMessage] | None = None
+    history: list[AssistantMessageIn] | None = None
+    thread_id: uuid.UUID | None = None  # continue an existing conversation
 
 
 class AskSource(BaseModel):
@@ -22,3 +24,17 @@ class AskSource(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     sources: list[AskSource]
+    thread_id: uuid.UUID | None = None
+
+
+class ThreadSummary(BaseModel):
+    id: uuid.UUID
+    title: str
+    updated_at: datetime
+
+
+class ThreadMessage(BaseModel):
+    role: str
+    content: str
+    sources: list[dict] | None = None
+    created_at: datetime
