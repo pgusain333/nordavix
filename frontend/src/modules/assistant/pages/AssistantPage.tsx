@@ -660,7 +660,9 @@ function ActionChip({ action }: { action: AssistantAction }) {
     setPhase("running")
     try {
       if (action.kind === "prepare_reconciliations") {
-        const r = await reconsApi.runAgenticPrep(action.period_end)
+        const r = action.qbo_account_id
+          ? await reconsApi.runAgenticPrepForAccount(action.period_end, action.qbo_account_id)
+          : await reconsApi.runAgenticPrep(action.period_end)
         setSummary(`${r.prepared} prepared · ${r.analyzed} analyzed${r.failed ? ` · ${r.failed} failed` : ""}`)
         void qc.invalidateQueries({ queryKey: ["recons-overview", action.period_end] })
         void qc.invalidateQueries({ queryKey: ["period-tracker"] })

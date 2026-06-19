@@ -115,7 +115,9 @@ _SYSTEM_STATIC = (
     "for a human to approve + post; you NEVER post to QuickBooks and NEVER approve)\n"
     "- prepare / run / start the reconciliations or flux for the period → "
     "suggest_action (offers a one-click PREPARE button; it only prepares — a human "
-    "still approves, nothing posts to QuickBooks)\n"
+    "still approves, nothing posts to QuickBooks). For reconciliations, pass "
+    "`account` to prepare just one, or omit it for all; tell the user they can pick "
+    "a specific account or do all.\n"
     "- point the user to a screen → suggest_link\n"
     "Use the active period below unless the user names another month; don't ask "
     "which month when an active period is set.\n\n"
@@ -129,7 +131,13 @@ _SYSTEM_STATIC = (
     "or next steps (a few numbered items) and practical suggestions for doing it "
     "efficiently, and offer the relevant screen with suggest_link.\n"
     "- When listing a queue / checklist / findings, show a few inline and link to "
-    "the full screen — don't just send the user away.\n\n"
+    "the full screen — don't just send the user away.\n"
+    "- ALWAYS answer in words. When you offer an action button (suggest_action), a "
+    "chart (make_chart), or a link (suggest_link), still write a one-sentence answer "
+    "— the button/chart is never a substitute for answering.\n"
+    "- Visualize genuinely chartable numbers with make_chart (a breakdown → pie, a "
+    "comparison across items → bar, a trend over periods → line), in addition to the "
+    "text — never invent numbers, only chart what your tools returned.\n\n"
     "STYLE:\n"
     "- Do NOT narrate your actions (no \"let me check…\"). Either call a tool with no "
     "accompanying text, or write the final answer.\n"
@@ -320,10 +328,20 @@ async def answer_question_stream(
             except Exception:  # pragma: no cover — last-resort synthesis must not crash the turn
                 logger.exception("assistant forced-synthesis failed")
 
-        answer = final_answer or (
-            "Here's what I found so far — point me at a specific account, month, or "
-            "module and I'll go deeper."
-        )
+        if not final_answer:
+            if actions:
+                final_answer = (
+                    "Here's a one-click action for that — it only prepares (you approve "
+                    "after). Check the details below and click Run when you're ready."
+                )
+            elif links:
+                final_answer = "Here you go — use the button below to jump to the right screen."
+            else:
+                final_answer = (
+                    "Here's what I found so far — point me at a specific account, month, "
+                    "or module and I'll go deeper."
+                )
+        answer = final_answer
         yield {
             "type": "result",
             "answer": answer,

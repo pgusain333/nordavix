@@ -34,6 +34,8 @@ export interface AssistantAction {
   period_end: string
   label: string
   tb_id?: string | null
+  qbo_account_id?: string | null
+  account_name?: string | null
 }
 
 export interface AskResponse {

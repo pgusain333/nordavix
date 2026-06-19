@@ -346,6 +346,7 @@ TOOL_DEFS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "kind": {"type": "string", "description": "prepare_reconciliations | prepare_flux"},
+                "account": {"type": "string", "description": "Reconciliations only — a specific account (number or name) to prepare just that one; omit to prepare ALL accounts."},
                 "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
             },
             "required": ["kind"],
@@ -883,7 +884,27 @@ async def dispatch_tool(
             return {"ok": False, "error": "Unknown action. Valid: prepare_reconciliations, prepare_flux."}
         action: dict = {"kind": kind, "period_end": pe.isoformat()}
         if kind == "prepare_reconciliations":
-            action["label"] = f"Prepare reconciliations · {pe.isoformat()}"
+            acct_q = (ti.get("account") or "").strip()
+            if acct_q:
+                like = f"%{acct_q}%"
+                row = (await db.execute(
+                    select(GlBalanceSnapshot).where(
+                        GlBalanceSnapshot.period_end == pe,
+                        (GlBalanceSnapshot.account_number.ilike(like))
+                        | (GlBalanceSnapshot.account_name.ilike(like))
+                        | (GlBalanceSnapshot.qbo_account_id == acct_q),
+                    ).limit(1)
+                )).scalars().first()
+                if row is None:
+                    return {"ok": False, "error": (
+                        f"No account matching '{acct_q}' for {pe.isoformat()}. Use the "
+                        "account number or exact name, or omit it to prepare all accounts."
+                    )}
+                action["qbo_account_id"] = row.qbo_account_id
+                action["account_name"] = row.account_name
+                action["label"] = f"Prepare recon · {row.account_name or row.account_number} · {pe.isoformat()}"
+            else:
+                action["label"] = f"Prepare all reconciliations · {pe.isoformat()}"
         else:
             # Flux is per-trial-balance; resolve the period's TB so the click can
             # run agentic directly. None → the UI routes the user to create it first.
