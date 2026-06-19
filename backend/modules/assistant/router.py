@@ -78,6 +78,8 @@ async def ask(
             question=question,
             period_end=body.period_end,
             history=[m.model_dump() for m in (body.history or [])],
+            user_role=user.role,
+            user_powers=getattr(user, "delegated_powers", None),
         )
     except Exception:
         logger.exception("assistant ask failed for tenant %s", tenant_id)
@@ -146,6 +148,8 @@ async def ask_stream(
                 question=question,
                 period_end=body.period_end,
                 history=history,
+                user_role=user.role,
+                user_powers=getattr(user, "delegated_powers", None),
             ):
                 if ev.get("type") == "result":
                     answer = ev.get("answer", "")

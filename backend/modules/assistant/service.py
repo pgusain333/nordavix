@@ -162,6 +162,44 @@ _SYSTEM_STATIC = (
     "table (real columns/rows — that table becomes the downloadable file), then add "
     "one line telling them to use the Download button below. If some data is missing, "
     "export what you have and note the gap.\n\n"
+    "WHAT YOU CAN DO — your full range across Nordavix. Never undersell it; when "
+    "asked what you can do (or for help), cover this whole breadth, tailored to the "
+    "user's role:\n"
+    "- Reconciliations: status, GL-vs-subledger variances, what's unreconciled, the "
+    "tie-out, who prepared/approved each — and offer to PREPARE them.\n"
+    "- Flux: what moved vs the prior period and why, the biggest variances — and "
+    "offer to PREPARE flux commentary.\n"
+    "- Schedules: prepaids, accruals, depreciation, leases, loans and this month's "
+    "entries.\n"
+    "- Adjustments: the proposed-entry queue and each entry's status; draft a new "
+    "entry for review.\n"
+    "- Risk Radar: likely misclassifications, errors and things to review.\n"
+    "- Close: what's blocking the close, the checklist, task assignments, progress, "
+    "and whether you're ready to close.\n"
+    "- Financials: balance sheet / income statement / cash-flow figures.\n"
+    "- Insights: financial health — cash, runway, margins, liquidity, growth.\n"
+    "- Intercompany: related-party accounts, eliminations, the consolidated view.\n"
+    "- Team: who's on the team and their roles.\n"
+    "- Account balances, what you've been taught about an account, and how things "
+    "were handled before.\n"
+    "- Visualize numbers as a chart, draft a journal entry, and export an answer to "
+    "PDF or Excel.\n"
+    "Combine these for broad questions. If a question maps to data a tool can fetch, "
+    "fetch it — never reply that you can only do a few things.\n\n"
+    "ROLES & SEGREGATION OF DUTIES — Nordavix enforces these; you respect them, you "
+    "never bypass them:\n"
+    "- preparer: enters/edits and PREPARES recons, flux, schedules and adjustments "
+    "— but cannot approve.\n"
+    "- reviewer: can APPROVE prepared work.\n"
+    "- admin: everything, plus governance (autopilot, PBC, period lock, QBO); admins "
+    "can delegate those powers to a member.\n"
+    "- Whoever prepared an item cannot also approve it.\n"
+    "You only ever PREPARE / PROPOSE (one-click prepare, drafts); a human approves "
+    "and posts — you never approve and never post to QuickBooks. Tailor to the "
+    "user's role (given below): offer what they're allowed to do; if they ask for "
+    "something above their role, do the part you can and say who finishes it (e.g. "
+    "\"ask a reviewer to approve\") — don't refuse flatly and don't imply you'll "
+    "override a gate.\n\n"
     "STYLE:\n"
     "- Do NOT narrate your actions (no \"let me check…\"). Either call a tool with no "
     "accompanying text, or write the final answer.\n"
@@ -175,14 +213,26 @@ _SYSTEM_STATIC = (
 )
 
 
-def _system_blocks(period_end: date | None) -> list[dict]:
+def _system_blocks(
+    period_end: date | None,
+    user_role: str | None = None,
+    user_powers: list[str] | None = None,
+) -> list[dict]:
     """System as cache-friendly blocks: a big cached static block + a tiny dynamic
-    one carrying the active period (kept out of the cached prefix so it can change
-    day-to-day without busting the cache)."""
+    one carrying the active period and the asking user's role (kept out of the
+    cached prefix so they can vary per request without busting the cache)."""
     pe = period_end.isoformat() if period_end else "none synced yet"
+    role = user_role or "preparer"
+    powers = [p for p in (user_powers or []) if p]
+    powers_txt = f" They also hold these delegated powers: {', '.join(powers)}." if powers else ""
+    ctx = (
+        f"Active period for this workspace: {pe}. Use it unless the user names another month. "
+        f"You are assisting a user whose role is {role}.{powers_txt} "
+        f"Tailor what you surface and offer to this role, and respect the segregation-of-duties gates."
+    )
     return [
         {"type": "text", "text": _SYSTEM_STATIC, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": f"Active period for this workspace: {pe}. Use it unless the user names another month."},
+        {"type": "text", "text": ctx},
     ]
 
 
@@ -240,6 +290,8 @@ async def answer_question_stream(
     question: str,
     period_end: date | None = None,
     history: list[dict] | None = None,
+    user_role: str | None = None,
+    user_powers: list[str] | None = None,
 ) -> AsyncIterator[dict]:
     """Run the grounded tool-use loop, STREAMING events as they happen.
 
@@ -268,7 +320,7 @@ async def answer_question_stream(
     try:
         if period_end is None:
             period_end = await latest_synced_period(db)
-        system = _system_blocks(period_end)
+        system = _system_blocks(period_end, user_role, user_powers)
         tools = _cached_tools()
         step_no = 0  # how many progress lines shown so far — drives the wording
 
@@ -395,6 +447,8 @@ async def answer_question(
     question: str,
     period_end: date | None = None,
     history: list[dict] | None = None,
+    user_role: str | None = None,
+    user_powers: list[str] | None = None,
 ) -> dict:
     """Non-streaming convenience wrapper (drains the stream into one dict). Kept for
     the JSON /ask endpoint and any caller that wants the whole answer at once."""
@@ -406,6 +460,7 @@ async def answer_question(
     charts: list[dict] = []
     async for ev in answer_question_stream(
         db=db, tenant_id=tenant_id, question=question, period_end=period_end, history=history,
+        user_role=user_role, user_powers=user_powers,
     ):
         if ev.get("type") == "result":
             answer = ev["answer"]
