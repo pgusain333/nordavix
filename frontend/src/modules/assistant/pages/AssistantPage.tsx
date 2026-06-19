@@ -388,46 +388,56 @@ export default function AssistantPage() {
 
   return (
     <div className="flex h-[calc(100vh-7rem)]">
-      {/* ── Left sidebar (desktop): brand · New chat · history (Claude-style) ── */}
-      <aside
-        className={`hidden w-64 shrink-0 flex-col px-1.5 pr-3.5 pt-1 ${sidebarOpen ? "md:flex" : ""}`}
-        style={{ borderRight: "1px solid var(--border)" }}
+      {/* ── Left sidebar (desktop): brand · New chat · history (Claude-style).
+           Width + opacity animate so opening/closing glides instead of snapping.
+           A fixed-width inner wrapper keeps the content from reflowing as it
+           collapses — it's clipped by the outer overflow-hidden instead. ── */}
+      <motion.aside
+        initial={false}
+        animate={{ width: sidebarOpen ? 256 : 0, opacity: sidebarOpen ? 1 : 0 }}
+        transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+        className="hidden shrink-0 overflow-hidden md:flex"
       >
-        <div className="flex items-center gap-2 px-1 pb-5 pt-1">
-          <div
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
-            style={{ background: "var(--green-subtle)", color: "var(--green)" }}
-          >
-            <Sparkles size={15} strokeWidth={1.9} />
-          </div>
-          <span className="flex-1 text-[14px] font-semibold" style={{ color: "var(--text)" }}>
-            NDVX Copilot
-          </span>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="shrink-0 rounded-md p-1 transition-opacity hover:opacity-80"
-            style={{ color: "var(--text-muted)" }}
-            title="Hide sidebar"
-            aria-label="Hide sidebar"
-          >
-            <PanelLeftClose size={16} strokeWidth={1.8} />
-          </button>
-        </div>
-        <button
-          onClick={newChat}
-          className="mb-5 flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-opacity hover:opacity-90"
-          style={{ background: "var(--green)", color: "#fff" }}
+        <div
+          className="flex h-full w-64 flex-col px-1.5 pr-3.5 pt-1"
+          style={{ borderRight: "1px solid var(--border)" }}
         >
-          <Plus size={15} strokeWidth={2.2} /> New chat
-        </button>
-        <div className="px-1 pb-2 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-          Recent
+          <div className="flex items-center gap-2 px-1 pb-5 pt-1">
+            <div
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+            >
+              <Sparkles size={15} strokeWidth={1.9} />
+            </div>
+            <span className="flex-1 text-[14px] font-semibold" style={{ color: "var(--text)" }}>
+              NDVX Copilot
+            </span>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="shrink-0 rounded-md p-1 transition-opacity hover:opacity-80"
+              style={{ color: "var(--text-muted)" }}
+              title="Hide sidebar"
+              aria-label="Hide sidebar"
+            >
+              <PanelLeftClose size={16} strokeWidth={1.8} />
+            </button>
+          </div>
+          <button
+            onClick={newChat}
+            className="mb-5 flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-opacity hover:opacity-90"
+            style={{ background: "var(--green)", color: "#fff" }}
+          >
+            <Plus size={15} strokeWidth={2.2} /> New chat
+          </button>
+          <div className="px-1 pb-2 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+            Recent
+          </div>
+          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-0.5">{historyList}</div>
         </div>
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-0.5">{historyList}</div>
-      </aside>
+      </motion.aside>
 
-      {/* ── Main pane ── */}
-      <div className={`flex min-w-0 flex-1 flex-col ${sidebarOpen ? "md:pl-4" : ""}`}>
+      {/* ── Main pane (always padded on the left so the closed state isn't flush) ── */}
+      <div className="flex min-w-0 flex-1 flex-col md:pl-4">
         {/* Desktop: when the sidebar is hidden, a slim bar to bring it back + New chat */}
         {!sidebarOpen && (
           <div className="mb-3 mt-3 hidden items-center gap-1.5 md:flex">
