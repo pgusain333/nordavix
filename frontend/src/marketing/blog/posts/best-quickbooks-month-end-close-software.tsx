@@ -297,7 +297,7 @@ export function Body() {
       <h2>#4 — Xenett: best for fast, accurate review</h2>
       <p>
         Xenett is an AI review-and-close tool for QBO and Xero that runs 100+ automated checks
-        to surface coding errors and inconsistencies, with a client portal and a Chrome
+        to surface <Link to="/blog/catch-gl-coding-errors">coding errors</Link> and inconsistencies, with a client portal and a Chrome
         extension. Firms report cutting review time 70–80%, and it&apos;s inexpensive
         (~$7.50–$10/client/mo). Like Double, its center of gravity is <em>review</em> — finding
         what&apos;s wrong before you close — rather than running reconciliations, schedules,

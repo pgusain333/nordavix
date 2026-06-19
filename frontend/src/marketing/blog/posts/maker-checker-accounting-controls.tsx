@@ -280,8 +280,9 @@ export function Body() {
       <p>
         Not natively — QBO roles gate access, not workflow. There's no built-in
         block on approving your own entry and no per-account sign-off trail.
-        Teams enforce it by policy, in spreadsheets, or with close software
-        layered on QuickBooks that makes the rule system-enforced.
+        Teams enforce it by policy, in spreadsheets, or with{" "}
+        <Link to="/blog/best-quickbooks-month-end-close-software">close software
+        layered on QuickBooks</Link> that makes the rule system-enforced.
       </p>
       <h3>What is a period lock and why does it matter?</h3>
       <p>

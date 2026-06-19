@@ -40,7 +40,9 @@ export function Body() {
         has <strong>dependencies</strong> — you can&apos;t do flux analysis on numbers
         that aren&apos;t reconciled, and you can&apos;t book intercompany eliminations
         until both sides have their balances locked. A flat list lets you check things
-        off in the wrong order and miss material misstatements.
+        off in the wrong order and miss material misstatements — including the{" "}
+        <Link to="/blog/catch-gl-coding-errors">GL coding errors</Link> that don&apos;t
+        break the trial balance and quietly survive the close.
       </p>
       <p>
         The version below is organized into five stages, each gating the next. You

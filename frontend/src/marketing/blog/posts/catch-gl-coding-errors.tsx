@@ -304,7 +304,9 @@ export function Body() {
         entry time, but it does not review the whole ledger at month-end for
         vendors coded against their own history, missing recurring charges, large
         unsupported entries, or round-dollar journal-entry plugs. That review is
-        done by hand or by close software layered on top of QuickBooks.
+        done by hand or by{" "}
+        <Link to="/blog/best-quickbooks-month-end-close-software">close software
+        layered on top of QuickBooks</Link>.
       </p>
       <h3>What&apos;s the difference between flux analysis and coding-error detection?</h3>
       <p>
