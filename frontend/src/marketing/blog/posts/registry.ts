@@ -19,6 +19,7 @@ import * as bankReconciliationQuickbooks    from "@/marketing/blog/posts/bank-re
 import * as auditPrepChecklist              from "@/marketing/blog/posts/audit-prep-checklist"
 import * as monthEndCloseChecklist          from "@/marketing/blog/posts/month-end-close-checklist"
 import * as monthEndCloseSoftware           from "@/marketing/blog/posts/month-end-close-software"
+import * as bestQboCloseSoftware            from "@/marketing/blog/posts/best-quickbooks-month-end-close-software"
 import * as intercompanyConsolidationQbo    from "@/marketing/blog/posts/intercompany-consolidation-quickbooks"
 import * as aiAccounting2026                from "@/marketing/blog/posts/ai-in-accounting-2026"
 import * as prepaidAmortizationSchedule     from "@/marketing/blog/posts/prepaid-expense-amortization-schedule"
@@ -41,6 +42,7 @@ const RAW_POSTS: BlogPostModule[] = [
   auditPrepChecklist              as BlogPostModule,
   monthEndCloseChecklist          as BlogPostModule,
   monthEndCloseSoftware           as BlogPostModule,
+  bestQboCloseSoftware            as BlogPostModule,
   intercompanyConsolidationQbo    as BlogPostModule,
   aiAccounting2026                as BlogPostModule,
 ]
