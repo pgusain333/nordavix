@@ -1,16 +1,29 @@
-"""Client assistant — grounded, tenant-scoped tool-calling Q&A (Tier 3 Phase 0).
+"""Client assistant — grounded, tenant-scoped tool-calling Q&A (Tier 3).
 
 Runs Claude in a tool-use loop with the read-only tools in tools.py. The whole
 loop executes under a HARD read-only DB guard (current_request_readonly), so even
 if a reused service function tried to write, it would raise rather than mutate —
 the assistant can only ever READ this client's data. Usage is recorded per turn
 via the same per-tenant AIUsage capture the rest of the app uses.
+
+Performance (why this is fast + cheap):
+  - Streaming: answer_question_stream yields tokens as they arrive, so the UI
+    shows the answer in ~1-2s instead of after the whole loop.
+  - Prompt caching: the (large) static system prompt and the tool schemas are
+    marked cache_control=ephemeral, so across the turns of one question AND
+    across questions (5-min TTL) they're read from cache, not re-billed.
+  - Model: settings.assistant_model (Haiku by default) — a high-volume,
+    latency-sensitive surface doesn't need the flux/recon narrative model.
+  - Period injection: the active period is handed to the model up front, so
+    simple questions resolve in ONE turn (often zero tool calls) and it never
+    wastes a round-trip asking "which month?".
 """
 from __future__ import annotations
 
 import json
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -28,34 +41,85 @@ logger = logging.getLogger(__name__)
 
 _aclient = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-# Same rates as core/ai/client.py — for the per-tenant cost estimate only.
-_COST_PER_INPUT = 3.00 / 1_000_000
-_COST_PER_OUTPUT = 15.00 / 1_000_000
+# Approx Haiku 4.5 rates (USD per token) — for the per-tenant cost estimate only.
+# Cache reads are ~0.1x input; cache writes ~1.25x input.
+_IN = 0.80 / 1_000_000
+_OUT = 4.00 / 1_000_000
+_CACHE_READ = 0.08 / 1_000_000
+_CACHE_WRITE = 1.00 / 1_000_000
 
-_MAX_TURNS = 6          # tool round-trips before we stop (loop backstop)
+_MAX_TURNS = 4          # tool round-trips before we stop (loop backstop)
 _MAX_TOKENS = 1024
 _MAX_HISTORY = 8        # prior turns carried for context
 
-_SYSTEM = (
-    "You are Nordavix's month-end close assistant for ONE accounting client — the "
-    "workspace you are called in. Answer ONLY from the data your tools return; never "
-    "invent or estimate numbers, balances, or statuses. If a tool returns no data "
-    "(e.g. the period hasn't been synced), say so plainly and suggest the next step "
-    "(e.g. \"run Sync for that month\"). When you state a figure, attribute it "
-    "(account name/number and period). Money is USD; show variances with their sign "
-    "and call out anything that doesn't tie out. Be concise and practical for a CPA. "
-    "If the user hasn't named a month and a tool needs one, ask which period "
-    "(YYYY-MM-DD). You can READ this client's data and you can DRAFT a journal "
-    "entry (draft_journal_entry) when the user asks to book/record/reclassify "
-    "something — a draft goes to the Adjustments queue for a human to approve and "
-    "post; you NEVER post to QuickBooks and NEVER approve. Use suggest_link to "
-    "point the user to the right screen (e.g. Adjustments after drafting). If "
-    "you're unsure which account to use, ask before drafting. "
-    "FORMAT cleanly in Markdown: open with the direct answer in one sentence, "
-    "then details as short bullet or numbered lists; use a compact Markdown table "
-    "only for genuinely tabular data (2-3 columns, e.g. a status breakdown). Bold "
-    "key terms sparingly. Keep it scannable — no walls of text, no raw data dumps."
+# Friendly present-tense labels for the "Searching…" status line while a tool runs.
+_STEP_LABEL: dict[str, str] = {
+    "get_reconciliations_overview": "Reading reconciliations",
+    "get_account_balance": "Looking up balances",
+    "get_close_status": "Checking close status",
+    "get_account_guidance": "Recalling what you taught us",
+    "recall": "Searching past records",
+    "draft_journal_entry": "Drafting an entry",
+    "suggest_link": "Finding the right screen",
+}
+
+# Static system prompt — identical every turn and across questions, so it is the
+# cached prefix (cache_control below). Dynamic context (the active period) is a
+# separate, tiny, uncached block appended after it.
+_SYSTEM_STATIC = (
+    "You are NDVX Chat, Nordavix's month-end-close assistant for ONE accounting "
+    "client — the workspace you are called in. You answer from this client's REAL, "
+    "synced data via your tools.\n\n"
+    "GROUNDING (non-negotiable):\n"
+    "- Answer ONLY from what your tools return. Never invent or estimate a number, "
+    "balance, or status.\n"
+    "- When you state a figure, attribute it (account name/number + period).\n"
+    "- If a tool returns no data (e.g. the month isn't synced), say so plainly and "
+    "suggest the next step (e.g. \"run Sync for that month\").\n"
+    "- Money is USD. Show variances with their sign and flag anything that doesn't "
+    "tie out.\n\n"
+    "TOOL ROUTING — pick the SMALLEST set of tools, usually ONE, then answer:\n"
+    "- balance of an account → get_account_balance\n"
+    "- unreconciled / variances / does it tie out → get_reconciliations_overview\n"
+    "- what's blocking / can we close → get_close_status\n"
+    "- what do we know or expect for an account → get_account_guidance\n"
+    "- how did we explain or handle X before → recall\n"
+    "- book / record / reclassify / accrue something → draft_journal_entry. This "
+    "creates a DRAFT that goes to the Adjustments queue for a human to approve and "
+    "post; you NEVER post to QuickBooks and NEVER approve.\n"
+    "- point the user to a screen → suggest_link\n"
+    "Use the active period given below unless the user names a different month. Do "
+    "NOT ask which month when an active period is set.\n\n"
+    "STYLE:\n"
+    "- Do NOT narrate your actions (no \"let me check…\"). Either call a tool with no "
+    "accompanying text, or write the final answer.\n"
+    "- Lead with the direct answer in one sentence, then short bullet or numbered "
+    "lists.\n"
+    "- Use a compact Markdown table ONLY for genuinely tabular data (2-3 columns, "
+    "e.g. a status breakdown).\n"
+    "- Be concise and practical for a CPA. No walls of text, no raw data dumps. Bold "
+    "key terms sparingly.\n"
+    "- If you're unsure which account a draft entry should hit, ask before drafting."
 )
+
+
+def _system_blocks(period_end: date | None) -> list[dict]:
+    """System as cache-friendly blocks: a big cached static block + a tiny dynamic
+    one carrying the active period (kept out of the cached prefix so it can change
+    day-to-day without busting the cache)."""
+    pe = period_end.isoformat() if period_end else "none synced yet"
+    return [
+        {"type": "text", "text": _SYSTEM_STATIC, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": f"Active period for this workspace: {pe}. Use it unless the user names another month."},
+    ]
+
+
+def _cached_tools() -> list[dict]:
+    """Tool schemas with a cache breakpoint on the last one, so the whole tool
+    block is served from cache after the first call."""
+    tools = [dict(t) for t in TOOL_DEFS]
+    tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}
+    return tools
 
 
 def _block_to_dict(block: Any) -> dict:
@@ -69,10 +133,17 @@ def _block_to_dict(block: Any) -> dict:
 def _record(resp: Any) -> None:
     try:
         u = resp.usage
-        cost = u.input_tokens * _COST_PER_INPUT + u.output_tokens * _COST_PER_OUTPUT
+        cache_read = getattr(u, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(u, "cache_creation_input_tokens", 0) or 0
+        cost = (
+            u.input_tokens * _IN
+            + u.output_tokens * _OUT
+            + cache_read * _CACHE_READ
+            + cache_write * _CACHE_WRITE
+        )
         record_call(
-            model=settings.anthropic_model,
-            input_tokens=u.input_tokens,
+            model=settings.assistant_model,
+            input_tokens=u.input_tokens + cache_read + cache_write,
             output_tokens=u.output_tokens,
             cost=cost,
             operation="assistant",
@@ -81,47 +152,74 @@ def _record(resp: Any) -> None:
         pass
 
 
-async def answer_question(
+def _history_messages(history: list[dict] | None) -> list[dict]:
+    out: list[dict] = []
+    for h in (history or [])[-_MAX_HISTORY:]:
+        role, content = h.get("role"), h.get("content")
+        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+            out.append({"role": role, "content": content})
+    return out
+
+
+async def answer_question_stream(
     *,
     db: AsyncSession,
     tenant_id: uuid.UUID,
     question: str,
     period_end: date | None = None,
     history: list[dict] | None = None,
-) -> dict:
-    """Run the grounded tool-use loop and return {answer, sources}."""
-    messages: list[dict] = []
-    for h in (history or [])[-_MAX_HISTORY:]:
-        role, content = h.get("role"), h.get("content")
-        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
-            messages.append({"role": role, "content": content})
+) -> AsyncIterator[dict]:
+    """Run the grounded tool-use loop, STREAMING events as they happen.
+
+    Yields dict events:
+      {"type": "step",   "label": str}                      a tool started (status line)
+      {"type": "delta",  "text": str}                       a chunk of the answer
+      {"type": "reset"}                                     clear partial text (a tool turn
+                                                            had preamble; the real answer follows)
+      {"type": "result", "answer", "sources", "drafts", "links"}   terminal payload
+
+    The entire loop runs under the hard read-only guard. The caller persists the
+    turn AFTER fully consuming this generator (the guard is reset in `finally`,
+    which runs as the generator is exhausted, before the caller's writes).
+    """
+    messages: list[dict] = _history_messages(history)
     messages.append({"role": "user", "content": question})
 
     sources: list[dict] = []
-    drafts: list[dict] = []   # validated JE drafts (router persists as ProposedEntry)
-    links: list[dict] = []    # deep-link buttons {path, label}
-    # Hard read-only for the whole loop: the assistant must never mutate data.
+    drafts: list[dict] = []
+    links: list[dict] = []
+    final_answer: str | None = None
+
     ro_token = current_request_readonly.set(True)
     try:
-        # Default the context period to the latest synced month so the assistant
-        # works out of the box; the model can still target another month per tool.
         if period_end is None:
             period_end = await latest_synced_period(db)
+        system = _system_blocks(period_end)
+        tools = _cached_tools()
 
         for _turn in range(_MAX_TURNS):
-            resp = await _aclient.messages.create(
-                model=settings.anthropic_model,
+            turn_text: list[str] = []
+            async with _aclient.messages.stream(
+                model=settings.assistant_model,
                 max_tokens=_MAX_TOKENS,
-                system=_SYSTEM,
-                tools=TOOL_DEFS,
+                system=system,
+                tools=tools,
                 messages=messages,
-            )
-            _record(resp)
+            ) as stream:
+                async for event in stream:
+                    et = getattr(event, "type", "")
+                    if et == "content_block_start" and getattr(event.content_block, "type", None) == "tool_use":
+                        yield {"type": "step", "label": _STEP_LABEL.get(event.content_block.name, "Working")}
+                    elif et == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
+                        turn_text.append(event.delta.text)
+                        yield {"type": "delta", "text": event.delta.text}
+                final = await stream.get_final_message()
+            _record(final)
 
-            if resp.stop_reason == "tool_use":
-                messages.append({"role": "assistant", "content": [_block_to_dict(b) for b in resp.content]})
+            if final.stop_reason == "tool_use":
+                messages.append({"role": "assistant", "content": [_block_to_dict(b) for b in final.content]})
                 results: list[dict] = []
-                for block in resp.content:
+                for block in final.content:
                     if block.type != "tool_use":
                         continue
                     try:
@@ -145,25 +243,58 @@ async def answer_question(
                         "content": json.dumps(out, default=str),
                     })
                 messages.append({"role": "user", "content": results})
+                # Any text this turn was preamble — drop it; the next turn answers.
+                if turn_text:
+                    yield {"type": "reset"}
                 continue
 
-            # Final assistant turn (no more tools).
-            text = "".join(getattr(b, "text", "") for b in resp.content if b.type == "text").strip()
-            return {
-                "answer": text or "I couldn't find an answer to that.",
-                "sources": sources,
-                "drafts": drafts,
-                "links": links,
-            }
+            # Final turn (no more tools): the streamed text IS the answer.
+            final_answer = "".join(turn_text).strip()
+            break
 
-        return {
-            "answer": "I wasn't able to finish that — try narrowing the question or naming a specific account or month.",
+        answer = final_answer or (
+            "I wasn't able to finish that — try narrowing the question or naming a "
+            "specific account or month."
+        )
+        yield {
+            "type": "result",
+            "answer": answer,
             "sources": sources,
             "drafts": drafts,
             "links": links,
         }
     finally:
         current_request_readonly.reset(ro_token)
+
+
+async def answer_question(
+    *,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    question: str,
+    period_end: date | None = None,
+    history: list[dict] | None = None,
+) -> dict:
+    """Non-streaming convenience wrapper (drains the stream into one dict). Kept for
+    the JSON /ask endpoint and any caller that wants the whole answer at once."""
+    answer = ""
+    sources: list[dict] = []
+    drafts: list[dict] = []
+    links: list[dict] = []
+    async for ev in answer_question_stream(
+        db=db, tenant_id=tenant_id, question=question, period_end=period_end, history=history,
+    ):
+        if ev.get("type") == "result":
+            answer = ev["answer"]
+            sources = ev["sources"]
+            drafts = ev["drafts"]
+            links = ev["links"]
+    return {
+        "answer": answer or "I couldn't find an answer to that.",
+        "sources": sources,
+        "drafts": drafts,
+        "links": links,
+    }
 
 
 def _title_from(question: str) -> str:

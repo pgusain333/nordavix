@@ -92,6 +92,23 @@ export function clearApiTokenCache(): void {
   _tokenInflight = null
 }
 
+/** API origin — exported so non-axios callers (SSE via fetch) hit the same host. */
+export const API_BASE_URL = BASE_URL
+
+/**
+ * Auth + demo headers for callers that can't use the axios instance — e.g. the
+ * assistant's SSE stream, which uses fetch() to read a ReadableStream. Mirrors
+ * the request interceptor: a fresh Clerk Bearer token (coalesced via the same
+ * cache) plus the demo header when demo mode is active.
+ */
+export async function authHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {}
+  const token = await obtainToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  if (_isDemo?.()) headers["X-Nordavix-Demo"] = "1"
+  return headers
+}
+
 apiClient.interceptors.request.use(async (config) => {
   if (_getToken) {
     const token = await obtainToken()

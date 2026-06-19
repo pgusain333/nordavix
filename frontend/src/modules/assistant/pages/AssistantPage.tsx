@@ -2,19 +2,22 @@
  * Client Assistant — "NDVX Chat".
  *
  * Grounded, tenant-scoped Q&A with conversation memory and propose-only actions
- * (Tier 3). Empty state is a centered hero with the composer; once a thread
- * starts, messages fill the view and the composer docks at the bottom. Answers
- * render as themed Markdown (tables, lists, bold) — never raw "| --- |" text.
+ * (Tier 3). The answer STREAMS in token-by-token over SSE (assistantApi.askStream)
+ * so it feels instant; a live status line shows which data it's reading. Empty
+ * state is a centered hero with the composer; once a thread starts, messages fill
+ * the view and the composer docks at the bottom. Answers render as themed Markdown.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 import { useNavigate } from "react-router-dom"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
-import { Bot, ArrowUp, Sparkles, Plus, History, Clock, FileText, ArrowUpRight } from "lucide-react"
+import {
+  Sparkles, ArrowUp, Square, Plus, History, Clock, FileText, ArrowUpRight,
+  Copy, Check, Loader2, AlertTriangle, Wallet, Scale, ClipboardList,
+} from "lucide-react"
 import {
   assistantApi,
   type AssistantSource,
-  type AssistantTurn,
   type AssistantDraft,
   type AssistantLink,
 } from "@/modules/assistant/api"
@@ -27,6 +30,7 @@ interface ChatMsg {
   drafts?: AssistantDraft[]
   links?: AssistantLink[]
   error?: boolean
+  streaming?: boolean
 }
 
 function money(s: string | null | undefined): string {
@@ -35,11 +39,11 @@ function money(s: string | null | undefined): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-const SUGGESTIONS = [
-  "What's blocking the close this month?",
-  "Which accounts are unreconciled?",
-  "What's our cash balance?",
-  "Are there any accounts that don't tie out?",
+const SUGGESTIONS: { icon: typeof Wallet; text: string }[] = [
+  { icon: AlertTriangle, text: "What's blocking the close this month?" },
+  { icon: ClipboardList, text: "Which accounts are unreconciled?" },
+  { icon: Wallet, text: "What's our cash balance?" },
+  { icon: Scale, text: "Are there any accounts that don't tie out?" },
 ]
 
 const TOOL_LABEL: Record<string, string> = {
@@ -66,13 +70,33 @@ function sourceLabels(sources: AssistantSource[] | null | undefined): string[] {
   return out
 }
 
+/** The brand mark used in the hero and on each assistant bubble. */
+function BrandMark({ size = 28, box = 56 }: { size?: number; box?: number }) {
+  return (
+    <div
+      className="flex items-center justify-center rounded-2xl shadow-sm"
+      style={{
+        height: box,
+        width: box,
+        background: "linear-gradient(145deg, var(--green), color-mix(in srgb, var(--green) 60%, #0a0f0d))",
+        color: "#fff",
+      }}
+    >
+      <Sparkles size={size} strokeWidth={1.7} />
+    </div>
+  )
+}
+
 export default function AssistantPage() {
   const qc = useQueryClient()
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [input, setInput] = useState("")
   const [threadId, setThreadId] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [streaming, setStreaming] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   const { data: threads } = useQuery({
     queryKey: ["assistant-threads"],
@@ -80,50 +104,91 @@ export default function AssistantPage() {
     staleTime: 30_000,
   })
 
-  const askMut = useMutation({
-    mutationFn: (v: { q: string; history: AssistantTurn[]; threadId: string | null }) =>
-      assistantApi.ask(v.q, null, v.history, v.threadId),
-  })
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
-  }, [messages, askMut.isPending])
+  }, [messages, status])
+
+  // Patch the last message (the in-flight assistant bubble).
+  function patchLast(fn: (m: ChatMsg) => ChatMsg) {
+    setMessages((prev) => {
+      if (!prev.length) return prev
+      const next = [...prev]
+      next[next.length - 1] = fn(next[next.length - 1])
+      return next
+    })
+  }
 
   async function send(text: string) {
     const q = text.trim()
-    if (!q || askMut.isPending) return
-    const history: AssistantTurn[] = messages
+    if (!q || streaming) return
+    const history = messages
       .filter((m) => !m.error)
       .map((m) => ({ role: m.role, content: m.content }))
-    setMessages((prev) => [...prev, { role: "user", content: q }])
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: q },
+      { role: "assistant", content: "", streaming: true },
+    ])
     setInput("")
+    setStreaming(true)
+    setStatus(null)
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+
     try {
-      const res = await askMut.mutateAsync({ q, history, threadId })
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: res.answer,
-          sources: res.sources,
-          drafts: res.drafts,
-          links: res.links,
+      await assistantApi.askStream(
+        q,
+        null,
+        history,
+        threadId,
+        (ev) => {
+          if (ev.type === "step") setStatus(ev.label)
+          else if (ev.type === "delta") {
+            setStatus(null)
+            patchLast((m) => ({ ...m, content: m.content + ev.text }))
+          } else if (ev.type === "reset") {
+            patchLast((m) => ({ ...m, content: "" }))
+          } else if (ev.type === "result") {
+            patchLast((m) => ({
+              ...m,
+              content: ev.answer,
+              sources: ev.sources,
+              drafts: ev.drafts,
+              links: ev.links,
+            }))
+          } else if (ev.type === "done") {
+            if (ev.thread_id) setThreadId(ev.thread_id)
+            void qc.invalidateQueries({ queryKey: ["assistant-threads"] })
+          } else if (ev.type === "error") {
+            patchLast((m) => ({ ...m, content: ev.message, error: true, streaming: false }))
+          }
         },
-      ])
-      if (res.thread_id) setThreadId(res.thread_id)
-      void qc.invalidateQueries({ queryKey: ["assistant-threads"] })
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Sorry — I hit an error answering that. Please try again in a moment.",
-          error: true,
-        },
-      ])
+        ctrl.signal,
+      )
+    } catch (e) {
+      const aborted = e instanceof DOMException && e.name === "AbortError"
+      patchLast((m) => ({
+        ...m,
+        content: aborted
+          ? m.content || "Stopped."
+          : "Sorry — I hit an error answering that. Please try again in a moment.",
+        error: !aborted && !m.content,
+        streaming: false,
+      }))
+    } finally {
+      patchLast((m) => ({ ...m, streaming: false }))
+      setStreaming(false)
+      setStatus(null)
+      abortRef.current = null
     }
   }
 
+  function stop() {
+    abortRef.current?.abort()
+  }
+
   function newChat() {
+    if (streaming) stop()
     setMessages([])
     setThreadId(null)
     setHistoryOpen(false)
@@ -152,55 +217,60 @@ export default function AssistantPage() {
   const composer = (
     <div className="w-full">
       <div
-        className="flex items-end gap-2 rounded-2xl p-2.5 shadow-sm"
-        style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
+        className="group flex items-end gap-2 rounded-2xl p-2 transition-shadow"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border-strong)",
+          boxShadow: "0 1px 2px rgba(0,0,0,.04), 0 8px 24px -16px rgba(0,0,0,.25)",
+        }}
+        onFocusCapture={(e) => (e.currentTarget.style.boxShadow = "0 0 0 3px var(--green-subtle), 0 8px 24px -16px rgba(0,0,0,.25)")}
+        onBlurCapture={(e) => (e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,.04), 0 8px 24px -16px rgba(0,0,0,.25)")}
       >
         <textarea
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value)
+            e.target.style.height = "auto"
+            e.target.style.height = `${Math.min(e.target.scrollHeight, 176)}px`
+          }}
           onKeyDown={onKeyDown}
           rows={1}
           placeholder="Ask about balances, variances, what's blocking close…"
-          className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-[14px] outline-none"
+          className="max-h-44 flex-1 resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed outline-none placeholder:opacity-60"
           style={{ color: "var(--text)" }}
         />
-        <button
-          onClick={() => void send(input)}
-          disabled={!input.trim() || askMut.isPending}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-opacity disabled:opacity-40"
-          style={{ background: "var(--green)", color: "#fff" }}
-          title="Send"
-          aria-label="Send"
-        >
-          <ArrowUp size={18} strokeWidth={2.2} />
-        </button>
+        {streaming ? (
+          <button
+            onClick={stop}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors"
+            style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+            title="Stop"
+            aria-label="Stop generating"
+          >
+            <Square size={15} strokeWidth={2.4} fill="currentColor" />
+          </button>
+        ) : (
+          <button
+            onClick={() => void send(input)}
+            disabled={!input.trim()}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-opacity disabled:opacity-40"
+            style={{ background: "var(--green)", color: "#fff" }}
+            title="Send"
+            aria-label="Send"
+          >
+            <ArrowUp size={18} strokeWidth={2.2} />
+          </button>
+        )}
       </div>
-      <p className="mt-1.5 px-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
-        Grounded in your data · read-only · never posts to QuickBooks without you.
+      <p className="mt-2 px-1 text-center text-[11px]" style={{ color: "var(--text-muted)" }}>
+        Grounded in your synced data · read-only · never posts to QuickBooks without you.
       </p>
-    </div>
-  )
-
-  const suggestionChips = (
-    <div className="flex flex-wrap justify-center gap-2">
-      {SUGGESTIONS.map((s) => (
-        <button
-          key={s}
-          onClick={() => void send(s)}
-          className="rounded-full px-3 py-1.5 text-[12.5px] transition-colors"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "var(--surface)")}
-        >
-          {s}
-        </button>
-      ))}
     </div>
   )
 
   return (
     <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-3xl flex-col">
-      {/* Header: controls always; small title only once a conversation is active */}
+      {/* Header: controls always; brand shown only once a conversation is active */}
       <div className="relative flex shrink-0 items-center justify-between gap-2 px-1 pb-3">
         <div className="flex items-center gap-2.5" style={{ visibility: empty ? "hidden" : "visible" }}>
           <div
@@ -274,47 +344,58 @@ export default function AssistantPage() {
       {empty ? (
         /* ── Centered hero ── */
         <div className="relative flex flex-1 flex-col items-center justify-center px-4 pb-10 text-center">
-          {/* soft brand glow */}
           <div
             aria-hidden
-            className="pointer-events-none absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-[60%] rounded-full blur-3xl"
-            style={{ background: "var(--green-subtle)", opacity: 0.55 }}
+            className="pointer-events-none absolute left-1/2 top-1/2 h-80 w-80 -translate-x-1/2 -translate-y-[62%] rounded-full blur-3xl"
+            style={{ background: "var(--green-subtle)", opacity: 0.6 }}
           />
-          <div className="relative w-full max-w-xl">
-            <div
-              className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl shadow-sm"
-              style={{ background: "var(--green-subtle)", color: "var(--green)" }}
-            >
-              <Sparkles size={28} strokeWidth={1.7} />
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="relative w-full max-w-xl"
+          >
+            <div className="mx-auto mb-5 w-fit">
+              <BrandMark />
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl" style={{ color: "var(--text)" }}>
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-[2.5rem]" style={{ color: "var(--text)" }}>
               NDVX <span style={{ color: "var(--green)" }}>Chat</span>
             </h1>
-            <p className="mx-auto mt-2.5 max-w-md text-[14px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            <p className="mx-auto mt-3 max-w-md text-[14.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
               Ask anything about this client's books — answered straight from your real, synced
               data, with the numbers to back it up.
             </p>
-            <div className="mt-6">{composer}</div>
-            <div className="mt-5">{suggestionChips}</div>
-          </div>
+            <div className="mt-7">{composer}</div>
+            <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {SUGGESTIONS.map(({ icon: Icon, text }) => (
+                <button
+                  key={text}
+                  onClick={() => void send(text)}
+                  className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] transition-all"
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--surface-2)"
+                    e.currentTarget.style.borderColor = "var(--border-strong)"
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--surface)"
+                    e.currentTarget.style.borderColor = "var(--border)"
+                  }}
+                >
+                  <Icon size={15} strokeWidth={1.8} style={{ color: "var(--green)" }} className="shrink-0" />
+                  <span className="line-clamp-1">{text}</span>
+                </button>
+              ))}
+            </div>
+          </motion.div>
         </div>
       ) : (
         /* ── Active conversation ── */
         <>
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-1 pb-4">
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-1 pb-4">
             {messages.map((m, i) => (
-              <MessageBubble key={i} msg={m} />
+              <MessageBubble key={i} msg={m} status={i === messages.length - 1 ? status : null} />
             ))}
-            {askMut.isPending && (
-              <div className="flex items-center gap-2 px-1" style={{ color: "var(--text-muted)" }}>
-                <Bot size={16} strokeWidth={1.7} />
-                <span className="flex gap-1">
-                  <Dot delay={0} />
-                  <Dot delay={0.15} />
-                  <Dot delay={0.3} />
-                </span>
-              </div>
-            )}
             <div ref={bottomRef} />
           </div>
           <div className="shrink-0 px-1 pt-1">{composer}</div>
@@ -324,39 +405,99 @@ export default function AssistantPage() {
   )
 }
 
-function MessageBubble({ msg }: { msg: ChatMsg }) {
+function MessageBubble({ msg, status }: { msg: ChatMsg; status: string | null }) {
   const isUser = msg.role === "user"
   const navigate = useNavigate()
   const labels = sourceLabels(msg.sources)
+  const [copied, setCopied] = useState(false)
+
+  function copy() {
+    void navigator.clipboard?.writeText(msg.content)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+
+  if (isUser) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18 }}
+        className="flex justify-end"
+      >
+        <div
+          className="max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[14px] leading-relaxed"
+          style={{ background: "var(--green-subtle)", color: "var(--text)", whiteSpace: "pre-wrap" }}
+        >
+          {msg.content}
+        </div>
+      </motion.div>
+    )
+  }
+
+  const showStatus = !!status && !msg.content
+  const showThinking = msg.streaming && !msg.content && !status
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18 }}
-      className={isUser ? "flex justify-end" : "flex justify-start"}
+      className="group flex justify-start gap-2.5"
     >
-      <div className={isUser ? "max-w-[85%]" : "max-w-[92%]"}>
+      <div className="mt-0.5 shrink-0">
+        <div
+          className="flex h-7 w-7 items-center justify-center rounded-lg"
+          style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+        >
+          <Sparkles size={14} strokeWidth={1.9} />
+        </div>
+      </div>
+
+      <div className="min-w-0 max-w-[92%]">
         <div
           className="rounded-2xl px-3.5 py-2.5 text-[14px] leading-relaxed"
-          style={
-            isUser
-              ? { background: "var(--green-subtle)", color: "var(--text)", whiteSpace: "pre-wrap" }
-              : {
-                  background: "var(--surface-2)",
-                  color: msg.error ? "var(--warn)" : "var(--text)",
-                  border: "1px solid var(--border)",
-                  whiteSpace: msg.error ? "pre-wrap" : undefined,
-                }
-          }
+          style={{
+            background: "var(--surface-2)",
+            color: msg.error ? "var(--warn)" : "var(--text)",
+            border: "1px solid var(--border)",
+            whiteSpace: msg.error ? "pre-wrap" : undefined,
+          }}
         >
-          {isUser || msg.error ? msg.content : <Markdown text={msg.content} />}
+          {showStatus ? (
+            <span className="flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+              <Loader2 size={14} className="animate-spin" />
+              <span className="text-[13px]">{status}…</span>
+            </span>
+          ) : showThinking ? (
+            <span className="flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
+              <Dot delay={0} /> <Dot delay={0.15} /> <Dot delay={0.3} />
+            </span>
+          ) : msg.error ? (
+            msg.content
+          ) : (
+            <div className="inline">
+              <Markdown text={msg.content} />
+              {msg.streaming && (
+                <motion.span
+                  className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] rounded-full"
+                  style={{ background: "var(--green)" }}
+                  animate={{ opacity: [1, 0.2, 1] }}
+                  transition={{ duration: 0.9, repeat: Infinity }}
+                />
+              )}
+            </div>
+          )}
         </div>
 
-        {labels.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-1.5 px-1">
-            <span className="text-[10.5px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-              Sources
-            </span>
+        {/* meta row: sources + copy (copy appears on hover once the answer is done) */}
+        {(labels.length > 0 || (!msg.streaming && !msg.error && msg.content)) && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1">
+            {labels.length > 0 && (
+              <span className="text-[10.5px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Sources
+              </span>
+            )}
             {labels.map((l) => (
               <span
                 key={l}
@@ -366,6 +507,17 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
                 {l}
               </span>
             ))}
+            {!msg.streaming && !msg.error && msg.content && (
+              <button
+                onClick={copy}
+                className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] opacity-0 transition-opacity group-hover:opacity-100"
+                style={{ color: "var(--text-muted)" }}
+                title="Copy answer"
+              >
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+            )}
           </div>
         )}
 

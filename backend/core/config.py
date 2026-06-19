@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # Anthropic — model pinned here so all modules upgrade together
     anthropic_api_key: str
     anthropic_model: str = "claude-sonnet-4-6"
+    # NDVX Chat (client assistant) runs on a faster/cheaper model than the
+    # flux/recon narratives — it's a high-volume, latency-sensitive surface and
+    # Haiku is plenty for grounded tool-routing + summarizing tool output.
+    # Flip back to anthropic_model here if you ever want chat on Sonnet.
+    assistant_model: str = "claude-haiku-4-5-20251001"
 
     # Application-layer encryption key for secrets at rest (QBO OAuth tokens).
     # urlsafe-base64 32-byte Fernet key. Empty = tokens stored plaintext

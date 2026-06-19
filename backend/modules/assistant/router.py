@@ -6,11 +6,13 @@ conversation thread (Phase 1). GET /threads + /threads/{id} power the history
 panel. Guarded by enforce_ai_limits and the tenant middleware (so the request's
 get_db session is scoped to the caller's client).
 """
+import json
 import logging
 import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +28,30 @@ from modules.assistant.schemas import (
     ThreadMessage,
     ThreadSummary,
 )
-from modules.assistant.service import answer_question, persist_turn
+from modules.assistant.service import answer_question, answer_question_stream, persist_turn
+
+
+def _sse(obj: dict) -> str:
+    """Serialize one event as a Server-Sent-Events frame."""
+    return f"data: {json.dumps(obj, default=str)}\n\n"
+
+
+def _persist_draft(db: AsyncSession, tenant_id: uuid.UUID, user_id, thread_id, d: dict) -> None:
+    """Persist one assistant-drafted JE into the Adjustments queue (open, for review)."""
+    db.add(ProposedEntry(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        source="assistant",
+        source_ref=str(thread_id) if thread_id else "assistant",
+        period_end=date.fromisoformat(d["period_end"]),
+        description=d.get("description") or "Assistant-drafted entry",
+        lines=d.get("lines") or [],
+        memo=d.get("memo"),
+        rationale=d.get("rationale"),
+        confidence=d.get("confidence") or "medium",
+        status="open",
+        created_by=user_id,
+    ))
 
 logger = logging.getLogger(__name__)
 
@@ -76,20 +101,7 @@ async def ask(
             # (source="assistant", status="open") for human review + posting.
             for d in result.get("drafts", []):
                 try:
-                    db.add(ProposedEntry(
-                        id=uuid.uuid4(),
-                        tenant_id=tenant_id,
-                        source="assistant",
-                        source_ref=str(thread_id) if thread_id else "assistant",
-                        period_end=date.fromisoformat(d["period_end"]),
-                        description=d.get("description") or "Assistant-drafted entry",
-                        lines=d.get("lines") or [],
-                        memo=d.get("memo"),
-                        rationale=d.get("rationale"),
-                        confidence=d.get("confidence") or "medium",
-                        status="open",
-                        created_by=user.id,
-                    ))
+                    _persist_draft(db, tenant_id, user.id, thread_id, d)
                 except Exception:
                     logger.exception("assistant: skipped a malformed draft")
             await db.commit()
@@ -104,6 +116,69 @@ async def ask(
         thread_id=thread_id,
         drafts=result.get("drafts", []),
         links=result.get("links", []),
+    )
+
+
+@router.post("/ask/stream", dependencies=[Depends(enforce_ai_limits)])
+async def ask_stream(
+    body: AskRequest,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Same as /ask, but streams the answer token-by-token over SSE so the UI shows
+    it as it's generated. Events: step (a tool ran), delta (answer chunk), reset
+    (clear partial), result (sources/drafts/links), done (thread_id), error."""
+    question = body.question.strip()
+    history = [m.model_dump() for m in (body.history or [])]
+
+    async def event_stream():
+        answer, sources, drafts = "", [], []
+        try:
+            async for ev in answer_question_stream(
+                db=db,
+                tenant_id=tenant_id,
+                question=question,
+                period_end=body.period_end,
+                history=history,
+            ):
+                if ev.get("type") == "result":
+                    answer = ev.get("answer", "")
+                    sources = ev.get("sources", [])
+                    drafts = ev.get("drafts", [])
+                yield _sse(ev)
+        except Exception:
+            logger.exception("assistant stream failed for tenant %s", tenant_id)
+            yield _sse({"type": "error", "message": "The assistant is temporarily unavailable. Please try again in a moment."})
+            return
+
+        # Persist the turn AFTER the loop — the read-only guard is reset once the
+        # generator above is exhausted, so these writes are allowed. Best-effort;
+        # skipped for read-only requests (demo / suspended members).
+        thread_id = body.thread_id
+        if not current_request_readonly.get():
+            try:
+                thread_id = await persist_turn(
+                    db=db, tenant_id=tenant_id, user_id=user.id,
+                    thread_id=body.thread_id, question=question,
+                    answer=answer, sources=sources,
+                )
+                for d in drafts:
+                    try:
+                        _persist_draft(db, tenant_id, user.id, thread_id, d)
+                    except Exception:
+                        logger.exception("assistant: skipped a malformed draft")
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                logger.exception("assistant stream persist failed for tenant %s", tenant_id)
+                thread_id = body.thread_id
+        yield _sse({"type": "done", "thread_id": str(thread_id) if thread_id else None})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
 
 

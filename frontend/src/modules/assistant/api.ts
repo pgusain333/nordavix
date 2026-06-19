@@ -1,4 +1,4 @@
-import { apiClient } from "@/core/api/client"
+import { apiClient, API_BASE_URL, authHeaders } from "@/core/api/client"
 
 export interface AssistantSource {
   tool: string
@@ -40,6 +40,15 @@ export interface AssistantTurn {
   content: string
 }
 
+/** One Server-Sent event from /ask/stream. */
+export type StreamEvent =
+  | { type: "step"; label: string }
+  | { type: "delta"; text: string }
+  | { type: "reset" }
+  | { type: "result"; answer: string; sources: AssistantSource[]; drafts: AssistantDraft[]; links: AssistantLink[] }
+  | { type: "done"; thread_id: string | null }
+  | { type: "error"; message: string }
+
 export interface ThreadSummary {
   id: string
   title: string
@@ -74,6 +83,58 @@ export const assistantApi = {
       thread_id: threadId || null,
     })
     return data as AskResponse
+  },
+
+  /**
+   * Streaming ask — same inputs as `ask`, but reads Server-Sent events and calls
+   * `onEvent` for each (step / delta / reset / result / done / error). Uses fetch
+   * (not axios) so we can read the response body as it arrives. Pass an
+   * AbortSignal to cancel an in-flight answer. Resolves when the stream ends.
+   */
+  askStream: async (
+    question: string,
+    periodEnd: string | null,
+    history: AssistantTurn[],
+    threadId: string | null,
+    onEvent: (ev: StreamEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const res = await fetch(`${API_BASE_URL}/api/assistant/ask/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({
+        question,
+        period_end: periodEnd || null,
+        history,
+        thread_id: threadId || null,
+      }),
+      signal,
+    })
+    if (!res.ok || !res.body) throw new Error(`assistant stream failed: ${res.status}`)
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ""
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      // SSE frames are separated by a blank line.
+      let idx: number
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const frame = buf.slice(0, idx)
+        buf = buf.slice(idx + 2)
+        const dataLine = frame.split("\n").find((l) => l.startsWith("data:"))
+        if (!dataLine) continue
+        const json = dataLine.slice(5).trim()
+        if (!json) continue
+        try {
+          onEvent(JSON.parse(json) as StreamEvent)
+        } catch {
+          /* ignore a malformed frame */
+        }
+      }
+    }
   },
 
   /** The current user's recent conversations for this client, newest first. */
