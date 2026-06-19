@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # Haiku is plenty for grounded tool-routing + summarizing tool output.
     # Flip back to anthropic_model here if you ever want chat on Sonnet.
     assistant_model: str = "claude-haiku-4-5-20251001"
+    # NDVX Copilot conversation retention: a chat thread (and its messages) is
+    # hard-deleted after this many days of INACTIVITY by the daily retention
+    # sweep. Chat is a convenience layer, not a record — the actual recons / JEs /
+    # audit log are unaffected. 0 or negative disables the sweep.
+    assistant_retention_days: int = 90
 
     # Application-layer encryption key for secrets at rest (QBO OAuth tokens).
     # urlsafe-base64 32-byte Fernet key. Empty = tokens stored plaintext

@@ -1,0 +1,31 @@
+name: Copilot conversation retention
+
+# Daily sweep that hard-deletes NDVX Copilot conversations inactive beyond the
+# retention window (ASSISTANT_RETENTION_DAYS on the backend, default 90 days).
+# All logic + safety live in the backend — this just pings the internal endpoint
+# once a day. If INTERNAL_TASK_SECRET isn't set as a repo Actions secret (and
+# matching Fly), the job logs a note and exits green (never red-X's).
+
+on:
+  schedule:
+    - cron: "30 3 * * *"   # 03:30 UTC daily (off-peak)
+  workflow_dispatch: {}     # allow manual runs from the Actions tab
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Copilot retention sweep
+        env:
+          INTERNAL_TASK_SECRET: ${{ secrets.INTERNAL_TASK_SECRET }}
+        run: |
+          if [ -z "$INTERNAL_TASK_SECRET" ]; then
+            echo "INTERNAL_TASK_SECRET not set — add it under Settings -> Secrets"
+            echo "and variables -> Actions to enable the sweep. Skipping."
+            exit 0
+          fi
+          curl -fsS -X POST "https://nordavix-api.fly.dev/api/internal/purge-expired-assistant-threads" \
+            -H "X-Internal-Secret: $INTERNAL_TASK_SECRET" \
+            -H "Content-Type: application/json"
+          echo
+          echo "Copilot retention sweep triggered."

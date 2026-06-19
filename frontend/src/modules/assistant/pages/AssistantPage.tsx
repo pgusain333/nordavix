@@ -430,6 +430,12 @@ export default function AssistantPage() {
             Recent
           </div>
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-0.5">{historyList}</div>
+          <p
+            className="mt-2 px-1 pt-2 text-[10.5px] leading-snug"
+            style={{ color: "var(--text-muted)", borderTop: "1px solid var(--border)" }}
+          >
+            Chats auto-delete after 90 days of inactivity. You can delete any chat anytime.
+          </p>
         </div>
       </motion.aside>
 

@@ -16,6 +16,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 
 from core.config import settings
+from modules.assistant.retention import purge_expired_threads
 from modules.reengagement.service import run_reengagement
 from modules.workspace.purge import purge_expired_tenants
 
@@ -51,6 +52,22 @@ async def run_purge_expired_tenants(
     failed = sum(1 for s in summaries if not s.get("ok"))
     logger.info("Purge endpoint ran: %d purged, %d failed.", purged, failed)
     return {"purged": purged, "failed": failed, "results": summaries}
+
+
+@router.post("/purge-expired-assistant-threads")
+async def run_purge_expired_assistant_threads(
+    x_internal_secret: str | None = Header(default=None),
+) -> dict:
+    """
+    Hard-delete NDVX Copilot conversations that have been inactive longer than the
+    retention window (ASSISTANT_RETENTION_DAYS, default 90). Chat is a convenience
+    layer — recons / proposed entries / the audit log are untouched. Idempotent;
+    safe to call daily. Returns {threads, messages, retention_days}.
+    """
+    _require_internal_secret(x_internal_secret)
+    summary = await purge_expired_threads()
+    logger.info("Assistant retention endpoint ran: %s", summary)
+    return summary
 
 
 @router.post("/run-reengagement")
