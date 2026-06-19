@@ -257,3 +257,32 @@ async def test_every_tenant_table_has_rls_policy(session):
         f"tenant tables missing a tenant_isolation RLS policy "
         f"(add one in their migration): {sorted(missing)}"
     )
+
+
+def test_every_tenant_table_named_in_an_rls_migration():
+    """Offline guard (no DB) — every tenant-scoped table (a model with a tenant_id
+    column) must be named in a migration that creates the tenant_isolation policy.
+
+    This is the regression guard for the 061 gap: 059 hand-listed its tables and
+    silently omitted 9, and the DB-based check above SKIPS on a create_all test DB,
+    so the hole shipped. This test derives the table set from the model registry
+    and scans the migration files, so it runs everywhere and fails the build if a
+    tenant table ever lacks a tenant_isolation policy. Lesson: don't hand-list
+    tenant tables."""
+    import pathlib
+
+    expected = {t.name for t in Base.metadata.sorted_tables if "tenant_id" in t.c}
+    versions = pathlib.Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    rls_text = "".join(
+        src
+        for src in (p.read_text(encoding="utf-8") for p in versions.glob("*.py"))
+        if "tenant_isolation" in src
+    )
+    missing = sorted(
+        t for t in expected
+        if f'"{t}"' not in rls_text and f"'{t}'" not in rls_text
+    )
+    assert not missing, (
+        "tenant tables not covered by any tenant_isolation migration "
+        f"(add a CREATE POLICY tenant_isolation for them): {missing}"
+    )
