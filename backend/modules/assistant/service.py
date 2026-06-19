@@ -52,27 +52,45 @@ _MAX_TURNS = 6          # tool round-trips before we force a final answer
 _MAX_TOKENS = 1024
 _MAX_HISTORY = 8        # prior turns carried for context
 
-# Friendly present-tense labels for the "Searching…" status line while a tool runs.
-_STEP_LABEL: dict[str, str] = {
-    "get_reconciliations_overview": "Reading reconciliations",
-    "get_account_balance": "Looking up balances",
-    "get_close_status": "Checking close status",
-    "get_adjustments_queue": "Reading the Adjustments queue",
-    "get_financial_insights": "Reviewing financial health",
-    "get_flux_variances": "Reading the flux analysis",
-    "get_schedules": "Reading schedules",
-    "get_risk_findings": "Scanning Risk Radar",
-    "get_close_tasks": "Reading the close checklist",
-    "get_financial_statements": "Pulling the financial statements",
-    "get_intercompany": "Checking intercompany",
-    "get_team": "Looking up the team",
-    "get_account_guidance": "Recalling what you taught us",
-    "recall": "Searching past records",
-    "draft_journal_entry": "Drafting an entry",
-    "suggest_action": "Setting up an action",
-    "make_chart": "Drawing a chart",
+# Chatty, first-person progress narration shown live while the copilot works
+# (e.g. "Let me check reconciliations…", "Now let me look at flux…"). Read tools
+# get a noun; action tools get their own verb phrase. The connective varies by
+# position so a multi-tool answer reads naturally instead of repeating itself.
+_STEP_NOUN: dict[str, str] = {
+    "get_reconciliations_overview": "reconciliations",
+    "get_account_balance": "the account balance",
+    "get_close_status": "close status",
+    "get_adjustments_queue": "the adjustments",
+    "get_financial_insights": "your financial health",
+    "get_flux_variances": "flux",
+    "get_schedules": "the schedules",
+    "get_risk_findings": "the risk radar",
+    "get_close_tasks": "the close checklist",
+    "get_financial_statements": "the financial statements",
+    "get_intercompany": "intercompany",
+    "get_team": "the team",
+    "get_account_guidance": "what you taught us about this account",
+    "recall": "past records",
+}
+_STEP_VERB: dict[str, str] = {
+    "draft_journal_entry": "Drafting the entry",
+    "suggest_action": "Setting up the prepare step",
+    "make_chart": "Putting together a chart",
     "suggest_link": "Finding the right screen",
 }
+_STEP_CONNECTORS = ("Now let me look at", "Now checking", "Then", "And")
+
+
+def _step_phrase(tool: str, idx: int) -> str:
+    """A chatty progress line for the tool that just started. `idx` is how many
+    steps have already been shown, so the opener varies ("Let me check …" first,
+    then "Now let me look at …", "Then …") instead of repeating."""
+    if tool in _STEP_VERB:
+        return _STEP_VERB[tool] + "…"
+    noun = _STEP_NOUN.get(tool, "the data")
+    if idx == 0:
+        return f"Let me check {noun}…"
+    return f"{_STEP_CONNECTORS[idx % len(_STEP_CONNECTORS)]} {noun}…"
 
 # Static system prompt — identical every turn and across questions, so it is the
 # cached prefix (cache_control below). Dynamic context (the active period) is a
@@ -252,6 +270,7 @@ async def answer_question_stream(
             period_end = await latest_synced_period(db)
         system = _system_blocks(period_end)
         tools = _cached_tools()
+        step_no = 0  # how many progress lines shown so far — drives the wording
 
         for _turn in range(_MAX_TURNS):
             turn_text: list[str] = []
@@ -265,10 +284,13 @@ async def answer_question_stream(
                 async for event in stream:
                     et = getattr(event, "type", "")
                     if et == "content_block_start" and getattr(event.content_block, "type", None) == "tool_use":
-                        yield {"type": "step", "label": _STEP_LABEL.get(event.content_block.name, "Working")}
+                        yield {"type": "step", "label": _step_phrase(event.content_block.name, step_no)}
+                        step_no += 1
                     elif et == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
+                        # Buffer text; do NOT stream it yet. If this turn ends up
+                        # calling a tool, that text was just preamble and is dropped
+                        # (no flicker) — only the final turn's text is ever shown.
                         turn_text.append(event.delta.text)
-                        yield {"type": "delta", "text": event.delta.text}
                 final = await stream.get_final_message()
             _record(final)
 
@@ -303,13 +325,15 @@ async def answer_question_stream(
                         "content": json.dumps(out, default=str),
                     })
                 messages.append({"role": "user", "content": results})
-                # Any text this turn was preamble — drop it; the next turn answers.
-                if turn_text:
-                    yield {"type": "reset"}
+                # Any text this turn was just preamble — it was never streamed, so
+                # there's nothing to undo. The next turn produces the real answer.
                 continue
 
-            # Final turn (no more tools): the streamed text IS the answer.
+            # Final turn (no more tools): the buffered text IS the answer — reveal
+            # it now, in one clean piece after the progress lines (no mid-stream switch).
             final_answer = "".join(turn_text).strip()
+            if final_answer:
+                yield {"type": "delta", "text": final_answer}
             break
 
         # If the loop ran out of turns still calling tools, force a closing answer

@@ -40,6 +40,7 @@ interface ChatMsg {
   actions?: AssistantAction[]
   charts?: AssistantChart[]
   exportIntent?: "pdf" | "xlsx" | "both" | null // user asked for a downloadable file
+  steps?: string[] // chatty progress lines shown while the answer is being worked on
   error?: boolean
   streaming?: boolean
 }
@@ -128,7 +129,6 @@ export default function AssistantPage() {
   const [threadId, setThreadId] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [streaming, setStreaming] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try { return localStorage.getItem("ndvx_copilot_sidebar") !== "0" } catch { return true }
   })
@@ -151,7 +151,7 @@ export default function AssistantPage() {
     if (!messages.length) return
     bottomRef.current?.scrollIntoView({ behavior: instantScroll.current ? "auto" : "smooth", block: "end" })
     instantScroll.current = false
-  }, [messages, status])
+  }, [messages])
 
   // Persist the sidebar show/hide choice across visits.
   useEffect(() => {
@@ -186,11 +186,10 @@ export default function AssistantPage() {
     setMessages((prev) => [
       ...prev,
       { role: "user", content: q },
-      { role: "assistant", content: "", streaming: true, question: q, exportIntent: detectExportIntent(q) },
+      { role: "assistant", content: "", streaming: true, question: q, exportIntent: detectExportIntent(q), steps: [] },
     ])
     setInput("")
     setStreaming(true)
-    setStatus(null)
     const ctrl = new AbortController()
     abortRef.current = ctrl
 
@@ -201,12 +200,11 @@ export default function AssistantPage() {
         history,
         threadId,
         (ev) => {
-          if (ev.type === "step") setStatus(ev.label)
-          else if (ev.type === "delta") {
-            setStatus(null)
+          if (ev.type === "step") {
+            // Accumulate the chatty progress lines while the copilot works.
+            patchLast((m) => ({ ...m, steps: [...(m.steps || []), ev.label] }))
+          } else if (ev.type === "delta") {
             patchLast((m) => ({ ...m, content: m.content + ev.text }))
-          } else if (ev.type === "reset") {
-            patchLast((m) => ({ ...m, content: "" }))
           } else if (ev.type === "result") {
             patchLast((m) => ({
               ...m,
@@ -243,7 +241,6 @@ export default function AssistantPage() {
     } finally {
       patchLast((m) => ({ ...m, streaming: false }))
       setStreaming(false)
-      setStatus(null)
       abortRef.current = null
     }
   }
@@ -557,7 +554,7 @@ export default function AssistantPage() {
             <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto max-w-4xl space-y-5 px-1 pb-4">
                 {messages.map((m, i) => (
-                  <MessageBubble key={i} msg={m} status={i === messages.length - 1 ? status : null} />
+                  <MessageBubble key={i} msg={m} />
                 ))}
                 <div ref={bottomRef} />
               </div>
@@ -655,7 +652,7 @@ function ThreadRow({
   )
 }
 
-function MessageBubble({ msg, status }: { msg: ChatMsg; status: string | null }) {
+function MessageBubble({ msg }: { msg: ChatMsg }) {
   const isUser = msg.role === "user"
   const navigate = useNavigate()
   const labels = sourceLabels(msg.sources)
@@ -698,8 +695,10 @@ function MessageBubble({ msg, status }: { msg: ChatMsg; status: string | null })
     )
   }
 
-  const showStatus = !!status && !msg.content
-  const showThinking = msg.streaming && !msg.content && !status
+  const steps = msg.steps ?? []
+  const working = !!msg.streaming && !msg.content && !msg.error
+  const showSteps = working && steps.length > 0
+  const showThinking = working && steps.length === 0
 
   return (
     <motion.div
@@ -727,11 +726,29 @@ function MessageBubble({ msg, status }: { msg: ChatMsg; status: string | null })
             whiteSpace: msg.error ? "pre-wrap" : undefined,
           }}
         >
-          {showStatus ? (
-            <span className="flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
-              <Loader2 size={14} className="animate-spin" />
-              <span className="text-[13px]">{status}…</span>
-            </span>
+          {showSteps ? (
+            <div className="flex flex-col gap-1.5">
+              {steps.map((s, i) => {
+                const last = i === steps.length - 1
+                return (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 2 }}
+                    animate={{ opacity: last ? 1 : 0.55, y: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="flex items-center gap-2 text-[13px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {last ? (
+                      <Loader2 size={13} className="shrink-0 animate-spin" />
+                    ) : (
+                      <Check size={13} className="shrink-0" style={{ color: "var(--green)" }} />
+                    )}
+                    <span>{s}</span>
+                  </motion.div>
+                )
+              })}
+            </div>
           ) : showThinking ? (
             <span className="flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
               <Dot delay={0} /> <Dot delay={0.15} /> <Dot delay={0.3} />
