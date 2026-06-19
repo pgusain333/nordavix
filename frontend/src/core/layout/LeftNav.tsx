@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import {
-  LayoutDashboard, BarChart3, Scale, FileText, ArrowLeftRight,
+  LayoutDashboard, Bot, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, X, Pencil, Check, CheckSquare, BookOpen,
   MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList, Search,
   PanelLeft, PanelLeftClose, Sparkles, ShieldCheck, Target, Rocket, ListChecks,
@@ -57,6 +57,7 @@ function prefetchRoute(path: string): void {
   const p = path.replace(/[?#].*$/, "").replace(/^\/app\/?/, "")
   switch (p) {
     case "":               return // Dashboard is eager
+    case "assistant":      void import("@/modules/assistant/pages/AssistantPage");            return
     case "autopilot":      void import("@/modules/autopilot/pages/AutopilotPage");          return
     case "close":          void import("@/modules/close/pages/CloseWorkflowPage");          return
     case "gl-accuracy":    void import("@/modules/gl_accuracy/pages/GlAccuracyPage");        return
@@ -133,6 +134,11 @@ function prefetchData(qc: QueryClient, path: string): void {
 //   pinned at the very bottom; Team now lives under Settings, not the rail.
 const DASHBOARD_ITEM: NavItem = {
   label: "Dashboard", path: "/app", icon: LayoutDashboard, available: true,
+}
+// Pinned above the phase groups alongside Dashboard — the always-available,
+// client-aware Q&A assistant (grounded in the workspace's own data).
+const ASSISTANT_ITEM: NavItem = {
+  label: "Assistant", path: "/app/assistant", icon: Bot, available: true,
 }
 
 interface NavGroup {
@@ -504,8 +510,9 @@ export function LeftNav({ onClose }: Props) {
       )}
 
       <nav className="shrink-0 px-2 py-3 space-y-0.5">
-        {/* Dashboard — pinned above the phase groups. */}
+        {/* Dashboard + Assistant — pinned above the phase groups. */}
         {renderItem(DASHBOARD_ITEM)}
+        {renderItem(ASSISTANT_ITEM)}
 
         {NAV_GROUPS.map((group) => {
           // Icon-only rail: no headers — a thin divider separates each phase and

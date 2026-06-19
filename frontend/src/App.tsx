@@ -41,6 +41,7 @@ const IntercompanyPage        = lazy(() => import("@/modules/intercompany/pages/
 const FinancialsPage          = lazy(() => import("@/modules/financials/pages/FinancialsPage").then(m => ({ default: m.FinancialsPage })))
 const InsightsPage            = lazy(() => import("@/modules/insights/pages/InsightsPage").then(m => ({ default: m.InsightsPage })))
 const AdjustmentsPage         = lazy(() => import("@/modules/adjustments/pages/AdjustmentsPage").then(m => ({ default: m.AdjustmentsPage })))
+const AssistantPage           = lazy(() => import("@/modules/assistant/pages/AssistantPage"))
 const AutopilotPage           = lazy(() => import("@/modules/autopilot/pages/AutopilotPage").then(m => ({ default: m.AutopilotPage })))
 const CloseWorkflowPage       = lazy(() => import("@/modules/close/pages/CloseWorkflowPage").then(m => ({ default: m.CloseWorkflowPage })))
 const GlAccuracyPage          = lazy(() => import("@/modules/gl_accuracy/pages/GlAccuracyPage").then(m => ({ default: m.GlAccuracyPage })))
@@ -129,6 +130,7 @@ function AppRoutes() {
             <Route path="financials"   element={<FinancialsPage />} />
             <Route path="insights"     element={<InsightsPage />} />
             <Route path="adjustments"  element={<AdjustmentsPage />} />
+            <Route path="assistant"    element={<AssistantPage />} />
             <Route path="autopilot"    element={<AutopilotPage />} />
             <Route path="close"        element={<CloseWorkflowPage />} />
             <Route path="gl-accuracy"  element={<GlAccuracyPage />} />

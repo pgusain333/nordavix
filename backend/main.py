@@ -11,6 +11,7 @@ from core.security.crypto import encryption_configured
 from core.tenancy.middleware import TenantMiddleware
 from modules.adjustments.router import router as adjustments_router
 from modules.advisory.router import router as advisory_router
+from modules.assistant.router import router as assistant_router
 from modules.audit.router import router as audit_router
 from modules.autopilot.router import router as autopilot_router
 from modules.close_workflow.router import router as close_workflow_router
@@ -141,6 +142,7 @@ app.include_router(notifications_router, prefix="/api/notifications", tags=["not
 app.include_router(onboarding_router,    prefix="/api/onboarding",   tags=["onboarding"])
 app.include_router(comments_router,      prefix="/api/comments",     tags=["comments"])
 app.include_router(adjustments_router,    prefix="/api/adjustments",  tags=["adjustments"])
+app.include_router(assistant_router,      prefix="/api/assistant",    tags=["assistant"])
 app.include_router(pbc_router,            prefix="/api/pbc",          tags=["pbc"])
 app.include_router(pbc_public_router,     prefix="/api/pbc-public",   tags=["pbc-public"])
 app.include_router(autopilot_router,      prefix="/api/autopilot",    tags=["autopilot"])
