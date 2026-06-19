@@ -202,4 +202,9 @@ export const assistantApi = {
     const { data } = await apiClient.get(`/api/assistant/threads/${threadId}`)
     return data as ThreadMessage[]
   },
+
+  /** Delete one of the current user's conversations (thread + its messages). */
+  deleteThread: async (threadId: string): Promise<void> => {
+    await apiClient.delete(`/api/assistant/threads/${threadId}`)
+  },
 }

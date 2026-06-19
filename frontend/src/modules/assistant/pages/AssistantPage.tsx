@@ -7,13 +7,14 @@
  * state is a centered hero with the composer; once a thread starts, messages fill
  * the view and the composer docks at the bottom. Answers render as themed Markdown.
  */
-import { useEffect, useRef, useState, type KeyboardEvent } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import {
   Sparkles, ArrowUp, Square, Plus, History, Clock, FileText, ArrowUpRight,
   Copy, Check, Download, Loader2, Play, AlertTriangle, Wallet, Scale, ClipboardList,
+  Trash2, X, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react"
 import {
   assistantApi,
@@ -23,6 +24,7 @@ import {
   type AssistantAction,
   type AssistantChart,
   type AssistantChartPoint,
+  type ThreadSummary,
 } from "@/modules/assistant/api"
 import { Markdown } from "@/modules/assistant/Markdown"
 import { reconsApi } from "@/modules/recons/api"
@@ -112,8 +114,13 @@ export default function AssistantPage() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try { return localStorage.getItem("ndvx_copilot_sidebar") !== "0" } catch { return true }
+  })
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const didAutoOpen = useRef(false)
+  const instantScroll = useRef(true) // first paint / thread-load jumps; streaming glides
 
   const { data: threads } = useQuery({
     queryKey: ["assistant-threads"],
@@ -121,9 +128,28 @@ export default function AssistantPage() {
     staleTime: 30_000,
   })
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
+  // Keep the answer pinned to the bottom. The first render and any thread load
+  // jump instantly (so reopening lands already-scrolled, not animating down);
+  // token streaming glides smoothly. useLayoutEffect → no top-then-jump flash.
+  useLayoutEffect(() => {
+    if (!messages.length) return
+    bottomRef.current?.scrollIntoView({ behavior: instantScroll.current ? "auto" : "smooth", block: "end" })
+    instantScroll.current = false
   }, [messages, status])
+
+  // Persist the sidebar show/hide choice across visits.
+  useEffect(() => {
+    try { localStorage.setItem("ndvx_copilot_sidebar", sidebarOpen ? "1" : "0") } catch { /* ignore */ }
+  }, [sidebarOpen])
+
+  // On first open, resume the most recent conversation (already at the bottom),
+  // so Copilot feels like returning to where you left off — not a blank restart.
+  useEffect(() => {
+    if (didAutoOpen.current || !threads) return
+    didAutoOpen.current = true
+    if (threads.length > 0) void loadThread(threads[0].id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threads])
 
   // Patch the last message (the in-flight assistant bubble).
   function patchLast(fn: (m: ChatMsg) => ChatMsg) {
@@ -215,6 +241,7 @@ export default function AssistantPage() {
 
   async function loadThread(id: string) {
     setHistoryOpen(false)
+    instantScroll.current = true // jump to the bottom of the loaded thread, don't animate
     try {
       const msgs = await assistantApi.getThread(id)
       setMessages(msgs.map((m) => ({ role: m.role, content: m.content, sources: m.sources })))
@@ -222,6 +249,22 @@ export default function AssistantPage() {
     } catch {
       /* leave current conversation in place on failure */
     }
+  }
+
+  async function deleteThread(id: string) {
+    // Optimistically drop it from the list; restore on failure.
+    qc.setQueryData<ThreadSummary[]>(["assistant-threads"], (prev) => prev?.filter((t) => t.id !== id))
+    try {
+      await assistantApi.deleteThread(id)
+    } catch {
+      void qc.invalidateQueries({ queryKey: ["assistant-threads"] })
+      return
+    }
+    if (id === threadId) {
+      setMessages([])
+      setThreadId(null)
+    }
+    void qc.invalidateQueries({ queryKey: ["assistant-threads"] })
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -293,19 +336,13 @@ export default function AssistantPage() {
     </p>
   ) : (
     threads.map((t) => (
-      <button
+      <ThreadRow
         key={t.id}
-        onClick={() => void loadThread(t.id)}
-        className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors"
-        style={{ background: t.id === threadId ? "var(--surface-2)" : "transparent" }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-        onMouseLeave={(e) =>
-          (e.currentTarget.style.background = t.id === threadId ? "var(--surface-2)" : "transparent")
-        }
-      >
-        <Clock size={13} strokeWidth={1.7} className="mt-0.5 shrink-0" style={{ color: "var(--text-muted)" }} />
-        <span className="line-clamp-2 text-[12.5px]" style={{ color: "var(--text)" }}>{t.title}</span>
-      </button>
+        thread={t}
+        active={t.id === threadId}
+        onOpen={() => void loadThread(t.id)}
+        onDelete={() => deleteThread(t.id)}
+      />
     ))
   )
 
@@ -313,35 +350,65 @@ export default function AssistantPage() {
     <div className="flex h-[calc(100vh-7rem)]">
       {/* ── Left sidebar (desktop): brand · New chat · history (Claude-style) ── */}
       <aside
-        className="hidden w-60 shrink-0 flex-col pr-3 md:flex"
+        className={`hidden w-64 shrink-0 flex-col px-1.5 pr-3.5 pt-1 ${sidebarOpen ? "md:flex" : ""}`}
         style={{ borderRight: "1px solid var(--border)" }}
       >
-        <div className="flex items-center gap-2 px-1 pb-3">
+        <div className="flex items-center gap-2 px-1 pb-5 pt-1">
           <div
-            className="flex h-7 w-7 items-center justify-center rounded-lg"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
             style={{ background: "var(--green-subtle)", color: "var(--green)" }}
           >
             <Sparkles size={15} strokeWidth={1.9} />
           </div>
-          <span className="text-[14px] font-semibold" style={{ color: "var(--text)" }}>
+          <span className="flex-1 text-[14px] font-semibold" style={{ color: "var(--text)" }}>
             NDVX Copilot
           </span>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="shrink-0 rounded-md p-1 transition-opacity hover:opacity-80"
+            style={{ color: "var(--text-muted)" }}
+            title="Hide sidebar"
+            aria-label="Hide sidebar"
+          >
+            <PanelLeftClose size={16} strokeWidth={1.8} />
+          </button>
         </div>
         <button
           onClick={newChat}
-          className="mb-3 flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-[13px] font-medium transition-opacity hover:opacity-90"
+          className="mb-5 flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-opacity hover:opacity-90"
           style={{ background: "var(--green)", color: "#fff" }}
         >
           <Plus size={15} strokeWidth={2.2} /> New chat
         </button>
-        <div className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+        <div className="px-1 pb-2 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
           Recent
         </div>
-        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">{historyList}</div>
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-0.5">{historyList}</div>
       </aside>
 
       {/* ── Main pane ── */}
-      <div className="flex min-w-0 flex-1 flex-col md:pl-4">
+      <div className={`flex min-w-0 flex-1 flex-col ${sidebarOpen ? "md:pl-4" : ""}`}>
+        {/* Desktop: when the sidebar is hidden, a slim bar to bring it back + New chat */}
+        {!sidebarOpen && (
+          <div className="mb-2 hidden items-center gap-1.5 md:flex">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12.5px] transition-colors"
+              style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}
+              title="Show sidebar"
+              aria-label="Show sidebar"
+            >
+              <PanelLeftOpen size={16} strokeWidth={1.8} />
+            </button>
+            <button
+              onClick={newChat}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium"
+              style={{ background: "var(--green)", color: "#fff" }}
+            >
+              <Plus size={15} strokeWidth={2} /> New chat
+            </button>
+          </div>
+        )}
         {/* Mobile top bar: brand · History · New (the sidebar is desktop-only) */}
         <div className="relative mb-1 flex shrink-0 items-center justify-between gap-2 px-1 md:hidden">
           <div className="flex items-center gap-2">
@@ -449,6 +516,83 @@ export default function AssistantPage() {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+/** One row in the Recent list: open on click, with a hover trash that asks for a
+ *  quick inline confirm before deleting (so a stray click can't wipe a chat). */
+function ThreadRow({
+  thread,
+  active,
+  onOpen,
+  onDelete,
+}: {
+  thread: ThreadSummary
+  active: boolean
+  onOpen: () => void
+  onDelete: () => Promise<void> | void
+}) {
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  async function confirmDelete() {
+    setBusy(true)
+    try {
+      await onDelete()
+    } finally {
+      setBusy(false)
+      setConfirming(false)
+    }
+  }
+
+  return (
+    <div
+      className="group relative flex items-center rounded-lg transition-colors"
+      style={{ background: active ? "var(--surface-2)" : "transparent" }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = active ? "var(--surface-2)" : "transparent")}
+    >
+      <button
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-2.5 text-left"
+      >
+        <Clock size={13} strokeWidth={1.7} className="mt-0.5 shrink-0" style={{ color: "var(--text-muted)" }} />
+        <span className="line-clamp-2 text-[12.5px]" style={{ color: "var(--text)" }}>{thread.title}</span>
+      </button>
+      {confirming ? (
+        <div className="flex shrink-0 items-center gap-0.5 pr-1.5">
+          <button
+            onClick={() => void confirmDelete()}
+            disabled={busy}
+            className="rounded-md p-1 transition-colors disabled:opacity-60"
+            style={{ color: "var(--danger, #dc2626)" }}
+            title="Delete this chat"
+            aria-label="Confirm delete"
+          >
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={14} />}
+          </button>
+          <button
+            onClick={() => setConfirming(false)}
+            className="rounded-md p-1 transition-colors"
+            style={{ color: "var(--text-muted)" }}
+            title="Cancel"
+            aria-label="Cancel delete"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setConfirming(true)}
+          className="mr-1.5 shrink-0 rounded-md p-1 opacity-0 transition-opacity group-hover:opacity-100"
+          style={{ color: "var(--text-muted)" }}
+          title="Delete chat"
+          aria-label="Delete chat"
+        >
+          <Trash2 size={13} />
+        </button>
+      )}
     </div>
   )
 }

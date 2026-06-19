@@ -13,7 +13,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ai.guard import enforce_ai_limits
@@ -272,3 +272,29 @@ async def get_thread(
         ThreadMessage(role=m.role, content=m.content, sources=m.sources, created_at=m.created_at)
         for m in msgs
     ]
+
+
+@router.delete("/threads/{thread_id}", status_code=204)
+async def delete_thread(
+    thread_id: uuid.UUID,
+    tenant_id: CurrentTenantId,  # noqa: ARG001 — scoping is via the session filter
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Delete one of the current user's conversations (the thread + its messages).
+    Tenant-scoped via the session filter; we additionally require the caller to be
+    the thread's owner so users can't delete each other's chats. No DB-level FK, so
+    the messages are removed explicitly."""
+    if current_request_readonly.get():
+        raise HTTPException(status_code=403, detail="This is a read-only session.")
+    thread = (await db.execute(
+        select(AssistantThread).where(AssistantThread.id == thread_id)
+    )).scalar_one_or_none()
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    if thread.created_by and user.id and thread.created_by != user.id:
+        raise HTTPException(status_code=403, detail="You can only delete your own conversations.")
+    await db.execute(delete(AssistantMessage).where(AssistantMessage.thread_id == thread_id))
+    await db.execute(delete(AssistantThread).where(AssistantThread.id == thread_id))
+    await db.commit()
+    return Response(status_code=204)
