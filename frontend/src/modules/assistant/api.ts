@@ -38,6 +38,19 @@ export interface AssistantAction {
   account_name?: string | null
 }
 
+export interface AssistantChartPoint {
+  label: string
+  value: number
+}
+
+/** A chart the copilot renders under its answer (bar/pie/line). */
+export interface AssistantChart {
+  type: "bar" | "pie" | "line"
+  title?: string
+  unit?: string
+  data: AssistantChartPoint[]
+}
+
 export interface AskResponse {
   answer: string
   sources: AssistantSource[]
@@ -45,6 +58,7 @@ export interface AskResponse {
   drafts: AssistantDraft[]
   links: AssistantLink[]
   actions: AssistantAction[]
+  charts: AssistantChart[]
 }
 
 export interface AssistantTurn {
@@ -57,7 +71,7 @@ export type StreamEvent =
   | { type: "step"; label: string }
   | { type: "delta"; text: string }
   | { type: "reset" }
-  | { type: "result"; answer: string; sources: AssistantSource[]; drafts: AssistantDraft[]; links: AssistantLink[]; actions: AssistantAction[] }
+  | { type: "result"; answer: string; sources: AssistantSource[]; drafts: AssistantDraft[]; links: AssistantLink[]; actions: AssistantAction[]; charts: AssistantChart[] }
   | { type: "done"; thread_id: string | null }
   | { type: "error"; message: string }
 

@@ -117,6 +117,7 @@ async def ask(
         drafts=result.get("drafts", []),
         links=result.get("links", []),
         actions=result.get("actions", []),
+        charts=result.get("charts", []),
     )
 
 

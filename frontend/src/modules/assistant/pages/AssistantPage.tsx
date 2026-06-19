@@ -21,6 +21,8 @@ import {
   type AssistantDraft,
   type AssistantLink,
   type AssistantAction,
+  type AssistantChart,
+  type AssistantChartPoint,
 } from "@/modules/assistant/api"
 import { Markdown } from "@/modules/assistant/Markdown"
 import { reconsApi } from "@/modules/recons/api"
@@ -33,6 +35,7 @@ interface ChatMsg {
   drafts?: AssistantDraft[]
   links?: AssistantLink[]
   actions?: AssistantAction[]
+  charts?: AssistantChart[]
   error?: boolean
   streaming?: boolean
 }
@@ -169,6 +172,7 @@ export default function AssistantPage() {
               drafts: ev.drafts,
               links: ev.links,
               actions: ev.actions,
+              charts: ev.charts,
             }))
           } else if (ev.type === "done") {
             if (ev.thread_id) setThreadId(ev.thread_id)
@@ -632,6 +636,10 @@ function MessageBubble({ msg, status }: { msg: ChatMsg; status: string | null })
         {msg.actions?.map((a, ai) => (
           <ActionChip key={ai} action={a} />
         ))}
+
+        {msg.charts?.map((c, ci) => (
+          <ChartView key={ci} chart={c} />
+        ))}
       </div>
     </motion.div>
   )
@@ -716,6 +724,126 @@ function ActionChip({ action }: { action: AssistantAction }) {
       <p className="mt-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
         Prepares only — a human still approves. Nothing posts to QuickBooks.
       </p>
+    </div>
+  )
+}
+
+// ── Charts (hand-rolled SVG, theme-aware, no chart-lib dependency) ──
+const CHART_COLORS = ["var(--green)", "#5DCAA5", "#888780", "#B4B2A9", "#0F6E56", "#D3D1C7"]
+
+function fmtNum(v: number, unit?: string): string {
+  if (unit === "%") return `${Math.round(v * 10) / 10}%`
+  const u = unit || ""
+  const a = Math.abs(v)
+  if (a >= 1_000_000) return `${u}${(v / 1_000_000).toFixed(1)}M`
+  if (a >= 1_000) return `${u}${(v / 1_000).toFixed(1)}K`
+  return `${u}${Math.round(v * 100) / 100}`
+}
+
+function ChartView({ chart }: { chart: AssistantChart }) {
+  const data = (chart.data || []).slice(0, 24)
+  if (!data.length) return null
+  return (
+    <div className="mt-2 rounded-xl p-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      {chart.title && (
+        <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+          {chart.title}
+        </div>
+      )}
+      {chart.type === "pie" ? (
+        <PieChart data={data} />
+      ) : chart.type === "line" ? (
+        <LineChart data={data} />
+      ) : (
+        <BarChart data={data} unit={chart.unit} />
+      )}
+    </div>
+  )
+}
+
+function BarChart({ data, unit }: { data: AssistantChartPoint[]; unit?: string }) {
+  const max = Math.max(...data.map((d) => Math.abs(d.value)), 1)
+  return (
+    <div className="flex flex-col gap-2">
+      {data.map((d, i) => (
+        <div key={i} className="grid items-center gap-2" style={{ gridTemplateColumns: "minmax(80px, 34%) 1fr auto" }}>
+          <span className="truncate text-[12px]" style={{ color: "var(--text-muted)" }}>{d.label}</span>
+          <span className="relative block h-3.5 overflow-hidden rounded" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+            <span className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.max(2, Math.round((Math.abs(d.value) / max) * 100))}%`, background: "var(--green)" }} />
+          </span>
+          <span className="min-w-[52px] text-right text-[12px] font-semibold tabular-nums" style={{ color: "var(--text)" }}>{fmtNum(d.value, unit)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function PieChart({ data }: { data: AssistantChartPoint[] }) {
+  const total = data.reduce((s, d) => s + Math.max(0, d.value), 0) || 1
+  const C = 60, R = 54
+  let angle = -90
+  const slices = data.map((d, i) => {
+    const frac = Math.max(0, d.value) / total
+    const start = angle
+    const end = angle + frac * 360
+    angle = end
+    const large = end - start > 180 ? 1 : 0
+    const pt = (deg: number): [number, number] => [
+      C + R * Math.cos((Math.PI / 180) * deg),
+      C + R * Math.sin((Math.PI / 180) * deg),
+    ]
+    const [x1, y1] = pt(start)
+    const [x2, y2] = pt(end)
+    return {
+      path: `M ${C} ${C} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${R} ${R} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`,
+      color: CHART_COLORS[i % CHART_COLORS.length],
+      label: d.label,
+      pct: Math.round(frac * 100),
+    }
+  })
+  return (
+    <div className="flex items-center gap-4">
+      <svg viewBox="0 0 120 120" width={120} height={120} className="shrink-0">
+        {slices.length === 1 ? (
+          <circle cx={C} cy={C} r={R} fill={slices[0].color} />
+        ) : (
+          slices.map((s, i) => <path key={i} d={s.path} fill={s.color} stroke="var(--surface)" strokeWidth={1} />)
+        )}
+      </svg>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        {slices.map((s, i) => (
+          <div key={i} className="flex items-center gap-2 text-[12px]">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: s.color }} />
+            <span className="truncate" style={{ color: "var(--text)" }}>{s.label}</span>
+            <span className="ml-auto shrink-0 tabular-nums" style={{ color: "var(--text-muted)" }}>{s.pct}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function LineChart({ data }: { data: AssistantChartPoint[] }) {
+  const W = 320, H = 110, pad = 10
+  const vals = data.map((d) => d.value)
+  const max = Math.max(...vals)
+  const min = Math.min(...vals, 0)
+  const range = max - min || 1
+  const n = data.length
+  const x = (i: number) => pad + (n <= 1 ? (W - 2 * pad) / 2 : (i / (n - 1)) * (W - 2 * pad))
+  const y = (v: number) => H - pad - ((v - min) / range) * (H - 2 * pad)
+  const pts = data.map((d, i) => `${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join(" ")
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+        <polyline points={pts} fill="none" stroke="var(--green)" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+        {data.map((d, i) => <circle key={i} cx={x(i)} cy={y(d.value)} r={2.5} fill="var(--green)" />)}
+      </svg>
+      <div className="mt-1 flex justify-between gap-2 text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+        <span className="truncate">{data[0]?.label}</span>
+        {n > 2 && <span className="truncate">{data[Math.floor((n - 1) / 2)]?.label}</span>}
+        <span className="truncate">{data[n - 1]?.label}</span>
+      </div>
     </div>
   )
 }

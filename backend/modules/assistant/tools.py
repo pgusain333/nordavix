@@ -352,6 +352,36 @@ TOOL_DEFS: list[dict[str, Any]] = [
             "required": ["kind"],
         },
     },
+    {
+        "name": "make_chart",
+        "description": (
+            "Render a chart UNDER your answer when a set of numbers is genuinely "
+            "visual — a breakdown (pie), a comparison across items (bar), or a trend "
+            "over periods (line). Pass numbers you already got from other tools; "
+            "never invent data. Use sparingly, and ALWAYS alongside a text answer."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "description": "bar | pie | line"},
+                "title": {"type": "string"},
+                "unit": {"type": "string", "description": "Optional, e.g. '$' or '%'."},
+                "data": {
+                    "type": "array",
+                    "description": "Points to plot.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "value": {"type": "number"},
+                        },
+                        "required": ["label", "value"],
+                    },
+                },
+            },
+            "required": ["type", "data"],
+        },
+    },
 ]
 
 # The stages get_close_status reports, in close order.
@@ -418,6 +448,27 @@ async def dispatch_tool(
     if name == "get_team":
         members = await workspace_members(db, tenant_id)
         return {"members": members, "count": len(members)}
+
+    if name == "make_chart":
+        ctype = (ti.get("type") or "").strip().lower()
+        if ctype not in ("bar", "pie", "line"):
+            return {"ok": False, "error": "type must be bar | pie | line."}
+        points: list[dict] = []
+        for d in (ti.get("data") or []):
+            if not isinstance(d, dict):
+                continue
+            try:
+                points.append({"label": str(d.get("label") or ""), "value": float(d.get("value"))})
+            except (TypeError, ValueError):
+                continue
+        if not points:
+            return {"ok": False, "error": "data must be a non-empty list of {label, value}."}
+        return {"ok": True, "chart": {
+            "type": ctype,
+            "title": (ti.get("title") or "").strip(),
+            "unit": (ti.get("unit") or "").strip(),
+            "data": points[:24],
+        }}
 
     pe = _parse_period(ti.get("period_end"), default_period)
     if pe is None:

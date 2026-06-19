@@ -36,6 +36,8 @@ class AskResponse(BaseModel):
     links: list[AskLink] = []
     # One-click "prepare" actions (run recon/flux agentic, propose-only). Phase 3.
     actions: list[dict] = []
+    # Charts rendered under the answer (bar/pie/line). Phase 3.
+    charts: list[dict] = []
 
 
 class ThreadSummary(BaseModel):

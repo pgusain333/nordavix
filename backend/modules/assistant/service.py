@@ -70,6 +70,7 @@ _STEP_LABEL: dict[str, str] = {
     "recall": "Searching past records",
     "draft_journal_entry": "Drafting an entry",
     "suggest_action": "Setting up an action",
+    "make_chart": "Drawing a chart",
     "suggest_link": "Finding the right screen",
 }
 
@@ -237,6 +238,7 @@ async def answer_question_stream(
     drafts: list[dict] = []
     links: list[dict] = []
     actions: list[dict] = []
+    charts: list[dict] = []
     final_answer: str | None = None
 
     ro_token = current_request_readonly.set(True)
@@ -288,6 +290,8 @@ async def answer_question_stream(
                             links.append(out["link"])
                         elif block.name == "suggest_action" and out.get("action"):
                             actions.append(out["action"])
+                        elif block.name == "make_chart" and out.get("chart"):
+                            charts.append(out["chart"])
                     results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -349,6 +353,7 @@ async def answer_question_stream(
             "drafts": drafts,
             "links": links,
             "actions": actions,
+            "charts": charts,
         }
     finally:
         current_request_readonly.reset(ro_token)
@@ -369,6 +374,7 @@ async def answer_question(
     drafts: list[dict] = []
     links: list[dict] = []
     actions: list[dict] = []
+    charts: list[dict] = []
     async for ev in answer_question_stream(
         db=db, tenant_id=tenant_id, question=question, period_end=period_end, history=history,
     ):
@@ -378,12 +384,14 @@ async def answer_question(
             drafts = ev["drafts"]
             links = ev["links"]
             actions = ev.get("actions", [])
+            charts = ev.get("charts", [])
     return {
         "answer": answer or "I couldn't find an answer to that.",
         "sources": sources,
         "drafts": drafts,
         "links": links,
         "actions": actions,
+        "charts": charts,
     }
 
 
