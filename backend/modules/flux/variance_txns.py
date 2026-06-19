@@ -31,7 +31,9 @@ from datetime import date
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.db.session import assert_tenant_owns
 from models.qbo_connection import QboConnection
+from models.variance import Variance
 from models.variance_transaction import VarianceTransaction
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,14 @@ async def pull_transactions_for_variance(
     )).scalar_one_or_none()
     if conn is None:
         raise RuntimeError("QuickBooks isn't connected — variance drill-in is only available for QBO-sourced analyses.")
+
+    # The delete below is keyed on variance_id (a foreign key), which the
+    # session SELECT filter does not auto-scope to the tenant. Enforce that this
+    # variance belongs to the caller's tenant first, so a foreign variance_id
+    # can never wipe another tenant's stored transactions.
+    await assert_tenant_owns(
+        db, Variance, variance_id, tenant_id=tenant_id, label="Variance"
+    )
 
     await db.execute(delete(VarianceTransaction).where(VarianceTransaction.variance_id == variance_id))
 

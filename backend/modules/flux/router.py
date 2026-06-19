@@ -28,7 +28,7 @@ from core.ai.guard import enforce_ai_limits
 from core.audit.log import write_audit_event
 from core.auth.dependencies import ROLE_ORDER, CurrentTenantId, CurrentUser, require_role
 from core.config import settings
-from core.db.session import get_db
+from core.db.session import assert_tenant_owns, get_db
 from models.account import Account
 from models.closed_period import ClosedPeriod
 from models.narrative import Narrative
@@ -1483,11 +1483,24 @@ async def export_excel(
 
 # ── Reset & Delete ──────────────────────────────────────────────────────────────
 
-async def _wipe_tb_children(tb_id: uuid.UUID, db: AsyncSession) -> None:
+async def _wipe_tb_children(
+    tb_id: uuid.UUID, db: AsyncSession, tenant_id: uuid.UUID
+) -> None:
     """
     Hard-delete every Account/Variance/Narrative belonging to this TB.
     Order: narratives → variances → accounts (FK-safe even without cascades).
+
+    These deletes are scoped by `trial_balance_id` (a foreign key), which the
+    session filter does NOT auto-scope to the tenant. So we first ENFORCE that
+    the current tenant owns this trial balance — a foreign / nonexistent tb_id
+    raises TenantOwnershipError (→ 404) and nothing is deleted. Callers already
+    404 on a missing TB; this makes the cascade safe even if a future caller
+    forgets that check (write-path isolation by enforcement, not convention).
     """
+    await assert_tenant_owns(
+        db, TrialBalance, tb_id, tenant_id=tenant_id, label="Trial balance"
+    )
+
     # Subquery: variances for this TB
     var_subq = (
         select(Variance.id)
@@ -1699,7 +1712,7 @@ async def reset_trial_balance(
     if tb is None:
         raise HTTPException(status_code=404, detail="Trial balance not found")
 
-    await _wipe_tb_children(tb_id, db)
+    await _wipe_tb_children(tb_id, db, tenant_id)
 
     tb.status = "pending"
     tb.r2_key = None
@@ -1734,7 +1747,7 @@ async def delete_trial_balance(
         raise HTTPException(status_code=404, detail="Trial balance not found")
 
     tb_name, tb_period = tb.name, tb.period_current
-    await _wipe_tb_children(tb_id, db)
+    await _wipe_tb_children(tb_id, db, tenant_id)
     await db.delete(tb)
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=_user.id,

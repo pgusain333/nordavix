@@ -1,7 +1,8 @@
+import uuid
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, with_loader_criteria
 
@@ -9,8 +10,10 @@ from core.config import settings
 from core.db.base import (
     DemoReadOnlyError,
     TenantBase,
+    TenantOwnershipError,
     current_request_readonly,
     current_tenant_id,
+    tenant_scope,
 )
 
 engine = create_async_engine(
@@ -102,6 +105,44 @@ def _block_readonly_flush(
         return
     if session.new or session.dirty or session.deleted:
         raise DemoReadOnlyError("Sample company is read-only.")
+
+
+async def assert_tenant_owns(
+    db: AsyncSession,
+    model: type,
+    entity_id: object,
+    *,
+    tenant_id: uuid.UUID | None = None,
+    label: str | None = None,
+) -> object:
+    """Enforce tenant ownership of a row BEFORE an unscoped bulk write.
+
+    The session SELECT filter is fail-closed, but a bulk DELETE/UPDATE keyed on
+    a foreign key (e.g. `delete(Account).where(trial_balance_id == :tb)`) is NOT
+    auto-scoped — its safety depends entirely on the caller having validated the
+    parent row's tenant ownership first. That made write-path isolation a
+    convention ("every caller must SELECT-to-validate before deleting by id")
+    rather than an enforced invariant.
+
+    This helper makes the check an explicit, reusable precondition: it runs a
+    tenant-scoped SELECT for the row's primary key and raises
+    TenantOwnershipError (→ HTTP 404) if the CURRENT tenant does not own it, or
+    it does not exist. Call it immediately before the bulk write so the write
+    below can never reach another tenant's rows.
+
+    Pass `tenant_id` to pin the check to a specific tenant (background/service
+    code that holds the id explicitly); omit it to use the ambient request
+    context. `model` must expose an `id` primary key (the convention across
+    every tenant-scoped model in this app)."""
+    pk = model.id  # type: ignore[attr-defined]
+    scope = tenant_scope(tenant_id) if tenant_id is not None else nullcontext()
+    with scope:
+        found = (
+            await db.execute(select(pk).where(pk == entity_id))
+        ).scalar_one_or_none()
+    if found is None:
+        raise TenantOwnershipError(label or model.__name__, entity_id)
+    return found
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

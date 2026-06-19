@@ -6,7 +6,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from core.config import settings
-from core.db.base import DemoReadOnlyError
+from core.db.base import DemoReadOnlyError, TenantOwnershipError
 from core.security.crypto import encryption_configured
 from core.tenancy.middleware import TenantMiddleware
 from modules.adjustments.router import router as adjustments_router
@@ -106,6 +106,18 @@ async def _demo_readonly_handler(request: Request, exc: DemoReadOnlyError) -> JS
     return JSONResponse(
         {"detail": "Sample company is read-only.", "code": "demo_readonly"},
         status_code=403,
+    )
+
+
+@app.exception_handler(TenantOwnershipError)
+async def _tenant_ownership_handler(request: Request, exc: TenantOwnershipError) -> JSONResponse:  # noqa: ARG001
+    """A tenant-ownership assertion failed (assert_tenant_owns) — code tried to
+    act on a row by id that the current tenant does not own. Surface it as a
+    clean 404 (don't confirm the row exists for another tenant) instead of a
+    500. The bulk write it guarded never ran."""
+    return JSONResponse(
+        {"detail": f"{exc.label} not found.", "code": "not_found"},
+        status_code=404,
     )
 
 # ── API routers ───────────────────────────────────────────────────────────────
