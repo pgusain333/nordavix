@@ -40,6 +40,16 @@ class AskResponse(BaseModel):
     charts: list[dict] = []
 
 
+class AssistantExportRequest(BaseModel):
+    """Export one Copilot answer to a file. The frontend sends the answer the user
+    is looking at (text + any charts) — the endpoint just formats it, no AI/DB read
+    of the answer itself."""
+    format: str = Field(..., pattern="^(pdf|xlsx)$")
+    question: str = Field("", max_length=2000)
+    answer: str = Field("", max_length=40000)
+    charts: list[dict] = []
+
+
 class ThreadSummary(BaseModel):
     id: uuid.UUID
     title: str

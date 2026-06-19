@@ -12,7 +12,7 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,9 +22,12 @@ from core.db.base import current_request_readonly
 from core.db.session import get_db
 from models.assistant_conversation import AssistantMessage, AssistantThread
 from models.proposed_entry import ProposedEntry
+from models.tenant import Tenant
+from modules.assistant.export import build_answer_pdf, build_answer_xlsx
 from modules.assistant.schemas import (
     AskRequest,
     AskResponse,
+    AssistantExportRequest,
     ThreadMessage,
     ThreadSummary,
 )
@@ -181,6 +184,53 @@ async def ask_stream(
         event_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
+@router.post("/export")
+async def export_answer(
+    body: AssistantExportRequest,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Export one Copilot answer (its text + any charts) as a branded PDF or Excel
+    file. Pure formatting of content the client already has — no AI spend. The only
+    DB read is the workspace name (for branding); Tenant isn't tenant-scoped, so we
+    filter by the caller's own id."""
+    company = "Nordavix"
+    try:
+        tenant = (await db.execute(
+            select(Tenant).where(Tenant.id == tenant_id)
+        )).scalar_one_or_none()
+        if tenant and tenant.name:
+            company = tenant.name
+    except Exception:
+        logger.exception("assistant export: workspace name lookup failed")
+
+    try:
+        if body.format == "pdf":
+            data = build_answer_pdf(
+                question=body.question, answer=body.answer,
+                charts=body.charts, company=company,
+            )
+            media, ext = "application/pdf", "pdf"
+        else:
+            data = build_answer_xlsx(
+                question=body.question, answer=body.answer, charts=body.charts,
+            )
+            media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ext = "xlsx"
+    except Exception:
+        logger.exception("assistant export failed for tenant %s", tenant_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Couldn't generate the export. Please try again.",
+        ) from None
+
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="ndvx-copilot-answer.{ext}"'},
     )
 
 

@@ -163,6 +163,34 @@ export const assistantApi = {
     }
   },
 
+  /**
+   * Export a single answer (its text + any charts) to a branded PDF or Excel file
+   * and trigger a browser download. Uses fetch (not axios) so we can stream the
+   * binary body straight to a Blob.
+   */
+  exportAnswer: async (
+    format: "pdf" | "xlsx",
+    question: string,
+    answer: string,
+    charts: AssistantChart[],
+  ): Promise<void> => {
+    const res = await fetch(`${API_BASE_URL}/api/assistant/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ format, question, answer, charts }),
+    })
+    if (!res.ok) throw new Error(`assistant export failed: ${res.status}`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `ndvx-copilot-answer.${format}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  },
+
   /** The current user's recent conversations for this client, newest first. */
   listThreads: async (): Promise<ThreadSummary[]> => {
     const { data } = await apiClient.get("/api/assistant/threads")

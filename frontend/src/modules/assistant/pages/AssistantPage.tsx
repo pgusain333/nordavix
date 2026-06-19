@@ -13,7 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import {
   Sparkles, ArrowUp, Square, Plus, History, Clock, FileText, ArrowUpRight,
-  Copy, Check, Loader2, Play, AlertTriangle, Wallet, Scale, ClipboardList,
+  Copy, Check, Download, Loader2, Play, AlertTriangle, Wallet, Scale, ClipboardList,
 } from "lucide-react"
 import {
   assistantApi,
@@ -31,6 +31,7 @@ import { api as fluxApi } from "@/modules/flux/api"
 interface ChatMsg {
   role: "user" | "assistant"
   content: string
+  question?: string // the user question that produced this answer (for export)
   sources?: AssistantSource[] | null
   drafts?: AssistantDraft[]
   links?: AssistantLink[]
@@ -143,7 +144,7 @@ export default function AssistantPage() {
     setMessages((prev) => [
       ...prev,
       { role: "user", content: q },
-      { role: "assistant", content: "", streaming: true },
+      { role: "assistant", content: "", streaming: true, question: q },
     ])
     setInput("")
     setStreaming(true)
@@ -457,11 +458,24 @@ function MessageBubble({ msg, status }: { msg: ChatMsg; status: string | null })
   const navigate = useNavigate()
   const labels = sourceLabels(msg.sources)
   const [copied, setCopied] = useState(false)
+  const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null)
 
   function copy() {
     void navigator.clipboard?.writeText(msg.content)
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1500)
+  }
+
+  async function doExport(format: "pdf" | "xlsx") {
+    if (exporting) return
+    setExporting(format)
+    try {
+      await assistantApi.exportAnswer(format, msg.question || "", msg.content, msg.charts || [])
+    } catch {
+      /* best-effort; the button just re-enables on failure */
+    } finally {
+      setExporting(null)
+    }
   }
 
   if (isUser) {
@@ -555,15 +569,43 @@ function MessageBubble({ msg, status }: { msg: ChatMsg; status: string | null })
               </span>
             ))}
             {!msg.streaming && !msg.error && msg.content && (
-              <button
-                onClick={copy}
-                className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] opacity-0 transition-opacity group-hover:opacity-100"
-                style={{ color: "var(--text-muted)" }}
-                title="Copy answer"
-              >
-                {copied ? <Check size={12} /> : <Copy size={12} />}
-                {copied ? "Copied" : "Copy"}
-              </button>
+              <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                <button
+                  onClick={copy}
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors"
+                  style={{ color: "var(--text-muted)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  title="Copy answer"
+                >
+                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                <button
+                  onClick={() => void doExport("pdf")}
+                  disabled={!!exporting}
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-60"
+                  style={{ color: "var(--text-muted)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  title="Download this answer as a branded PDF"
+                >
+                  {exporting === "pdf" ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                  PDF
+                </button>
+                <button
+                  onClick={() => void doExport("xlsx")}
+                  disabled={!!exporting}
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-60"
+                  style={{ color: "var(--text-muted)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  title="Download this answer as Excel"
+                >
+                  {exporting === "xlsx" ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                  Excel
+                </button>
+              </div>
             )}
           </div>
         )}
