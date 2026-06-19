@@ -48,7 +48,7 @@ _OUT = 4.00 / 1_000_000
 _CACHE_READ = 0.08 / 1_000_000
 _CACHE_WRITE = 1.00 / 1_000_000
 
-_MAX_TURNS = 4          # tool round-trips before we stop (loop backstop)
+_MAX_TURNS = 6          # tool round-trips before we force a final answer
 _MAX_TOKENS = 1024
 _MAX_HISTORY = 8        # prior turns carried for context
 
@@ -59,6 +59,12 @@ _STEP_LABEL: dict[str, str] = {
     "get_close_status": "Checking close status",
     "get_adjustments_queue": "Reading the Adjustments queue",
     "get_financial_insights": "Reviewing financial health",
+    "get_flux_variances": "Reading the flux analysis",
+    "get_schedules": "Reading schedules",
+    "get_risk_findings": "Scanning Risk Radar",
+    "get_close_tasks": "Reading the close checklist",
+    "get_financial_statements": "Pulling the financial statements",
+    "get_intercompany": "Checking intercompany",
     "get_account_guidance": "Recalling what you taught us",
     "recall": "Searching past records",
     "draft_journal_entry": "Drafting an entry",
@@ -80,27 +86,44 @@ _SYSTEM_STATIC = (
     "suggest the next step (e.g. \"run Sync for that month\").\n"
     "- Money is USD. Show variances with their sign and flag anything that doesn't "
     "tie out.\n\n"
-    "TOOL ROUTING — pick the SMALLEST set of tools, usually ONE, then answer:\n"
-    "- balance of an account → get_account_balance\n"
-    "- unreconciled / variances / does it tie out → get_reconciliations_overview\n"
+    "TOOL ROUTING — pick the smallest set of tools that answers the question, then "
+    "answer. You CAN call several tools (even in one turn) for a broad question:\n"
+    "- account balance → get_account_balance\n"
+    "- reconciliations: what's unreconciled, GL-vs-subledger variance, does it tie "
+    "out → get_reconciliations_overview\n"
+    "- flux: what moved vs the prior period, biggest changes → get_flux_variances\n"
+    "- schedules: prepaids / accruals / depreciation / leases / loans this month → "
+    "get_schedules\n"
+    "- what's in the Adjustments queue / proposed entries / what's left to approve → "
+    "get_adjustments_queue\n"
+    "- risk / likely errors / misclassifications / anything to review → "
+    "get_risk_findings\n"
+    "- what's left to do / my tasks / close checklist / are we on track → "
+    "get_close_tasks\n"
+    "- specific statement figures (net income, total assets, revenue) → "
+    "get_financial_statements\n"
+    "- financial health / business outlook / cash / runway / margins / growth → "
+    "get_financial_insights\n"
+    "- intercompany / related-party accounts → get_intercompany\n"
     "- what's blocking / can we close → get_close_status\n"
-    "- what's in the Adjustments queue / pending or proposed entries / what's left "
-    "to approve → get_adjustments_queue\n"
-    "- how are we doing / business outlook / financial health / cash / runway / "
-    "profitability / margins / growth → get_financial_insights\n"
-    "- what do we know or expect for an account → get_account_guidance\n"
-    "- how did we explain or handle X before → recall\n"
-    "- book / record / reclassify / accrue something → draft_journal_entry. This "
-    "creates a DRAFT that goes to the Adjustments queue for a human to approve and "
-    "post; you NEVER post to QuickBooks and NEVER approve.\n"
+    "- what we know or expect for an account → get_account_guidance\n"
+    "- how we explained or handled X before → recall\n"
+    "- book / record / reclassify / accrue → draft_journal_entry (creates a DRAFT "
+    "for a human to approve + post; you NEVER post to QuickBooks and NEVER approve)\n"
     "- point the user to a screen → suggest_link\n"
-    "Use the active period given below unless the user names a different month. Do "
-    "NOT ask which month when an active period is set. You are NOT limited to "
-    "close mechanics — you can also report the Adjustments queue and the financial "
-    "outlook with the tools above.\n"
-    "When the user asks what's in the Adjustments queue, give the status counts and "
-    "list a few of the entries inline, then offer the Adjustments screen "
-    "(suggest_link) for the full list — don't just send them away.\n\n"
+    "Use the active period below unless the user names another month; don't ask "
+    "which month when an active period is set.\n\n"
+    "BE A PROACTIVE CLOSE COPILOT:\n"
+    "- ALWAYS give an answer. If a tool returns no data, say what's missing and the "
+    "next step — never reply that you couldn't finish.\n"
+    "- For broad questions (\"how's the close going\", \"what should I do\"), gather "
+    "from the relevant tools (close tasks + reconciliations + flux + risk + "
+    "adjustments) and synthesize ONE clear picture.\n"
+    "- Lead with the direct answer, then when it helps add a short, prioritized plan "
+    "or next steps (a few numbered items) and practical suggestions for doing it "
+    "efficiently, and offer the relevant screen with suggest_link.\n"
+    "- When listing a queue / checklist / findings, show a few inline and link to "
+    "the full screen — don't just send the user away.\n\n"
     "STYLE:\n"
     "- Do NOT narrate your actions (no \"let me check…\"). Either call a tool with no "
     "accompanying text, or write the final answer.\n"
@@ -263,9 +286,34 @@ async def answer_question_stream(
             final_answer = "".join(turn_text).strip()
             break
 
+        # If the loop ran out of turns still calling tools, force a closing answer
+        # with NO tools so the model MUST synthesize from everything it gathered —
+        # never punt with "I couldn't finish".
+        if final_answer is None:
+            try:
+                turn_text = []
+                async with _aclient.messages.stream(
+                    model=settings.assistant_model,
+                    max_tokens=_MAX_TOKENS,
+                    system=system,
+                    messages=messages,
+                ) as stream:
+                    async for event in stream:
+                        if (
+                            getattr(event, "type", "") == "content_block_delta"
+                            and getattr(event.delta, "type", None) == "text_delta"
+                        ):
+                            turn_text.append(event.delta.text)
+                            yield {"type": "delta", "text": event.delta.text}
+                    final = await stream.get_final_message()
+                _record(final)
+                final_answer = "".join(turn_text).strip()
+            except Exception:  # pragma: no cover — last-resort synthesis must not crash the turn
+                logger.exception("assistant forced-synthesis failed")
+
         answer = final_answer or (
-            "I wasn't able to finish that — try narrowing the question or naming a "
-            "specific account or month."
+            "Here's what I found so far — point me at a specific account, month, or "
+            "module and I'll go deeper."
         )
         yield {
             "type": "result",

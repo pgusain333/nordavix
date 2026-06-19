@@ -25,7 +25,7 @@ from models.proposed_entry import ProposedEntry
 from models.trial_balance import TrialBalance
 from models.variance import Variance
 from modules.adjustments.service import parse_ai_entries, period_accounts
-from modules.close_workflow.service import linked_status
+from modules.close_workflow.service import build_checklist, linked_status
 from modules.memory.service import account_memory_context
 from modules.recons.overview import read_overview_from_snapshots
 
@@ -173,6 +173,92 @@ TOOL_DEFS: list[dict[str, Any]] = [
             "properties": {
                 "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
             },
+        },
+    },
+    {
+        "name": "get_flux_variances",
+        "description": (
+            "Flux analysis for the period — the account balances that moved vs the "
+            "prior period, with the dollar and % change, which are material, their "
+            "review status, and whether an explanation has been written. Use for "
+            "'what moved this month', 'biggest variances', 'flux', 'what changed vs "
+            "last month', 'is the flux done'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+                "material_only": {"type": "boolean", "description": "Only material variances (default true)."},
+            },
+        },
+    },
+    {
+        "name": "get_schedules",
+        "description": (
+            "Amortization & roll-forward schedules for the period — prepaids, "
+            "accruals, fixed assets (depreciation), leases, and loans: how many are "
+            "committed and the total expense and ending balance hitting this month "
+            "per type. Use for 'what's amortizing', 'prepaid/depreciation/accrual "
+            "this month', 'schedules', 'recurring entries'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "get_risk_findings",
+        "description": (
+            "Risk Radar / GL-accuracy findings for the period — likely "
+            "misclassifications, duplicates, round-dollar entries, missing recurring "
+            "items, large entries with no memo, etc., each with severity and a "
+            "suggested fix. Use for 'any errors', 'what looks wrong', 'coding "
+            "mistakes', 'risks', 'anything to review', 'second set of eyes'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "get_close_tasks",
+        "description": (
+            "The month-end close checklist for the period — every step (sync, "
+            "reconciliations, flux, schedules, adjustments, and manual tasks) with "
+            "its status, assignee, due date, and progress. Use for 'what's left to "
+            "do', 'my tasks', 'close checklist', 'what should I do next', 'are we on "
+            "track', and to build a step-by-step plan to finish the close."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "get_financial_statements",
+        "description": (
+            "The internal financial statements for the period, built from synced GL "
+            "data — Income Statement (revenue, gross profit, operating & net income) "
+            "and Balance Sheet (assets, liabilities, equity) line items. Use for "
+            "specific statement figures: 'what's net income', 'total assets', "
+            "'revenue this period', 'show the P&L / balance sheet'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "get_intercompany",
+        "description": (
+            "Intercompany setup for this workspace — the accounts marked "
+            "intercompany and the configured counterparty pairs, with this entity's "
+            "balance on each for the period. Use for 'intercompany', 'related-party "
+            "balances', 'IC accounts', 'who are we paired with'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
         },
     },
     {
@@ -501,6 +587,214 @@ async def dispatch_tool(
             "recommendations": [
                 {"priority": r.get("priority"), "title": r.get("title")}
                 for r in recs[:5]
+            ],
+        }
+
+    if name == "get_flux_variances":
+        material_only = ti.get("material_only")
+        material_only = True if material_only is None else bool(material_only)
+        tb = (await db.execute(
+            select(TrialBalance).where(TrialBalance.period_current == pe)
+        )).scalar_one_or_none()
+        if tb is None:
+            return {
+                "ok": False, "period_end": pe.isoformat(),
+                "note": "No flux analysis for this period yet. Run Flux Analysis for that month.",
+            }
+        rows = (await db.execute(
+            select(Variance, Account)
+            .join(Account, Account.id == Variance.account_id)
+            .where(Account.trial_balance_id == tb.id)
+        )).all()
+        items = []
+        for var, acct in rows:
+            if material_only and not getattr(var, "is_material", False):
+                continue
+            items.append({
+                "account_number": acct.account_number,
+                "account_name": acct.account_name,
+                "prior_balance": str(acct.prior_balance) if acct.prior_balance is not None else None,
+                "current_balance": str(acct.current_balance) if acct.current_balance is not None else None,
+                "dollar_variance": str(var.dollar_variance) if var.dollar_variance is not None else None,
+                "pct_variance": str(var.pct_variance) if var.pct_variance is not None else None,
+                "material": bool(getattr(var, "is_material", False)),
+                "status": var.status,
+                "explained": var.ai_commentary is not None,
+            })
+
+        def _absamt(it: dict) -> float:
+            try:
+                return abs(float(it["dollar_variance"] or 0))
+            except Exception:
+                return 0.0
+
+        items.sort(key=_absamt, reverse=True)
+        return {
+            "period_end": pe.isoformat(),
+            "material_only": material_only,
+            "total": len(items),
+            "items": items[:15],
+        }
+
+    if name == "get_schedules":
+        from decimal import Decimal
+
+        from models.schedule import ScheduleSnapshot
+        rows = (await db.execute(
+            select(ScheduleSnapshot).where(
+                ScheduleSnapshot.period_end == pe,
+                ScheduleSnapshot.status == "committed",
+            )
+        )).scalars().all()
+        by_type: dict[str, dict] = {}
+        for r in rows:
+            t = by_type.setdefault(
+                r.schedule_type,
+                {"snapshots": 0, "items": 0, "period_expense": Decimal("0"), "ending_balance": Decimal("0")},
+            )
+            t["snapshots"] += 1
+            t["items"] += (r.item_count or 0)
+            for fld in ("period_expense", "ending_balance"):
+                try:
+                    t[fld] += Decimal(str(getattr(r, fld) or 0))
+                except Exception:
+                    pass
+        types = [
+            {
+                "type": k,
+                "committed_snapshots": v["snapshots"],
+                "items": v["items"],
+                "period_expense": f"{v['period_expense']:.2f}",
+                "ending_balance": f"{v['ending_balance']:.2f}",
+            }
+            for k, v in sorted(by_type.items())
+        ]
+        return {
+            "period_end": pe.isoformat(),
+            "types": types,
+            "note": None if types else "No committed schedules for this period yet.",
+        }
+
+    if name == "get_risk_findings":
+        from modules.gl_accuracy.service import list_findings
+        data = await list_findings(db, pe)
+        items = [
+            {
+                "title": it.get("title"),
+                "kind": it.get("kind"),
+                "severity": it.get("severity"),
+                "action_kind": it.get("action_kind"),
+                "amount": it.get("amount"),
+                "vendor": it.get("vendor"),
+                "posted_account_name": it.get("posted_account_name"),
+                "suggested_account_name": it.get("suggested_account_name"),
+                "status": it.get("status"),
+            }
+            for it in (data.get("items") or [])[:10]
+        ]
+        return {
+            "period_end": pe.isoformat(),
+            "open_count": data.get("open_count"),
+            "high": data.get("high"),
+            "medium": data.get("medium"),
+            "fixable_dollars": data.get("dollars"),
+            "items": items,
+        }
+
+    if name == "get_close_tasks":
+        steps = await build_checklist(db, tenant_id, pe, None)
+        items = [
+            {
+                "title": s.get("title"),
+                "category": s.get("category"),
+                "status": s.get("status"),
+                "due_date": s.get("due_date"),
+                "completed_pct": s.get("completed_pct"),
+                "linked_module": s.get("linked_module"),
+            }
+            for s in steps
+        ]
+        counts: dict[str, int] = {}
+        for s in items:
+            counts[s["status"]] = counts.get(s["status"], 0) + 1
+        return {
+            "period_end": pe.isoformat(),
+            "counts": counts,
+            "total": len(items),
+            "steps": items,
+        }
+
+    if name == "get_financial_statements":
+        from modules.financials.internal import build_balance_sheet, build_income_statement
+        has_snap = (await db.execute(
+            select(GlBalanceSnapshot).where(GlBalanceSnapshot.period_end == pe).limit(1)
+        )).scalars().first()
+        if has_snap is None:
+            return {
+                "ok": False, "period_end": pe.isoformat(),
+                "note": "No synced GL for this period yet. Run Sync for that month.",
+            }
+
+        def _slim(rows: list[dict]) -> list[dict]:
+            out = []
+            for r in rows:
+                cur = r.get("current")
+                if cur is None and r.get("kind") != "section_header":
+                    continue
+                out.append({
+                    "label": r.get("label"),
+                    "amount": str(cur) if cur is not None else None,
+                    "kind": r.get("kind"),
+                })
+            return out
+
+        is_rows, _ = await build_income_statement(db, tenant_id, pe, None)
+        bs_rows, _ = await build_balance_sheet(db, tenant_id, pe, None)
+        return {
+            "period_end": pe.isoformat(),
+            "income_statement": _slim(is_rows),
+            "balance_sheet": _slim(bs_rows),
+        }
+
+    if name == "get_intercompany":
+        from models.intercompany_account import IntercompanyAccount
+        from models.intercompany_pair import IntercompanyPair
+        pairs = (await db.execute(select(IntercompanyPair))).scalars().all()
+        marks = (await db.execute(select(IntercompanyAccount))).scalars().all()
+        if not pairs and not marks:
+            return {
+                "ok": True, "period_end": pe.isoformat(), "pairs": [], "accounts": [],
+                "note": "No intercompany accounts or pairs are configured for this workspace.",
+            }
+        acct_ids = {p.my_qbo_account_id for p in pairs} | {m.qbo_account_id for m in marks}
+        bal_by_acct: dict[str, str] = {}
+        if acct_ids:
+            brows = (await db.execute(
+                select(GlBalanceSnapshot).where(
+                    GlBalanceSnapshot.period_end == pe,
+                    GlBalanceSnapshot.qbo_account_id.in_(acct_ids),
+                )
+            )).scalars().all()
+            for b in brows:
+                bal_by_acct[b.qbo_account_id] = str(b.balance)
+        return {
+            "period_end": pe.isoformat(),
+            "pairs": [
+                {
+                    "my_account": p.my_qbo_account_id,
+                    "counterparty": p.counterparty_label,
+                    "my_balance": bal_by_acct.get(p.my_qbo_account_id),
+                }
+                for p in pairs
+            ],
+            "accounts": [
+                {
+                    "qbo_account_id": m.qbo_account_id,
+                    "kind": m.kind,
+                    "counterparty": m.counterparty,
+                    "balance": bal_by_acct.get(m.qbo_account_id),
+                }
+                for m in marks
             ],
         }
 
