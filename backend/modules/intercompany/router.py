@@ -33,7 +33,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.ai.guard import enforce_ai_limits
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_role
-from core.db.session import get_db
+
+# Intercompany is inherently CROSS-TENANT — consolidation and eliminations read
+# multiple companies, and a pair is mirrored as a row in BOTH companies. It must
+# therefore run on the system (BYPASSRLS) engine so it keeps working after the
+# Tier 2 RLS cutover; its access control is the app-layer company-membership
+# checks in each handler, not RLS. Inert until cutover (system and app engines
+# are the same object while APP_DATABASE_URL is unset). See docs/RLS_CUTOVER.md.
+from core.db.session import get_system_db
 from models.gl_balance_snapshot import GlBalanceSnapshot
 from models.intercompany_account import IntercompanyAccount
 from models.intercompany_pair import IntercompanyPair
@@ -148,7 +155,7 @@ def _kind_for_account_type(acct_type: str) -> str:
 async def get_overview(
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> OverviewResponse:
     """All flagged IC accounts with their live GL balances at period_end."""
     try:
@@ -263,7 +270,7 @@ async def get_overview(
 async def auto_detect(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
     classify: bool = True,
 ) -> dict:
     """
@@ -402,7 +409,7 @@ async def upsert_mark(
     body: MarkIn,
     tenant_id: CurrentTenantId,
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> dict:
     if body.kind not in ("receivable", "payable", "unknown"):
         raise HTTPException(400, "kind must be receivable / payable / unknown")
@@ -448,7 +455,7 @@ async def delete_mark(
     mark_id: uuid.UUID,
     tenant_id: CurrentTenantId,
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> dict:
     row = (await db.execute(
         select(IntercompanyAccount).where(IntercompanyAccount.id == mark_id)
@@ -475,7 +482,7 @@ async def delete_mark(
 async def ai_detect(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> dict:
     """
     AI-powered IC detection — pass the whole chart of accounts to Claude
@@ -676,7 +683,7 @@ Empty list is acceptable.
 async def auto_classify(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
     lookback_months: int = 6,
 ) -> dict:
     """
@@ -751,7 +758,7 @@ async def get_account_transactions(
     qbo_account_id: str,
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> dict:
     """Transactions posted to this IC account in the closing month."""
     try:
@@ -989,7 +996,7 @@ async def _balance_at_period_end(
 async def list_accessible_companies(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> AccessibleCompaniesResponse:
     """
     Every OTHER workspace the current user has access to (via shared
@@ -1073,7 +1080,7 @@ async def list_accessible_companies(
 @router.get("/pairs", response_model=list[PairOut])
 async def list_pairs(
     tenant_id: CurrentTenantId,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> list[PairOut]:
     """Pairs visible to THIS tenant (its half of each pair_group)."""
     pairs = list((await db.execute(
@@ -1101,7 +1108,7 @@ async def create_pair(
     body: PairIn,
     tenant_id: CurrentTenantId,
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> PairOut:
     """
     Create a pair: writes TWO rows (one per tenant) sharing a
@@ -1229,7 +1236,7 @@ async def delete_pair(
     pair_group_id: uuid.UUID,
     tenant_id: CurrentTenantId,
     user: User = Depends(require_role("reviewer")),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> dict:
     """Delete BOTH halves of the pair_group (across tenants). Reviewer+ —
     unpairing changes eliminations + the consolidated TB on two entities."""
@@ -1278,7 +1285,7 @@ async def get_eliminations(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> EliminationsResponse:
     """
     For every pair this tenant participates in: pull both sides'
@@ -1364,7 +1371,7 @@ async def get_consolidated_tb(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> ConsolidatedTbResponse:
     """
     Roll up the GL snapshot from every paired entity at period_end,
@@ -1551,7 +1558,7 @@ async def export_eliminations_xlsx(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ):
     """Excel export of the eliminations report."""
     from io import BytesIO
@@ -1629,7 +1636,7 @@ async def export_consolidated_tb_xlsx(
     tenant_id: CurrentTenantId,
     user: CurrentUser,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ):
     """Excel export of the consolidated TB with elimination column."""
     from io import BytesIO
