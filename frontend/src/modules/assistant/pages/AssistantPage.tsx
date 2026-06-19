@@ -9,20 +9,31 @@
  * are saved per client so conversations persist and can be resumed.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
+import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
-import { Bot, ArrowUp, Sparkles, Plus, History, Clock } from "lucide-react"
+import { Bot, ArrowUp, Sparkles, Plus, History, Clock, FileText, ArrowUpRight } from "lucide-react"
 import {
   assistantApi,
   type AssistantSource,
   type AssistantTurn,
+  type AssistantDraft,
+  type AssistantLink,
 } from "@/modules/assistant/api"
 
 interface ChatMsg {
   role: "user" | "assistant"
   content: string
   sources?: AssistantSource[] | null
+  drafts?: AssistantDraft[]
+  links?: AssistantLink[]
   error?: boolean
+}
+
+function money(s: string | null | undefined): string {
+  const n = Number(s ?? 0)
+  if (!isFinite(n)) return String(s ?? "")
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 const SUGGESTIONS = [
@@ -89,7 +100,13 @@ export default function AssistantPage() {
       const res = await askMut.mutateAsync({ q, history, threadId })
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: res.answer, sources: res.sources },
+        {
+          role: "assistant",
+          content: res.answer,
+          sources: res.sources,
+          drafts: res.drafts,
+          links: res.links,
+        },
       ])
       if (res.thread_id) setThreadId(res.thread_id)
       void qc.invalidateQueries({ queryKey: ["assistant-threads"] })
@@ -299,6 +316,7 @@ export default function AssistantPage() {
 
 function MessageBubble({ msg }: { msg: ChatMsg }) {
   const isUser = msg.role === "user"
+  const navigate = useNavigate()
   const labels = sourceLabels(msg.sources)
   return (
     <motion.div
@@ -335,6 +353,71 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
               >
                 {l}
               </span>
+            ))}
+          </div>
+        )}
+
+        {msg.drafts?.map((d, di) => (
+          <div
+            key={di}
+            className="mt-2 rounded-xl p-3"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+          >
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <FileText size={14} style={{ color: "var(--green)" }} />
+              <span className="text-[12.5px] font-medium" style={{ color: "var(--text)" }}>
+                {d.description}
+              </span>
+            </div>
+            <div className="space-y-0.5">
+              {d.lines.map((ln, li) => (
+                <div
+                  key={li}
+                  className="flex items-center justify-between text-[12px] tabular-nums"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <span className="truncate">
+                    {[ln.account_number, ln.account_name].filter(Boolean).join(" · ") || "—"}
+                  </span>
+                  <span className="ml-3 shrink-0">
+                    {Number(ln.debit) > 0 ? `Dr ${money(ln.debit)}` : `Cr ${money(ln.credit)}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {d.memo && (
+              <p className="mt-1.5 text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+                Memo: {d.memo}
+              </p>
+            )}
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                Draft · in Adjustments for review
+              </span>
+              <button
+                onClick={() => navigate("/app/adjustments")}
+                className="inline-flex items-center gap-1 text-[12px] font-medium"
+                style={{ color: "var(--green)" }}
+              >
+                Review <ArrowUpRight size={13} />
+              </button>
+            </div>
+          </div>
+        ))}
+
+        {msg.links && msg.links.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {msg.links.map((l, li) => (
+              <button
+                key={li}
+                onClick={() => navigate(l.path)}
+                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium transition-colors"
+                style={{ border: "1px solid var(--border)", color: "var(--text)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                {l.label} <ArrowUpRight size={13} />
+              </button>
             ))}
           </div>
         )}

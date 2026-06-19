@@ -8,6 +8,7 @@ get_db session is scoped to the caller's client).
 """
 import logging
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -18,6 +19,7 @@ from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.base import current_request_readonly
 from core.db.session import get_db
 from models.assistant_conversation import AssistantMessage, AssistantThread
+from models.proposed_entry import ProposedEntry
 from modules.assistant.schemas import (
     AskRequest,
     AskResponse,
@@ -70,13 +72,39 @@ async def ask(
                 answer=result["answer"],
                 sources=result.get("sources"),
             )
+            # Persist any assistant-drafted JEs into the Adjustments queue
+            # (source="assistant", status="open") for human review + posting.
+            for d in result.get("drafts", []):
+                try:
+                    db.add(ProposedEntry(
+                        id=uuid.uuid4(),
+                        tenant_id=tenant_id,
+                        source="assistant",
+                        source_ref=str(thread_id) if thread_id else "assistant",
+                        period_end=date.fromisoformat(d["period_end"]),
+                        description=d.get("description") or "Assistant-drafted entry",
+                        lines=d.get("lines") or [],
+                        memo=d.get("memo"),
+                        rationale=d.get("rationale"),
+                        confidence=d.get("confidence") or "medium",
+                        status="open",
+                        created_by=user.id,
+                    ))
+                except Exception:
+                    logger.exception("assistant: skipped a malformed draft")
             await db.commit()
         except Exception:
             await db.rollback()
             logger.exception("assistant persist failed for tenant %s", tenant_id)
             thread_id = body.thread_id
 
-    return AskResponse(answer=result["answer"], sources=result["sources"], thread_id=thread_id)
+    return AskResponse(
+        answer=result["answer"],
+        sources=result["sources"],
+        thread_id=thread_id,
+        drafts=result.get("drafts", []),
+        links=result.get("links", []),
+    )
 
 
 @router.get("/threads", response_model=list[ThreadSummary])

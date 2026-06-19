@@ -21,10 +21,19 @@ class AskSource(BaseModel):
     input: dict
 
 
+class AskLink(BaseModel):
+    path: str
+    label: str
+
+
 class AskResponse(BaseModel):
     answer: str
     sources: list[AskSource]
     thread_id: uuid.UUID | None = None
+    # Assistant-drafted journal entries (also persisted as ProposedEntry rows in
+    # the Adjustments queue) + deep-link buttons. Phase 2.
+    drafts: list[dict] = []
+    links: list[AskLink] = []
 
 
 class ThreadSummary(BaseModel):

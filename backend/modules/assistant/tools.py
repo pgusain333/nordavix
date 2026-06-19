@@ -22,9 +22,23 @@ from models.gl_balance_snapshot import GlBalanceSnapshot
 from models.narrative import Narrative
 from models.trial_balance import TrialBalance
 from models.variance import Variance
+from modules.adjustments.service import parse_ai_entries, period_accounts
 from modules.close_workflow.service import linked_status
 from modules.memory.service import account_memory_context
 from modules.recons.overview import read_overview_from_snapshots
+
+# Screens the assistant can deep-link the user to (target -> path, default label).
+_LINK_TARGETS: dict[str, tuple[str, str]] = {
+    "dashboard": ("/app", "Dashboard"),
+    "reconciliations": ("/app/reconciliations", "Reconciliations"),
+    "flux": ("/app/flux", "Flux Analysis"),
+    "schedules": ("/app/schedules", "Schedules"),
+    "adjustments": ("/app/adjustments", "Adjustments"),
+    "close": ("/app/close", "Close Workflow"),
+    "risk": ("/app/gl-accuracy", "Risk Radar"),
+    "insights": ("/app/insights", "Insights"),
+    "financials": ("/app/financials", "Financial Statements"),
+}
 
 # Anthropic tool schemas — Phase 0 is read-only Q&A only (no write/post tools).
 TOOL_DEFS: list[dict[str, Any]] = [
@@ -116,6 +130,63 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 }
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "draft_journal_entry",
+        "description": (
+            "Draft a balanced adjusting journal entry from the user's request "
+            "(e.g. 'book the $1,200 annual insurance to prepaid'). Creates a DRAFT "
+            "only — it goes to the Adjustments queue for a human to review, approve, "
+            "and post to QuickBooks. You NEVER post and NEVER approve. Provide 2+ "
+            "lines that balance (total debits == total credits), referencing real "
+            "accounts by account_number (preferred) and/or account_name. If you're "
+            "unsure of the correct account, ask the user before drafting."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "What the entry records, e.g. 'Reclassify annual insurance premium to prepaid'.",
+                },
+                "lines": {
+                    "type": "array",
+                    "description": "Two or more JE lines whose debits and credits balance.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "account_number": {"type": "string"},
+                            "account_name": {"type": "string"},
+                            "debit": {"type": "string", "description": "e.g. '1200.00'; omit/'0' on a credit line."},
+                            "credit": {"type": "string", "description": "e.g. '1200.00'; omit/'0' on a debit line."},
+                        },
+                    },
+                },
+                "memo": {"type": "string"},
+                "rationale": {"type": "string", "description": "Short why."},
+                "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+            },
+            "required": ["description", "lines"],
+        },
+    },
+    {
+        "name": "suggest_link",
+        "description": (
+            "Offer the user a button to jump to a relevant screen. Use when pointing "
+            "them where to act — e.g. after drafting an entry link to 'adjustments', "
+            "or to review a reconciliation link to 'reconciliations'. Valid targets: "
+            "dashboard, reconciliations, flux, schedules, adjustments, close, risk, "
+            "insights, financials."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "One of the valid targets."},
+                "label": {"type": "string", "description": "Optional button label; defaults to the section name."},
+            },
+            "required": ["target"],
         },
     },
 ]
@@ -293,5 +364,43 @@ async def dispatch_tool(
             })
 
         return {"query": q, "results": results}
+
+    if name == "draft_journal_entry":
+        # Validate + map onto real accounts + enforce Σdebit == Σcredit using the
+        # SAME helpers the Adjustments AI producers use. Read-only here; the
+        # router persists the returned draft as a ProposedEntry after the loop.
+        accounts = await period_accounts(db, tenant_id, pe)
+        entry = {
+            "description": ti.get("description"),
+            "lines": ti.get("lines") or [],
+            "memo": ti.get("memo"),
+            "rationale": ti.get("rationale"),
+            "confidence": ti.get("confidence"),
+        }
+        parsed = parse_ai_entries([entry], accounts)
+        if not parsed:
+            return {
+                "ok": False,
+                "error": (
+                    "I couldn't turn that into a balanced entry. Make sure total "
+                    "debits equal total credits and the accounts exist for this "
+                    "period (run Sync if the month isn't synced yet)."
+                ),
+            }
+        return {
+            "ok": True,
+            "draft": {**parsed[0], "period_end": pe.isoformat()},
+            "note": (
+                "Drafted for review — it's now in the Adjustments queue for a "
+                "person to approve and post. Nothing was posted to QuickBooks."
+            ),
+        }
+
+    if name == "suggest_link":
+        target = (ti.get("target") or "").strip().lower()
+        if target not in _LINK_TARGETS:
+            return {"ok": False, "error": f"Unknown target. Valid: {', '.join(_LINK_TARGETS)}."}
+        path, default_label = _LINK_TARGETS[target]
+        return {"ok": True, "link": {"path": path, "label": ti.get("label") or default_label}}
 
     return {"error": f"Unknown tool: {name}"}

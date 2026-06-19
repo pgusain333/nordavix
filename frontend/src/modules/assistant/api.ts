@@ -5,10 +5,34 @@ export interface AssistantSource {
   input: Record<string, unknown>
 }
 
+export interface AssistantDraftLine {
+  account_number?: string | null
+  account_name?: string | null
+  account_qbo_id?: string | null
+  debit: string
+  credit: string
+}
+
+export interface AssistantDraft {
+  description: string
+  lines: AssistantDraftLine[]
+  memo?: string | null
+  rationale?: string | null
+  confidence?: string | null
+  period_end?: string | null
+}
+
+export interface AssistantLink {
+  path: string
+  label: string
+}
+
 export interface AskResponse {
   answer: string
   sources: AssistantSource[]
   thread_id: string | null
+  drafts: AssistantDraft[]
+  links: AssistantLink[]
 }
 
 export interface AssistantTurn {

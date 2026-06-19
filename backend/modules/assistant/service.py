@@ -45,8 +45,12 @@ _SYSTEM = (
     "(account name/number and period). Money is USD; show variances with their sign "
     "and call out anything that doesn't tie out. Be concise and practical for a CPA. "
     "If the user hasn't named a month and a tool needs one, ask which period "
-    "(YYYY-MM-DD). You can only READ this client's data — you cannot post entries or "
-    "change anything; if asked to, explain how they'd do it in the app."
+    "(YYYY-MM-DD). You can READ this client's data and you can DRAFT a journal "
+    "entry (draft_journal_entry) when the user asks to book/record/reclassify "
+    "something — a draft goes to the Adjustments queue for a human to approve and "
+    "post; you NEVER post to QuickBooks and NEVER approve. Use suggest_link to "
+    "point the user to the right screen (e.g. Adjustments after drafting). If "
+    "you're unsure which account to use, ask before drafting."
 )
 
 
@@ -90,6 +94,8 @@ async def answer_question(
     messages.append({"role": "user", "content": question})
 
     sources: list[dict] = []
+    drafts: list[dict] = []   # validated JE drafts (router persists as ProposedEntry)
+    links: list[dict] = []    # deep-link buttons {path, label}
     # Hard read-only for the whole loop: the assistant must never mutate data.
     ro_token = current_request_readonly.set(True)
     try:
@@ -124,6 +130,11 @@ async def answer_question(
                             pass
                         out = {"error": f"tool failed: {exc}"}
                     sources.append({"tool": block.name, "input": block.input})
+                    if isinstance(out, dict) and out.get("ok"):
+                        if block.name == "draft_journal_entry" and out.get("draft"):
+                            drafts.append(out["draft"])
+                        elif block.name == "suggest_link" and out.get("link"):
+                            links.append(out["link"])
                     results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -134,11 +145,18 @@ async def answer_question(
 
             # Final assistant turn (no more tools).
             text = "".join(getattr(b, "text", "") for b in resp.content if b.type == "text").strip()
-            return {"answer": text or "I couldn't find an answer to that.", "sources": sources}
+            return {
+                "answer": text or "I couldn't find an answer to that.",
+                "sources": sources,
+                "drafts": drafts,
+                "links": links,
+            }
 
         return {
             "answer": "I wasn't able to finish that — try narrowing the question or naming a specific account or month.",
             "sources": sources,
+            "drafts": drafts,
+            "links": links,
         }
     finally:
         current_request_readonly.reset(ro_token)
