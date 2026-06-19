@@ -1,12 +1,10 @@
 /**
- * Client Assistant — grounded, tenant-scoped Q&A with conversation memory
- * (Tier 3 Phase 0 + Phase 1).
+ * Client Assistant — "NDVX Chat".
  *
- * Answers questions about the ACTIVE client by calling read-only backend tools
- * (reconciliations, balances, close status, taught expectations) and recalling
- * past narratives/notes. Every answer is grounded in the client's real data —
- * the model can't reach another client's books, and it can only read. Threads
- * are saved per client so conversations persist and can be resumed.
+ * Grounded, tenant-scoped Q&A with conversation memory and propose-only actions
+ * (Tier 3). Empty state is a centered hero with the composer; once a thread
+ * starts, messages fill the view and the composer docks at the bottom. Answers
+ * render as themed Markdown (tables, lists, bold) — never raw "| --- |" text.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 import { useNavigate } from "react-router-dom"
@@ -20,6 +18,7 @@ import {
   type AssistantDraft,
   type AssistantLink,
 } from "@/modules/assistant/api"
+import { Markdown } from "@/modules/assistant/Markdown"
 
 interface ChatMsg {
   role: "user" | "assistant"
@@ -49,6 +48,8 @@ const TOOL_LABEL: Record<string, string> = {
   get_close_status: "Close status",
   get_account_guidance: "Client memory",
   recall: "Past records",
+  draft_journal_entry: "Drafted entry",
+  suggest_link: "Link",
 }
 
 function sourceLabels(sources: AssistantSource[] | null | undefined): string[] {
@@ -148,25 +149,69 @@ export default function AssistantPage() {
 
   const empty = messages.length === 0
 
+  const composer = (
+    <div className="w-full">
+      <div
+        className="flex items-end gap-2 rounded-2xl p-2.5 shadow-sm"
+        style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
+      >
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={onKeyDown}
+          rows={1}
+          placeholder="Ask about balances, variances, what's blocking close…"
+          className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-[14px] outline-none"
+          style={{ color: "var(--text)" }}
+        />
+        <button
+          onClick={() => void send(input)}
+          disabled={!input.trim() || askMut.isPending}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-opacity disabled:opacity-40"
+          style={{ background: "var(--green)", color: "#fff" }}
+          title="Send"
+          aria-label="Send"
+        >
+          <ArrowUp size={18} strokeWidth={2.2} />
+        </button>
+      </div>
+      <p className="mt-1.5 px-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
+        Grounded in your data · read-only · never posts to QuickBooks without you.
+      </p>
+    </div>
+  )
+
+  const suggestionChips = (
+    <div className="flex flex-wrap justify-center gap-2">
+      {SUGGESTIONS.map((s) => (
+        <button
+          key={s}
+          onClick={() => void send(s)}
+          className="rounded-full px-3 py-1.5 text-[12.5px] transition-colors"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+          onMouseLeave={(e) => (e.currentTarget.style.background = "var(--surface)")}
+        >
+          {s}
+        </button>
+      ))}
+    </div>
+  )
+
   return (
     <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-3xl flex-col">
-      {/* Header */}
-      <div className="relative flex shrink-0 items-center justify-between gap-2 px-1 pb-4">
-        <div className="flex items-center gap-2.5">
+      {/* Header: controls always; small title only once a conversation is active */}
+      <div className="relative flex shrink-0 items-center justify-between gap-2 px-1 pb-3">
+        <div className="flex items-center gap-2.5" style={{ visibility: empty ? "hidden" : "visible" }}>
           <div
-            className="flex h-9 w-9 items-center justify-center rounded-lg"
+            className="flex h-8 w-8 items-center justify-center rounded-lg"
             style={{ background: "var(--green-subtle)", color: "var(--green)" }}
           >
-            <Sparkles size={18} strokeWidth={1.8} />
+            <Sparkles size={16} strokeWidth={1.8} />
           </div>
-          <div>
-            <h1 className="text-lg font-semibold leading-tight" style={{ color: "var(--text)" }}>
-              Assistant
-            </h1>
-            <p className="text-[12.5px]" style={{ color: "var(--text-muted)" }}>
-              Grounded in this client's data · remembers across periods · read-only
-            </p>
-          </div>
+          <span className="text-[15px] font-semibold" style={{ color: "var(--text)" }}>
+            NDVX Chat
+          </span>
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -191,7 +236,6 @@ export default function AssistantPage() {
 
           {historyOpen && (
             <>
-              {/* click-away */}
               <div className="fixed inset-0 z-10" onClick={() => setHistoryOpen(false)} />
               <div
                 className="absolute right-0 top-11 z-20 max-h-80 w-72 overflow-y-auto rounded-xl p-1.5 shadow-xl"
@@ -227,89 +271,55 @@ export default function AssistantPage() {
         </div>
       </div>
 
-      {/* Conversation */}
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-1 pb-4">
-        {empty ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <div
-              className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl"
-              style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}
-            >
-              <Bot size={24} strokeWidth={1.6} />
-            </div>
-            <p className="text-[15px] font-medium" style={{ color: "var(--text)" }}>
-              Ask anything about this client's books
-            </p>
-            <p className="mt-1 max-w-sm text-[13px]" style={{ color: "var(--text-muted)" }}>
-              I'll pull the answer from your reconciliations, balances, close status,
-              what you've taught me, and past explanations — never guessing.
-            </p>
-            <div className="mt-5 flex flex-wrap justify-center gap-2">
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => void send(s)}
-                  className="rounded-full px-3 py-1.5 text-[12.5px] transition-colors"
-                  style={{
-                    background: "var(--surface)",
-                    border: "1px solid var(--border)",
-                    color: "var(--text)",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "var(--surface)")}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          messages.map((m, i) => <MessageBubble key={i} msg={m} />)
-        )}
-
-        {askMut.isPending && (
-          <div className="flex items-center gap-2 px-1" style={{ color: "var(--text-muted)" }}>
-            <Bot size={16} strokeWidth={1.7} />
-            <span className="flex gap-1">
-              <Dot delay={0} />
-              <Dot delay={0.15} />
-              <Dot delay={0.3} />
-            </span>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Composer */}
-      <div className="shrink-0 px-1 pt-1">
-        <div
-          className="flex items-end gap-2 rounded-xl p-2"
-          style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
-        >
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            rows={1}
-            placeholder="Ask about balances, variances, what's blocking close…"
-            className="max-h-32 flex-1 resize-none bg-transparent px-2 py-1.5 text-[14px] outline-none"
-            style={{ color: "var(--text)" }}
+      {empty ? (
+        /* ── Centered hero ── */
+        <div className="relative flex flex-1 flex-col items-center justify-center px-4 pb-10 text-center">
+          {/* soft brand glow */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-[60%] rounded-full blur-3xl"
+            style={{ background: "var(--green-subtle)", opacity: 0.55 }}
           />
-          <button
-            onClick={() => void send(input)}
-            disabled={!input.trim() || askMut.isPending}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-opacity disabled:opacity-40"
-            style={{ background: "var(--green)", color: "#fff" }}
-            title="Send"
-            aria-label="Send"
-          >
-            <ArrowUp size={18} strokeWidth={2.2} />
-          </button>
+          <div className="relative w-full max-w-xl">
+            <div
+              className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl shadow-sm"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+            >
+              <Sparkles size={28} strokeWidth={1.7} />
+            </div>
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl" style={{ color: "var(--text)" }}>
+              NDVX <span style={{ color: "var(--green)" }}>Chat</span>
+            </h1>
+            <p className="mx-auto mt-2.5 max-w-md text-[14px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+              Ask anything about this client's books — answered straight from your real, synced
+              data, with the numbers to back it up.
+            </p>
+            <div className="mt-6">{composer}</div>
+            <div className="mt-5">{suggestionChips}</div>
+          </div>
         </div>
-        <p className="mt-1.5 px-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
-          The assistant reads your data to answer — it never posts entries or changes anything.
-        </p>
-      </div>
+      ) : (
+        /* ── Active conversation ── */
+        <>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-1 pb-4">
+            {messages.map((m, i) => (
+              <MessageBubble key={i} msg={m} />
+            ))}
+            {askMut.isPending && (
+              <div className="flex items-center gap-2 px-1" style={{ color: "var(--text-muted)" }}>
+                <Bot size={16} strokeWidth={1.7} />
+                <span className="flex gap-1">
+                  <Dot delay={0} />
+                  <Dot delay={0.15} />
+                  <Dot delay={0.3} />
+                </span>
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+          <div className="shrink-0 px-1 pt-1">{composer}</div>
+        </>
+      )}
     </div>
   )
 }
@@ -327,19 +337,21 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
     >
       <div className={isUser ? "max-w-[85%]" : "max-w-[92%]"}>
         <div
-          className="whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-[14px] leading-relaxed"
+          className="rounded-2xl px-3.5 py-2.5 text-[14px] leading-relaxed"
           style={
             isUser
-              ? { background: "var(--green-subtle)", color: "var(--text)" }
+              ? { background: "var(--green-subtle)", color: "var(--text)", whiteSpace: "pre-wrap" }
               : {
                   background: "var(--surface-2)",
                   color: msg.error ? "var(--warn)" : "var(--text)",
                   border: "1px solid var(--border)",
+                  whiteSpace: msg.error ? "pre-wrap" : undefined,
                 }
           }
         >
-          {msg.content}
+          {isUser || msg.error ? msg.content : <Markdown text={msg.content} />}
         </div>
+
         {labels.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1.5 px-1">
             <span className="text-[10.5px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
