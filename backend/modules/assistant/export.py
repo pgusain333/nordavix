@@ -207,15 +207,83 @@ def build_answer_pdf(*, question: str, answer: str, charts: list[dict], company:
 
 # ── Excel ────────────────────────────────────────────────────────────────────
 
-def _safe_sheet_title(title: str, fallback: str) -> str:
+def _safe_sheet_title(title: str | None, fallback: str) -> str:
     t = re.sub(r"[\[\]:*?/\\]", " ", (title or "").strip())[:28]
     return t or fallback
+
+
+def _coerce_cell(v: str):
+    """Turn '$1,234.50' / '(1,200)' into a real number so Excel can sum/sort it;
+    leave percentages and plain text alone."""
+    s = str(v).strip()
+    if not s or s.endswith("%"):
+        return s
+    core = s.replace("$", "").replace(",", "").strip()
+    neg = core.startswith("(") and core.endswith(")")  # accounting negative
+    if neg:
+        core = core[1:-1].strip()
+    try:
+        f = float(core)
+        return -f if neg else f
+    except ValueError:
+        return s
+
+
+def _extract_tables_and_prose(answer: str) -> tuple[str, list[dict]]:
+    """Split a Markdown answer into (prose, tables). Each table is
+    {title, header, rows} parsed from a pipe-table run, so Excel gets real
+    columns instead of one wall-of-text cell. Scans line-by-line so a table is
+    found even when its title sits on the line directly above it (no blank line)."""
+    lines = (answer or "").replace("\r\n", "\n").split("\n")
+    tables: list[dict] = []
+    prose: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        if "|" in lines[i] and lines[i].strip():
+            j, run = i, []
+            while j < n and "|" in lines[j] and lines[j].strip():
+                run.append(lines[j])
+                j += 1
+            rows: list[list[str]] = []
+            for r in run:
+                if set(r) <= set(" |:-"):  # separator row (---|---)
+                    continue
+                rows.append([c.strip() for c in r.strip().strip("|").split("|")])
+            if len(rows) >= 2:  # header + at least one data row
+                title = None
+                for k in range(len(prose) - 1, -1, -1):
+                    if prose[k].strip():
+                        cand = re.sub(r"^[#\s]*", "", prose[k]).replace("*", "").strip()
+                        if cand and len(cand) <= 60 and "|" not in cand:
+                            title = cand
+                        break
+                header, *body = rows
+                tables.append({"title": title, "header": header, "rows": body})
+                i = j
+                continue
+        prose.append(lines[i])
+        i += 1
+    return "\n".join(prose).strip(), tables
 
 
 def build_answer_xlsx(*, question: str, answer: str, charts: list[dict]) -> bytes:
     from openpyxl import Workbook
     from openpyxl.chart import BarChart, LineChart, PieChart, Reference
     from openpyxl.styles import Alignment, Font
+    from openpyxl.utils import get_column_letter
+
+    prose, tables = _extract_tables_and_prose(answer)
+
+    used: set[str] = {"answer"}
+
+    def uniq(title: str) -> str:
+        base, t, n = title[:28], title[:28], 2
+        while t.lower() in used:
+            suffix = f" {n}"
+            t = base[: 28 - len(suffix)] + suffix
+            n += 1
+        used.add(t.lower())
+        return t
 
     wb = Workbook()
     ws = wb.active
@@ -230,12 +298,25 @@ def build_answer_xlsx(*, question: str, answer: str, charts: list[dict]) -> byte
         ws.cell(row + 1, 1, question).alignment = Alignment(wrap_text=True, vertical="top")
         row += 3
     ws.cell(row, 1, "Answer").font = Font(bold=True)
-    plain = re.sub(r"[*`#]", "", answer or "").strip()
+    plain = re.sub(r"[*`#]", "", prose).strip()
     ws.cell(row + 1, 1, plain).alignment = Alignment(wrap_text=True, vertical="top")
     ws.column_dimensions["A"].width = 95
 
+    # Structured data tables → one sheet each, with real rows/columns (numbers
+    # coerced so they're sortable/summable), not a wall of text.
+    for i, tbl in enumerate(tables, start=1):
+        ts = wb.create_sheet(title=uniq(_safe_sheet_title(tbl.get("title"), f"Table {i}")))
+        header = tbl["header"]
+        for c, h in enumerate(header, start=1):
+            ts.cell(1, c, re.sub(r"[*`]", "", str(h)).strip()).font = Font(bold=True)
+        for r0, rrow in enumerate(tbl["rows"], start=2):
+            for c, val in enumerate(rrow, start=1):
+                ts.cell(r0, c, _coerce_cell(re.sub(r"[*`]", "", str(val))))
+        for c in range(1, len(header) + 1):
+            ts.column_dimensions[get_column_letter(c)].width = 24
+
     for i, ch in enumerate(charts or [], start=1):
-        cs = wb.create_sheet(title=_safe_sheet_title(ch.get("title"), f"Chart {i}"))
+        cs = wb.create_sheet(title=uniq(_safe_sheet_title(ch.get("title"), f"Chart {i}")))
         cs["A1"] = "Label"
         cs["B1"] = "Value"
         cs["A1"].font = cs["B1"].font = Font(bold=True)

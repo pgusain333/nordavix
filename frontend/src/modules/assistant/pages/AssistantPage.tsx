@@ -39,6 +39,7 @@ interface ChatMsg {
   links?: AssistantLink[]
   actions?: AssistantAction[]
   charts?: AssistantChart[]
+  exportIntent?: "pdf" | "xlsx" | "both" | null // user asked for a downloadable file
   error?: boolean
   streaming?: boolean
 }
@@ -47,6 +48,20 @@ function money(s: string | null | undefined): string {
   const n = Number(s ?? 0)
   if (!isFinite(n)) return String(s ?? "")
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+/** Did the user ask Copilot to make them a file? If so, which format(s)? Drives a
+ *  prominent Download button under the answer so a file request always yields a file. */
+function detectExportIntent(text: string): "pdf" | "xlsx" | "both" | null {
+  const t = text.toLowerCase()
+  const action = /\b(creat|mak|generat|export|download|build|produc|prepar)\w*\b|give me|send me|i (need|want)\b/.test(t)
+  const pdf = /\bpdf\b/.test(t)
+  const xlsx = /\b(excel|spreadsheet|xlsx|workbook|csv)\b|\.xls/.test(t)
+  if (pdf && xlsx) return "both"
+  if (pdf) return "pdf"
+  if (xlsx) return "xlsx"
+  if (action && /\b(file|download|export)\b/.test(t)) return "both"
+  return null
 }
 
 const SUGGESTIONS: { icon: typeof Wallet; text: string }[] = [
@@ -117,6 +132,7 @@ export default function AssistantPage() {
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try { return localStorage.getItem("ndvx_copilot_sidebar") !== "0" } catch { return true }
   })
+  const [loadingThreadId, setLoadingThreadId] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const didAutoOpen = useRef(false)
@@ -170,7 +186,7 @@ export default function AssistantPage() {
     setMessages((prev) => [
       ...prev,
       { role: "user", content: q },
-      { role: "assistant", content: "", streaming: true, question: q },
+      { role: "assistant", content: "", streaming: true, question: q, exportIntent: detectExportIntent(q) },
     ])
     setInput("")
     setStreaming(true)
@@ -202,7 +218,11 @@ export default function AssistantPage() {
               charts: ev.charts,
             }))
           } else if (ev.type === "done") {
-            if (ev.thread_id) setThreadId(ev.thread_id)
+            if (ev.thread_id) {
+              setThreadId(ev.thread_id)
+              // The thread gained a turn — refresh its cached messages for next open.
+              void qc.invalidateQueries({ queryKey: ["assistant-thread", ev.thread_id] })
+            }
             void qc.invalidateQueries({ queryKey: ["assistant-threads"] })
           } else if (ev.type === "error") {
             patchLast((m) => ({ ...m, content: ev.message, error: true, streaming: false }))
@@ -239,21 +259,39 @@ export default function AssistantPage() {
     setHistoryOpen(false)
   }
 
+  // Warm a thread's messages on hover so the click opens instantly.
+  function prefetchThread(id: string) {
+    void qc.prefetchQuery({
+      queryKey: ["assistant-thread", id],
+      queryFn: () => assistantApi.getThread(id),
+      staleTime: 60_000,
+    })
+  }
+
   async function loadThread(id: string) {
     setHistoryOpen(false)
     instantScroll.current = true // jump to the bottom of the loaded thread, don't animate
+    setLoadingThreadId(id)
     try {
-      const msgs = await assistantApi.getThread(id)
+      // Cache-first: instant if it was prefetched on hover or opened before.
+      const msgs = await qc.fetchQuery({
+        queryKey: ["assistant-thread", id],
+        queryFn: () => assistantApi.getThread(id),
+        staleTime: 60_000,
+      })
       setMessages(msgs.map((m) => ({ role: m.role, content: m.content, sources: m.sources })))
       setThreadId(id)
     } catch {
       /* leave current conversation in place on failure */
+    } finally {
+      setLoadingThreadId(null)
     }
   }
 
   async function deleteThread(id: string) {
     // Optimistically drop it from the list; restore on failure.
     qc.setQueryData<ThreadSummary[]>(["assistant-threads"], (prev) => prev?.filter((t) => t.id !== id))
+    qc.removeQueries({ queryKey: ["assistant-thread", id] })
     try {
       await assistantApi.deleteThread(id)
     } catch {
@@ -340,7 +378,9 @@ export default function AssistantPage() {
         key={t.id}
         thread={t}
         active={t.id === threadId}
+        loading={loadingThreadId === t.id}
         onOpen={() => void loadThread(t.id)}
+        onPrefetch={() => prefetchThread(t.id)}
         onDelete={() => deleteThread(t.id)}
       />
     ))
@@ -390,7 +430,7 @@ export default function AssistantPage() {
       <div className={`flex min-w-0 flex-1 flex-col ${sidebarOpen ? "md:pl-4" : ""}`}>
         {/* Desktop: when the sidebar is hidden, a slim bar to bring it back + New chat */}
         {!sidebarOpen && (
-          <div className="mb-2 hidden items-center gap-1.5 md:flex">
+          <div className="mb-3 mt-3 hidden items-center gap-1.5 md:flex">
             <button
               onClick={() => setSidebarOpen(true)}
               className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12.5px] transition-colors"
@@ -525,12 +565,16 @@ export default function AssistantPage() {
 function ThreadRow({
   thread,
   active,
+  loading,
   onOpen,
+  onPrefetch,
   onDelete,
 }: {
   thread: ThreadSummary
   active: boolean
+  loading: boolean
   onOpen: () => void
+  onPrefetch: () => void
   onDelete: () => Promise<void> | void
 }) {
   const [confirming, setConfirming] = useState(false)
@@ -550,14 +594,18 @@ function ThreadRow({
     <div
       className="group relative flex items-center rounded-lg transition-colors"
       style={{ background: active ? "var(--surface-2)" : "transparent" }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+      onMouseEnter={(e) => { onPrefetch(); e.currentTarget.style.background = "var(--surface-2)" }}
       onMouseLeave={(e) => (e.currentTarget.style.background = active ? "var(--surface-2)" : "transparent")}
     >
       <button
         onClick={onOpen}
         className="flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-2.5 text-left"
       >
-        <Clock size={13} strokeWidth={1.7} className="mt-0.5 shrink-0" style={{ color: "var(--text-muted)" }} />
+        {loading ? (
+          <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin" style={{ color: "var(--green)" }} />
+        ) : (
+          <Clock size={13} strokeWidth={1.7} className="mt-0.5 shrink-0" style={{ color: "var(--text-muted)" }} />
+        )}
         <span className="line-clamp-2 text-[12.5px]" style={{ color: "var(--text)" }}>{thread.title}</span>
       </button>
       {confirming ? (
@@ -694,6 +742,38 @@ function MessageBubble({ msg, status }: { msg: ChatMsg; status: string | null })
             </div>
           )}
         </div>
+
+        {/* The user asked for a file → a prominent Download right under the answer. */}
+        {!msg.streaming && !msg.error && msg.content && msg.exportIntent && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {(msg.exportIntent === "xlsx" || msg.exportIntent === "both") && (
+              <button
+                onClick={() => void doExport("xlsx")}
+                disabled={!!exporting}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-medium transition-opacity hover:opacity-90 disabled:opacity-60"
+                style={{ background: "var(--green)", color: "#fff" }}
+              >
+                {exporting === "xlsx" ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                Download Excel
+              </button>
+            )}
+            {(msg.exportIntent === "pdf" || msg.exportIntent === "both") && (
+              <button
+                onClick={() => void doExport("pdf")}
+                disabled={!!exporting}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-medium transition-opacity hover:opacity-90 disabled:opacity-60"
+                style={
+                  msg.exportIntent === "both"
+                    ? { border: "1px solid var(--green)", color: "var(--green)" }
+                    : { background: "var(--green)", color: "#fff" }
+                }
+              >
+                {exporting === "pdf" ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                Download PDF
+              </button>
+            )}
+          </div>
+        )}
 
         {/* meta row: sources + copy (copy appears on hover once the answer is done) */}
         {(labels.length > 0 || (!msg.streaming && !msg.error && msg.content)) && (
