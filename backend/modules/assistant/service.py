@@ -69,6 +69,7 @@ _STEP_LABEL: dict[str, str] = {
     "get_account_guidance": "Recalling what you taught us",
     "recall": "Searching past records",
     "draft_journal_entry": "Drafting an entry",
+    "suggest_action": "Setting up an action",
     "suggest_link": "Finding the right screen",
 }
 
@@ -112,6 +113,9 @@ _SYSTEM_STATIC = (
     "- how we explained or handled X before → recall\n"
     "- book / record / reclassify / accrue → draft_journal_entry (creates a DRAFT "
     "for a human to approve + post; you NEVER post to QuickBooks and NEVER approve)\n"
+    "- prepare / run / start the reconciliations or flux for the period → "
+    "suggest_action (offers a one-click PREPARE button; it only prepares — a human "
+    "still approves, nothing posts to QuickBooks)\n"
     "- point the user to a screen → suggest_link\n"
     "Use the active period below unless the user names another month; don't ask "
     "which month when an active period is set.\n\n"
@@ -224,6 +228,7 @@ async def answer_question_stream(
     sources: list[dict] = []
     drafts: list[dict] = []
     links: list[dict] = []
+    actions: list[dict] = []
     final_answer: str | None = None
 
     ro_token = current_request_readonly.set(True)
@@ -273,6 +278,8 @@ async def answer_question_stream(
                             drafts.append(out["draft"])
                         elif block.name == "suggest_link" and out.get("link"):
                             links.append(out["link"])
+                        elif block.name == "suggest_action" and out.get("action"):
+                            actions.append(out["action"])
                     results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -323,6 +330,7 @@ async def answer_question_stream(
             "sources": sources,
             "drafts": drafts,
             "links": links,
+            "actions": actions,
         }
     finally:
         current_request_readonly.reset(ro_token)
@@ -342,6 +350,7 @@ async def answer_question(
     sources: list[dict] = []
     drafts: list[dict] = []
     links: list[dict] = []
+    actions: list[dict] = []
     async for ev in answer_question_stream(
         db=db, tenant_id=tenant_id, question=question, period_end=period_end, history=history,
     ):
@@ -350,11 +359,13 @@ async def answer_question(
             sources = ev["sources"]
             drafts = ev["drafts"]
             links = ev["links"]
+            actions = ev.get("actions", [])
     return {
         "answer": answer or "I couldn't find an answer to that.",
         "sources": sources,
         "drafts": drafts,
         "links": links,
+        "actions": actions,
     }
 
 

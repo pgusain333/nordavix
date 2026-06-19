@@ -27,12 +27,22 @@ export interface AssistantLink {
   label: string
 }
 
+/** A one-click "prepare" action the copilot offers (run recon/flux agentic,
+ *  propose-only). The chat triggers the existing endpoint on click. */
+export interface AssistantAction {
+  kind: "prepare_reconciliations" | "prepare_flux"
+  period_end: string
+  label: string
+  tb_id?: string | null
+}
+
 export interface AskResponse {
   answer: string
   sources: AssistantSource[]
   thread_id: string | null
   drafts: AssistantDraft[]
   links: AssistantLink[]
+  actions: AssistantAction[]
 }
 
 export interface AssistantTurn {
@@ -45,7 +55,7 @@ export type StreamEvent =
   | { type: "step"; label: string }
   | { type: "delta"; text: string }
   | { type: "reset" }
-  | { type: "result"; answer: string; sources: AssistantSource[]; drafts: AssistantDraft[]; links: AssistantLink[] }
+  | { type: "result"; answer: string; sources: AssistantSource[]; drafts: AssistantDraft[]; links: AssistantLink[]; actions: AssistantAction[] }
   | { type: "done"; thread_id: string | null }
   | { type: "error"; message: string }
 

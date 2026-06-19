@@ -13,15 +13,18 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import {
   Sparkles, ArrowUp, Square, Plus, History, Clock, FileText, ArrowUpRight,
-  Copy, Check, Loader2, AlertTriangle, Wallet, Scale, ClipboardList,
+  Copy, Check, Loader2, Play, AlertTriangle, Wallet, Scale, ClipboardList,
 } from "lucide-react"
 import {
   assistantApi,
   type AssistantSource,
   type AssistantDraft,
   type AssistantLink,
+  type AssistantAction,
 } from "@/modules/assistant/api"
 import { Markdown } from "@/modules/assistant/Markdown"
+import { reconsApi } from "@/modules/recons/api"
+import { api as fluxApi } from "@/modules/flux/api"
 
 interface ChatMsg {
   role: "user" | "assistant"
@@ -29,6 +32,7 @@ interface ChatMsg {
   sources?: AssistantSource[] | null
   drafts?: AssistantDraft[]
   links?: AssistantLink[]
+  actions?: AssistantAction[]
   error?: boolean
   streaming?: boolean
 }
@@ -164,6 +168,7 @@ export default function AssistantPage() {
               sources: ev.sources,
               drafts: ev.drafts,
               links: ev.links,
+              actions: ev.actions,
             }))
           } else if (ev.type === "done") {
             if (ev.thread_id) setThreadId(ev.thread_id)
@@ -623,8 +628,93 @@ function MessageBubble({ msg, status }: { msg: ChatMsg; status: string | null })
             ))}
           </div>
         )}
+
+        {msg.actions?.map((a, ai) => (
+          <ActionChip key={ai} action={a} />
+        ))}
       </div>
     </motion.div>
+  )
+}
+
+function ActionChip({ action }: { action: AssistantAction }) {
+  const qc = useQueryClient()
+  const navigate = useNavigate()
+  const [phase, setPhase] = useState<"idle" | "running" | "done" | "error">("idle")
+  const [summary, setSummary] = useState("")
+
+  const reviewPath =
+    action.kind === "prepare_reconciliations"
+      ? "/app/reconciliations"
+      : action.tb_id
+        ? `/app/flux/${action.tb_id}`
+        : "/app/flux"
+
+  async function run() {
+    if (phase === "running") return
+    // Flux with no analysis yet → route to the create flow (the page auto-creates).
+    if (action.kind === "prepare_flux" && !action.tb_id) {
+      navigate(`/app/flux/analyses?new=1&period=${action.period_end}`)
+      return
+    }
+    setPhase("running")
+    try {
+      if (action.kind === "prepare_reconciliations") {
+        const r = await reconsApi.runAgenticPrep(action.period_end)
+        setSummary(`${r.prepared} prepared · ${r.analyzed} analyzed${r.failed ? ` · ${r.failed} failed` : ""}`)
+        void qc.invalidateQueries({ queryKey: ["recons-overview", action.period_end] })
+        void qc.invalidateQueries({ queryKey: ["period-tracker"] })
+        void qc.invalidateQueries({ queryKey: ["adjustments"] })
+      } else {
+        const r = await fluxApi.runAgenticFlux(action.tb_id!)
+        setSummary(`${r.processed} explained${r.failed ? ` · ${r.failed} failed` : ""}`)
+        void qc.invalidateQueries({ queryKey: ["variances", action.tb_id] })
+        void qc.invalidateQueries({ queryKey: ["trial-balances"] })
+      }
+      setPhase("done")
+    } catch {
+      setPhase("error")
+    }
+  }
+
+  return (
+    <div className="mt-2 rounded-xl p-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      {phase === "done" ? (
+        <div className="flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 text-[12.5px]" style={{ color: "var(--text)" }}>
+            <Check size={14} style={{ color: "var(--green)" }} /> {summary || "Prepared"}
+          </span>
+          <button
+            onClick={() => navigate(reviewPath)}
+            className="inline-flex shrink-0 items-center gap-1 text-[12px] font-medium"
+            style={{ color: "var(--green)" }}
+          >
+            Review <ArrowUpRight size={13} />
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[12.5px]" style={{ color: "var(--text)" }}>{action.label}</span>
+          <button
+            onClick={() => void run()}
+            disabled={phase === "running"}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium transition-opacity disabled:opacity-60"
+            style={{ background: "var(--green)", color: "#fff" }}
+          >
+            {phase === "running" ? (
+              <><Loader2 size={13} className="animate-spin" /> Preparing…</>
+            ) : phase === "error" ? (
+              "Retry"
+            ) : (
+              <><Play size={13} /> Run</>
+            )}
+          </button>
+        </div>
+      )}
+      <p className="mt-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
+        Prepares only — a human still approves. Nothing posts to QuickBooks.
+      </p>
+    </div>
   )
 }
 

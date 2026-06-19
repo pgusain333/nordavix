@@ -34,6 +34,8 @@ class AskResponse(BaseModel):
     # the Adjustments queue) + deep-link buttons. Phase 2.
     drafts: list[dict] = []
     links: list[AskLink] = []
+    # One-click "prepare" actions (run recon/flux agentic, propose-only). Phase 3.
+    actions: list[dict] = []
 
 
 class ThreadSummary(BaseModel):

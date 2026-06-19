@@ -330,6 +330,27 @@ TOOL_DEFS: list[dict[str, Any]] = [
             "required": ["target"],
         },
     },
+    {
+        "name": "suggest_action",
+        "description": (
+            "Offer a one-click button to PREPARE work (propose-only): run the AI "
+            "preparer on the period's reconciliations or flux. Use when the user "
+            "asks to prepare / run / start the reconciliations or flux (e.g. "
+            "\"prepare April's reconciliations\", \"run the flux for March\"). This "
+            "OFFERS a confirm button the user clicks to run it — it only PREPARES "
+            "(drafts commentary + proposed entries); a human still approves and "
+            "nothing posts to QuickBooks. Do NOT claim you already ran it; you're "
+            "offering the button."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "description": "prepare_reconciliations | prepare_flux"},
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+            },
+            "required": ["kind"],
+        },
+    },
 ]
 
 # The stages get_close_status reports, in close order.
@@ -855,5 +876,25 @@ async def dispatch_tool(
             return {"ok": False, "error": f"Unknown target. Valid: {', '.join(_LINK_TARGETS)}."}
         path, default_label = _LINK_TARGETS[target]
         return {"ok": True, "link": {"path": path, "label": ti.get("label") or default_label}}
+
+    if name == "suggest_action":
+        kind = (ti.get("kind") or "").strip().lower()
+        if kind not in ("prepare_reconciliations", "prepare_flux"):
+            return {"ok": False, "error": "Unknown action. Valid: prepare_reconciliations, prepare_flux."}
+        action: dict = {"kind": kind, "period_end": pe.isoformat()}
+        if kind == "prepare_reconciliations":
+            action["label"] = f"Prepare reconciliations · {pe.isoformat()}"
+        else:
+            # Flux is per-trial-balance; resolve the period's TB so the click can
+            # run agentic directly. None → the UI routes the user to create it first.
+            tb_id = (await db.execute(
+                select(TrialBalance.id).where(TrialBalance.period_current == pe).limit(1)
+            )).scalar_one_or_none()
+            action["tb_id"] = str(tb_id) if tb_id else None
+            action["label"] = (
+                f"Prepare flux · {pe.isoformat()}" if tb_id
+                else f"Start flux analysis · {pe.isoformat()}"
+            )
+        return {"ok": True, "action": action}
 
     return {"error": f"Unknown tool: {name}"}
