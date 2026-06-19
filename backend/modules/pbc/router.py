@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser, require_capability
 from core.config import settings
-from core.db.session import get_db
+from core.db.session import get_db, get_system_db
 from core.email.sender import send_email
 from core.storage import r2 as r2_storage
 from models.evidence_request import EvidenceRequest
@@ -336,7 +336,7 @@ def _public_payload(req: EvidenceRequest, company: str) -> dict:
 
 
 @public_router.get("/{token}")
-async def get_public_request(token: str, db: AsyncSession = Depends(get_db)) -> dict:
+async def get_public_request(token: str, db: AsyncSession = Depends(get_system_db)) -> dict:
     req = await _load_by_token(db, token)
     if req is None:
         raise HTTPException(status_code=404, detail="This link isn't valid.")
@@ -348,7 +348,7 @@ async def get_public_request(token: str, db: AsyncSession = Depends(get_db)) -> 
 async def public_upload(
     token: str,
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_system_db),
 ) -> dict:
     req = await _load_by_token(db, token)
     if req is None:

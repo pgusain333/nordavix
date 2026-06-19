@@ -8,6 +8,17 @@ class Settings(BaseSettings):
     # Database — must use asyncpg driver prefix: postgresql+asyncpg://
     database_url: str
 
+    # Optional SECOND database URL for the request path (Tier 2 RLS). When set,
+    # FastAPI request handlers (get_db) connect as this login instead of the
+    # main one; everything else (migrations, auth/bootstrap, background jobs,
+    # purge, public no-context routes) keeps using database_url. Point this at a
+    # NON-BYPASSRLS role (e.g. nordavix_app, created by migration 059) to make
+    # Row-Level Security actually enforce per-tenant isolation on the request
+    # path. Empty = dormant: the app uses database_url everywhere exactly as
+    # before (RLS policies exist but the BYPASSRLS login ignores them). This is
+    # the cutover switch — see docs/RLS_CUTOVER.md.
+    app_database_url: str = ""
+
     # Redis — Upstash uses rediss:// (TLS); local dev uses redis://
     # Stored as str because RedisDsn doesn't accept rediss:// in all pydantic versions
     redis_url: str
@@ -73,6 +84,17 @@ class Settings(BaseSettings):
     ai_monthly_cost_cap_usd: float = 25.0
     ai_cap_enforce: bool = True
 
+    # ── Tenant isolation: per-transaction DB GUC (Tier 2 RLS groundwork) ────
+    # When True, every DB transaction announces its tenant to Postgres via
+    # set_config('app.current_tenant', <current_tenant_id>, is_local=True). This
+    # is the value Row-Level Security policies will compare tenant_id against.
+    # Harmless until RLS policies exist (an unused, transaction-local GUC); ON by
+    # default so the plumbing is exercised in production BEFORE policies are
+    # enabled. Kill switch: set DB_SET_TENANT_GUC=false on the host to disable
+    # instantly without a code change (e.g. if it ever interacts badly with the
+    # connection pooler).
+    db_set_tenant_guc: bool = True
+
     app_env: str = "development"
     debug: bool = False
 
@@ -129,6 +151,18 @@ class Settings(BaseSettings):
         if not v.startswith("postgresql+asyncpg://"):
             raise ValueError(
                 "DATABASE_URL must use the asyncpg driver: postgresql+asyncpg://"
+            )
+        return v
+
+    @field_validator("app_database_url")
+    @classmethod
+    def app_url_asyncpg_or_empty(cls, v: str) -> str:
+        # Optional — but if set, it must use the same asyncpg driver as the main
+        # URL (it feeds the same create_async_engine path).
+        if v and not v.startswith("postgresql+asyncpg://"):
+            raise ValueError(
+                "APP_DATABASE_URL, when set, must use the asyncpg driver: "
+                "postgresql+asyncpg://"
             )
         return v
 

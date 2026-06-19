@@ -26,7 +26,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 # Registration side effects: attach the production Session event listeners.
 import core.db.session  # noqa: F401
@@ -196,3 +196,64 @@ async def test_wipe_tb_children_refuses_foreign_tb(session, tenant_a, tenant_b):
         await session.execute(select(TrialBalance), execution_options={"skip_tenant_filter": True})
     ).scalars().all()
     assert [r.id for r in survivor] == [tb.id]
+
+
+# ── 5. Per-transaction tenant GUC (Tier 2 RLS substrate) ────────────────────────
+
+@pytest.mark.asyncio
+async def test_tenant_guc_set_on_transaction(test_engine, tenant_a):
+    """A transaction opened WITH tenant context sets app.current_tenant, so RLS
+    policies can compare tenant_id against it. The after_begin hook fires on the
+    first statement (which begins the txn), so the GUC is live for that query."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    current_tenant_id.set(tenant_a)
+    async with factory() as s:
+        val = (
+            await s.execute(text("SELECT current_setting('app.current_tenant', true)"))
+        ).scalar_one()
+        assert val == str(tenant_a)
+        await s.rollback()
+
+
+@pytest.mark.asyncio
+async def test_tenant_guc_absent_without_context(test_engine):
+    """No tenant context → the GUC is left unset (so RLS would be fail-closed)."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(test_engine, expire_on_commit=False)
+    current_tenant_id.set(None)
+    async with factory() as s:
+        val = (
+            await s.execute(text("SELECT current_setting('app.current_tenant', true)"))
+        ).scalar_one()
+        assert not val, f"expected an unset GUC with no tenant context, got {val!r}"
+        await s.rollback()
+
+
+# ── 6. RLS policy coverage (Tier 2) ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_every_tenant_table_has_rls_policy(session):
+    """Every tenant-scoped table must carry the `tenant_isolation` RLS policy, so
+    a future TenantBase table added without a policy fails the build (Tier 2
+    enforcement is per-table — a missing policy = that table is unreadable by the
+    constrained role, or worse, never gets RLS coverage).
+
+    Skips when the test DB was built by create_all alone (no migrations) —
+    policies only exist after `alembic upgrade head` (CI)."""
+    policied = set(
+        (await session.execute(
+            text("SELECT tablename FROM pg_policies WHERE policyname = 'tenant_isolation'")
+        )).scalars().all()
+    )
+    if not policied:
+        pytest.skip("RLS policies absent — migrations not applied to this test DB")
+
+    expected = {t.name for t in Base.metadata.sorted_tables if "tenant_id" in t.c}
+    missing = expected - policied
+    assert not missing, (
+        f"tenant tables missing a tenant_isolation RLS policy "
+        f"(add one in their migration): {sorted(missing)}"
+    )

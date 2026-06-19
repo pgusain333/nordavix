@@ -2,7 +2,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, nullcontext
 
-from sqlalchemy import event, select
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, with_loader_criteria
 
@@ -16,17 +16,47 @@ from core.db.base import (
     tenant_scope,
 )
 
-engine = create_async_engine(
+# ── Engines (Tier 2 RLS: two logins) ────────────────────────────────────────
+# SYSTEM engine — the main login (Supabase `postgres`, which has BYPASSRLS). Used
+# for auth/bootstrap, background jobs, the purge, and public/no-tenant-context
+# routes. It BYPASSES Row-Level Security — correct for cross-tenant/system work.
+# Supabase free tier allows ~10 pooled connections; stay well under that limit.
+system_engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
     pool_pre_ping=True,
-    # Supabase free tier allows ~10 pooled connections; stay well under that limit.
     pool_size=5,
     max_overflow=5,
 )
+engine = system_engine  # backwards-compatible alias for existing imports
 
+# APP engine — the REQUEST PATH. When APP_DATABASE_URL points at a NON-BYPASSRLS
+# role (nordavix_app, created by migration 059), request handlers (get_db) become
+# CONSTRAINED by RLS to the tenant in the app.current_tenant GUC. Until then it's
+# the SAME engine object as system_engine — so dormant = today's behavior, one
+# connection pool, RLS policies present but ignored by the BYPASSRLS login.
+# See docs/RLS_CUTOVER.md for the (reversible) cutover.
+_app_url = settings.app_database_url.strip()
+if _app_url and _app_url != settings.database_url:
+    app_engine = create_async_engine(
+        _app_url,
+        echo=settings.debug,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=5,
+    )
+else:
+    app_engine = system_engine
+
+# System sessions (BYPASS): bootstrap, background jobs, purge, public routes.
 AsyncSessionLocal = async_sessionmaker(
-    engine,
+    system_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+# Request-path sessions (RLS-CONSTRAINED once APP_DATABASE_URL is set).
+TenantSessionLocal = async_sessionmaker(
+    app_engine,
     class_=AsyncSession,
     expire_on_commit=False,
 )
@@ -145,8 +175,56 @@ async def assert_tenant_owns(
     return found
 
 
+@event.listens_for(Session, "after_begin")
+def _set_tenant_guc(
+    session: Session, transaction: object, connection: object,  # noqa: ARG001
+) -> None:
+    """Announce the active tenant to Postgres at the start of every transaction.
+
+    Sets `app.current_tenant` (transaction-local, via set_config(..., is_local=
+    True)) to the current_tenant_id ContextVar. This is the value Tier 2
+    Row-Level Security policies compare tenant_id against. SET LOCAL semantics
+    mean it is scoped to THIS transaction and auto-cleared at commit/rollback,
+    so it can never leak across pooled-connection reuse.
+
+    No tenant context (system / bootstrap / cross-tenant work) → the GUC is left
+    unset; those transactions either run as a bypassing role or are handled
+    explicitly when RLS is enabled. Harmless until policies exist (the GUC is
+    simply unused). Gated by settings.db_set_tenant_guc as a host-flippable kill
+    switch.
+
+    Uses Core execute on the transaction's connection (not the ORM Session), so
+    it bypasses the do_orm_execute tenant filter and the demo read-only guard —
+    set_config is a read-only function call, safe even in read-only requests.
+    """
+    if not settings.db_set_tenant_guc:
+        return
+    tid = current_tenant_id.get()
+    if tid is None:
+        return
+    connection.execute(
+        text("SELECT set_config('app.current_tenant', :tid, true)"),
+        {"tid": str(tid)},
+    )
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency that yields a database session for a single request."""
+    """FastAPI dependency for the REQUEST PATH — yields a session on the app
+    engine. Once APP_DATABASE_URL points at the non-BYPASSRLS role, these
+    sessions are constrained by Row-Level Security to the request's tenant (the
+    app.current_tenant GUC, set by the after_begin hook). Handlers reached
+    through the tenant middleware always have a tenant context; PUBLIC /
+    no-tenant-context routes must use get_system_db instead."""
+    async with TenantSessionLocal() as session:
+        yield session
+
+
+async def get_system_db() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI dependency for PUBLIC / pre-tenant-context routes (e.g. the
+    pbc-public magic-link endpoints) that legitimately operate WITHOUT a tenant
+    GUC. Yields a session on the system (BYPASSRLS) engine, scoped by the
+    route's own token/authorization logic rather than RLS. Never use this for
+    normal authenticated handlers — those use get_db."""
     async with AsyncSessionLocal() as session:
         yield session
 
