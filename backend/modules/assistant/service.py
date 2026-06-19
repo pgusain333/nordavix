@@ -75,7 +75,7 @@ _STEP_LABEL: dict[str, str] = {
 # cached prefix (cache_control below). Dynamic context (the active period) is a
 # separate, tiny, uncached block appended after it.
 _SYSTEM_STATIC = (
-    "You are NDVX Chat, Nordavix's month-end-close assistant for ONE accounting "
+    "You are NDVX Copilot, Nordavix's month-end-close assistant for ONE accounting "
     "client — the workspace you are called in. You answer from this client's REAL, "
     "synced data via your tools.\n\n"
     "GROUNDING (non-negotiable):\n"

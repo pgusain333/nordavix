@@ -248,7 +248,7 @@ export function Body() {
           and cash flow plus a board-ready executive report, built from the closed books.
         </li>
         <li>
-          <strong>NDVX Chat — a client-aware AI assistant.</strong> Ask &quot;what&apos;s
+          <strong>NDVX Copilot — a client-aware AI assistant.</strong> Ask &quot;what&apos;s
           blocking the close?&quot; or &quot;why did rent jump in March?&quot; and it answers
           from your real, synced data, remembers prior periods, and can{" "}
           <em>draft a balanced journal entry</em> straight into the adjustments queue for you

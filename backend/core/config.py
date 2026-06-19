@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # Anthropic — model pinned here so all modules upgrade together
     anthropic_api_key: str
     anthropic_model: str = "claude-sonnet-4-6"
-    # NDVX Chat (client assistant) runs on a faster/cheaper model than the
+    # NDVX Copilot (client assistant) runs on a faster/cheaper model than the
     # flux/recon narratives — it's a high-volume, latency-sensitive surface and
     # Haiku is plenty for grounded tool-routing + summarizing tool output.
     # Flip back to anthropic_model here if you ever want chat on Sonnet.

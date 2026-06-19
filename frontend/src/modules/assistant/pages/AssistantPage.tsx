@@ -1,5 +1,5 @@
 /**
- * Client Assistant — "NDVX Chat".
+ * Client Assistant — "NDVX Copilot".
  *
  * Grounded, tenant-scoped Q&A with conversation memory and propose-only actions
  * (Tier 3). The answer STREAMS in token-by-token over SSE (assistantApi.askStream)
@@ -245,7 +245,7 @@ export default function AssistantPage() {
           rows={1}
           placeholder="Ask about balances, variances, what's blocking close…"
           className="max-h-44 flex-1 resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed outline-none placeholder:opacity-60"
-          style={{ color: "var(--text)" }}
+          style={{ color: "var(--text)", outline: "none", border: "none", boxShadow: "none", WebkitAppearance: "none" }}
         />
         {streaming ? (
           <button
@@ -276,144 +276,168 @@ export default function AssistantPage() {
     </div>
   )
 
+  const historyList = !threads?.length ? (
+    <p className="px-2 py-3 text-[12.5px]" style={{ color: "var(--text-muted)" }}>
+      No conversations yet.
+    </p>
+  ) : (
+    threads.map((t) => (
+      <button
+        key={t.id}
+        onClick={() => void loadThread(t.id)}
+        className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors"
+        style={{ background: t.id === threadId ? "var(--surface-2)" : "transparent" }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+        onMouseLeave={(e) =>
+          (e.currentTarget.style.background = t.id === threadId ? "var(--surface-2)" : "transparent")
+        }
+      >
+        <Clock size={13} strokeWidth={1.7} className="mt-0.5 shrink-0" style={{ color: "var(--text-muted)" }} />
+        <span className="line-clamp-2 text-[12.5px]" style={{ color: "var(--text)" }}>{t.title}</span>
+      </button>
+    ))
+  )
+
   return (
-    <div className="flex h-[calc(100vh-7rem)] flex-col">
-      {/* Header: controls always; brand shown only once a conversation is active.
-          Centered to the same max width as the messages + composer; the scroll
-          area below is full-width so its scrollbar sits at the far right edge. */}
-      <div className="relative mx-auto flex w-full max-w-3xl shrink-0 items-center justify-between gap-2 px-1 pb-3">
-        <div className="flex items-center gap-2.5" style={{ visibility: empty ? "hidden" : "visible" }}>
+    <div className="flex h-[calc(100vh-7rem)]">
+      {/* ── Left sidebar (desktop): brand · New chat · history (Claude-style) ── */}
+      <aside
+        className="hidden w-60 shrink-0 flex-col pr-3 md:flex"
+        style={{ borderRight: "1px solid var(--border)" }}
+      >
+        <div className="flex items-center gap-2 px-1 pb-3">
           <div
-            className="flex h-8 w-8 items-center justify-center rounded-lg"
+            className="flex h-7 w-7 items-center justify-center rounded-lg"
             style={{ background: "var(--green-subtle)", color: "var(--green)" }}
           >
-            <Sparkles size={16} strokeWidth={1.8} />
+            <Sparkles size={15} strokeWidth={1.9} />
           </div>
-          <span className="text-[15px] font-semibold" style={{ color: "var(--text)" }}>
-            NDVX Chat
+          <span className="text-[14px] font-semibold" style={{ color: "var(--text)" }}>
+            NDVX Copilot
           </span>
         </div>
-
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setHistoryOpen((o) => !o)}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] transition-colors"
-            style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-            title="Recent conversations"
-          >
-            <History size={15} strokeWidth={1.8} /> History
-          </button>
-          <button
-            onClick={newChat}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium transition-colors"
-            style={{ background: "var(--green)", color: "#fff" }}
-            title="Start a new conversation"
-          >
-            <Plus size={15} strokeWidth={2} /> New
-          </button>
-
-          {historyOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setHistoryOpen(false)} />
-              <div
-                className="absolute right-0 top-11 z-20 max-h-80 w-72 overflow-y-auto rounded-xl p-1.5 shadow-xl"
-                style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
-              >
-                {!threads?.length ? (
-                  <p className="px-2 py-3 text-center text-[12.5px]" style={{ color: "var(--text-muted)" }}>
-                    No past conversations yet.
-                  </p>
-                ) : (
-                  threads.map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => void loadThread(t.id)}
-                      className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors"
-                      style={{ background: t.id === threadId ? "var(--surface-2)" : "transparent" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                      onMouseLeave={(e) =>
-                        (e.currentTarget.style.background =
-                          t.id === threadId ? "var(--surface-2)" : "transparent")
-                      }
-                    >
-                      <Clock size={13} strokeWidth={1.7} className="mt-0.5 shrink-0" style={{ color: "var(--text-muted)" }} />
-                      <span className="line-clamp-2 text-[12.5px]" style={{ color: "var(--text)" }}>
-                        {t.title}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </>
-          )}
+        <button
+          onClick={newChat}
+          className="mb-3 flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-[13px] font-medium transition-opacity hover:opacity-90"
+          style={{ background: "var(--green)", color: "#fff" }}
+        >
+          <Plus size={15} strokeWidth={2.2} /> New chat
+        </button>
+        <div className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+          Recent
         </div>
-      </div>
+        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">{historyList}</div>
+      </aside>
 
-      {empty ? (
-        /* ── Centered hero ── */
-        <div className="relative flex flex-1 flex-col items-center justify-center px-4 pb-10 text-center">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute left-1/2 top-1/2 h-80 w-80 -translate-x-1/2 -translate-y-[62%] rounded-full blur-3xl"
-            style={{ background: "var(--green-subtle)", opacity: 0.6 }}
-          />
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="relative w-full max-w-xl"
-          >
-            <div className="mx-auto mb-5 w-fit">
-              <BrandMark />
+      {/* ── Main pane ── */}
+      <div className="flex min-w-0 flex-1 flex-col md:pl-4">
+        {/* Mobile top bar: brand · History · New (the sidebar is desktop-only) */}
+        <div className="relative mb-1 flex shrink-0 items-center justify-between gap-2 px-1 md:hidden">
+          <div className="flex items-center gap-2">
+            <div
+              className="flex h-7 w-7 items-center justify-center rounded-lg"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+            >
+              <Sparkles size={15} strokeWidth={1.9} />
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-[2.5rem]" style={{ color: "var(--text)" }}>
-              NDVX <span style={{ color: "var(--green)" }}>Chat</span>
-            </h1>
-            <p className="mx-auto mt-3 max-w-md text-[14.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              Ask anything about this client's books — answered straight from your real, synced
-              data, with the numbers to back it up.
-            </p>
-            <div className="mt-7">{composer}</div>
-            <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {SUGGESTIONS.map(({ icon: Icon, text }) => (
-                <button
-                  key={text}
-                  onClick={() => void send(text)}
-                  className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] transition-all"
-                  style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--surface-2)"
-                    e.currentTarget.style.borderColor = "var(--border-strong)"
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "var(--surface)"
-                    e.currentTarget.style.borderColor = "var(--border)"
-                  }}
-                >
-                  <Icon size={15} strokeWidth={1.8} style={{ color: "var(--green)" }} className="shrink-0" />
-                  <span className="line-clamp-1">{text}</span>
-                </button>
-              ))}
-            </div>
-          </motion.div>
-        </div>
-      ) : (
-        /* ── Active conversation ── */
-        <>
-          {/* Full-width scroll area → scrollbar at the far right; messages centered. */}
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-3xl space-y-5 px-1 pb-4">
-              {messages.map((m, i) => (
-                <MessageBubble key={i} msg={m} status={i === messages.length - 1 ? status : null} />
-              ))}
-              <div ref={bottomRef} />
-            </div>
+            <span className="text-[14px] font-semibold" style={{ color: "var(--text)" }}>
+              NDVX Copilot
+            </span>
           </div>
-          <div className="mx-auto w-full max-w-3xl shrink-0 px-1 pt-1">{composer}</div>
-        </>
-      )}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setHistoryOpen((o) => !o)}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px]"
+              style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}
+              title="Recent conversations"
+            >
+              <History size={15} strokeWidth={1.8} /> History
+            </button>
+            <button
+              onClick={newChat}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium"
+              style={{ background: "var(--green)", color: "#fff" }}
+            >
+              <Plus size={15} strokeWidth={2} /> New
+            </button>
+            {historyOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setHistoryOpen(false)} />
+                <div
+                  className="absolute right-0 top-11 z-20 max-h-80 w-72 overflow-y-auto rounded-xl p-1.5 shadow-xl"
+                  style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
+                >
+                  {historyList}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {empty ? (
+          /* ── Centered hero ── */
+          <div className="relative flex flex-1 flex-col items-center justify-center px-4 pb-10 text-center">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute left-1/2 top-1/2 h-80 w-80 -translate-x-1/2 -translate-y-[62%] rounded-full blur-3xl"
+              style={{ background: "var(--green-subtle)", opacity: 0.6 }}
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+              className="relative w-full max-w-2xl"
+            >
+              <div className="mx-auto mb-5 w-fit">
+                <BrandMark />
+              </div>
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-[2.5rem]" style={{ color: "var(--text)" }}>
+                NDVX <span style={{ color: "var(--green)" }}>Copilot</span>
+              </h1>
+              <p className="mx-auto mt-3 max-w-md text-[14.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                Ask anything about this client's books — answered straight from your real, synced
+                data, with the numbers to back it up.
+              </p>
+              <div className="mt-7">{composer}</div>
+              <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {SUGGESTIONS.map(({ icon: Icon, text }) => (
+                  <button
+                    key={text}
+                    onClick={() => void send(text)}
+                    className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] transition-all"
+                    style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "var(--surface-2)"
+                      e.currentTarget.style.borderColor = "var(--border-strong)"
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "var(--surface)"
+                      e.currentTarget.style.borderColor = "var(--border)"
+                    }}
+                  >
+                    <Icon size={15} strokeWidth={1.8} style={{ color: "var(--green)" }} className="shrink-0" />
+                    <span className="line-clamp-1">{text}</span>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        ) : (
+          /* ── Active conversation ── */
+          <>
+            {/* Full-width scroll area → scrollbar at the far right; messages centered. */}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="mx-auto max-w-4xl space-y-5 px-1 pb-4">
+                {messages.map((m, i) => (
+                  <MessageBubble key={i} msg={m} status={i === messages.length - 1 ? status : null} />
+                ))}
+                <div ref={bottomRef} />
+              </div>
+            </div>
+            <div className="mx-auto w-full max-w-4xl shrink-0 px-1 pt-1">{composer}</div>
+          </>
+        )}
+      </div>
     </div>
   )
 }
