@@ -116,16 +116,23 @@ async def gather_account_pdf_data(
     # of a possibly-stale stored subledger_total.
     reconciling_items_out = (review.reconciling_items if review else []) or []
 
+    # An approved (or closed-period) reconciliation is FROZEN — render the
+    # subledger captured at sign-off, never a live schedule recompute. The
+    # schedule rolls current items as of any date, so re-deriving it would
+    # retroactively change a locked period's audit record. Only live-derive for
+    # still-editable recs; frozen ones fall through to the stored subledger_total.
+    frozen = review is not None and review.status == "approved"
     sched = None
-    try:
-        from modules.recons.agentic import _schedule_backed_subledger
-        sched = await _schedule_backed_subledger(db, tenant_id, qbo_account_id, period_end)
-    except Exception:
-        logger.warning(
-            "pdf: schedule subledger calc failed for %s @ %s — using stored subledger",
-            qbo_account_id, period_end, exc_info=True,
-        )
-        sched = None
+    if not frozen:
+        try:
+            from modules.recons.agentic import _schedule_backed_subledger
+            sched = await _schedule_backed_subledger(db, tenant_id, qbo_account_id, period_end)
+        except Exception:
+            logger.warning(
+                "pdf: schedule subledger calc failed for %s @ %s — using stored subledger",
+                qbo_account_id, period_end, exc_info=True,
+            )
+            sched = None
 
     if sched is not None:
         from modules.recons.overview import _SCHEDULE_SL_LABEL

@@ -614,8 +614,18 @@ async def _build_overview_from_qbo_data(
         # phantom-variance bug). Mirrors the recon drawer's
         # `schedule base + ticked items` exactly, so dashboard == drawer ==
         # close gate, locked or not.
+        # A signed-off reconciliation is an audit record: its subledger is FROZEN
+        # at the value captured on approval — never re-derived from live schedule
+        # data afterward. The schedule rolls CURRENT items as of any date, so a
+        # schedule item added or edited after a period closed would otherwise
+        # retroactively change a closed, approved rec and manufacture a phantom
+        # variance on a locked period (which could never be cleared). Only
+        # live-derive for still-editable recs; approved/closed recs fall through
+        # to the saved subledger_total below. Mirrors the variance-detail
+        # endpoint, which already freezes approved accounts.
+        is_frozen = review is not None and review.status == "approved"
         sched_sub = None
-        if qbo_id in sched_account_ids:
+        if qbo_id in sched_account_ids and not is_frozen:
             try:
                 sched_sub = await _schedule_backed_subledger(session, tid, qbo_id, period_end)
             except Exception:

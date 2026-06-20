@@ -2776,8 +2776,14 @@ function InlineSubledgerForm({
   // (no flipSign). Ticked reconciling items adjust GL differences on top.
   // Falls back to the rolled-forward opening before the schedule query loads
   // (or for non-schedule accounts).
+  // An APPROVED rec is frozen — its subledger is the value captured at sign-off,
+  // not a live schedule recompute (which rolls current items as of any date and
+  // would retroactively change a closed/approved period). Match the backend,
+  // which freezes approved accounts: drop the live schedule base so the drawer
+  // shows the saved subledger (and hides the live schedule-vs-GL panel), exactly
+  // like the dashboard. Closed periods are always approved, so this covers them.
   const scheduleBaseBalance =
-    isScheduleBacked && scheduleSub?.subledger_balance != null
+    isScheduleBacked && scheduleSub?.subledger_balance != null && account.review_status !== "approved"
       ? parseFloat(scheduleSub.subledger_balance)
       : null
   const baseBalance = scheduleBaseBalance ?? openingBalance
