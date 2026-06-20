@@ -299,6 +299,17 @@
    margins, and field-group spacing. We use !important here ONLY for
    the handful of properties that Clerk overrides specifically. */
 
+/* THE label-clipping fix. Clerk's card / cardBox default to border-radius:16px
+   + overflow:hidden. Our appearance makes the card transparent (no border, no
+   shadow), so that rounding is invisible — but the rounded corners still CLIP
+   the form content, cutting the corner letters (the "P" of PASSWORD, etc.).
+   Flatten the radius and un-clip so text is never cut. */
+.cl-card,
+.cl-cardBox {
+  border-radius: 0 !important;
+  overflow: visible !important;
+}
+
 /* Kill Clerk's animated focus/error halo (box-shadow ring) — that's
    what was visually bleeding up into the PASSWORD label area when
    the input was invalid. We keep just a clean border for state. */
