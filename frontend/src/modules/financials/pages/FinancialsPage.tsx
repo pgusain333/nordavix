@@ -243,24 +243,20 @@ export function FinancialsPage() {
   // CF tab transparently uses QBO.
   const effectiveSource: FinancialSource = tab === "cf" ? "quickbooks" : source
 
-  // Period_start is only sent when the user explicitly picked Custom
-  // AND we're on a period-based statement (IS or CF). BS is point-in-
-  // time so it's always undefined for that tab.
+  // Always send an explicit start for IS/CF so the comparative basis only governs
+  // the COMPARATIVE column and never reshapes the current period: custom → the
+  // chosen start; YTD → Jan 1 of the period-end's year. (With period_start
+  // omitted, prior_month would collapse the current IS/CF period to a single
+  // month — see financials/router.py.) BS is point-in-time and ignores it.
   const isPeriodBased = tab === "is" || tab === "cf"
-  const effectivePeriodStart: string | undefined =
-    isPeriodBased && periodMode === "custom" ? periodStart : undefined
+  const effectivePeriodStart: string | undefined = isPeriodBased
+    ? (periodMode === "custom" ? periodStart : firstDayOfYear(periodEnd))
+    : undefined
 
-  // Comparative basis: month-over-month when the selection is exactly one
-  // calendar month (the default + the "Last month" preset), else prior-year
-  // (YTD, quarter, year, or any multi-month custom range). Computed once and
-  // applied to all three statements + Excel + PDF so the whole package uses a
-  // single, consistent comparative — same logic as the close binder / exec report.
-  const _peDate = new Date(periodEnd + "T00:00:00")
-  const isSingleMonthView =
-    periodMode === "custom" &&
-    periodStart === firstDayOfMonth(periodEnd) &&
-    periodEnd === lastDayOfMonth(_peDate.getFullYear(), _peDate.getMonth() + 1)
-  const comparativeBasis: ComparativeBasis = isSingleMonthView ? "prior_month" : "prior_year"
+  // Comparative is always the prior PERIOD — the immediately preceding month —
+  // for IS, BS, and CF (month-over-month, not prior year). The backend maps
+  // prior_month to the previous calendar month (range for IS/CF, month-end for BS).
+  const comparativeBasis: ComparativeBasis = "prior_month"
 
   const queryClient = useQueryClient()
 
@@ -285,7 +281,7 @@ export function FinancialsPage() {
   // (CF always reads QuickBooks; period_start only applies to IS/CF in custom).
   function prefetchTab(key: Tab) {
     if (key === tab) return
-    const ps = (key === "is" || key === "cf") && periodMode === "custom" ? periodStart : undefined
+    const ps = (key === "is" || key === "cf") ? (periodMode === "custom" ? periodStart : firstDayOfYear(periodEnd)) : undefined
     const src: FinancialSource = key === "cf" ? "quickbooks" : source
     if (!(hasLoaded && (src === "nordavix" || !!qbo))) return
     queryClient.prefetchQuery({
@@ -454,7 +450,7 @@ export function FinancialsPage() {
             <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none mb-1.5"
               style={{ color: "var(--text-2)" }}>
               <input type="checkbox" checked={comparative} onChange={(e) => setComparative(e.target.checked)} />
-              Show prior year
+              Show prior period
             </label>
             {hasLoaded ? (
               <Button size="sm" variant="outline" onClick={() => refetch()}
@@ -536,7 +532,7 @@ export function FinancialsPage() {
         </div>
       </PageHeader>
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-5xl w-full mx-auto space-y-4">
+      <div className="flex-1 px-4 sm:px-6 py-5 w-full space-y-4">
 
         {/* Export error */}
         <AnimatePresence>
@@ -583,7 +579,7 @@ export function FinancialsPage() {
             </div>
             <p className="text-base font-semibold text-theme mb-1">Choose a period to load</p>
             <p className="text-sm max-w-md mx-auto mb-5" style={{ color: "var(--text-muted)" }}>
-              Pick the period-end date above (and whether to include a prior-year
+              Pick the period-end date above (and whether to include a prior-period
               comparative), then click <b>Load financials</b>. We&apos;ll remember
               this view so you land back here next time.
             </p>
@@ -608,7 +604,7 @@ export function FinancialsPage() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
                   transition={{ duration: 0.18, ease: "easeOut" }}
-                  className="space-y-4"
+                  className="max-w-5xl space-y-4"
                 >
                   {active === "exec" ? (
                     isPeriodClosed ? (
@@ -642,7 +638,7 @@ export function FinancialsPage() {
                   ) : active === "exports" ? (
                     <SchedulesExportCard
                       periodEnd={periodEnd}
-                      periodStart={periodMode === "custom" ? periodStart : undefined}
+                      periodStart={periodMode === "custom" ? periodStart : firstDayOfYear(periodEnd)}
                       comparative={comparative}
                       source={source}
                       comparativeBasis={comparativeBasis}
