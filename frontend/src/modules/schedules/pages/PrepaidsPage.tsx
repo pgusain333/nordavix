@@ -13,7 +13,7 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { Brain, Calendar, FileText, Pencil, Trash2, X } from "lucide-react"
+import { Brain, Calendar, CheckCircle2, FileText, Pencil, Trash2, X } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -32,7 +32,7 @@ import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
 import { schedulesApi } from "@/modules/schedules/api"
 import { memoryApi } from "@/modules/memory/api"
-import { formatDate } from "@/core/lib/dates"
+import { formatDate, toISODate } from "@/core/lib/dates"
 import type { PrepaidAlertItem, PrepaidAmortMethod, PrepaidCandidate, PrepaidItem } from "@/modules/schedules/types"
 
 /**
@@ -70,7 +70,7 @@ interface PrepaidPrefill {
 function defaultPeriodEnd(): string {
   const now = new Date()
   const last = new Date(now.getFullYear(), now.getMonth(), 0)
-  return last.toISOString().slice(0, 10)
+  return toISODate(last)  // local components — see toISODate (no UTC off-by-one)
 }
 
 function fmt(s: string | null | undefined): string {
@@ -308,7 +308,18 @@ export function PrepaidsPage() {
             onAddRenewal={handleAddRenewal}
           />
         )}
-        <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
+        {/* KPI strip — visualize-first headline figures for the schedule */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <Kpi label="Total prepaid" value={fmt(totals.total.toString())} />
+          <Kpi label="Active items" value={totals.active.toString()} />
+          <Kpi label="Amortization this period"
+            value={filterAccount && snapshot ? fmt(snapshot.period_expense) : "—"} amber />
+          <Kpi label="Ending balance"
+            value={filterAccount && snapshot ? fmt(snapshot.ending_balance) : "—"} />
+        </div>
+
+        {/* Account filter + recon tie-out status (surfaces the commit → recon link) */}
+        <div className="rounded-xl p-4 flex items-center gap-4 flex-wrap"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker
             value={filterAccount}
@@ -316,10 +327,26 @@ export function PrepaidsPage() {
             mode="filter"
             label="GL account"
           />
-          <Kpi label="Total prepaid" value={fmt(totals.total.toString())} />
-          <Kpi label="Active items" value={totals.active.toString()} />
           {filterAccount && snapshot && (
-            <Kpi label="Amortization this period" value={fmt(snapshot.period_expense)} amber />
+            snapshot.committed && !snapshot.stale ? (
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full"
+                style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+                <CheckCircle2 size={12} strokeWidth={2.4} />
+                Committed — feeds the Prepaid Expenses reconciliation
+              </span>
+            ) : snapshot.stale ? (
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full"
+                style={{ background: "#f4eddf", color: "#8a6326" }}>
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: "#8a6326" }} />
+                Committed but stale — re-commit to update the recon
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full"
+                style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--text-muted)" }} />
+                Draft — commit below to feed the reconciliation
+              </span>
+            )
           )}
         </div>
 
@@ -452,10 +479,10 @@ export function PrepaidsPage() {
 
 function Kpi({ label, value, amber }: { label: string; value: string; amber?: boolean }) {
   return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-wider"
+    <div className="rounded-xl p-3.5" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <p className="text-[10px] font-bold uppercase tracking-wider"
         style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className="text-base font-bold tabular-nums mt-0.5"
+      <p className="text-xl font-bold tabular-nums mt-1"
         style={{ color: amber ? "#8a6326" : "var(--text)" }}>{value}</p>
     </div>
   )
