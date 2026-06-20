@@ -192,4 +192,11 @@
     <priority>0.8</priority>
   </url>
 
+  <url>
+    <loc>https://nordavix.com/blog/balance-sheet-account-schedules</loc>
+    <lastmod>2026-06-20</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
 </urlset>

@@ -66,7 +66,12 @@ export function Body() {
       <p>
         Every balance-sheet account needs a documented tie-out between the GL balance
         and an external source. The rule of thumb: if you can&apos;t name what you
-        ticked the balance to, it isn&apos;t reconciled.
+        ticked the balance to, it isn&apos;t reconciled. For the five accounts
+        QuickBooks doesn&apos;t keep a subledger for — prepaids, accruals, fixed
+        assets, leases, and loans — that source is a{" "}
+        <Link to="/blog/balance-sheet-account-schedules" className="text-[var(--green)] underline">
+          schedule you build
+        </Link>, and the schedule&apos;s ending balance is the subledger you tie to.
       </p>
       <ol>
         <li>

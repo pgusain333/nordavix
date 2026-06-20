@@ -26,8 +26,10 @@ import * as prepaidAmortizationSchedule     from "@/marketing/blog/posts/prepaid
 import * as makerCheckerControls            from "@/marketing/blog/posts/maker-checker-accounting-controls"
 import * as compoundingMemory              from "@/marketing/blog/posts/compounding-memory"
 import * as closeByRole                    from "@/marketing/blog/posts/month-end-close-cfo-controller-outsourced-accounting"
+import * as balanceSheetAccountSchedules   from "@/marketing/blog/posts/balance-sheet-account-schedules"
 
 const RAW_POSTS: BlogPostModule[] = [
+  balanceSheetAccountSchedules    as BlogPostModule,
   closeByRole                     as BlogPostModule,
   compoundingMemory               as BlogPostModule,
   catchGlCodingErrors             as BlogPostModule,

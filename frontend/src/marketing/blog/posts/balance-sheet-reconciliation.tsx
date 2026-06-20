@@ -217,6 +217,14 @@ export function Body() {
         <li><strong>Equity</strong> → the cap table, board approvals, and the prior-year retained-earnings roll-forward.</li>
       </ul>
       <p>
+        Notice how many of those sources aren&apos;t statements you receive but{" "}
+        <Link to="/blog/balance-sheet-account-schedules">schedules you build</Link>{" "}
+        — the prepaid, accrual, fixed-asset, lease, and loan workpapers{" "}
+        <em>are</em> the subledgers for the accounts QuickBooks doesn&apos;t keep
+        one for. Get those schedules right and those reconciliations tie out by
+        construction.
+      </p>
+      <p>
         Not every account needs the same depth every month. Reconcile by{" "}
         <strong>risk and materiality</strong>: high-volume and estimate-heavy
         accounts (AR, AP, accruals, inventory) get full scrutiny every period;

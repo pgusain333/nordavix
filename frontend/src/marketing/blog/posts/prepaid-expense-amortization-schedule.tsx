@@ -303,7 +303,10 @@ export function Body() {
         journal entry, and pulls the schedule's total straight into the
         reconciliation as the authoritative subledger. The month-end view shows
         the schedule's items on one side, the QuickBooks GL on the other, and a
-        tie-out line between them. When you add a new policy mid-month, the
+        tie-out line between them. The prepaid is just one of five{" "}
+        <Link to="/blog/balance-sheet-account-schedules">balance sheet account
+        schedules</Link> that work this way — accruals, fixed assets, leases, and
+        loans follow the same pattern. When you add a new policy mid-month, the
         unposted entry appears as a <em>timing item</em> that clears itself the
         moment you post it — so the difference is always explained, never
         mysterious.
