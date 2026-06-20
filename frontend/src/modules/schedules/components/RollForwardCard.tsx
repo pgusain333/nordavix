@@ -1,14 +1,15 @@
 /**
- * Visual roll-forward: beginning + additions − expense − payments = ending.
+ * Period roll-forward — beginning + additions − expense − payments = ending,
+ * drawn as a WATERFALL so the period's movement reads at a glance. This is the
+ * heart of every schedule page: committing it pushes the ending balance into
+ * the reconciliation as the subledger.
  *
- * Compact card that shows the snapshot math at a glance. Each block has
- * its own colour: beginning (neutral), additions (green), expense (amber),
- * payments (blue), ending (bold).
- *
- * Empty state (no account picked) shows a friendly nudge instead.
+ * Empty state (no account picked) shows a friendly nudge instead. Shared by all
+ * five schedule pages — the commit / stale / committed wiring is preserved
+ * exactly via the same props.
  */
 import { motion } from "framer-motion"
-import { ArrowRight, CheckCircle2, Save, RefreshCw, AlertTriangle } from "lucide-react"
+import { CheckCircle2, Save, RefreshCw, AlertTriangle } from "lucide-react"
 import { Button } from "@/core/ui/components"
 import { formatDateTime } from "@/core/lib/dates"
 import type { Snapshot } from "@/modules/schedules/types"
@@ -24,12 +25,6 @@ interface Props {
   alreadyCommitted: boolean
   /** Was committed, but items changed since → prompt a re-commit. */
   stale?:          boolean
-}
-
-function fmt(s: string): string {
-  const n = parseFloat(s) || 0
-  const abs = `$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  return n < 0 ? `(${abs})` : abs
 }
 
 export function RollForwardCard({
@@ -59,13 +54,6 @@ export function RollForwardCard({
       </div>
     )
   }
-
-  const cells = [
-    { label: "Beginning",  value: snapshot.beginning_balance, color: "var(--text-2)" },
-    { label: "+ Additions", value: snapshot.additions,         color: "var(--green)" },
-    { label: `− ${expenseLabel}`, value: snapshot.period_expense, color: "#8a6326" },
-    { label: `− ${paymentLabel}`, value: snapshot.payments,    color: "#3c5a76" },
-  ]
 
   return (
     <motion.div
@@ -124,31 +112,13 @@ export function RollForwardCard({
           </p>
         </div>
       )}
-      <div className="flex flex-wrap items-end gap-2">
-        {cells.map((c) => (
-          <div key={c.label}
-            className="flex-1 min-w-[140px] rounded-lg p-3"
-            style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-            <p className="text-[10px] font-semibold uppercase tracking-wider mb-1"
-              style={{ color: "var(--text-muted)" }}>{c.label}</p>
-            <p className="text-base font-bold tabular-nums" style={{ color: c.color }}>
-              {fmt(c.value)}
-            </p>
-          </div>
-        ))}
-        <ArrowRight size={18} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-        <div className="flex-1 min-w-[160px] rounded-lg p-3"
-          style={{
-            background: "var(--green-subtle)",
-            border: "1.5px solid var(--green)",
-          }}>
-          <p className="text-[10px] font-semibold uppercase tracking-wider mb-1"
-            style={{ color: "var(--green)" }}>= Ending</p>
-          <p className="text-lg font-bold tabular-nums" style={{ color: "var(--green)" }}>
-            {fmt(snapshot.ending_balance)}
-          </p>
-        </div>
-      </div>
+
+      <RollForwardWaterfall
+        snapshot={snapshot}
+        expenseLabel={expenseLabel}
+        paymentLabel={paymentLabel}
+      />
+
       <p className="text-[10px] mt-3" style={{ color: "var(--text-muted)" }}>
         {snapshot.item_count} active item{snapshot.item_count === 1 ? "" : "s"} contributing.
         {alreadyCommitted && snapshot.committed_at && (
@@ -156,5 +126,108 @@ export function RollForwardCard({
         )}
       </p>
     </motion.div>
+  )
+}
+
+// ── Waterfall ────────────────────────────────────────────────────────────────
+
+function num(s: string): number { return parseFloat(s) || 0 }
+
+/** Compact money for the bar labels — whole dollars, accounting negatives. */
+function money(n: number): string {
+  const abs = `$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  return n < 0 ? `(${abs})` : abs
+}
+
+interface WStep {
+  label: string
+  sub:   string
+  lo:    number   // bar bottom value
+  hi:    number   // bar top value
+  end:   number   // running balance at this step's right edge (connector level)
+  fill:  string
+  text:  string
+}
+
+function RollForwardWaterfall({ snapshot, expenseLabel, paymentLabel }: {
+  snapshot:     Snapshot
+  expenseLabel: string
+  paymentLabel: string
+}) {
+  const beginning = num(snapshot.beginning_balance)
+  const additions = num(snapshot.additions)
+  const expense   = num(snapshot.period_expense)
+  const payments  = num(snapshot.payments)
+  const ending    = num(snapshot.ending_balance)
+
+  const steps: WStep[] = []
+  let run = beginning
+  steps.push({
+    label: "Beginning", sub: money(beginning),
+    lo: Math.min(0, beginning), hi: Math.max(0, beginning), end: beginning,
+    fill: "#8aa399", text: "var(--text-2)",
+  })
+  const addStep = (label: string, delta: number, fill: string, text: string) => {
+    const from = run, to = run + delta
+    steps.push({
+      label, sub: `${delta >= 0 ? "+ " : "− "}${money(Math.abs(delta))}`,
+      lo: Math.min(from, to), hi: Math.max(from, to), end: to, fill, text,
+    })
+    run = to
+  }
+  addStep("+ Additions",     additions, "var(--green)", "var(--green)")
+  addStep(`− ${expenseLabel}`, -expense,  "#c79a52",      "#8a6326")
+  addStep(`− ${paymentLabel}`, -payments, "#3c5a76",      "#3c5a76")
+  // Any residual (e.g. "other" movements) so the waterfall always ties to the
+  // authoritative ending balance.
+  const residual = ending - run
+  if (Math.abs(residual) > 0.5) {
+    addStep("± Other", residual, "#888780", "var(--text-2)")
+  }
+  steps.push({
+    label: "= Ending", sub: money(ending),
+    lo: Math.min(0, ending), hi: Math.max(0, ending), end: ending,
+    fill: "var(--green)", text: "var(--green)",
+  })
+
+  const cols = steps.length
+  const SLOT = 120, BARW = 58, CH_TOP = 14, CH_BOT = 104, H = 142
+  const W = cols * SLOT
+  const vals = steps.flatMap((s) => [s.lo, s.hi]).concat([0])
+  const maxV = Math.max(...vals)
+  const minV = Math.min(...vals)
+  const rng = maxV - minV || 1
+  const y  = (v: number) => CH_BOT - ((v - minV) / rng) * (CH_BOT - CH_TOP)
+  const cx = (i: number) => i * SLOT + SLOT / 2
+
+  return (
+    <div className="rounded-xl p-2 overflow-x-auto"
+      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet"
+        style={{ display: "block", width: "100%", maxWidth: W }} role="img"
+        aria-label="Period roll-forward waterfall">
+        {/* Connectors at each running balance */}
+        {steps.slice(0, -1).map((s, i) => (
+          <line key={`c${i}`}
+            x1={cx(i) + BARW / 2} y1={y(s.end)}
+            x2={cx(i + 1) - BARW / 2} y2={y(s.end)}
+            stroke="var(--border-strong)" strokeWidth="1" strokeDasharray="3 3" />
+        ))}
+        {/* Bars */}
+        {steps.map((s, i) => {
+          const h0 = y(s.lo) - y(s.hi)
+          const height = Math.max(h0, 2)
+          const by = y(s.hi) - (height - h0) / 2
+          return <rect key={`b${i}`} x={cx(i) - BARW / 2} y={by} width={BARW} height={height} rx={3} fill={s.fill} />
+        })}
+        {/* Labels */}
+        {steps.map((s, i) => (
+          <g key={`l${i}`}>
+            <text x={cx(i)} y={120} textAnchor="middle" fontSize="10" fill="var(--text-muted)">{s.label}</text>
+            <text x={cx(i)} y={135} textAnchor="middle" fontSize="11.5" fontWeight="700" fill={s.text}>{s.sub}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
   )
 }
