@@ -2781,7 +2781,12 @@ function InlineSubledgerForm({
       ? parseFloat(scheduleSub.subledger_balance)
       : null
   const baseBalance = scheduleBaseBalance ?? openingBalance
-  const computedSubledger = baseBalance + selectedSum
+  // For schedule-backed accounts the Nordavix schedule is the COMPLETE subledger
+  // — its closing already includes this period's amortization / depreciation /
+  // accretion — so ticked GL items must NOT add on top (that double-counted the
+  // schedule's own amortization JEs the agentic preparer ticks). Non-schedule
+  // accounts keep the opening + ticked-items build-up.
+  const computedSubledger = baseBalance + (scheduleBaseBalance != null ? 0 : selectedSum)
   // Label for the build-up's base line when it's a schedule balance.
   const scheduleBaseLabel = scheduleBaseBalance != null
     ? `Per Nordavix ${SCHEDULE_TYPE_LABEL[scheduleSub?.schedule_type ?? ""] ?? "schedule"} schedule`
@@ -3450,12 +3455,16 @@ function InlineSubledgerForm({
         />
       )}
 
+      {/* Schedule-backed: the schedule IS the subledger, so ticked GL items
+          don't adjust it — pass empty items so the card shows base = closing
+          (the per-item schedule activity is shown above in the Schedule-vs-GL
+          panel). Non-schedule accounts keep the opening + ticked-items build-up. */}
       <SubledgerBuildup
         openingBalance={baseBalance}
         scheduleBaseLabel={scheduleBaseLabel}
         prior={prior}
-        selectedItems={selectedItems}
-        selectedSum={selectedSum}
+        selectedItems={scheduleBaseBalance != null ? [] : selectedItems}
+        selectedSum={scheduleBaseBalance != null ? 0 : selectedSum}
         computedSubledger={computedSubledger}
         flipSign={flipSign}
         readOnly={readOnly}
@@ -4140,7 +4149,7 @@ function SubledgerBuildup({
         {selectedItems.length === 0 ? (
           <p className="text-[11px] py-1.5 italic" style={{ color: "var(--text-muted)" }}>
             {scheduleBaseLabel
-              ? "Subledger ties to the schedule. Tick a GL entry in the table below only to explain a difference vs the schedule."
+              ? "Subledger is the Nordavix schedule balance (shown above vs the GL). It updates when the schedule changes — to fix a difference, edit the schedule itself."
               : "No reconciling items selected. Tick QBO entries in the table below or use “Add manual item”."}
           </p>
         ) : (

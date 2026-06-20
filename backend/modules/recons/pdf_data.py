@@ -152,23 +152,18 @@ async def gather_account_pdf_data(
             }
             for i, e in enumerate(sl_entries[1:], start=1)
         ]
-        # GL reconciling items the preparer ticked on top (real timing diffs),
-        # signed exactly as the dashboard does so the PDF == dashboard.
-        flip = Decimal("-1") if is_credit_natural else Decimal("1")
-        ticked_total = Decimal("0")
-        for it in (review.reconciling_items if review else []) or []:
-            if it.get("cleared") is False:
-                continue
-            tid = str(it.get("txn_id", ""))
-            if tid.startswith("schedule-"):
-                continue
-            raw = Decimal(str(it.get("amount", "0") or "0"))
-            ticked_total += raw if tid.startswith("manual-") else flip * raw
-        subledger_balance = sl_signed + ticked_total
-        # Build-up = schedule opening + schedule activity + ticked GL items.
-        # Any explicitly-open (cleared=False) saved items still flow through so
-        # they surface in the separate "open items" section.
-        reconciling_items_out = schedule_items + list((review.reconciling_items if review else []) or [])
+        # The schedule is the COMPLETE subledger — its closing already includes
+        # the period's amortization / depreciation / accretion, so nothing is
+        # added on top (matching the dashboard). The build-up IS the schedule's
+        # own roll-forward (opening + activity); only explicitly-open
+        # (cleared=False) saved items still flow through, for the separate "open
+        # items" section.
+        subledger_balance = sl_signed
+        open_items = [
+            it for it in ((review.reconciling_items if review else []) or [])
+            if it.get("cleared") is False
+        ]
+        reconciling_items_out = schedule_items + open_items
     elif review and review.subledger_total is not None:
         subledger_balance = Decimal(review.subledger_total)
     else:
