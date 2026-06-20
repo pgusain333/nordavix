@@ -26,7 +26,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   Calendar, ClipboardList, Building2, Home, Banknote,
   ArrowRight, CheckCircle2, Sparkles, RefreshCw, LayoutGrid,
-  Download, ExternalLink, FileSpreadsheet, ArrowLeftRight,
+  Download, ExternalLink, FileSpreadsheet, ArrowLeftRight, ChevronRight,
 } from "lucide-react"
 
 import { Button, Spinner } from "@/core/ui/components"
@@ -38,7 +38,11 @@ import { schedulesApi } from "@/modules/schedules/api"
 import {
   SCHEDULE_BLURB, SCHEDULE_HUMAN, SCHEDULE_ROUTE,
   SCHEDULE_TYPES, type OverviewType, type ScheduleType,
+  type PrepaidItem, type AccrualItem, type FixedAssetItem, type LeaseItem, type LoanItem,
 } from "@/modules/schedules/types"
+import { PrepaidAmortizationDrawer } from "@/modules/schedules/components/PrepaidAmortizationDrawer"
+import { AccrualReversalDrawer } from "@/modules/schedules/components/AccrualReversalDrawer"
+import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
 
 type RailKey = "overview" | ScheduleType | "ai"
 
@@ -402,6 +406,21 @@ function OverviewDetail({ types, total, totalItems, periodEnd, onOpenType }: {
 
 // ── Per-type detail ──────────────────────────────────────────────────────────
 
+type SchedItem = PrepaidItem | AccrualItem | FixedAssetItem | LeaseItem | LoanItem
+
+/** The headline figure to show per line item, by type (raw field — the full
+ *  computed schedule is in the drawer that opens on click). */
+function itemPrimary(type: ScheduleType, item: SchedItem): { label: string; value: string } {
+  switch (type) {
+    case "prepaid":     return { label: "Total",     value: (item as PrepaidItem).total_amount }
+    case "accrual":     return { label: "Amount",    value: (item as AccrualItem).amount }
+    case "fixed_asset": return { label: "Cost",      value: (item as FixedAssetItem).cost }
+    case "lease":       return { label: "Monthly",   value: (item as LeaseItem).monthly_payment }
+    case "loan":        return { label: "Principal", value: (item as LoanItem).original_principal }
+  }
+  return { label: "", value: "0" }
+}
+
 function TypeDetail({ t, total, periodEnd, onOpenWorkpaper }: {
   t: OverviewType
   total: number
@@ -413,6 +432,16 @@ function TypeDetail({ t, total, periodEnd, onOpenWorkpaper }: {
   const st = statusOf(t)
   const sharePct = total > 0 ? ((parseFloat(t.ending_balance) || 0) / total) * 100 : 0
 
+  // Line items for this type — clicking one opens its existing schedule drawer
+  // (reused as-is; each computes the amortization / loan / depreciation table
+  // client-side). Cheap, read-only GET; component-scoped to the selected type.
+  const [openItem, setOpenItem] = useState<SchedItem | null>(null)
+  const { data: itemsData, isLoading: itemsLoading } = useQuery({
+    queryKey: ["schedules", "items", t.type],
+    queryFn:  () => schedulesApi.listItems(t.type),
+  })
+  const items: SchedItem[] = itemsData?.items ?? []
+
   async function exportXlsx() {
     setExporting(true); setExportErr(null)
     try { await schedulesApi.downloadScheduleExcel(t.type, periodEnd) }
@@ -420,15 +449,8 @@ function TypeDetail({ t, total, periodEnd, onOpenWorkpaper }: {
     finally { setExporting(false) }
   }
 
-  const inside: string[] = {
-    prepaid:     ["Line items with start/end + amortization method", "Month-by-month straight-line amortization schedule", "AI prepaid detection from your GL", "Renewal alerts for expiring items", "Proposed JEs + commit → feeds the recon"],
-    accrual:     ["Accrual line items with reversal dates", "Accrue / reverse lifecycle per period", "AI missed-accrual + unreversed detection", "Proposed JEs + commit → feeds the recon"],
-    fixed_asset: ["Asset register with cost + useful life", "Month-by-month depreciation & net book value schedule", "AI capitalization detection from your GL", "Disposals + proposed JEs + commit → feeds the recon"],
-    lease:       ["Lease register with term + payment", "Payment schedule (optional ASC 842 ROU + liability)", "Proposed JEs + commit → feeds the recon"],
-    loan:        ["Loan register with rate + term", "Month-by-month principal / interest amortization schedule", "Proposed JEs (principal + interest) + commit → feeds the recon"],
-  }[t.type]
-
   return (
+    <>
     <Card>
       <div className="px-5 py-4 flex items-start gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
         <span className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
@@ -482,19 +504,54 @@ function TypeDetail({ t, total, periodEnd, onOpenWorkpaper }: {
           </p>
         </div>
 
-        {/* What's inside the full workpaper */}
+        {/* Line items — click one to open its full schedule (existing drawer) */}
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>
-            Inside this workpaper
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Line items{items.length > 0 && <span style={{ color: "var(--text-2)" }}> · {items.length}</span>}
+            </p>
+            {items.length > 0 && (
+              <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Click a row to view its schedule</span>
+            )}
+          </div>
+          {itemsLoading ? (
+            <div className="py-6 flex justify-center"><Spinner className="h-5 w-5" /></div>
+          ) : items.length === 0 ? (
+            <p className="text-[12px] rounded-lg p-3" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+              No items yet — add them in the full workpaper.
+            </p>
+          ) : (
+            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+              {items.map((item, i) => {
+                const fig = itemPrimary(t.type, item)
+                return (
+                  <button key={item.id} onClick={() => setOpenItem(item)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
+                    style={{ borderTop: i > 0 ? "1px solid var(--border)" : undefined, background: "transparent" }}
+                    onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"}
+                    onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "transparent"}
+                  >
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[13px] font-medium truncate" style={{ color: "var(--text)" }}>
+                        {item.description || "Untitled"}
+                      </span>
+                      <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
+                        {item.vendor || item.reference || "—"}{!item.is_active && " · inactive"}
+                      </span>
+                    </span>
+                    <span className="text-right shrink-0">
+                      <span className="block text-[9px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{fig.label}</span>
+                      <span className="block text-[12px] font-semibold tabular-nums" style={{ color: "var(--text)" }}>{fmtMoney(fig.value)}</span>
+                    </span>
+                    <ChevronRight size={14} strokeWidth={2} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          <p className="text-[10px] mt-2" style={{ color: "var(--text-muted)" }}>
+            Add / edit items, run AI detection, and commit the snapshot in the full workpaper.
           </p>
-          <ul className="space-y-1.5">
-            {inside.map((line, i) => (
-              <li key={i} className="text-[12px] leading-snug flex items-start gap-2" style={{ color: "var(--text-2)" }}>
-                <span className="mt-1.5 h-1 w-1 rounded-full shrink-0" style={{ background: "var(--green)" }} />
-                {line}
-              </li>
-            ))}
-          </ul>
         </div>
 
         {/* Actions */}
@@ -515,6 +572,26 @@ function TypeDetail({ t, total, periodEnd, onOpenWorkpaper }: {
         {exportErr && <p className="text-[11px]" style={{ color: "#9b3d37" }}>{exportErr}</p>}
       </div>
     </Card>
+
+    {/* Reuse the existing per-item schedule drawers verbatim — each computes
+        its amortization / loan / depreciation / lease table client-side. */}
+    {openItem && t.type === "prepaid" && (
+      <PrepaidAmortizationDrawer item={openItem as PrepaidItem} onClose={() => setOpenItem(null)} />
+    )}
+    {openItem && t.type === "accrual" && (
+      <AccrualReversalDrawer item={openItem as AccrualItem} onClose={() => setOpenItem(null)} />
+    )}
+    {openItem && (t.type === "fixed_asset" || t.type === "lease" || t.type === "loan") && (
+      <ScheduleItemDrawer
+        variant={
+          t.type === "fixed_asset" ? { kind: "fixed_asset" as const, item: openItem as FixedAssetItem }
+          : t.type === "lease"     ? { kind: "lease" as const,       item: openItem as LeaseItem }
+          :                          { kind: "loan" as const,        item: openItem as LoanItem }
+        }
+        onClose={() => setOpenItem(null)}
+      />
+    )}
+    </>
   )
 }
 
