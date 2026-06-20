@@ -1,7 +1,7 @@
 /**
  * Accrued Expenses schedule detail page. See PrepaidsPage for pattern docs.
  */
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { ClipboardList, FileText, Pencil, Trash2, X, CheckCircle2 } from "lucide-react"
@@ -100,12 +100,6 @@ export function AccrualsPage() {
   const exportMut = useMutation({
     mutationFn: () => schedulesApi.downloadScheduleExcel("accrual", periodEnd),
   })
-
-  const totals = useMemo(() => {
-    const total = items.filter((i) => i.is_active && !i.is_reversed)
-      .reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
-    return { total, active: items.filter((i) => i.is_active).length }
-  }, [items])
 
   /**
    * "Add accrual" click from the AI missed-accrual banner. The dialog
@@ -243,11 +237,10 @@ export function AccrualsPage() {
         <div className={isClosed ? "space-y-5" : "flex-1 min-w-0 space-y-5"}>
         {/* Unreversed-accrual checker stays in the main column — a data alert. */}
         {!isClosed && <UnreversedAccrualsBanner periodEnd={periodEnd} />}
-        <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
+        {/* Account filter — the roll-forward below carries the recon tie-out */}
+        <div className="rounded-xl p-4"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker value={filterAccount} onChange={setFilterAccount} mode="filter" label="GL account" />
-          <Kpi label="Active accruals" value={fmt(totals.total.toString())} />
-          <Kpi label="Items tracked" value={totals.active.toString()} />
         </div>
 
         <RollForwardCard
@@ -351,15 +344,6 @@ export function AccrualsPage() {
   )
 }
 
-function Kpi({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-wider"
-        style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className="text-base font-bold tabular-nums mt-0.5 text-theme">{value}</p>
-    </div>
-  )
-}
 function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
   return <th className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`} style={{ color: "var(--text-muted)" }}>{children}</th>
 }

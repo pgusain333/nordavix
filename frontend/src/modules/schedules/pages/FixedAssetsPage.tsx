@@ -6,7 +6,7 @@
  * is a separate GL account (contra-asset), tracked via the
  * accumulated_dep_qbo_account_id field on each item.
  */
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { Building2, FileText, Pencil, Trash2, X } from "lucide-react"
@@ -153,12 +153,6 @@ export function FixedAssetsPage() {
     mutationFn: () => schedulesApi.downloadScheduleExcel("fixed_asset", periodEnd),
   })
 
-  const totals = useMemo(() => {
-    const cost = items.filter((i) => i.is_active && !i.disposed_on)
-      .reduce((s, i) => s + (parseFloat(i.cost) || 0), 0)
-    return { cost, active: items.filter((i) => i.is_active).length }
-  }, [items])
-
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
       <SchedulePageHeader
@@ -241,11 +235,10 @@ export function FixedAssetsPage() {
         </aside>
         )}
         <div className={isClosed ? "space-y-5" : "flex-1 min-w-0 space-y-5"}>
-        <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
+        {/* Account filter — the roll-forward below carries the recon tie-out */}
+        <div className="rounded-xl p-4"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker value={filterAccount} onChange={setFilterAccount} mode="filter" label="Cost (asset) GL account" />
-          <Kpi label="Total cost (active)" value={fmt(totals.cost.toString())} />
-          <Kpi label="Active assets" value={totals.active.toString()} />
         </div>
 
         <RollForwardCard
@@ -346,15 +339,6 @@ export function FixedAssetsPage() {
   )
 }
 
-function Kpi({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-wider"
-        style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className="text-base font-bold tabular-nums mt-0.5 text-theme">{value}</p>
-    </div>
-  )
-}
 function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
   return <th className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`} style={{ color: "var(--text-muted)" }}>{children}</th>
 }

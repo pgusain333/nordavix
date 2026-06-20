@@ -11,7 +11,7 @@
  * pushes the liability snapshot; ROU snapshot is computed similarly via
  * the same item — future PR can split into its own page).
  */
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { Home, FileText, Pencil, Trash2, X } from "lucide-react"
@@ -118,14 +118,6 @@ export function LeasesPage() {
     mutationFn: () => schedulesApi.downloadScheduleExcel("lease", periodEnd),
   })
 
-  const totals = useMemo(() => {
-    const monthly = items.filter((i) => i.is_active)
-      .reduce((s, i) => s + (parseFloat(i.monthly_payment) || 0), 0)
-    const liability = items.filter((i) => i.is_active && i.initial_liability)
-      .reduce((s, i) => s + (parseFloat(i.initial_liability ?? "0") || 0), 0)
-    return { monthly, liability, active: items.filter((i) => i.is_active).length }
-  }, [items])
-
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
       <SchedulePageHeader
@@ -138,14 +130,12 @@ export function LeasesPage() {
         exporting={exportMut.isPending}
       />
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
-        <div className="rounded-xl p-4 flex items-end gap-4 flex-wrap"
+        {/* Account filter — the roll-forward below carries the recon tie-out */}
+        <div className="rounded-xl p-4"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
           <AccountPicker value={filterAccount} onChange={setFilterAccount} mode="filter" label="Lease liability GL account" />
-          <Kpi label="Monthly payments" value={fmt(totals.monthly.toString())} />
-          <Kpi label="Initial liability (ASC 842)" value={fmt(totals.liability.toString())} />
-          <Kpi label="Active leases" value={totals.active.toString()} />
         </div>
 
         <RollForwardCard
@@ -240,15 +230,6 @@ export function LeasesPage() {
   )
 }
 
-function Kpi({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-wider"
-        style={{ color: "var(--text-muted)" }}>{label}</p>
-      <p className="text-base font-bold tabular-nums mt-0.5 text-theme">{value}</p>
-    </div>
-  )
-}
 function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
   return <th className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`} style={{ color: "var(--text-muted)" }}>{children}</th>
 }
