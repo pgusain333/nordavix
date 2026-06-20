@@ -408,6 +408,18 @@ async def run_deep_agentic_for_variance(
     except Exception:
         logger.exception("flux memory hint lookup failed (variance %s)", variance_id)
 
+    # Knowledge graph: fold in what this account is connected to (open findings,
+    # accepted adjusting entries) so the analysis reasons over the relationships
+    # behind the variance. Best-effort; appended to the memory-hint slot (which
+    # is also part of the cache key below, so new context yields a fresh answer).
+    try:
+        from core.graph import Node, graph_context
+        graph_hint = await graph_context(db, Node("account", acct.qbo_account_id))
+        if graph_hint:
+            memory_hint = "\n\n".join(x for x in (memory_hint, graph_hint) if x)
+    except Exception:
+        logger.exception("flux graph context lookup failed (variance %s)", variance_id)
+
     user_prompt = _build_user_prompt(
         acct=acct, tb=tb, var=var, txns=txns, chart=chart, memory_hint=memory_hint
     )

@@ -19,6 +19,7 @@ from core.db.base import tenant_scope
 from core.graph import (
     GraphError,
     Node,
+    graph_context,
     inverse_of,
     link,
     neighbors,
@@ -141,3 +142,18 @@ async def test_subgraph_respects_depth(session, tenant_a):
         types2 = {n["type"] for n in depth2["nodes"]}
         assert types2 == {"journal_entry", "reconciliation", "period"}
         assert len(depth2["edges"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_context_summarizes_neighbors(session, tenant_a):
+    acct = str(uuid.uuid4())
+    je = str(uuid.uuid4())
+    with tenant_scope(tenant_a):
+        await link(session, Node("finding", "txn1:acctX"), "found_on", Node("account", acct))
+        await link(session, Node("journal_entry", je), "affects", Node("account", acct))
+        text = await graph_context(session, Node("account", acct))
+        empty = await graph_context(session, Node("account", str(uuid.uuid4())))
+
+    assert "knowledge graph" in text.lower()
+    assert "finding" in text and "journal_entry" in text
+    assert empty == ""  # an unconnected node yields no context block

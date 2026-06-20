@@ -859,6 +859,18 @@ async def build_variance_commentary(
     except Exception:
         logger.exception("memory hint lookup failed (acct=%s)", qid)
 
+    # Knowledge graph: fold in what this account is connected to (open findings,
+    # accepted adjusting entries) so the AI reasons over the relationships behind
+    # the balance, not just this period's numbers. Best-effort; appended to the
+    # memory-hint slot already woven into the prompt.
+    try:
+        from core.graph import Node, graph_context
+        graph_hint = await graph_context(db, Node("account", qid))
+        if graph_hint:
+            memory_hint = "\n\n".join(x for x in (memory_hint, graph_hint) if x)
+    except Exception:
+        logger.exception("graph context lookup failed (acct=%s)", qid)
+
     actions = _generate_recon_actions(
         account_name=account_name, account_number=account_number,
         account_type=account_type, period_end=period_end,
@@ -1175,6 +1187,18 @@ async def build_ai_commentary(
         )
     except Exception:
         logger.exception("memory hint lookup failed (acct=%s)", qid)
+
+    # Knowledge graph: fold in what this account is connected to (open findings,
+    # accepted adjusting entries) so the AI reasons over the relationships behind
+    # the balance, not just this period's numbers. Best-effort; appended to the
+    # memory-hint slot already woven into the prompt.
+    try:
+        from core.graph import Node, graph_context
+        graph_hint = await graph_context(db, Node("account", qid))
+        if graph_hint:
+            memory_hint = "\n\n".join(x for x in (memory_hint, graph_hint) if x)
+    except Exception:
+        logger.exception("graph context lookup failed (acct=%s)", qid)
 
     actions = _generate_recon_actions(
         account_name=account_name, account_number=account_number,

@@ -265,6 +265,52 @@ async def replace_open_proposals(
     return inserted
 
 
+# ── Knowledge graph: keep an entry's edges in sync with its lifecycle ──────
+
+
+async def sync_entry_graph(db: AsyncSession, entry: ProposedEntry, *, present: bool) -> None:
+    """Mirror an entry's *committed* state into the accounting knowledge graph.
+
+    present=True (accepted / posted): the journal entry ``explains`` its
+    reconciliation (or, for flux, its variance) and ``affects`` each account it
+    touches. present=False (open / dismissed): those edges are removed. Keyed on
+    the entry id; accepted entries are sticky, so unlike open drafts these edges
+    don't churn. Best-effort — a graph failure never breaks the lifecycle
+    transition that called it.
+    """
+    try:
+        from core.db.base import tenant_scope
+        from core.graph import Node, link, unlink
+
+        je = Node("journal_entry", str(entry.id))
+        if entry.source == "flux":
+            rel, target = "explains", Node("flux_variance", str(entry.source_ref))
+        else:
+            rel = "explains"
+            target = Node("reconciliation", f"{entry.source_ref}:{entry.period_end.isoformat()}")
+
+        accounts: list[str] = []
+        seen: set[str] = set()
+        for ln in entry.lines or []:
+            qid = ln.get("account_qbo_id")
+            if qid and qid not in seen:
+                seen.add(qid)
+                accounts.append(str(qid))
+
+        with tenant_scope(entry.tenant_id):
+            if present:
+                await link(db, je, rel, target, origin="system", created_by=entry.status_changed_by)
+                for qid in accounts:
+                    await link(db, je, "affects", Node("account", qid),
+                               origin="system", created_by=entry.status_changed_by)
+            else:
+                await unlink(db, je, rel, target)
+                for qid in accounts:
+                    await unlink(db, je, "affects", Node("account", qid))
+    except Exception:
+        logger.exception("graph edge sync failed for proposed entry %s (non-fatal)", entry.id)
+
+
 # ── Bank: deterministic generation ────────────────────────────────────────
 
 

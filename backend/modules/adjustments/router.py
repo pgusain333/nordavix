@@ -42,6 +42,7 @@ from modules.adjustments.service import (
     normalize_lines,
     period_accounts,
     serialize,
+    sync_entry_graph,
 )
 from modules.memory import service as memory
 
@@ -198,6 +199,15 @@ async def _transition(
         entity_id=entry.id,
         metadata={"source": entry.source, "status_before": prev, "status_after": new_status},
     )
+
+    # Knowledge graph: an accepted/posted JE explains its recon/variance and
+    # affects its accounts; open/dismissed ones don't. Keeps edges in sync with
+    # the human's decision (best-effort; never blocks the transition).
+    if new_status in ("accepted", "posted"):
+        await sync_entry_graph(db, entry, present=True)
+    elif new_status in ("open", "dismissed"):
+        await sync_entry_graph(db, entry, present=False)
+
     await db.commit()
     await db.refresh(entry)
     return serialize(entry)
