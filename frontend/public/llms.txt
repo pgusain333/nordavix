@@ -1,0 +1,53 @@
+# Nordavix
+
+> AI-native month-end close software on top of QuickBooks Online — reconciliations,
+> flux analysis, balance-sheet schedules, intercompany consolidation, and an
+> AI-narrated financial package, with maker/checker controls and a sequential close gate.
+
+Nordavix connects to QuickBooks Online **read-only** and helps controllers and CPAs
+close the books faster and more defensibly. It reconciles every balance-sheet account,
+runs flux (variance) analysis, maintains prepaid / accrual / fixed-asset / lease / loan
+schedules that feed those reconciliations as subledgers, drafts adjusting journal entries
+for a human to review and post, and produces a board-ready financial package. AI does the
+mechanical first pass; the human keeps every approval. Free during beta.
+
+<!-- Maintenance: this file is hand-curated (like sitemap.xml). When you add a blog post
+     under src/marketing/blog/posts/, add a line under the right section below and in
+     public/sitemap.xml. Keep it Markdown with an H1 and real links. -->
+
+## Product
+
+- [Solutions](https://nordavix.com/solutions): how the close loop works — reconciliations, flux, schedules, consolidation, and the financial package
+- [Security](https://nordavix.com/security): data handling, multi-tenant isolation, and read-only QuickBooks access
+- [Help & docs](https://nordavix.com/help): how to use Nordavix, module by module
+- [Blog](https://nordavix.com/blog): controller-grade guides on the month-end close
+
+## Guides: Month-end close & schedules
+
+- [Balance Sheet Account Schedules](https://nordavix.com/blog/balance-sheet-account-schedules): prepaid, accrual, fixed-asset, lease & loan schedules as reconciliation subledgers
+- [Prepaid Expense Amortization Schedule](https://nordavix.com/blog/prepaid-expense-amortization-schedule): a worked example — straight-line vs days-based, the journal entries, the tie-out
+- [The Complete Month-End Close Checklist](https://nordavix.com/blog/month-end-close-checklist): five gated stages from cut-off to lock
+- [Month-End Close Software Buyer's Guide (2026)](https://nordavix.com/blog/month-end-close-software): what to look for and how to evaluate tools
+- [Best QuickBooks Month-End Close Software (2026)](https://nordavix.com/blog/best-quickbooks-month-end-close-software): top 5, ranked
+- [The Month-End Close, by Role](https://nordavix.com/blog/month-end-close-cfo-controller-outsourced-accounting): how CFOs, controllers & outsourced teams each approach it
+- [Maker-Checker for a 3-Person Team](https://nordavix.com/blog/maker-checker-accounting-controls): real segregation-of-duties controls without bureaucracy
+- [The Close That Learns Your Books](https://nordavix.com/blog/compounding-memory): how teaching the AI your expectations compounds over closes
+- [Month-End Close Is Still Broken](https://nordavix.com/blog/month-end-close-is-broken): the problem Nordavix is built to fix
+
+## Guides: Reconciliation
+
+- [Balance Sheet Reconciliation: The Complete Guide](https://nordavix.com/blog/balance-sheet-reconciliation): GL-to-subledger, the roll-forward, account-by-account
+- [Balance Sheet Reconciliation Checklist (+ Template)](https://nordavix.com/blog/balance-sheet-reconciliation-checklist): a step-by-step checklist and free template
+- [Bank Reconciliation in QuickBooks Online](https://nordavix.com/blog/bank-reconciliation-quickbooks): how to tie cash to the bank statement
+
+## Guides: Flux analysis
+
+- [Flux Analysis: A Controller's Working Guide](https://nordavix.com/blog/flux-analysis-guide): the method, materiality, and worked examples
+- [Flux Analysis Example](https://nordavix.com/blog/flux-analysis-example): a full worked walk-through
+
+## Guides: AI, controls & audit
+
+- [AI in Accounting: What's Actually Working in 2026](https://nordavix.com/blog/ai-in-accounting-2026): where AI helps the close today
+- [How to Catch GL Coding Errors](https://nordavix.com/blog/catch-gl-coding-errors): finding misclassifications that don't break the trial balance
+- [Intercompany Consolidation in QuickBooks](https://nordavix.com/blog/intercompany-consolidation-quickbooks): eliminations and the consolidated trial balance
+- [Audit Prep Checklist](https://nordavix.com/blog/audit-prep-checklist): the binder a Big-4 auditor wishes you'd hand over
