@@ -814,6 +814,27 @@ async def _commit_one_snapshot(
     await _reflag_approved_recons(
         db, tenant_id, {qbo_account_id}, user_id=user_id, reason="schedule committed",
     )
+
+    # Knowledge-graph dual-write (best-effort, additive): this committed schedule
+    # is the subledger that SUPPORTS the account's reconciliation for the period.
+    # Keyed on stable (type, account, period) ids so re-commits are idempotent.
+    # A graph failure must never break the commit.
+    try:
+        from core.db.base import tenant_scope
+        from core.graph import Node, link
+
+        with tenant_scope(tenant_id):
+            await link(
+                db,
+                Node("schedule", f"{schedule_type}:{qbo_account_id}:{pe.isoformat()}"),
+                "supports",
+                Node("reconciliation", f"{qbo_account_id}:{pe.isoformat()}"),
+                origin="system",
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("graph dual-write failed for schedule commit (non-fatal)")
+
     return existing, snap_d
 
 

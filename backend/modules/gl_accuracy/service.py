@@ -122,11 +122,13 @@ async def _replace_open_findings(
 
     inserted = 0
     seen: set[str] = set()
+    new_edges: list[tuple[str, str | None]] = []
     for fl in flags:
         key = _finding_key(fl)
         if key in actioned_keys or key in seen:
             continue
         seen.add(key)
+        new_edges.append((key, fl.get("posted_account_id")))
         db.add(GlAccuracyFinding(
             id=uuid.uuid4(), tenant_id=tenant_id, period_end=period_end, finding_key=key,
             kind=fl.get("kind") or "misclassification",
@@ -150,6 +152,26 @@ async def _replace_open_findings(
             status="open",
         ))
         inserted += 1
+
+    # Knowledge-graph dual-write (best-effort, additive): record that each
+    # finding is "found on" the account it flags and is "part of" the period.
+    # Keyed on the stable finding_key so re-scans are idempotent. A graph
+    # failure must never break the scan.
+    if new_edges:
+        try:
+            from core.db.base import tenant_scope
+            from core.graph import Node, link
+
+            with tenant_scope(tenant_id):
+                period_node = Node("period", period_end.isoformat())
+                for key, acct in new_edges:
+                    finding_node = Node("finding", key)
+                    await link(db, finding_node, "part_of", period_node, origin="system")
+                    if acct:
+                        await link(db, finding_node, "found_on", Node("account", str(acct)), origin="system")
+        except Exception:
+            logger.exception("graph dual-write failed for GL-accuracy findings (non-fatal)")
+
     return inserted
 
 
