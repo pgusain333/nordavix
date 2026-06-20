@@ -88,14 +88,19 @@ export function AuthPage({ mode }: Props) {
       headerTitle:             "hidden",
       headerSubtitle:          "hidden",
       socialButtonsBlockButton:
-        "border border-[var(--border-strong)] bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--text)] font-medium text-sm rounded-lg",
+        "h-11 border border-[var(--border-strong)] bg-[var(--surface)] hover:bg-[var(--surface-2)] text-[var(--text)] font-medium text-sm rounded-lg",
       dividerLine:             "bg-[var(--border)]",
       dividerText:             "text-[var(--text-muted)] text-xs",
-      formFieldLabel:          "text-[var(--text-2)] text-xs font-semibold uppercase tracking-wider mb-1",
+      // Refined micro-label: smaller, controlled tracking (the old text-xs +
+      // tracking-wider read cramped), and a real gap below so the field's
+      // rounded corner can never sit under the label text.
+      formFieldLabel:          "text-[var(--text-2)] text-[11px] font-semibold uppercase tracking-[0.1em] mb-2",
+      // Taller, roomier input (px-3.5 py-2.5 ≈ 44px). The right padding leaves
+      // space for the show-password eye so typed text never runs under it.
       formFieldInput:
-        "bg-[var(--surface-2)] border border-[var(--border-strong)] text-[var(--text)] text-sm rounded-lg focus:border-[var(--green)] focus:ring-0",
+        "bg-[var(--surface-2)] border border-[var(--border-strong)] text-[var(--text)] text-sm rounded-lg px-3.5 py-2.5 focus:border-[var(--green)] focus:ring-0",
       formButtonPrimary:
-        "bg-[var(--green)] hover:opacity-90 text-white font-semibold text-sm rounded-lg shadow-none normal-case",
+        "h-11 bg-[var(--green)] hover:opacity-90 text-white font-semibold text-sm rounded-lg shadow-none normal-case",
       footer:                  "hidden",
       footerAction:            "hidden",
       identityPreviewText:     "text-[var(--text)]",

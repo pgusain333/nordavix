@@ -320,10 +320,22 @@
   border-color: var(--green) !important;
 }
 
-/* Generous spacing between label and input so any remaining error
-   indicator can't visually touch the label. */
+/* Clear gap so the input's rounded top-left corner — which turns GREEN when
+   the field is focused — can never sit under the label text. That green
+   rounded corner peeking under the "P" of PASSWORD is the "overlapping" mark;
+   a real gap (plus the taller field below) keeps the corner well clear. */
 .cl-formFieldLabelRow {
-  margin-bottom: 0.5rem !important;
+  margin-bottom: 0.6rem !important;
+}
+/* Premium field sizing — taller, roomier inputs that match the brand panel.
+   The password field reserves right padding so the show-password eye (and any
+   browser autofill icon) never overlaps the typed text. */
+.cl-formFieldInput {
+  min-height: 2.75rem !important;
+  padding: 0.625rem 0.875rem !important;
+}
+.cl-formField__password .cl-formFieldInput {
+  padding-right: 2.75rem !important;
 }
 .cl-formField {
   margin-bottom: 1rem !important;
