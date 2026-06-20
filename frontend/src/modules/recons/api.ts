@@ -180,6 +180,10 @@ export interface OverviewAccount {
   subledger_balance:      string
   subledger_source:       string
   subledger_is_manual:    boolean
+  // Subledger IS the account's Nordavix schedule (prepaid / accrual / FA /
+  // lease / loan), computed live from the schedule items. Authoritative —
+  // takes display priority over the roll-forward badge.
+  subledger_is_schedule?: boolean
   subledger_is_rollforward?: boolean    // default subledger came from prior period close
   // Tells the UI which prior source the roll-forward came from:
   //   "subledger" — a reconciled prior-period subledger (most reliable)

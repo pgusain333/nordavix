@@ -374,6 +374,79 @@ async def fetch_overview(
     return await sync_overview(conn, session, period_end)
 
 
+# ── Schedule-backed subledger ────────────────────────────────────────────────
+# For an account whose subledger IS a Nordavix schedule (prepaid / accrual /
+# fixed asset / lease / loan), the schedule — not the generic close-and-roll
+# chain — is the authoritative subledger. It's LIVE-computed from the active
+# schedule items, so the dashboard tracks schedule edits automatically (the
+# closing balance moves the moment a schedule line changes). Deriving it here,
+# in the single overview builder, keeps the dashboard row, the recon drawer's
+# schedule-vs-GL panel, the variance, and the close gate all in agreement —
+# instead of relying on a frontend auto-save that's disabled once a rec is
+# locked (the bug this replaces).
+
+# schedule_type (from _schedule_backed_subledger) → human label for the source
+# string + the dashboard "Schedule" badge.
+_SCHEDULE_SL_LABEL: dict[str, str] = {
+    "prepaid":            "prepaid",
+    "accrual":            "accrual",
+    "fixed_asset_cost":   "fixed-asset",
+    "fixed_asset_accdep": "accumulated-depreciation",
+    "lease_liability":    "lease-liability",
+    "lease_rou":          "ROU-asset",
+    "loan":               "loan",
+}
+
+
+def _schedule_subledger_source(schedule_type: str, ticked_count: int) -> str:
+    label = _SCHEDULE_SL_LABEL.get(schedule_type, "schedule")
+    base = f"Per Nordavix {label} schedule (computed live from the schedule items)."
+    if ticked_count:
+        base += (
+            f" Plus {ticked_count} reconciling item"
+            f"{'s' if ticked_count != 1 else ''} ticked on top."
+        )
+    return base
+
+
+async def _schedule_backed_account_ids(session: AsyncSession) -> set[str]:
+    """Every GL account id a Nordavix schedule maps to — the primary account on
+    each schedule type PLUS the fixed-asset accumulated-depreciation and lease
+    ROU contra/secondary accounts — for ACTIVE items only. Lets the overview
+    gate the (cheap, DB-only) per-account schedule-subledger calc to just these
+    accounts (typically a handful), keeping the snapshot read fast. Tenant
+    scoping is applied by the session's filter listener, like every query here."""
+    from sqlalchemy import select as _select
+
+    from models.schedule import (
+        ScheduleAccrual,
+        ScheduleFixedAsset,
+        ScheduleLease,
+        ScheduleLoan,
+        SchedulePrepaid,
+    )
+
+    ids: set[str] = set()
+    # Primary GL account on every schedule type.
+    for Model in (SchedulePrepaid, ScheduleAccrual, ScheduleFixedAsset, ScheduleLease, ScheduleLoan):
+        rows = (await session.execute(
+            _select(Model.qbo_account_id).where(Model.is_active.is_(True))
+        )).scalars().all()
+        ids.update(a for a in rows if a)
+    # Secondary accounts that also roll up to a schedule.
+    dep = (await session.execute(
+        _select(ScheduleFixedAsset.accumulated_dep_qbo_account_id).where(
+            ScheduleFixedAsset.is_active.is_(True)
+        )
+    )).scalars().all()
+    ids.update(a for a in dep if a)
+    rou = (await session.execute(
+        _select(ScheduleLease.rou_qbo_account_id).where(ScheduleLease.is_active.is_(True))
+    )).scalars().all()
+    ids.update(a for a in rou if a)
+    return ids
+
+
 async def _build_overview_from_qbo_data(
     *,
     session: AsyncSession,
@@ -463,6 +536,16 @@ async def _build_overview_from_qbo_data(
         if e.ref_id:
             wp_evidence_by_acct[e.ref_id] = wp_evidence_by_acct.get(e.ref_id, 0) + 1
 
+    # Accounts whose subledger IS a Nordavix schedule. For these the schedule
+    # is the authoritative, live-computed subledger (see _schedule_backed_*
+    # above) and overrides the generic roll-forward below. Resolved once here
+    # (a few small queries) so the per-account calc only runs for accounts that
+    # actually have a schedule — the snapshot read stays fast for everyone else.
+    from core.db.base import current_tenant_id as _current_tenant_id
+    from modules.recons.agentic import _schedule_backed_subledger
+    tid = _current_tenant_id.get()
+    sched_account_ids = await _schedule_backed_account_ids(session)
+
     out_accounts: list[dict] = []
     for a in accounts_meta:
         acct_type = a.get("AccountType", "")
@@ -521,7 +604,48 @@ async def _build_overview_from_qbo_data(
         # and surface the YTD NI as a checkable line item instead.
         is_re = _is_retained_earnings(a.get("Name", "") or "", acct_type)
 
-        if has_saved_subledger:
+        # ── Schedule-backed subledger (highest priority) ─────────────────
+        # If this account is tied to a Nordavix schedule, the schedule IS the
+        # subledger: computed LIVE from the active schedule items (so it tracks
+        # schedule edits), signed to the GL convention, plus any GL reconciling
+        # items the preparer explicitly ticked on top. This overrides the
+        # generic close-and-roll value — which only carried the prior closing
+        # forward and never applied this period's schedule activity (the
+        # phantom-variance bug). Mirrors the recon drawer's
+        # `schedule base + ticked items` exactly, so dashboard == drawer ==
+        # close gate, locked or not.
+        sched_sub = None
+        if qbo_id in sched_account_ids:
+            try:
+                sched_sub = await _schedule_backed_subledger(session, tid, qbo_id, period_end)
+            except Exception:
+                logger.warning(
+                    "overview: schedule subledger calc failed for %s @ %s — "
+                    "falling back to roll-forward", qbo_id, period_end, exc_info=True,
+                )
+                sched_sub = None
+        is_schedule_backed = sched_sub is not None
+
+        if sched_sub is not None:
+            sl_signed = Decimal(str(sched_sub.get("sl_signed") or "0"))
+            ticked_total = Decimal("0")
+            ticked_count = 0
+            for it in ((review.reconciling_items if review else []) or []):
+                # cleared is not False ⇒ ticked (real timing differences the
+                # preparer reconciled on top of the schedule). Open items
+                # (cleared=False) are never part of the subledger math.
+                if it.get("cleared") is not False:
+                    ticked_total += _dec(it.get("amount") or "0")
+                    ticked_count += 1
+            subledger_balance = (sl_signed + ticked_total).quantize(Decimal("0.01"))
+            source = _schedule_subledger_source(
+                str(sched_sub.get("schedule_type") or ""), ticked_count,
+            )
+            has_detail = True
+            # The schedule is the source — not a roll-forward, not a manual seed.
+            is_rollforward_from_subledger = False
+            is_manual_seed = False
+        elif has_saved_subledger:
             # Display the saved value either way (it's the canonical
             # current-period subledger). The is_manual_seed / is_rollforward
             # flags above drive the badge in the UI.
@@ -573,6 +697,12 @@ async def _build_overview_from_qbo_data(
             # to be true for ANY saved subledger, which lit the dot up
             # on AI-prepared / auto-saved roll-forward rows incorrectly.
             "subledger_is_manual": is_manual_seed,
+            # "Schedule" badge — TRUE when the subledger is the account's
+            # Nordavix schedule (live-computed). Takes display priority over
+            # the roll-forward badge, which is suppressed (set False above) for
+            # these accounts so the UI never mislabels a schedule balance as a
+            # carried-forward one.
+            "subledger_is_schedule": is_schedule_backed,
             # "Roll fwd" badge — TRUE whenever a prior reconciled
             # period exists, regardless of whether the current period
             # has a saved subledger or not. The badge means "this

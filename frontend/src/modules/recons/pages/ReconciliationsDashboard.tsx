@@ -1911,7 +1911,17 @@ export function ReconciliationsDashboard() {
                                     style={{ background: "var(--green)" }}
                                     title="Subledger saved for this period" />
                                 )}
-                                {!a.subledger_is_manual && a.subledger_is_rollforward && (
+                                {!a.subledger_is_manual && a.subledger_is_schedule && (
+                                  <span className="inline-flex items-center text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded"
+                                    style={{
+                                      background: "var(--green-subtle)",
+                                      color: "var(--green)",
+                                    }}
+                                    title="Subledger is computed live from this account's Nordavix schedule — it updates automatically when the schedule changes.">
+                                    Schedule
+                                  </span>
+                                )}
+                                {!a.subledger_is_manual && !a.subledger_is_schedule && a.subledger_is_rollforward && (
                                   <span className="inline-flex items-center text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded"
                                     style={{
                                       background: "var(--info-subtle)",
