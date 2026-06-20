@@ -532,7 +532,7 @@ export function FinancialsPage() {
         </div>
       </PageHeader>
 
-      <div className="flex-1 px-4 sm:px-6 py-5 w-full space-y-4">
+      <div className="flex-1 px-4 sm:px-6 py-5 w-full max-w-7xl mx-auto space-y-4">
 
         {/* Export error */}
         <AnimatePresence>
@@ -604,7 +604,7 @@ export function FinancialsPage() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
                   transition={{ duration: 0.18, ease: "easeOut" }}
-                  className="max-w-5xl space-y-4"
+                  className="space-y-4"
                 >
                   {active === "exec" ? (
                     isPeriodClosed ? (
