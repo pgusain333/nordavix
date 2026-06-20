@@ -628,15 +628,23 @@ async def _build_overview_from_qbo_data(
 
         if sched_sub is not None:
             sl_signed = Decimal(str(sched_sub.get("sl_signed") or "0"))
+            # Ticked GL reconciling items the preparer reconciled on top of the
+            # schedule (real timing differences). Sign EXACTLY as the recon
+            # drawer does (signedAmount): credit-natural accounts flip QBO
+            # amounts to the GL convention; manual items are already signed;
+            # "schedule-" items are part of sl_signed already → never re-count.
+            flip = Decimal("-1") if group in _CREDIT_NATURAL_GROUPS else Decimal("1")
             ticked_total = Decimal("0")
             ticked_count = 0
             for it in ((review.reconciling_items if review else []) or []):
-                # cleared is not False ⇒ ticked (real timing differences the
-                # preparer reconciled on top of the schedule). Open items
-                # (cleared=False) are never part of the subledger math.
-                if it.get("cleared") is not False:
-                    ticked_total += _dec(it.get("amount") or "0")
-                    ticked_count += 1
+                if it.get("cleared") is False:
+                    continue
+                txn_id = str(it.get("txn_id") or "")
+                if txn_id.startswith("schedule-"):
+                    continue
+                raw = _dec(it.get("amount") or "0")
+                ticked_total += raw if txn_id.startswith("manual-") else flip * raw
+                ticked_count += 1
             subledger_balance = (sl_signed + ticked_total).quantize(Decimal("0.01"))
             source = _schedule_subledger_source(
                 str(sched_sub.get("schedule_type") or ""), ticked_count,

@@ -321,7 +321,11 @@ def _buildup(data, body_w) -> Table:
 
     def signed(it):
         raw = _to_decimal(it.get("amount"))
-        return raw if str(it.get("txn_id", "")).startswith("manual-") else flip * raw
+        # "manual-" items are entered already-signed; "schedule-" items carry the
+        # Nordavix schedule's own signed (debit-positive) amount. Neither is
+        # re-flipped for credit-natural accounts — only raw QBO items are.
+        tid = str(it.get("txn_id", ""))
+        return raw if tid.startswith(("manual-", "schedule-")) else flip * raw
 
     memo = ParagraphStyle("m", fontName="Helvetica", fontSize=9, leading=12, textColor=GREY_DARK)
     memo_b = ParagraphStyle("mb", fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=INK)
@@ -445,7 +449,11 @@ def _reconciling_items(data, body_w) -> list[Any] | None:
 
     def signed(it):
         raw = _to_decimal(it.get("amount"))
-        return raw if str(it.get("txn_id", "")).startswith("manual-") else flip * raw
+        # "manual-" items are entered already-signed; "schedule-" items carry the
+        # Nordavix schedule's own signed (debit-positive) amount. Neither is
+        # re-flipped for credit-natural accounts — only raw QBO items are.
+        tid = str(it.get("txn_id", ""))
+        return raw if tid.startswith(("manual-", "schedule-")) else flip * raw
 
     header = ["Type", "Description", "Reference", "Date", "Amount", "Status"]
     rows = [header]

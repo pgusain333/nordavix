@@ -108,7 +108,68 @@ async def gather_account_pdf_data(
             names_by_id[u.id] = display or f"User {str(u.id)[:8]}"
 
     is_credit_natural = snap.account_type in _CREDIT_NATURAL
-    if review and review.subledger_total is not None:
+
+    # Items rendered in the build-up. Default = the saved reconciling items.
+    # Schedule-backed accounts replace this with the schedule's own roll-forward
+    # (opening + activity) so the PRINTED build-up foots to the LIVE Nordavix
+    # schedule — the same authoritative subledger the dashboard shows — instead
+    # of a possibly-stale stored subledger_total.
+    reconciling_items_out = (review.reconciling_items if review else []) or []
+
+    sched = None
+    try:
+        from modules.recons.agentic import _schedule_backed_subledger
+        sched = await _schedule_backed_subledger(db, tenant_id, qbo_account_id, period_end)
+    except Exception:
+        logger.warning(
+            "pdf: schedule subledger calc failed for %s @ %s — using stored subledger",
+            qbo_account_id, period_end, exc_info=True,
+        )
+        sched = None
+
+    if sched is not None:
+        from modules.recons.overview import _SCHEDULE_SL_LABEL
+        sl_signed = Decimal(str(sched.get("sl_signed") or "0"))
+        sl_entries = sched.get("sl_entries") or []
+        # sl_entries[0] is the opening (roll-forward anchor); the rest are this
+        # period's activity (amortization / depreciation / accretion / …) and,
+        # by construction, opening + Σ activity == sl_signed.
+        opening_balance = Decimal(str(sl_entries[0].get("amount") or "0")) if sl_entries else Decimal("0")
+        label = _SCHEDULE_SL_LABEL.get(str(sched.get("schedule_type") or ""), "schedule")
+        opening_source = f"Per Nordavix {label} schedule — balance at prior period end"
+        # Activity lines → build-up items carrying the schedule's signed
+        # (debit-positive) amount. The "schedule-" prefix tells pdf._buildup NOT
+        # to re-flip them for credit-natural accounts.
+        schedule_items = [
+            {
+                "txn_id":     f"schedule-{i}",
+                "txn_type":   "Schedule",
+                "txn_number": "",
+                "txn_date":   e.get("date") or period_end.isoformat(),
+                "amount":     str(e.get("amount") or "0"),
+                "memo":       e.get("label") or "Schedule activity",
+                "cleared":    True,
+            }
+            for i, e in enumerate(sl_entries[1:], start=1)
+        ]
+        # GL reconciling items the preparer ticked on top (real timing diffs),
+        # signed exactly as the dashboard does so the PDF == dashboard.
+        flip = Decimal("-1") if is_credit_natural else Decimal("1")
+        ticked_total = Decimal("0")
+        for it in (review.reconciling_items if review else []) or []:
+            if it.get("cleared") is False:
+                continue
+            tid = str(it.get("txn_id", ""))
+            if tid.startswith("schedule-"):
+                continue
+            raw = Decimal(str(it.get("amount", "0") or "0"))
+            ticked_total += raw if tid.startswith("manual-") else flip * raw
+        subledger_balance = sl_signed + ticked_total
+        # Build-up = schedule opening + schedule activity + ticked GL items.
+        # Any explicitly-open (cleared=False) saved items still flow through so
+        # they surface in the separate "open items" section.
+        reconciling_items_out = schedule_items + list((review.reconciling_items if review else []) or [])
+    elif review and review.subledger_total is not None:
         subledger_balance = Decimal(review.subledger_total)
     else:
         subledger_balance = opening_balance
@@ -135,7 +196,7 @@ async def gather_account_pdf_data(
         "opening_balance":    str(opening_balance),
         "opening_source":     opening_source,
         "is_credit_natural":  is_credit_natural,
-        "reconciling_items":  (review.reconciling_items if review else []) or [],
+        "reconciling_items":  reconciling_items_out,
         "notes":              (review.notes if review else None),
         "prepared_by_name":   (
             names_by_id.get(review.prepared_by) if review and review.prepared_by else None
