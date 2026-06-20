@@ -31,10 +31,11 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   Building2, User, Briefcase, Users as UsersIcon, Bell, Sparkles,
   Palette, Download, Info, ArrowRight, Plus, Mail, ExternalLink,
-  CheckCircle2, FileDown, AlertTriangle, ShieldCheck, BookOpen, Brain,
+  CheckCircle2, FileDown, AlertTriangle, ShieldCheck, BookOpen, Brain, Rocket,
   type LucideIcon,
 } from "lucide-react"
 import { MemorySection } from "@/modules/memory/MemorySection"
+import { AutopilotSection } from "@/modules/autopilot/AutopilotSection"
 import { Spinner } from "@/core/ui/components"
 import { SkeletonBlock } from "@/core/ui/Skeleton"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
@@ -50,7 +51,7 @@ import {
 
 type SectionKey =
   | "company" | "profile" | "workspaces" | "team"
-  | "notifications" | "ai" | "memory" | "appearance" | "data" | "about"
+  | "notifications" | "ai" | "autopilot" | "memory" | "appearance" | "data" | "about"
 
 interface SectionDef {
   key:   SectionKey
@@ -66,6 +67,7 @@ const SECTIONS: SectionDef[] = [
   { key: "team",          label: "Team",            icon: UsersIcon,  hint: "Members and roles" },
   { key: "notifications", label: "Notifications",   icon: Bell,       hint: "Email and in-app alerts" },
   { key: "ai",            label: "AI preferences",  icon: Sparkles,   hint: "Agentic, materiality, tone" },
+  { key: "autopilot",     label: "Close Autopilot", icon: Rocket,     hint: "Scheduled month-end automation" },
   { key: "memory",        label: "Client memory",   icon: Brain,      hint: "What the AI has learned" },
   { key: "appearance",    label: "Appearance",      icon: Palette,    hint: "Theme and density" },
   { key: "data",          label: "Data & export",   icon: Download,   hint: "Audit log, exports" },
@@ -137,6 +139,7 @@ export function SettingsPage() {
                 {active === "team"          && <TeamSection />}
                 {active === "notifications" && <NotificationsSection />}
                 {active === "ai"            && <AIPreferencesSection />}
+                {active === "autopilot"     && <AutopilotSection />}
                 {active === "memory"        && <MemorySection />}
                 {active === "appearance"    && <AppearanceSection />}
                 {active === "data"          && <DataExportSection />}

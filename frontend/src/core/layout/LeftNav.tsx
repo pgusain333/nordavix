@@ -15,7 +15,7 @@ import {
   LayoutDashboard, Bot, BarChart3, Scale, FileText, ArrowLeftRight,
   Plug, X, Pencil, Check, CheckSquare, BookOpen,
   MessageSquare, Settings, Lightbulb, LifeBuoy, ClipboardList, Search,
-  PanelLeft, PanelLeftClose, Sparkles, ShieldCheck, Target, Rocket, ListChecks,
+  PanelLeft, PanelLeftClose, Sparkles, ShieldCheck, Target, ListChecks,
   ScanSearch, ChevronDown,
   type LucideIcon,
 } from "lucide-react"
@@ -149,7 +149,6 @@ interface NavGroup {
 
 const NAV_GROUPS: NavGroup[] = [
   { id: "close", label: "Close", items: [
-    { label: "Close Autopilot", path: "/app/autopilot", icon: Rocket,      available: true },
     { label: "Close Workflow",  path: "/app/close",     icon: ListChecks,  available: true },
     { label: "Close Tasks",     path: "/app/tasks",     icon: CheckSquare, available: true },
   ]},

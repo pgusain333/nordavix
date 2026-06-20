@@ -67,21 +67,98 @@ function fmtSyncedAt(iso: string): string {
   return formatDateTime(d)
 }
 
-// Section anchor registry
+// ── Section registry — drives the master rail AND the detail pane ─────────────
+// Order = rail order. "overview" is the executive landing (health + KPIs + summary).
 const SECTIONS = [
-  { id: "recommendations", label: "Risks",         icon: AlertTriangle },
-  { id: "liquidity",       label: "Liquidity",     icon: Wallet },
-  { id: "cash_forecast",   label: "Forecast",      icon: CalendarClock },
-  { id: "balance_sheet",   label: "Balance sheet", icon: Scale },
-  { id: "profitability",   label: "P&L",           icon: LineIcon },
-  { id: "growth",          label: "Growth",        icon: TrendingUp },
-  { id: "breakeven",       label: "Break-even",    icon: Gauge },
-  { id: "receivables",     label: "AR",            icon: ArrowDownToLine },
-  { id: "payables",        label: "AP",            icon: ArrowUpFromLine },
-  { id: "expenses",        label: "Expenses",      icon: ReceiptText },
+  { id: "overview",        label: "Overview",      icon: Sparkles,        title: "Executive overview",            description: "Health score, headline KPIs, and the management summary for the period." },
+  { id: "recommendations", label: "Risks",         icon: AlertTriangle,   title: "Risks & recommendations",       description: "Heuristic-flagged action items for the selected period." },
+  { id: "liquidity",       label: "Liquidity",     icon: Wallet,          title: "Liquidity",                     description: "Cash position, operating burn, runway, ratios, and cash conversion." },
+  { id: "cash_forecast",   label: "Forecast",      icon: CalendarClock,   title: "Cash flow forecast",            description: "Where cash lands over the next 6 months at the current operating burn — and when to act." },
+  { id: "balance_sheet",   label: "Balance sheet", icon: Scale,           title: "Balance sheet & solvency",      description: "What you own vs. owe, how leveraged you are, and how net worth is trending." },
+  { id: "profitability",   label: "P&L",           icon: LineIcon,        title: "Revenue & profitability",       description: "Top-line trends and margin compression." },
+  { id: "growth",          label: "Growth",        icon: TrendingUp,      title: "Growth & momentum",             description: "Revenue trajectory, annualized run-rate, and whether costs scale slower than revenue." },
+  { id: "breakeven",       label: "Break-even",    icon: Gauge,           title: "Break-even & margin of safety", description: "The revenue needed to cover all costs, and how much cushion you have above it." },
+  { id: "receivables",     label: "AR",            icon: ArrowDownToLine, title: "Receivables (AR)",              description: "How quickly customers pay, where risk concentrates, largest overdue accounts." },
+  { id: "payables",        label: "AP",            icon: ArrowUpFromLine, title: "Payables (AP)",                 description: "How quickly you're paying suppliers. Stretched payables damage relationships." },
+  { id: "expenses",        label: "Expenses",      icon: ReceiptText,     title: "Expense monitoring",            description: "Where the money went + month-over-month movers for anomaly detection." },
 ] as const
 
 type SectionId = typeof SECTIONS[number]["id"]
+
+/** Worst KPI risk in a section — drives the rail status dot from the server's
+ *  own per-KPI risk assessment (red > amber > green > neutral). */
+function worstRisk(rows?: KpiRow[]): RiskLevel {
+  if (!rows || rows.length === 0) return "neutral"
+  if (rows.some((r) => r.risk === "red"))   return "red"
+  if (rows.some((r) => r.risk === "amber")) return "amber"
+  if (rows.some((r) => r.risk === "green")) return "green"
+  return "neutral"
+}
+
+/** The compact headline metric + status dot shown for each rail row, so the
+ *  user reads the whole financial picture at a glance before drilling in. */
+function railMeta(id: SectionId, data: InsightsOverview): { headline: string; status: RiskLevel } {
+  switch (id) {
+    case "overview": {
+      const ms = data.management_summary
+      return {
+        headline: ms ? `Health ${ms.score}/100` : "Executive digest",
+        status: ms ? (ms.health === "strong" ? "green" : ms.health === "watch" ? "amber" : "red") : "neutral",
+      }
+    }
+    case "recommendations": {
+      const recs = data.recommendations ?? []
+      const high = recs.filter((r) => r.priority === "high").length
+      return {
+        headline: recs.length === 0 ? "Nothing flagged"
+          : high > 0 ? `${high} high · ${recs.length} total` : `${recs.length} flagged`,
+        status: high > 0 ? "red" : recs.some((r) => r.priority === "medium") ? "amber" : recs.length ? "green" : "neutral",
+      }
+    }
+    case "liquidity":
+      return { headline: `${fmtMoney(data.liquidity.cash_balance)} cash`, status: worstRisk(data.liquidity.kpis) }
+    case "cash_forecast": {
+      const r = data.cash_forecast
+      const head = data.liquidity.runway_months !== null
+        ? `${data.liquidity.runway_months.toFixed(1)} mo runway`
+        : r.out_of_cash_date ? `$0 ~ ${r.out_of_cash_date}` : "Cash-positive"
+      return { headline: head, status: worstRisk(r.kpis) }
+    }
+    case "balance_sheet":
+      return { headline: `${fmtMoney(data.balance_sheet.equity)} equity`, status: worstRisk(data.balance_sheet.kpis) }
+    case "profitability": {
+      const p = data.profitability
+      const head = p.net_margin_pct !== null ? `${p.net_margin_pct.toFixed(1)}% net margin` : fmtMoney(p.net_income)
+      return { headline: head, status: worstRisk(p.kpis) }
+    }
+    case "growth": {
+      const g = data.growth
+      const head = g.revenue_growth_mom !== null
+        ? `${g.revenue_growth_mom >= 0 ? "+" : ""}${g.revenue_growth_mom.toFixed(1)}% MoM`
+        : `${fmtMoney(g.annualized_run_rate)} run-rate`
+      return { headline: head, status: worstRisk(g.kpis) }
+    }
+    case "breakeven": {
+      const b = data.breakeven
+      const head = b.margin_of_safety_pct !== null ? `${b.margin_of_safety_pct.toFixed(0)}% safety`
+        : b.break_even_revenue !== null ? `${fmtMoney(b.break_even_revenue)} B/E` : "—"
+      return { headline: head, status: worstRisk(b.kpis) }
+    }
+    case "receivables": {
+      const r = data.receivables
+      const dso = r.dso_days !== null ? ` · ${r.dso_days.toFixed(0)}d` : ""
+      return { headline: `${fmtMoney(r.ar_balance)} AR${dso}`, status: worstRisk(r.kpis) }
+    }
+    case "payables": {
+      const p = data.payables
+      const dpo = p.dpo_days !== null ? ` · ${p.dpo_days.toFixed(0)}d` : ""
+      return { headline: `${fmtMoney(p.ap_balance)} AP${dpo}`, status: worstRisk(p.kpis) }
+    }
+    case "expenses":
+      return { headline: `${fmtMoney(data.expenses.total_expenses)} spend`, status: worstRisk(data.expenses.kpis) }
+  }
+  return { headline: "", status: "neutral" }
+}
 
 // ── Main page ────────────────────────────────────────────────────────────────
 
@@ -182,6 +259,28 @@ export function InsightsPage() {
     setSearchParams(next, { replace: true })
   }
 
+  // ── Selected section (master rail → detail pane) ─────────────────────────
+  const [active, setActive] = useState<SectionId>("overview")
+
+  // Keyboard nav: ↑/↓ moves between sections — but never while a form control is
+  // focused, so the period <select> and date inputs keep their native arrows.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const el = document.activeElement
+      if (el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) return
+      e.preventDefault()
+      setActive((cur) => {
+        const i = SECTIONS.findIndex((s) => s.id === cur)
+        const ni = e.key === "ArrowDown" ? Math.min(SECTIONS.length - 1, i + 1) : Math.max(0, i - 1)
+        return SECTIONS[ni].id
+      })
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
   // ── Layout ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
@@ -198,9 +297,7 @@ export function InsightsPage() {
         syncError={syncError}
       />
 
-      {pending && data && <JumpNav data={data} />}
-
-      <div className="flex-1 px-4 sm:px-8 py-6 w-full">
+      <div className="flex-1 px-4 sm:px-6 py-5 w-full">
         {/* Empty state — never auto-loaded */}
         {!pending && (
           <EmptyState onGenerate={generate} />
@@ -230,10 +327,10 @@ export function InsightsPage() {
           <AnimatePresence mode="wait">
             <motion.div
               key={`${data.period_end}-${data.period_start ?? ""}`}
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.22, ease: "easeOut" }}
-              className="space-y-6"
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="space-y-4"
             >
               {data.custom_range && data.custom_pl_error && (
                 <div className="rounded-lg p-3 flex items-start gap-2"
@@ -246,137 +343,13 @@ export function InsightsPage() {
                 </div>
               )}
 
-              <HeroKpis data={data} />
-              <ManagementSummary data={data} />
-              <Section id="recommendations" title="Risks & recommendations" icon={Sparkles}
-                description="Heuristic-flagged action items for the selected period.">
-                <Recommendations data={data} />
-              </Section>
-              <Section id="liquidity" title="Liquidity" icon={Wallet}
-                description="Cash position, operating burn, runway, ratios, and cash conversion.">
-                <KpiTable rows={data.liquidity.kpis} />
-                <AdvisoryBlock advisory={data.liquidity.advisory} />
-                <SectionDivider label="Cash & operating cash flow — last 7 months" />
-                <DualSparkline history={data.liquidity.history}
-                  leftKey="cash" rightKey="ocf"
-                  leftLabel="Cash balance" rightLabel="Monthly OCF"
-                  onPointClick={jumpToMonth} />
-              </Section>
-              <Section id="cash_forecast" title="Cash flow forecast" icon={CalendarClock}
-                description="Where cash lands over the next 6 months at the current operating burn — and when to act.">
-                <KpiTable rows={data.cash_forecast.kpis} />
-                <AdvisoryBlock advisory={data.cash_forecast.advisory} />
-                {data.cash_forecast.points.length > 0 && (
-                  <>
-                    <SectionDivider label="Projected cash balance — next 6 months" />
-                    <ForecastChart points={data.cash_forecast.points}
-                      outOfCashDate={data.cash_forecast.out_of_cash_date} />
-                  </>
-                )}
-              </Section>
-              <Section id="balance_sheet" title="Balance sheet & solvency" icon={Scale}
-                description="What you own vs. owe, how leveraged you are, and how net worth is trending.">
-                <KpiTable rows={data.balance_sheet.kpis} />
-                <AdvisoryBlock advisory={data.balance_sheet.advisory} />
-                {data.balance_sheet.equity_history.length > 0 && (
-                  <>
-                    <SectionDivider label="Net worth (equity) — last 7 months" />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <SparklineCard label="Equity / net worth"
-                        points={data.balance_sheet.equity_history.map((h) => ({ x: h.label, y: h.equity, period: h.period }))}
-                        color="var(--green)" onPointClick={jumpToMonth} />
-                    </div>
-                  </>
-                )}
-              </Section>
-              <Section id="profitability" title="Revenue & profitability" icon={LineIcon}
-                description="Top-line trends and margin compression.">
-                <KpiTable rows={data.profitability.kpis} />
-                <AdvisoryBlock advisory={data.profitability.advisory} />
-                <SectionDivider label="Revenue, GP, and net income — last 7 months" />
-                <TripleSparkline history={data.profitability.history}
-                  keys={["revenue", "gp", "ni"]}
-                  labels={["Revenue", "Gross profit", "Net income"]}
-                  onPointClick={jumpToMonth} />
-              </Section>
-              <Section id="growth" title="Growth & momentum" icon={TrendingUp}
-                description="Revenue trajectory, annualized run-rate, and whether costs scale slower than revenue.">
-                <KpiTable rows={data.growth.kpis} />
-                <AdvisoryBlock advisory={data.growth.advisory} />
-                {data.growth.history.length > 0 && (
-                  <>
-                    <SectionDivider label="Revenue — last 7 months" />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <SparklineCard label="Revenue"
-                        points={data.growth.history.map((h) => ({ x: h.label, y: Number(h.revenue ?? 0), period: h.period }))}
-                        color="var(--green)" onPointClick={jumpToMonth} />
-                    </div>
-                  </>
-                )}
-              </Section>
-              <Section id="breakeven" title="Break-even & margin of safety" icon={Gauge}
-                description="The revenue needed to cover all costs, and how much cushion you have above it.">
-                <KpiTable rows={data.breakeven.kpis} />
-                <AdvisoryBlock advisory={data.breakeven.advisory} />
-                {data.breakeven.break_even_revenue !== null && (
-                  <>
-                    <SectionDivider label="Current revenue vs. break-even" />
-                    <BreakevenBar current={data.breakeven.current_revenue}
-                      breakEven={data.breakeven.break_even_revenue} />
-                  </>
-                )}
-              </Section>
-              <Section id="receivables" title="Receivables (AR)" icon={ArrowDownToLine}
-                description="How quickly customers pay, where risk concentrates, largest overdue accounts.">
-                <KpiTable rows={data.receivables.kpis} />
-                <AdvisoryBlock advisory={data.receivables.advisory} />
-                {data.receivables.aging.length > 0 ? (
-                  <>
-                    <SectionDivider label="Aging concentration" />
-                    <AgingBars buckets={data.receivables.aging} />
-                  </>
-                ) : data.receivables.qbo_error && <InlineHint text={data.receivables.qbo_error} />}
-                {data.receivables.top_customers.length > 0 && (
-                  <>
-                    <SectionDivider label="Top 5 overdue customers" />
-                    <EntityTable rows={data.receivables.top_customers} entityLabel="Customer" />
-                  </>
-                )}
-              </Section>
-              <Section id="payables" title="Payables (AP)" icon={ArrowUpFromLine}
-                description="How quickly you're paying suppliers. Stretched payables damage relationships.">
-                <KpiTable rows={data.payables.kpis} />
-                <AdvisoryBlock advisory={data.payables.advisory} />
-                {data.payables.aging.length > 0 ? (
-                  <>
-                    <SectionDivider label="Aging concentration" />
-                    <AgingBars buckets={data.payables.aging} />
-                  </>
-                ) : data.payables.qbo_error && <InlineHint text={data.payables.qbo_error} />}
-                {data.payables.top_vendors.length > 0 && (
-                  <>
-                    <SectionDivider label="Top 5 owed vendors" />
-                    <EntityTable rows={data.payables.top_vendors} entityLabel="Vendor" />
-                  </>
-                )}
-              </Section>
-              <Section id="expenses" title="Expense monitoring" icon={ReceiptText}
-                description="Where the money went + month-over-month movers for anomaly detection.">
-                <KpiTable rows={data.expenses.kpis} />
-                <AdvisoryBlock advisory={data.expenses.advisory} />
-                {data.expenses.top_categories.length > 0 && (
-                  <>
-                    <SectionDivider label="Largest categories (by spend this period)" />
-                    <CategoryBars rows={data.expenses.top_categories} />
-                  </>
-                )}
-                {data.expenses.top_movers.length > 0 && (
-                  <>
-                    <SectionDivider label="Biggest month-over-month movers" />
-                    <MoversTable rows={data.expenses.top_movers} />
-                  </>
-                )}
-              </Section>
+              {/* Master rail (left) → visualize-first detail (right) */}
+              <div className="flex flex-col md:flex-row gap-4 lg:gap-6">
+                <SectionRail active={active} onSelect={setActive} data={data} />
+                <div className="flex-1 min-w-0">
+                  <SectionDetail id={active} data={data} onJumpToMonth={jumpToMonth} />
+                </div>
+              </div>
             </motion.div>
           </AnimatePresence>
         )}
@@ -576,96 +549,330 @@ function EmptyState({ onGenerate }: { onGenerate: () => void }) {
   )
 }
 
-// ── Sticky jump-to-section nav ───────────────────────────────────────────────
+// ── Master rail — section list with headline metric + status dot ─────────────
 
-function JumpNav({ data }: { data: InsightsOverview }) {
-  void data
-  const [active, setActive] = useState<SectionId>("recommendations")
-
-  // Watch which section is in view
-  useEffect(() => {
-    const els = SECTIONS
-      .map((s) => document.getElementById(`insights-section-${s.id}`))
-      .filter((e): e is HTMLElement => !!e)
-    if (els.length === 0) return
-
-    const obs = new IntersectionObserver((entries) => {
-      // Pick the entry whose top is closest to the top of the viewport but
-      // still visible — feels more natural than "first intersecting".
-      const visible = entries.filter((e) => e.isIntersecting)
-      if (visible.length === 0) return
-      visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
-      const top = visible[0]
-      const id = top.target.id.replace("insights-section-", "") as SectionId
-      setActive(id)
-    }, { rootMargin: "-100px 0px -60% 0px", threshold: [0, 0.1, 0.5, 1] })
-
-    els.forEach((el) => obs.observe(el))
-    return () => obs.disconnect()
-  }, [])
-
-  function scrollTo(id: SectionId) {
-    const el = document.getElementById(`insights-section-${id}`)
-    if (!el) return
-    el.scrollIntoView({ behavior: "smooth", block: "start" })
-  }
-
+function SectionRail({ active, onSelect, data }: {
+  active: SectionId; onSelect: (id: SectionId) => void; data: InsightsOverview;
+}) {
   return (
-    <div className="sticky top-0 z-10 px-4 sm:px-8 py-2 backdrop-blur"
+    <>
+      {/* Desktop: vertical, sticky rail */}
+      <nav className="hidden md:flex md:flex-col gap-1 w-60 lg:w-72 shrink-0 md:sticky md:top-2 md:self-start"
+        aria-label="Insight sections">
+        <div className="px-2 pb-1 flex items-center justify-between">
+          <span className="text-[10px] font-bold uppercase tracking-wider truncate" style={{ color: "var(--text-muted)" }}>
+            {data.period_label}
+          </span>
+          <OverallHealthPill data={data} />
+        </div>
+        {SECTIONS.map((s) => (
+          <RailItem key={s.id} section={s} active={active === s.id}
+            onSelect={() => onSelect(s.id)} data={data} />
+        ))}
+        <p className="px-2 pt-1.5 text-[10px] flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
+          <MousePointerClick size={10} strokeWidth={2} />
+          Use ↑ ↓ to move between sections
+        </p>
+      </nav>
+
+      {/* Mobile: horizontal scroll strip of chips */}
+      <div className="md:hidden -mx-4 px-4 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+        <div className="flex gap-2 pb-1">
+          {SECTIONS.map((s) => {
+            const Icon = s.icon
+            const isActive = active === s.id
+            const { status } = railMeta(s.id, data)
+            return (
+              <button key={s.id} onClick={() => onSelect(s.id)}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-all shrink-0"
+                style={{
+                  background: isActive ? "var(--green-subtle)" : "var(--surface)",
+                  color:      isActive ? "var(--green)"        : "var(--text-2)",
+                  border:     `1px solid ${isActive ? "var(--green)" : "var(--border)"}`,
+                }}
+              >
+                <Icon size={12} strokeWidth={2} />
+                {s.label}
+                {status !== "neutral" && status !== "green" && (
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: riskColor(status) }} />
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function RailItem({ section, active, onSelect, data }: {
+  section: typeof SECTIONS[number]; active: boolean; onSelect: () => void; data: InsightsOverview;
+}) {
+  const Icon = section.icon
+  const { headline, status } = railMeta(section.id, data)
+  return (
+    <button onClick={onSelect}
+      aria-current={active ? "page" : undefined}
+      className="group w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
       style={{
-        background: "color-mix(in oklab, var(--bg) 92%, transparent)",
-        borderBottom: "1px solid var(--border)",
-      }}>
-      <div className="w-full flex items-center gap-1.5 overflow-x-auto"
-        style={{ scrollbarWidth: "none" }}>
-        {SECTIONS.map((s) => {
-          const Icon = s.icon
-          const isActive = active === s.id
-          return (
-            <button key={s.id}
-              onClick={() => scrollTo(s.id)}
-              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-all"
-              style={{
-                background: isActive ? "var(--green-subtle)" : "transparent",
-                color:      isActive ? "var(--green)"        : "var(--text-2)",
-                border:     `1px solid ${isActive ? "var(--green)" : "var(--border)"}`,
-              }}
-            >
-              <Icon size={11} strokeWidth={2} />
-              {s.label}
-            </button>
-          )
-        })}
+        background: active ? "var(--green-subtle)" : "transparent",
+        border: `1px solid ${active ? "color-mix(in oklab, var(--green) 35%, transparent)" : "transparent"}`,
+      }}
+      onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)" }}
+      onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent" }}
+    >
+      <span className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 transition-colors"
+        style={{
+          background: active ? "var(--green)" : "var(--surface-2)",
+          color:      active ? "#fff"         : "var(--text-2)",
+        }}>
+        <Icon size={15} strokeWidth={1.9} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-[13px] font-semibold truncate"
+          style={{ color: active ? "var(--green)" : "var(--text)" }}>{section.label}</span>
+        <span className="block text-[11px] truncate tabular-nums" style={{ color: "var(--text-muted)" }}>{headline}</span>
+      </span>
+      {status !== "neutral" && (
+        <span className="h-2 w-2 rounded-full shrink-0" style={{ background: riskColor(status) }} />
+      )}
+    </button>
+  )
+}
+
+/** Compact overall-health chip atop the rail (from the management summary). */
+function OverallHealthPill({ data }: { data: InsightsOverview }) {
+  const ms = data.management_summary
+  if (!ms) return null
+  const tone = ms.health === "strong" ? { fg: "#3e8f66", bg: "#eaf4ee" }
+    : ms.health === "watch" ? { fg: "#8a6326", bg: "#f4eddf" }
+    : { fg: "#9b3d37", bg: "#f7eeec" }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full"
+      style={{ background: tone.bg, color: tone.fg }}>
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.fg }} />
+      {ms.score}
+    </span>
+  )
+}
+
+/** Circular health-score gauge — the visualize-first hero of the overview. */
+function HealthGauge({ score, health }: { score: number; health: "strong" | "watch" | "at_risk" }) {
+  const color = health === "strong" ? "var(--green)" : health === "watch" ? "#c79a52" : "#9b3d37"
+  const label = health === "strong" ? "Strong" : health === "watch" ? "Watch" : "At risk"
+  const R = 52
+  const C = 2 * Math.PI * R
+  const dash = C * (Math.max(0, Math.min(100, score)) / 100)
+  return (
+    <div className="relative shrink-0" style={{ width: 140, height: 140 }}>
+      <svg width="140" height="140" viewBox="0 0 140 140" className="-rotate-90">
+        <circle cx="70" cy="70" r={R} fill="none" stroke="var(--surface-2)" strokeWidth="10" />
+        <motion.circle cx="70" cy="70" r={R} fill="none" stroke={color} strokeWidth="10"
+          strokeLinecap="round" strokeDasharray={C}
+          initial={{ strokeDashoffset: C }}
+          animate={{ strokeDashoffset: C - dash }}
+          transition={{ duration: 0.9, ease: "easeOut" }} />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-3xl font-bold tabular-nums leading-none" style={{ color: "var(--text)" }}>{score}</span>
+        <span className="text-[9px] font-bold uppercase tracking-wider mt-1" style={{ color }}>{label}</span>
       </div>
     </div>
   )
 }
 
-// ── Section wrapper with anchor ──────────────────────────────────────────────
+// ── Detail pane — the selected section, visualize-first ───────────────────────
 
-function Section({
-  id, title, icon: Icon, description, children,
-}: {
-  id: SectionId; title: string; icon: React.ElementType; description: string; children: React.ReactNode;
+function SectionDetail({ id, data, onJumpToMonth }: {
+  id: SectionId; data: InsightsOverview; onJumpToMonth: (periodEnd: string) => void;
 }) {
+  const section = SECTIONS.find((s) => s.id === id)!
+  const Icon = section.icon
+  const { status } = railMeta(id, data)
+  const showPill = status !== "neutral" && id !== "overview" && id !== "recommendations"
   return (
-    <section id={`insights-section-${id}`} className="rounded-2xl scroll-mt-20"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-      <div className="px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-start gap-3">
-          <span className="h-8 w-8 rounded-md flex items-center justify-center shrink-0"
+    <AnimatePresence mode="wait">
+      <motion.section
+        key={id}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -6 }}
+        transition={{ duration: 0.18, ease: "easeOut" }}
+        className="rounded-2xl overflow-hidden"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
+      >
+        <div className="px-5 py-4 flex items-start gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
+          <span className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
             style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
-            <Icon size={15} strokeWidth={1.8} />
+            <Icon size={17} strokeWidth={1.8} />
           </span>
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-bold text-theme">{title}</h2>
-            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{description}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base font-bold text-theme">{section.title}</h2>
+              {showPill && <RiskPill level={status} />}
+            </div>
+            <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{section.description}</p>
           </div>
         </div>
-      </div>
-      <div className="p-5 space-y-5">{children}</div>
-    </section>
+        <div className="p-5 space-y-5">
+          <SectionBody id={id} data={data} onJumpToMonth={onJumpToMonth} />
+        </div>
+      </motion.section>
+    </AnimatePresence>
   )
+}
+
+function SectionBody({ id, data, onJumpToMonth }: {
+  id: SectionId; data: InsightsOverview; onJumpToMonth: (periodEnd: string) => void;
+}) {
+  switch (id) {
+    case "overview":
+      return (
+        <div className="space-y-5">
+          {data.management_summary && (
+            <div className="flex flex-col sm:flex-row items-center sm:items-center gap-5">
+              <HealthGauge score={data.management_summary.score} health={data.management_summary.health} />
+              <div className="min-w-0 text-center sm:text-left">
+                <p className="text-[15px] font-semibold leading-snug" style={{ color: "var(--text)" }}>
+                  {data.management_summary.headline}
+                </p>
+                <p className="text-[12px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+                  {data.custom_range ? "Selected window" : "Latest closed month"} · {data.period_label}
+                </p>
+              </div>
+            </div>
+          )}
+          <HeroKpis data={data} />
+          <ManagementSummary data={data} embedded />
+        </div>
+      )
+    case "recommendations":
+      return (data.recommendations && data.recommendations.length > 0)
+        ? <Recommendations data={data} />
+        : <InlineHint text="No risks flagged for this period — nothing needs your attention here." />
+    case "liquidity":
+      return (
+        <>
+          <DualSparkline history={data.liquidity.history}
+            leftKey="cash" rightKey="ocf"
+            leftLabel="Cash balance" rightLabel="Monthly OCF"
+            onPointClick={onJumpToMonth} />
+          <KpiTable rows={data.liquidity.kpis} />
+          <AdvisoryBlock advisory={data.liquidity.advisory} />
+        </>
+      )
+    case "cash_forecast":
+      return (
+        <>
+          {data.cash_forecast.points.length > 0
+            ? <ForecastChart points={data.cash_forecast.points} outOfCashDate={data.cash_forecast.out_of_cash_date} />
+            : <InlineHint text="Not enough history to project cash flow yet — sync a few more months." />}
+          <KpiTable rows={data.cash_forecast.kpis} />
+          <AdvisoryBlock advisory={data.cash_forecast.advisory} />
+        </>
+      )
+    case "balance_sheet":
+      return (
+        <>
+          {data.balance_sheet.equity_history.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <SparklineCard label="Equity / net worth"
+                points={data.balance_sheet.equity_history.map((h) => ({ x: h.label, y: h.equity, period: h.period }))}
+                color="var(--green)" onPointClick={onJumpToMonth} />
+            </div>
+          )}
+          <KpiTable rows={data.balance_sheet.kpis} />
+          <AdvisoryBlock advisory={data.balance_sheet.advisory} />
+        </>
+      )
+    case "profitability":
+      return (
+        <>
+          <TripleSparkline history={data.profitability.history}
+            keys={["revenue", "gp", "ni"]}
+            labels={["Revenue", "Gross profit", "Net income"]}
+            onPointClick={onJumpToMonth} />
+          <KpiTable rows={data.profitability.kpis} />
+          <AdvisoryBlock advisory={data.profitability.advisory} />
+        </>
+      )
+    case "growth":
+      return (
+        <>
+          {data.growth.history.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <SparklineCard label="Revenue"
+                points={data.growth.history.map((h) => ({ x: h.label, y: Number(h.revenue ?? 0), period: h.period }))}
+                color="var(--green)" onPointClick={onJumpToMonth} />
+            </div>
+          )}
+          <KpiTable rows={data.growth.kpis} />
+          <AdvisoryBlock advisory={data.growth.advisory} />
+        </>
+      )
+    case "breakeven":
+      return (
+        <>
+          {data.breakeven.break_even_revenue !== null
+            ? <BreakevenBar current={data.breakeven.current_revenue} breakEven={data.breakeven.break_even_revenue} />
+            : <InlineHint text="Break-even needs a positive contribution margin to compute." />}
+          <KpiTable rows={data.breakeven.kpis} />
+          <AdvisoryBlock advisory={data.breakeven.advisory} />
+        </>
+      )
+    case "receivables":
+      return (
+        <>
+          {data.receivables.aging.length > 0
+            ? <AgingBars buckets={data.receivables.aging} />
+            : data.receivables.qbo_error ? <InlineHint text={data.receivables.qbo_error} /> : null}
+          {data.receivables.top_customers.length > 0 && (
+            <>
+              <SectionDivider label="Top 5 overdue customers" />
+              <EntityTable rows={data.receivables.top_customers} entityLabel="Customer" />
+            </>
+          )}
+          <KpiTable rows={data.receivables.kpis} />
+          <AdvisoryBlock advisory={data.receivables.advisory} />
+        </>
+      )
+    case "payables":
+      return (
+        <>
+          {data.payables.aging.length > 0
+            ? <AgingBars buckets={data.payables.aging} />
+            : data.payables.qbo_error ? <InlineHint text={data.payables.qbo_error} /> : null}
+          {data.payables.top_vendors.length > 0 && (
+            <>
+              <SectionDivider label="Top 5 owed vendors" />
+              <EntityTable rows={data.payables.top_vendors} entityLabel="Vendor" />
+            </>
+          )}
+          <KpiTable rows={data.payables.kpis} />
+          <AdvisoryBlock advisory={data.payables.advisory} />
+        </>
+      )
+    case "expenses":
+      return (
+        <>
+          {data.expenses.top_categories.length > 0 && (
+            <>
+              <SectionDivider label="Largest categories (by spend this period)" />
+              <CategoryBars rows={data.expenses.top_categories} />
+            </>
+          )}
+          {data.expenses.top_movers.length > 0 && (
+            <>
+              <SectionDivider label="Biggest month-over-month movers" />
+              <MoversTable rows={data.expenses.top_movers} />
+            </>
+          )}
+          <KpiTable rows={data.expenses.kpis} />
+          <AdvisoryBlock advisory={data.expenses.advisory} />
+        </>
+      )
+  }
+  return null
 }
 
 // ── Hero KPIs ────────────────────────────────────────────────────────────────
@@ -767,7 +974,7 @@ function Recommendations({ data }: { data: InsightsOverview }) {
 
 // ── Management summary ───────────────────────────────────────────────────────
 
-function ManagementSummary({ data }: { data: InsightsOverview }) {
+function ManagementSummary({ data, embedded = false }: { data: InsightsOverview; embedded?: boolean }) {
   const ms = data.management_summary
   if (!ms) return null
   const tone =
@@ -776,8 +983,10 @@ function ManagementSummary({ data }: { data: InsightsOverview }) {
     :                          { bg: "#f7eeec", fg: "#9b3d37", label: "At risk", Icon: AlertTriangle }
   const Icon = tone.Icon
   return (
-    <div className="rounded-2xl overflow-hidden"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+    <div className={embedded ? "rounded-xl overflow-hidden" : "rounded-2xl overflow-hidden"}
+      style={embedded
+        ? { border: "1px solid var(--border)" }
+        : { background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
       <div className="px-5 py-4 flex items-start gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
         <span className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
           style={{ background: tone.bg, color: tone.fg }}>
@@ -791,7 +1000,9 @@ function ManagementSummary({ data }: { data: InsightsOverview }) {
               {tone.label} · {ms.score}/100
             </span>
           </div>
-          <p className="text-[13px] mt-1 font-medium" style={{ color: "var(--text)" }}>{ms.headline}</p>
+          {!embedded && (
+            <p className="text-[13px] mt-1 font-medium" style={{ color: "var(--text)" }}>{ms.headline}</p>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x"
