@@ -14,8 +14,9 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useOrganization } from "@clerk/clerk-react"
 import { motion, AnimatePresence } from "framer-motion"
-import { formatDateTime } from "@/core/lib/dates"
+import { formatDateTime, toISODate } from "@/core/lib/dates"
 import {
   TrendingUp, TrendingDown, Wallet, ReceiptText, ArrowDownToLine,
   ArrowUpFromLine, LineChart as LineIcon, Sparkles, AlertTriangle,
@@ -34,11 +35,13 @@ import {
 // ── Period helpers ───────────────────────────────────────────────────────────
 
 function lastDayOfMonth(year: number, monthIdx: number): string {
-  const last = new Date(year, monthIdx + 1, 0)
-  return last.toISOString().slice(0, 10)
+  // Local components, not toISOString() — see toISODate. UTC serialization
+  // would roll a month-end back a day in any UTC+ timezone, so "June" would
+  // be sent as June 29 and miss the month-end snapshot entirely.
+  return toISODate(new Date(year, monthIdx + 1, 0))
 }
 function firstDayOfMonth(year: number, monthIdx: number): string {
-  return new Date(year, monthIdx, 1).toISOString().slice(0, 10)
+  return toISODate(new Date(year, monthIdx, 1))
 }
 function defaultPeriodEnd(): string {
   const now = new Date()
@@ -170,8 +173,31 @@ interface PendingPeriod {
   periodStart?: string  // present when mode === "custom"
 }
 
+// ── "Keep loaded" persistence ─────────────────────────────────────────────────
+// Remember the last period the user generated, per workspace, so returning to
+// Insights auto-loads it (the saved server snapshot returns instantly) instead
+// of dropping back to the empty Generate screen. Keyed by Clerk org id so a
+// company switch shows that company's last view, not another's.
+const lastRunKey = (orgId: string) => `ndvx:insights:lastrun:${orgId}`
+
+function readLastRun(orgId: string): PendingPeriod | null {
+  try {
+    const raw = localStorage.getItem(lastRunKey(orgId))
+    if (!raw) return null
+    const p = JSON.parse(raw) as PendingPeriod
+    if (p && typeof p.periodEnd === "string" && (p.mode === "month" || p.mode === "custom")) return p
+  } catch { /* ignore corrupt / unavailable storage */ }
+  return null
+}
+
+function writeLastRun(orgId: string, p: PendingPeriod): void {
+  try { localStorage.setItem(lastRunKey(orgId), JSON.stringify(p)) } catch { /* ignore */ }
+}
+
 export function InsightsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const { organization } = useOrganization()
+  const orgId = organization?.id ?? null
 
   // ── Form state (what's in the picker, not necessarily what's loaded) ──
   const initialEnd = searchParams.get("period_end") || searchParams.get("period") || defaultPeriodEnd()
@@ -238,6 +264,7 @@ export function InsightsPage() {
     const effectiveStart = mode === "custom" ? periodStart : defaultPeriodStart(periodEnd)
     const payload: PendingPeriod = { mode, periodEnd, periodStart: effectiveStart }
     setPending(payload)
+    if (orgId) writeLastRun(orgId, payload)  // keep loaded on return
     const next = new URLSearchParams(searchParams)
     next.set("period_end", payload.periodEnd)
     next.set("period_start", effectiveStart)
@@ -252,12 +279,32 @@ export function InsightsPage() {
     setPeriodStart(start)
     const payload: PendingPeriod = { mode: "month", periodEnd: periodEndISO, periodStart: start }
     setPending(payload)
+    if (orgId) writeLastRun(orgId, payload)  // keep loaded on return
     const next = new URLSearchParams(searchParams)
     next.set("period_end", payload.periodEnd)
     next.set("period_start", start)
     next.delete("period")
     setSearchParams(next, { replace: true })
   }
+
+  // Keep loaded after first run: when there are no shared-link params, restore
+  // this workspace's last-generated period so the page lands already loaded (the
+  // saved server snapshot returns instantly) instead of the empty Generate
+  // screen. Re-runs on workspace switch so each company shows its own last view.
+  useEffect(() => {
+    if (!orgId) return
+    if (searchParams.get("period_end") || searchParams.get("period")) return  // shared link wins
+    const saved = readLastRun(orgId)
+    if (saved) {
+      setMode(saved.mode)
+      setPeriodEnd(saved.periodEnd)
+      setPeriodStart(saved.periodStart ?? defaultPeriodStart(saved.periodEnd))
+      setPending(saved)
+    } else {
+      setPending(null)  // a workspace with no prior run shows the empty state
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId])
 
   // ── Selected section (master rail → detail pane) ─────────────────────────
   const [active, setActive] = useState<SectionId>("overview")
@@ -481,17 +528,14 @@ function Header({
 
 function PresetButtons({ onPick }: { onPick: (start: string, end: string) => void }) {
   const today = new Date()
-  const todayISO = today.toISOString().slice(0, 10)
+  const todayISO = toISODate(today)
 
-  const lastDayOfPriorMonth = (() => {
-    const d = new Date(today.getFullYear(), today.getMonth(), 0)
-    return d.toISOString().slice(0, 10)
-  })()
+  const lastDayOfPriorMonth = toISODate(new Date(today.getFullYear(), today.getMonth(), 0))
 
   const presets: { label: string; start: string; end: string }[] = useMemo(() => {
     const ytdStart = `${today.getFullYear()}-01-01`
-    const last30Start = new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10)
-    const last90Start = new Date(today.getTime() - 90 * 86400_000).toISOString().slice(0, 10)
+    const last30Start = toISODate(new Date(today.getTime() - 30 * 86400_000))
+    const last90Start = toISODate(new Date(today.getTime() - 90 * 86400_000))
     const q1Start = `${today.getFullYear()}-01-01`,  q1End = `${today.getFullYear()}-03-31`
     const q2Start = `${today.getFullYear()}-04-01`,  q2End = `${today.getFullYear()}-06-30`
     return [

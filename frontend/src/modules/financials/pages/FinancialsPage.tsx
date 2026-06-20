@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useOrganization } from "@clerk/clerk-react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Download,
@@ -32,6 +33,7 @@ import {
   BarChart3,
   Scale,
   TrendingUp,
+  TrendingDown,
   Layers,
   Calendar,
   Sparkles,
@@ -39,10 +41,12 @@ import {
   Briefcase,
   Table2,
   Send,
+  RefreshCw,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { PageHeader } from "@/core/ui/PageHeader"
+import { toISODate, formatDate } from "@/core/lib/dates"
 import {
   financialsApi, FINANCIAL_SCHEDULES, SCHEDULE_GROUPS,
   type Statement, type FinancialRow, type FinancialSource, type ComparativeBasis,
@@ -53,15 +57,16 @@ import { reconsApi } from "@/modules/recons/api"
 type Tab = "is" | "bs" | "cf"
 
 function defaultPeriodEnd(): string {
-  const d = new Date(); d.setDate(0)
-  return d.toISOString().slice(0, 10)
+  const d = new Date(); d.setDate(0)   // last day of the prior month (local)
+  return toISODate(d)
 }
 
 /** Last-day-of-month helper for the quick-period chips. */
 function lastDayOfMonth(year: number, month: number): string {
-  // month is 1-12; new Date(y, m, 0) returns day 0 of next month = last of current
-  const d = new Date(year, month, 0)
-  return d.toISOString().slice(0, 10)
+  // month is 1-12; new Date(y, m, 0) returns day 0 of next month = last of current.
+  // toISODate (local components) — NOT toISOString, which would roll the date back
+  // a day in any UTC+ timezone and desync period_end from the month-end snapshot.
+  return toISODate(new Date(year, month, 0))
 }
 
 /** Quick-period options driven off "today" — match the period selector
@@ -84,13 +89,13 @@ function quickPeriods(): { key: string; label: string; periodEnd: string; mode: 
       key: "lm", label: "Last month",
       periodEnd: lastDayOfMonth(lastMonth.y, lastMonth.m),
       mode: "custom",
-      periodStart: new Date(lastMonth.y, lastMonth.m - 1, 1).toISOString().slice(0, 10),
+      periodStart: toISODate(new Date(lastMonth.y, lastMonth.m - 1, 1)),
     },
     {
       key: "lq", label: "Last quarter",
       periodEnd: lastDayOfMonth(lastQuarter.y, lastQuarter.m),
       mode: "custom",
-      periodStart: new Date(lastQuarter.y, quarterStartMonth - 1, 1).toISOString().slice(0, 10),
+      periodStart: toISODate(new Date(lastQuarter.y, quarterStartMonth - 1, 1)),
     },
     {
       key: "ytd", label: "YTD",
@@ -101,7 +106,7 @@ function quickPeriods(): { key: string; label: string; periodEnd: string; mode: 
       key: "ly", label: "Last year",
       periodEnd: lastDayOfMonth(y - 1, 12),
       mode: "custom",
-      periodStart: new Date(y - 1, 0, 1).toISOString().slice(0, 10),
+      periodStart: toISODate(new Date(y - 1, 0, 1)),
     },
   ]
 }
@@ -138,7 +143,7 @@ const TAB_SUB: Record<Tab, string> = {
 function firstDayOfMonth(periodEnd: string): string {
   try {
     const d = new Date(periodEnd + "T00:00:00")
-    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
+    return toISODate(new Date(d.getFullYear(), d.getMonth(), 1))
   } catch {
     return periodEnd
   }
@@ -148,7 +153,7 @@ function firstDayOfMonth(periodEnd: string): string {
 function firstDayOfYear(periodEnd: string): string {
   try {
     const d = new Date(periodEnd + "T00:00:00")
-    return new Date(d.getFullYear(), 0, 1).toISOString().slice(0, 10)
+    return toISODate(new Date(d.getFullYear(), 0, 1))
   } catch {
     return periodEnd
   }
@@ -156,9 +161,60 @@ function firstDayOfYear(periodEnd: string): string {
 
 type PeriodMode = "ytd" | "custom"
 
+// Rail selection: the three statements plus the two side panels.
+type RailKey = Tab | "exec" | "exports"
+
+// ── "Keep loaded" persistence ─────────────────────────────────────────────────
+// Remember the last financials view per workspace so returning lands already
+// loaded (no re-pick + re-Load), keyed by Clerk org id so each company restores
+// its own last view.
+interface SavedView {
+  tab:         Tab
+  periodEnd:   string
+  periodMode:  PeriodMode
+  periodStart: string
+  source:      FinancialSource
+  comparative: boolean
+}
+const savedViewKey = (orgId: string) => `ndvx:financials:lastview:${orgId}`
+
+function readSavedView(orgId: string): SavedView | null {
+  try {
+    const raw = localStorage.getItem(savedViewKey(orgId))
+    if (!raw) return null
+    const v = JSON.parse(raw) as SavedView
+    if (v && typeof v.periodEnd === "string" && (v.tab === "is" || v.tab === "bs" || v.tab === "cf")) return v
+  } catch { /* ignore corrupt / unavailable storage */ }
+  return null
+}
+
+function writeSavedView(orgId: string, v: SavedView): void {
+  try { localStorage.setItem(savedViewKey(orgId), JSON.stringify(v)) } catch { /* ignore */ }
+}
+
+/** Headline rows for the visualize-first KPI strip — the statement's own
+ *  computed/grand totals (Gross profit, Net income, Total assets, …) so the
+ *  numbers are exactly the audited totals, never a re-derivation. Falls back to
+ *  section subtotals when a statement has few computed lines (e.g. cash flow). */
+function pickHeadlineRows(rows: FinancialRow[]): FinancialRow[] {
+  const hasVal = (r: FinancialRow) => r.current !== null && r.current !== "" && r.current !== undefined
+  const strong = rows.filter((r) => (r.kind === "grand_total" || r.kind === "computed") && hasVal(r))
+  let picked = strong
+  if (picked.length < 3) {
+    const totals = rows.filter((r) => (r.kind === "total" || r.kind === "subtotal") && hasVal(r))
+    // de-dupe by label, keep strong first
+    const seen = new Set(strong.map((r) => r.label))
+    picked = [...strong, ...totals.filter((r) => !seen.has(r.label))]
+  }
+  return picked.slice(0, 4)
+}
+
 export function FinancialsPage() {
   const navigate = useNavigate()
-  const [tab, setTab]                 = useState<Tab>("is")
+  const { organization } = useOrganization()
+  const orgId = organization?.id ?? null
+  const [tab, setTab]                 = useState<Tab>("is")           // statement driving the query
+  const [active, setActive]           = useState<RailKey>("is")       // rail selection (statements + panels)
   const [periodEnd, setPeriodEnd]     = useState<string>(defaultPeriodEnd())
   // Period type — "Custom" is the default: it exposes a Period Start picker
   // and defaults the range to the month being viewed (1st → period-end). YTD
@@ -283,6 +339,42 @@ export function FinancialsPage() {
   })
   const isPeriodClosed = closedPeriods.some((c) => c.period_end === periodEnd)
 
+  // Rail selection — statements drive both the highlight AND the queried
+  // statement; the side panels (exec / exports) only move the highlight.
+  function selectRail(key: RailKey) {
+    setActive(key)
+    if (key === "is" || key === "bs" || key === "cf") setTab(key)
+  }
+
+  // ── Keep loaded after first run (per workspace) ──
+  // The restore effect's setStates carry the PREVIOUS org's fields until the
+  // re-render lands, so the persist effect must skip the one write triggered by
+  // a restore (else a workspace switch would clobber the new org's saved view
+  // with the old org's fields). skipNextPersist gates exactly that write.
+  const skipNextPersist = useRef(false)
+  useEffect(() => {
+    if (!orgId) return
+    skipNextPersist.current = true
+    const v = readSavedView(orgId)
+    if (v) {
+      setTab(v.tab); setActive(v.tab)
+      setPeriodEnd(v.periodEnd); setPeriodMode(v.periodMode)
+      setPeriodStart(v.periodStart); setSource(v.source); setComparative(v.comparative)
+      setHasLoaded(true)
+    } else {
+      setHasLoaded(false)   // a workspace with no prior view shows the Load gate
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId])
+
+  useEffect(() => {
+    const skip = skipNextPersist.current
+    skipNextPersist.current = false
+    if (skip || !orgId || !hasLoaded) return
+    writeSavedView(orgId, { tab, periodEnd, periodMode, periodStart, source, comparative })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, hasLoaded, tab, periodEnd, periodMode, periodStart, source, comparative])
+
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
       {/* Header — compact single-row PageHeader (was a ~140px three-deck).
@@ -366,8 +458,8 @@ export function FinancialsPage() {
             </label>
             {hasLoaded ? (
               <Button size="sm" variant="outline" onClick={() => refetch()}
-                loading={isLoading}>
-                Reload
+                loading={isLoading} icon={<RefreshCw size={13} strokeWidth={2} />}>
+                Refresh
               </Button>
             ) : (
               <Button size="sm" onClick={() => setHasLoaded(true)}
@@ -479,33 +571,11 @@ export function FinancialsPage() {
           </div>
         )}
 
-        {/* Executive Report — surfaced pre-Load so the user actually
-            finds it. Only shown for closed periods; uses the closed-
-            periods query (cached, ~one DB scan) so no statement
-            Load is required first. Same card component as below. */}
-        {isPeriodClosed && (
-          <ExecutiveReportCard
-            periodLabel={(() => {
-              try { return new Date(periodEnd + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }) }
-              catch { return periodEnd }
-            })()}
-            onGenerate={() => execReportMut.mutate("internal")}
-            onGenerateClient={() => execReportMut.mutate("client")}
-            loading={execReportMut.isPending}
-            error={execError}
-            onDismissError={() => setExecError(null)}
-            recipientEmail={recipientEmail}
-            onRecipientChange={setRecipientEmail}
-            onSend={() => sendReportMut.mutate(recipientEmail)}
-            sending={sendReportMut.isPending}
-            sendOk={sendOk}
-            sendError={sendError}
-          />
-        )}
-
-        {/* Initial gate — explicit Load before any QBO pull */}
+        {/* Load gate (first visit) → split view (master rail + detail). After
+            the first Load this workspace's view is remembered, so a return
+            visit lands here already loaded — no re-pick, no re-Load. */}
         {!hasLoaded ? (
-          <div className="rounded-xl p-10 text-center"
+          <div className="rounded-xl p-10 text-center max-w-3xl mx-auto"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
             <div className="h-14 w-14 mx-auto rounded-full flex items-center justify-center mb-4"
               style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
@@ -514,103 +584,239 @@ export function FinancialsPage() {
             <p className="text-base font-semibold text-theme mb-1">Choose a period to load</p>
             <p className="text-sm max-w-md mx-auto mb-5" style={{ color: "var(--text-muted)" }}>
               Pick the period-end date above (and whether to include a prior-year
-              comparative). Click <b>Load financials</b> to pull the statements live
-              from QuickBooks.
+              comparative), then click <b>Load financials</b>. We&apos;ll remember
+              this view so you land back here next time.
             </p>
             <Button size="sm" onClick={() => setHasLoaded(true)} disabled={!qbo}>
               Load financials
             </Button>
           </div>
         ) : (
-          <>
-            {/* Sticky statement switcher — sits at the top of the
-                scroll area so the user always sees which statement is
-                active + can flip between IS/BS/CF without scrolling
-                back. Bigger touch targets than the previous pill tabs,
-                each with a subtitle that previews the contents. */}
-            <div className="sticky top-0 z-20 -mx-4 sm:-mx-8 px-4 sm:px-8 pt-1 pb-3"
-              style={{ background: "var(--bg)" }}>
-              <div className="rounded-xl overflow-hidden grid grid-cols-3"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-                {(Object.entries(TAB_LABEL) as [Tab, string][]).map(([key, label]) => {
-                  const active = tab === key
-                  const Icon = TAB_ICON[key]
-                  return (
-                    <button key={key} onClick={() => setTab(key)}
-                      className="px-4 py-3 text-left transition-all relative"
-                      style={{
-                        background: active ? "var(--green-subtle)" : "var(--surface)",
-                        borderRight: key !== "cf" ? "1px solid var(--border)" : undefined,
-                        cursor: "pointer",
-                      }}
-                      onMouseEnter={(e) => { if (!active) { (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"; prefetchTab(key) } }}
-                      onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--surface)" }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Icon size={14} strokeWidth={1.8}
-                          style={{ color: active ? "var(--green)" : "var(--text-muted)" }} />
-                        <span className="text-sm font-semibold"
-                          style={{ color: active ? "var(--green)" : "var(--text)" }}>
-                          {label}
-                        </span>
-                      </div>
-                      <p className="text-[10px] mt-0.5 hidden sm:block"
-                        style={{ color: "var(--text-muted)" }}>
-                        {TAB_SUB[key]}
-                      </p>
-                      {/* Active underline */}
-                      {active && (
-                        <span className="absolute left-0 right-0 bottom-0 h-0.5"
-                          style={{ background: "var(--green)" }} />
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* Closed pill — relocated under the tabs so it stays
-                  visible with them while scrolling. */}
-              {stmt?.is_closed && (
-                <div className="mt-2 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold"
-                  style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
-                  <Lock size={11} strokeWidth={2} />
-                  Books closed for {periodEnd} — final PDF export available
-                </div>
-              )}
-            </div>
-
-            {/* Statement body */}
-            {isLoading ? (
-              <div className="py-16 flex items-center justify-center"><Spinner /></div>
-            ) : error ? (
-              <div className="rounded-xl p-10 text-center"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-                <AlertCircle size={28} strokeWidth={1.6} className="mx-auto mb-3" style={{ color: "#9b3d37" }} />
-                <p className="text-sm font-semibold text-theme mb-1">Could not pull statement from QuickBooks</p>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  {((error as { message?: string })?.message) ?? "Try a different period or re-sync."}
-                </p>
-              </div>
-            ) : stmt ? (
-              <StatementView stmt={stmt} />
-            ) : null}
-
-            {/* Financial statement schedules — the full GAAP workpaper set,
-                exportable to Excel individually or as one package. */}
-            <SchedulesExportCard
+          <div className="flex flex-col md:flex-row gap-4 lg:gap-6">
+            <FinancialsRail
+              active={active}
+              onSelect={selectRail}
+              onHover={prefetchTab}
+              isPeriodClosed={isPeriodClosed}
               periodEnd={periodEnd}
-              periodStart={periodMode === "custom" ? periodStart : undefined}
-              comparative={comparative}
-              source={source}
-              comparativeBasis={comparativeBasis}
             />
-
-            {/* (Executive Report card moved above the Load gate so
-                it's visible immediately when the user lands on a
-                closed period — no need to Load financials first.) */}
-          </>
+            <div className="flex-1 min-w-0">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={active}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  className="space-y-4"
+                >
+                  {active === "exec" ? (
+                    isPeriodClosed ? (
+                      <ExecutiveReportCard
+                        periodLabel={(() => {
+                          try { return new Date(periodEnd + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" }) }
+                          catch { return periodEnd }
+                        })()}
+                        onGenerate={() => execReportMut.mutate("internal")}
+                        onGenerateClient={() => execReportMut.mutate("client")}
+                        loading={execReportMut.isPending}
+                        error={execError}
+                        onDismissError={() => setExecError(null)}
+                        recipientEmail={recipientEmail}
+                        onRecipientChange={setRecipientEmail}
+                        onSend={() => sendReportMut.mutate(recipientEmail)}
+                        sending={sendReportMut.isPending}
+                        sendOk={sendOk}
+                        sendError={sendError}
+                      />
+                    ) : (
+                      <div className="rounded-2xl p-8 text-center"
+                        style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+                        <Sparkles size={24} strokeWidth={1.6} className="mx-auto mb-2" style={{ color: "var(--text-muted)" }} />
+                        <p className="text-sm font-semibold text-theme mb-1">Executive report is a closed-period deliverable</p>
+                        <p className="text-xs max-w-sm mx-auto" style={{ color: "var(--text-muted)" }}>
+                          Close the books for {periodEnd} to generate the AI-narrated board package.
+                        </p>
+                      </div>
+                    )
+                  ) : active === "exports" ? (
+                    <SchedulesExportCard
+                      periodEnd={periodEnd}
+                      periodStart={periodMode === "custom" ? periodStart : undefined}
+                      comparative={comparative}
+                      source={source}
+                      comparativeBasis={comparativeBasis}
+                    />
+                  ) : isLoading ? (
+                    <div className="py-16 flex items-center justify-center"><Spinner /></div>
+                  ) : error ? (
+                    <div className="rounded-2xl p-10 text-center"
+                      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                      <AlertCircle size={28} strokeWidth={1.6} className="mx-auto mb-3" style={{ color: "#9b3d37" }} />
+                      <p className="text-sm font-semibold text-theme mb-1">Could not pull statement from QuickBooks</p>
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                        {((error as { message?: string })?.message) ?? "Try a different period or re-sync."}
+                      </p>
+                    </div>
+                  ) : stmt ? (
+                    <>
+                      {stmt.is_closed && (
+                        <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold"
+                          style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid var(--green)" }}>
+                          <Lock size={11} strokeWidth={2} />
+                          Books closed for {periodEnd} — final PDF export available
+                        </div>
+                      )}
+                      <KpiStrip stmt={stmt} />
+                      <StatementView stmt={stmt} />
+                    </>
+                  ) : null}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── Master rail — statements + side panels ───────────────────────────────────
+
+function FinancialsRail({ active, onSelect, onHover, isPeriodClosed, periodEnd }: {
+  active: RailKey
+  onSelect: (key: RailKey) => void
+  onHover: (key: Tab) => void
+  isPeriodClosed: boolean
+  periodEnd: string
+}) {
+  const statements: { key: RailKey; label: string; icon: typeof BarChart3; sub: string }[] =
+    (["is", "bs", "cf"] as Tab[]).map((k) => ({ key: k as RailKey, label: TAB_LABEL[k], icon: TAB_ICON[k], sub: TAB_SUB[k] }))
+  const panels: { key: RailKey; label: string; icon: typeof BarChart3; sub: string }[] = [
+    ...(isPeriodClosed ? [{ key: "exec" as RailKey, label: "Executive report", icon: Sparkles, sub: "AI-narrated board package" }] : []),
+    { key: "exports", label: "Exports & schedules", icon: Table2, sub: "PDF + Excel workpapers" },
+  ]
+  const chips = [...statements, ...panels]
+  return (
+    <>
+      {/* Desktop: vertical, sticky rail */}
+      <nav className="hidden md:flex md:flex-col gap-1 w-60 lg:w-72 shrink-0 md:sticky md:top-2 md:self-start"
+        aria-label="Statements and exports">
+        <div className="px-2 pb-1 flex items-center justify-between gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider truncate" style={{ color: "var(--text-muted)" }}>
+            As of {formatDate(periodEnd)}
+          </span>
+          {isPeriodClosed && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}>
+              <Lock size={9} strokeWidth={2.4} /> Closed
+            </span>
+          )}
+        </div>
+        {statements.map((s) => (
+          <RailItemFin key={s.key} item={s} active={active === s.key}
+            onSelect={() => onSelect(s.key)}
+            onHover={() => onHover(s.key as Tab)} />
+        ))}
+        <div className="h-px my-1.5 mx-2" style={{ background: "var(--border)" }} />
+        {panels.map((s) => (
+          <RailItemFin key={s.key} item={s} active={active === s.key}
+            onSelect={() => onSelect(s.key)} />
+        ))}
+      </nav>
+
+      {/* Mobile: horizontal scroll strip */}
+      <div className="md:hidden -mx-4 px-4 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+        <div className="flex gap-2 pb-1">
+          {chips.map((s) => {
+            const Icon = s.icon
+            const isActive = active === s.key
+            return (
+              <button key={s.key} onClick={() => onSelect(s.key)}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-all shrink-0"
+                style={{
+                  background: isActive ? "var(--green-subtle)" : "var(--surface)",
+                  color:      isActive ? "var(--green)"        : "var(--text-2)",
+                  border:     `1px solid ${isActive ? "var(--green)" : "var(--border)"}`,
+                }}>
+                <Icon size={12} strokeWidth={2} />
+                {s.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function RailItemFin({ item, active, onSelect, onHover }: {
+  item: { key: RailKey; label: string; icon: typeof BarChart3; sub: string }
+  active: boolean
+  onSelect: () => void
+  onHover?: () => void
+}) {
+  const Icon = item.icon
+  return (
+    <button onClick={onSelect}
+      onMouseEnter={(e) => {
+        onHover?.()
+        if (!active) (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"
+      }}
+      onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent" }}
+      aria-current={active ? "page" : undefined}
+      className="group w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
+      style={{
+        background: active ? "var(--green-subtle)" : "transparent",
+        border: `1px solid ${active ? "color-mix(in oklab, var(--green) 35%, transparent)" : "transparent"}`,
+      }}
+    >
+      <span className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 transition-colors"
+        style={{ background: active ? "var(--green)" : "var(--surface-2)", color: active ? "#fff" : "var(--text-2)" }}>
+        <Icon size={15} strokeWidth={1.9} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-[13px] font-semibold truncate"
+          style={{ color: active ? "var(--green)" : "var(--text)" }}>{item.label}</span>
+        <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{item.sub}</span>
+      </span>
+    </button>
+  )
+}
+
+// ── KPI strip — visualize-first headline figures for the active statement ─────
+
+function KpiStrip({ stmt }: { stmt: Statement }) {
+  const rows = pickHeadlineRows(stmt.rows)
+  if (rows.length === 0) return null
+  const hasComp = stmt.comparative_label !== null
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {rows.map((r, i) => {
+        const cur = parseFloat(r.current ?? "")
+        const pri = parseFloat(r.prior ?? "")
+        const delta = hasComp && Number.isFinite(cur) && Number.isFinite(pri) && pri !== 0
+          ? ((cur - pri) / Math.abs(pri)) * 100
+          : null
+        const up = delta !== null && delta >= 0
+        return (
+          <div key={i} className="rounded-2xl p-4"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+            <p className="text-[11px] font-bold uppercase tracking-wider truncate" style={{ color: "var(--text-muted)" }} title={r.label}>
+              {r.label}
+            </p>
+            <p className="text-xl font-bold mt-1 tabular-nums" style={{ color: "var(--text)" }}>
+              {fmtMoney(r.current, true)}
+            </p>
+            {delta !== null && (
+              <span className="text-[11px] font-semibold inline-flex items-center gap-0.5 mt-1" style={{ color: "var(--text-muted)" }}>
+                {up ? <TrendingUp size={10} strokeWidth={2.4} /> : <TrendingDown size={10} strokeWidth={2.4} />}
+                {up ? "+" : ""}{delta.toFixed(1)}% vs {stmt.comparative_label}
+              </span>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

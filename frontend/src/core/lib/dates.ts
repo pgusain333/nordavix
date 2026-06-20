@@ -45,6 +45,23 @@ export function formatDate(d: DateLike): string {
 }
 
 /**
+ * Format a Date as ISO YYYY-MM-DD using LOCAL calendar components.
+ *
+ * Use this for API payloads / query params that carry a day-precision date
+ * the user picked or that we derive from "now" (period ends, custom ranges,
+ * month boundaries). NEVER use `d.toISOString().slice(0,10)` for these:
+ * toISOString converts to UTC first, so a locally-constructed
+ * `new Date(2026, 5, 1)` (June 1 local) serializes to "2026-05-31" in any
+ * UTC+ timezone — silently shifting the period back a day, which corrupts
+ * the P&L window AND makes period_end miss the month-end snapshot. This
+ * reads the local components directly, so the date the user sees is the
+ * date that's sent.
+ */
+export function toISODate(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+
+/**
  * Format as MM-DD-YYYY hh:mm AM/PM in the user's local time. Used for
  * timestamps that need the time component (approval stamps, note
  * creation, audit entries, AI generation time). Same anti-locale-
