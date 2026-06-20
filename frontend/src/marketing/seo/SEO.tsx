@@ -98,8 +98,8 @@ export function SEO({
       <meta property="og:title" content={fullTitle} />
       <meta property="og:description" content={description} />
       <meta property="og:image" content={ogImage} />
-      <meta property="og:image:width" content="1200" />
-      <meta property="og:image:height" content="630" />
+      <meta property="og:image:width" content="2400" />
+      <meta property="og:image:height" content="1260" />
       <meta property="og:image:alt" content={fullTitle} />
 
       {/* Twitter Card */}
