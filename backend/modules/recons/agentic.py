@@ -256,6 +256,21 @@ async def run_agentic_prep(
     # doesn't lose the work done on rows 1-6. Opening balance for each
     # account = the prior reconciled subledger ONLY (close-and-roll).
     # No GL snapshot fallback per user requirement.
+    #
+    # The per-account secondary check pulls QBO's TrialBalance at period_end to
+    # confirm nothing was back-dated since the sync. period_end is constant across
+    # this loop, so pull + parse it ONCE here and reuse it for every account
+    # instead of re-downloading the whole company TB per account (the dominant
+    # cost of a "Run AI" click). Identical data; best-effort — if this fails each
+    # account falls back to its own pull, exactly as before.
+    tb_parsed: Any = None
+    try:
+        from core.qbo_tb import fetch_trial_balance, parse_trial_balance
+        tb_parsed = parse_trial_balance(await fetch_trial_balance(conn, period_end))
+    except Exception:
+        logger.warning("agentic: shared TrialBalance pull failed; per-account fallback", exc_info=True)
+        tb_parsed = None
+
     for snap in snap_rows:
         # Cooperative cancel check — fires between accounts so each
         # in-flight account gets to commit cleanly before we stop.
@@ -284,6 +299,7 @@ async def run_agentic_prep(
                 period_end=period_end,
                 review=review_by_qid.get(snap.qbo_account_id),
                 prior=prior_by_qid.get(snap.qbo_account_id),
+                tb_parsed=tb_parsed,
                 result=result,
             )
         except Exception as exc:
@@ -322,6 +338,7 @@ async def _process_account(
     review: AccountReviewStatus | None,
     prior: AccountReviewStatus | None,
     result: AgenticResult,
+    tb_parsed: Any = None,
 ) -> None:
     """Apply the agentic prep logic to one account."""
     qid = snap.qbo_account_id
@@ -464,6 +481,7 @@ async def _process_account(
                     opening=opening, gl_balance=gl_balance, computed=computed,
                     items=items, prior=prior,
                     opening_source_label=opening_source,
+                    tb_parsed=tb_parsed,
                 )
             except Exception:
                 logger.exception(
@@ -986,6 +1004,7 @@ async def build_ai_commentary(
     items: list[dict[str, Any]],
     prior: AccountReviewStatus | None,
     opening_source_label: str = "",
+    tb_parsed: Any = None,
 ) -> dict[str, Any]:
     """
     Build the structured AI commentary for a successfully-tied
@@ -1140,6 +1159,7 @@ async def build_ai_commentary(
             conn=conn, db=db, qid=qid,
             account_name=account_name, account_number=account_number,
             period_end=period_end, gl_balance=gl_balance,
+            tb_parsed=tb_parsed,
         )
         if secondary is not None:
             checks.append(secondary)
@@ -1472,6 +1492,7 @@ async def _secondary_qbo_check(
     account_number: str,
     period_end: date,
     gl_balance: Decimal,
+    tb_parsed: Any = None,
 ) -> dict[str, Any] | None:
     """Independent verification: pull a fresh look at this account's
     balance directly from QBO's TrialBalance at period_end and compare
@@ -1481,8 +1502,12 @@ async def _secondary_qbo_check(
     entries after the sync."""
     try:
         from core.qbo_tb import fetch_trial_balance, lookup_balance, parse_trial_balance
-        report = await fetch_trial_balance(conn, period_end)
-        parsed = parse_trial_balance(report)
+        # Reuse the run-level TrialBalance pull (period_end is constant across the
+        # agentic loop) — identical data, fetched once. Fall back to a per-account
+        # pull only if the shared one wasn't available.
+        parsed = tb_parsed if tb_parsed is not None else parse_trial_balance(
+            await fetch_trial_balance(conn, period_end)
+        )
         live = lookup_balance(parsed, qbo_id=qid, acct_num=account_number, name=account_name)
     except Exception:
         return None

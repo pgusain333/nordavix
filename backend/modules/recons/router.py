@@ -2041,30 +2041,38 @@ async def list_periods_tracker(
         else:
             cur = _date(cur.year, cur.month + 1, 1)
 
-    # Bulk-load all review + closed-period rows in two queries so we don't
-    # do N+1 lookups.
-    review_rows = list((await db.execute(
-        select(AccountReviewStatus).where(AccountReviewStatus.period_end.in_(month_ends))
-    )).scalars().all())
+    # Bulk-load review-row COUNTS grouped by (period_end, status) + the
+    # closed-period rows in two queries. Grouping in SQL avoids hydrating every
+    # account row across all months just to tally per-period status counts; the
+    # counts (and everything downstream) are byte-identical.
+    from sqlalchemy import func
+    count_rows = (await db.execute(
+        select(
+            AccountReviewStatus.period_end,
+            AccountReviewStatus.status,
+            func.count().label("n"),
+        )
+        .where(AccountReviewStatus.period_end.in_(month_ends))
+        .group_by(AccountReviewStatus.period_end, AccountReviewStatus.status)
+    )).all()
     closed_rows = list((await db.execute(
         select(ClosedPeriod).where(ClosedPeriod.period_end.in_(month_ends))
     )).scalars().all())
     closed_by_pe: dict[_date, ClosedPeriod] = {c.period_end: c for c in closed_rows}
 
-    # Index review rows by period_end + status
-    by_pe: dict[_date, list[AccountReviewStatus]] = {}
-    for r in review_rows:
-        by_pe.setdefault(r.period_end, []).append(r)
+    # Index the grouped counts by period_end → {status: n} (status may be NULL).
+    counts_by_pe: dict[_date, dict] = {}
+    for pe_val, status_val, n in count_rows:
+        counts_by_pe.setdefault(pe_val, {})[status_val] = n
 
     out = []
     for pe in month_ends:
-        rows = by_pe.get(pe, [])
         # Don't surface the seed-date row as a "real" period
         if pe < t.books_start_date:
             continue
         cnt = {"pending": 0, "reviewed": 0, "approved": 0, "flagged": 0}
-        for r in rows:
-            cnt[r.status if r.status in cnt else "pending"] += 1
+        for status_val, n in counts_by_pe.get(pe, {}).items():
+            cnt[status_val if status_val in cnt else "pending"] += n
         total = sum(cnt.values())
         closed = closed_by_pe.get(pe)
         # Workflow status:
