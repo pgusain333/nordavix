@@ -157,3 +157,20 @@ async def test_graph_context_summarizes_neighbors(session, tenant_a):
     assert "knowledge graph" in text.lower()
     assert "finding" in text and "journal_entry" in text
     assert empty == ""  # an unconnected node yields no context block
+
+
+@pytest.mark.asyncio
+async def test_resolve_nodes_labels_and_fallbacks(session, tenant_a):
+    # schedule + period resolve by pure id-parsing (no DB row needed), so this
+    # is robust on the create_all test DB regardless of which optional tables
+    # (e.g. gl_balance_snapshots) the migrations-vs-create_all schema includes.
+    from core.graph.resolve import resolve_nodes
+
+    with tenant_scope(tenant_a):
+        views = await resolve_nodes(session, [
+            Node("schedule", "prepaid:1400:2026-05-31"),
+            Node("period", "2026-05-31"),
+        ])
+
+    assert views[("schedule", "prepaid:1400:2026-05-31")].label == "Prepaid schedule"
+    assert views[("period", "2026-05-31")].label == "May 2026"
