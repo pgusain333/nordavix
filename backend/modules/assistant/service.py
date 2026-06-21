@@ -130,6 +130,10 @@ _SYSTEM_STATIC = (
     "- what's blocking / can we close → get_close_status\n"
     "- what we know or expect for an account → get_account_guidance\n"
     "- how we explained or handled X before → recall\n"
+    "- the story behind an account / what's connected to it / why is it flagged / "
+    "what relates to a reconciliation → get_related, then NARRATE what it returns "
+    "(its reconciliation status + GL-vs-subledger variance, the schedule that backs "
+    "it, the findings raised on it, the entries that explain it) — never just link\n"
     "- book / record / reclassify / accrue → draft_journal_entry (creates a DRAFT "
     "for a human to approve + post; you NEVER post to QuickBooks and NEVER approve)\n"
     "- prepare / run / start the reconciliations or flux for the period → "
@@ -201,8 +205,11 @@ _SYSTEM_STATIC = (
     "\"ask a reviewer to approve\") — don't refuse flatly and don't imply you'll "
     "override a gate.\n\n"
     "STYLE:\n"
-    "- Do NOT narrate your actions (no \"let me check…\"). Either call a tool with no "
-    "accompanying text, or write the final answer.\n"
+    "- Don't narrate data lookups (no \"let me check…\"): call a DATA-fetch tool with "
+    "no accompanying text. But when you attach a link, action, chart or draft "
+    "(suggest_link / suggest_action / make_chart / draft_journal_entry), write the "
+    "FULL answer in that same turn — the button/chart/draft is an add-on, never the "
+    "reply.\n"
     "- Lead with the direct answer in one sentence, then short bullet or numbered "
     "lists.\n"
     "- Use a compact Markdown table ONLY for genuinely tabular data (2-3 columns, "
@@ -211,6 +218,11 @@ _SYSTEM_STATIC = (
     "key terms sparingly.\n"
     "- If you're unsure which account a draft entry should hit, ask before drafting."
 )
+
+# Tools whose result the model ATTACHES to its answer (a button / chart / draft)
+# rather than reasoning further over. A turn that calls only these — with text —
+# IS the final answer, so that text must be shown, not dropped as preamble.
+_OUTPUT_TOOLS = {"suggest_link", "suggest_action", "make_chart", "draft_journal_entry"}
 
 
 def _system_blocks(
@@ -377,8 +389,17 @@ async def answer_question_stream(
                         "content": json.dumps(out, default=str),
                     })
                 messages.append({"role": "user", "content": results})
-                # Any text this turn was just preamble — it was never streamed, so
-                # there's nothing to undo. The next turn produces the real answer.
+                # If this turn called ONLY output tools (a link / action / chart /
+                # draft to ATTACH to the answer — not a data fetch), its buffered
+                # text IS the answer: reveal it and stop. Otherwise that text was
+                # "let me check…" preamble before a fetch — drop it (it was never
+                # streamed) and let the next turn produce the real answer.
+                tool_names = {b.name for b in final.content if b.type == "tool_use"}
+                if tool_names and tool_names <= _OUTPUT_TOOLS:
+                    final_answer = "".join(turn_text).strip()
+                    if final_answer:
+                        yield {"type": "delta", "text": final_answer}
+                    break
                 continue
 
             # Final turn (no more tools): the buffered text IS the answer — reveal
@@ -388,10 +409,11 @@ async def answer_question_stream(
                 yield {"type": "delta", "text": final_answer}
             break
 
-        # If the loop ran out of turns still calling tools, force a closing answer
-        # with NO tools so the model MUST synthesize from everything it gathered —
-        # never punt with "I couldn't finish".
-        if final_answer is None:
+        # If we still have no answer text — the loop ran out of turns mid-tool, OR
+        # the model ended a turn without writing words — force a closing answer with
+        # NO tools so it MUST synthesize from everything it gathered. This is what
+        # makes "the story behind X" narrate instead of punting to a canned link.
+        if not final_answer:
             try:
                 turn_text = []
                 async with _aclient.messages.stream(

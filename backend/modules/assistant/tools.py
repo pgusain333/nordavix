@@ -118,13 +118,14 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "get_related",
         "description": (
-            "How an account connects across the close — its slice of the "
-            "accounting knowledge graph. Returns the schedule that SUPPORTS its "
-            "reconciliation, the GL-accuracy findings RAISED ON it, and the "
-            "adjusting entries that EXPLAIN or AFFECT it, grouped by relationship. "
-            "Use to trace the full story behind a balance — 'what's connected to "
-            "<account>', 'what's the story behind <account>', 'why is <account> "
-            "flagged', 'what relates to this reconciliation' — before explaining it."
+            "The full story behind ONE account this period, assembled in a single "
+            "call: its balance and type, its reconciliation status and GL-vs-"
+            "subledger variance, the schedule that backs it, the risk findings "
+            "raised on it, and its knowledge-graph connections (entries that explain "
+            "or affect it), grouped by relationship. THE tool for 'what's the story "
+            "behind <account>', 'what's connected to <account>', 'why is <account> "
+            "flagged', 'what relates to this reconciliation'. After calling it, "
+            "NARRATE the story in words — never just send the user to a screen."
         ),
         "input_schema": {
             "type": "object",
@@ -567,13 +568,15 @@ async def dispatch_tool(
             return {"ok": False, "period_end": pe.isoformat(),
                     "note": f"No account matching '{q}' for {pe.isoformat()}."}
 
+        qid = row.qbo_account_id
+        acct_label = f"{row.account_number or ''} {row.account_name or ''}".strip()
+
         # Traverse the knowledge graph: the account's own edges (findings on it,
         # JEs affecting it) PLUS its reconciliation's edges (the schedule that
         # supports it, JEs explaining it). Read-only; resolved to real names.
         from core.graph import RELATIONS, Node, neighbors
         from core.graph.resolve import resolve_nodes
 
-        qid = row.qbo_account_id
         seeds = [Node("account", qid), Node("reconciliation", f"{qid}:{pe.isoformat()}")]
         seen: set[tuple[str, str, str]] = set()
         nbrs = []
@@ -597,12 +600,75 @@ async def dispatch_tool(
             {"relationship": RELATIONS[r].label if r in RELATIONS else r.replace("_", " "), "items": items}
             for r, items in grouped.items()
         ]
+
+        # Graph edges are a bonus index; the STORY must be substantive even when
+        # the graph is sparse (e.g. not yet backfilled). Pull the account's real
+        # context straight from the source tables too. Each read is guarded so one
+        # failure can't blank the whole answer.
+        reconciliation = None
+        try:
+            ov = await read_overview_from_snapshots(db, pe)
+            for a in ov.get("accounts", []):
+                if (a.get("qbo_account_id") == qid
+                        or (row.account_number and a.get("account_number") == row.account_number)
+                        or (a.get("account_name") and a.get("account_name") == row.account_name)):
+                    reconciliation = {
+                        "review_status": a.get("review_status"),
+                        "gl_balance": a.get("gl_balance"),
+                        "subledger_balance": a.get("subledger_balance"),
+                        "variance": a.get("variance"),
+                    }
+                    break
+        except Exception:
+            pass
+
+        schedules: list[dict] = []
+        try:
+            from models.schedule import ScheduleSnapshot
+            srows = (await db.execute(
+                select(ScheduleSnapshot).where(
+                    ScheduleSnapshot.period_end == pe,
+                    ScheduleSnapshot.qbo_account_id == qid,
+                    ScheduleSnapshot.status == "committed",
+                )
+            )).scalars().all()
+            schedules = [
+                {"type": s.schedule_type, "items": s.item_count, "ending_balance": str(s.ending_balance)}
+                for s in srows
+            ]
+        except Exception:
+            pass
+
+        findings: list[dict] = []
+        try:
+            from modules.gl_accuracy.service import list_findings
+            data = await list_findings(db, pe)
+            for it in (data.get("items") or []):
+                if it.get("posted_account_id") == qid or it.get("suggested_account_id") == qid:
+                    findings.append({"title": it.get("title"), "severity": it.get("severity"),
+                                     "status": it.get("status"), "kind": it.get("kind")})
+            findings = findings[:8]
+        except Exception:
+            pass
+
+        total = (sum(len(c["items"]) for c in connections) + len(schedules) + len(findings)
+                 + (1 if reconciliation else 0))
         return {
-            "account": f"{row.account_number or ''} {row.account_name or ''}".strip(),
+            "account": acct_label,
+            "account_id": qid,
             "period_end": pe.isoformat(),
+            "context": {
+                "balance": str(row.balance),
+                "account_type": row.account_type,
+                "reconciliation": reconciliation,
+                "schedules": schedules,
+                "risk_findings": findings,
+            },
             "connections": connections,
-            "total": sum(len(c["items"]) for c in connections),
-            "note": None if connections else "No connections recorded for this account yet.",
+            "total": total,
+            "note": (None if total else
+                     "No reconciliation, schedule, findings, or recorded connections for this "
+                     "account this period — it may be inactive or not yet synced."),
         }
 
     if name == "recall":
