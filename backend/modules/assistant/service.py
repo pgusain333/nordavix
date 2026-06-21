@@ -20,6 +20,7 @@ Performance (why this is fast + cheap):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -324,6 +325,20 @@ def _history_messages(history: list[dict] | None) -> list[dict]:
     return out
 
 
+async def _typewriter(text: str) -> AsyncIterator[str]:
+    """Replay an already-finished answer as small chunks so the UI types it out
+    instead of dropping it in one block. The answer is buffered first (never shown
+    mid-flight), so this can never display tool-turn preamble that later changes.
+    Capped to ~120 chunks so even a long answer types in ~1.5s, not 5s."""
+    n = len(text)
+    if not n:
+        return
+    size = max(3, n // 120)
+    for i in range(0, n, size):
+        yield text[i:i + size]
+        await asyncio.sleep(0.012)
+
+
 async def answer_question_stream(
     *,
     db: AsyncSession,
@@ -377,7 +392,6 @@ async def answer_question_stream(
 
         for _turn in range(_MAX_TURNS):
             turn_text: list[str] = []
-            streamed = False
             async with _aclient.messages.stream(
                 model=settings.assistant_model,
                 max_tokens=_MAX_TOKENS,
@@ -391,13 +405,11 @@ async def answer_question_stream(
                         yield {"type": "step", "label": _step_phrase(event.content_block.name, step_no)}
                         step_no += 1
                     elif et == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
-                        # Stream the answer token-by-token (the typing effect) so the
-                        # first words land immediately and the wait feels short. If
-                        # this turn turns out to be a DATA-fetch tool turn, the text
-                        # was "let me check…" preamble and we clear it with a `reset`.
+                        # BUFFER text — never show it mid-flight. If this turn ends up
+                        # calling a data tool, this text was "let me check…" preamble
+                        # that would otherwise sit on screen during the fetch and then
+                        # get replaced. Only the FINAL answer is revealed (typed below).
                         turn_text.append(event.delta.text)
-                        streamed = True
-                        yield {"type": "delta", "text": event.delta.text}
                 final = await stream.get_final_message()
             _record(final)
 
@@ -433,27 +445,32 @@ async def answer_question_stream(
                     })
                 messages.append({"role": "user", "content": results})
                 # If this turn called ONLY output tools (a link / action / chart /
-                # draft to ATTACH to the answer — not a data fetch), the text it just
-                # streamed IS the answer: keep it and stop. Otherwise this was a
-                # data-fetch turn and any streamed text was "let me check…" preamble —
-                # clear it with a reset and let the next turn produce the real answer.
+                # draft to ATTACH to the answer — not a data fetch), its buffered text
+                # IS the answer: keep it and stop. Otherwise this was a data-fetch turn
+                # whose buffered text was just preamble — drop it (it was never shown)
+                # and let the next turn produce the real answer.
                 tool_names = {b.name for b in final.content if b.type == "tool_use"}
                 if tool_names and tool_names <= _OUTPUT_TOOLS:
                     final_answer = "".join(turn_text).strip()
                     break
-                if streamed:
-                    yield {"type": "reset"}
                 continue
 
-            # Final turn (no more tools): the answer already streamed token-by-token
-            # above — just record it for the result payload + persistence.
+            # Final turn (no more tools): its buffered text IS the answer. We type it
+            # out below — nothing was shown before now, so it can never flicker.
             final_answer = "".join(turn_text).strip()
             break
 
+        # Reveal the buffered answer as a smooth typewriter — it reads like it's
+        # being typed, but because it was buffered (never shown mid-flight) no
+        # tool-turn preamble can flash on screen and then change.
+        if final_answer:
+            async for chunk in _typewriter(final_answer):
+                yield {"type": "delta", "text": chunk}
+
         # If we still have no answer text — the loop ran out of turns mid-tool, OR
         # the model ended a turn without writing words — force a closing answer with
-        # NO tools so it MUST synthesize from everything it gathered. This is what
-        # makes "the story behind X" narrate instead of punting to a canned link.
+        # NO tools so it MUST synthesize from everything it gathered. That call has no
+        # tools, so it can't produce preamble; streaming it live is flicker-free.
         if not final_answer:
             try:
                 turn_text = []
