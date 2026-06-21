@@ -20,7 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
-import { formatDate, formatDateLong, formatDateTime } from "@/core/lib/dates"
+import { formatDate, formatDateLong, formatDateTime, toISODate } from "@/core/lib/dates"
 import { useDemoMode } from "@/core/demo/DemoModeProvider"
 import {
   Plus,
@@ -963,7 +963,11 @@ interface PeriodPreset {
 }
 
 function iso(d: Date): string {
-  return d.toISOString().slice(0, 10)
+  // LOCAL date — NEVER toISOString().slice(0,10). For any timezone behind UTC
+  // (all of the US) that serializes a local midnight back a day — e.g. May 1
+  // local → "2026-04-30" — silently shifting every flux period boundary and
+  // making the whole analysis pull the wrong month's figures.
+  return toISODate(d)
 }
 function lastDayOfMonth(year: number, monthIdx0: number): Date {
   return new Date(year, monthIdx0 + 1, 0)
@@ -1076,7 +1080,7 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
       const firstDay = new Date(d.getFullYear(), d.getMonth(), 1)
       const priorLast = new Date(d.getFullYear(), d.getMonth(), 0)
       const priorFirst = new Date(d.getFullYear(), d.getMonth() - 1, 1)
-      const iso = (x: Date) => x.toISOString().slice(0, 10)
+      const iso = (x: Date) => toISODate(x)   // local date — see note on the top-level iso()
       return [iso(firstDay), iso(lastDay), iso(priorFirst), iso(priorLast)] as const
     }
     return PERIOD_PRESETS[1].compute()
@@ -1112,7 +1116,7 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
       // Compute new prior as same-dates-one-year-back
       const d = new Date(v + "T00:00:00")
       d.setFullYear(d.getFullYear() - 1)
-      setPriorStart(d.toISOString().slice(0, 10))
+      setPriorStart(toISODate(d))
     }
   }
   function onPeriodEndChange(v: string) {
@@ -1121,7 +1125,7 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
       setActivePreset(null)
       const d = new Date(v + "T00:00:00")
       d.setFullYear(d.getFullYear() - 1)
-      setPriorEnd(d.toISOString().slice(0, 10))
+      setPriorEnd(toISODate(d))
     }
   }
 

@@ -20,7 +20,7 @@ import { readMeta } from "@/modules/onboarding/components/CompanyForm"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
-import { formatDate, formatDateLong } from "@/core/lib/dates"
+import { formatDate, formatDateLong, toISODate } from "@/core/lib/dates"
 import { apiClient } from "@/core/api/client"
 
 /** Resolve the current workspace's month-end close target in days
@@ -87,9 +87,12 @@ function fmtMoney(s: string | number): string {
 }
 
 function defaultPeriodEnd(): string {
-  const d = new Date()
-  d.setDate(0)
-  return d.toISOString().slice(0, 10)
+  // Last day of the PRIOR month, as a LOCAL date. new Date(y, m, 0) is the last
+  // day of month m-1; toISODate reads local components so it never shifts a day
+  // in a behind-UTC timezone — which would point the whole dashboard, and every
+  // ?period= deep-link into flux / schedules / insights, at the wrong month.
+  const now = new Date()
+  return toISODate(new Date(now.getFullYear(), now.getMonth(), 0))
 }
 
 function timeAgo(iso: string | null | undefined): string {
