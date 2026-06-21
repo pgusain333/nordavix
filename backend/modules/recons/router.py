@@ -1093,7 +1093,12 @@ async def update_account_review_status(
     # disagree beyond the materiality floor. The reconciling-items build-up
     # feeds the subledger, so an explained gap collapses to ~0 and passes.
     if status_value == "approved":
-        unrec = await _unreconciled_accounts(db, pe, [qbo_account_id])
+        # Build the overview ONCE and reuse it for both the tie-out gate and the
+        # freeze capture below — both read the same pre-flip snapshot, so this
+        # avoids constructing the (schedule-heavy) overview twice per approve.
+        from modules.recons.overview import read_overview_from_snapshots
+        _approve_ov = await read_overview_from_snapshots(db, pe)
+        unrec = await _unreconciled_accounts(db, pe, [qbo_account_id], ov=_approve_ov)
         if qbo_account_id in unrec:
             raise HTTPException(
                 status_code=422,
@@ -1108,7 +1113,7 @@ async def update_account_review_status(
         # computed from its LIVE schedule, not its (possibly stale) stored
         # subledger_total. Frozen onto the row in the 'approved' branch so the
         # sign-off holds this reconciled balance and can never gain a variance.
-        approved_subledger = (await _overview_subledgers(db, pe)).get(qbo_account_id)
+        approved_subledger = (await _overview_subledgers(db, pe, ov=_approve_ov)).get(qbo_account_id)
 
     # NOTE: "Mark prepared" (reviewed) deliberately has NO tie-out gate — a
     # preparer can mark an account prepared with a documented variance / open
@@ -1344,12 +1349,16 @@ async def bulk_update_account_review_status(
         for qid in ids:
             if await _bank_acct_missing_statement(db, tenant_id, qid, pe):
                 missing_statement.add(qid)
-        # 3. GL must tie to the subledger within the materiality floor.
-        unrec = await _unreconciled_accounts(db, pe, ids)
+        # 3. GL must tie to the subledger within the materiality floor. Build the
+        # overview ONCE and reuse it for both the tie-out gate and the displayed-
+        # subledger capture below (both read the same pre-flip snapshot).
+        from modules.recons.overview import read_overview_from_snapshots
+        _bulk_ov = await read_overview_from_snapshots(db, pe)
+        unrec = await _unreconciled_accounts(db, pe, ids, ov=_bulk_ov)
         # Capture every account's displayed subledger NOW — before any row flips
         # to 'approved' below — so schedule-backed accounts are still read from
         # their live schedule. Frozen onto each approved row further down.
-        displayed_subs = await _overview_subledgers(db, pe)
+        displayed_subs = await _overview_subledgers(db, pe, ov=_bulk_ov)
 
         reasons: dict[str, str] = {}
         for qid in ids:
@@ -1932,7 +1941,9 @@ def _fmt_money_simple(v: Decimal) -> str:
     return f"$({n})" if sign < 0 else f"${n}"
 
 
-async def _overview_subledgers(db: AsyncSession, period_end) -> dict[str, Decimal]:
+async def _overview_subledgers(
+    db: AsyncSession, period_end, ov: dict | None = None,
+) -> dict[str, Decimal]:
     """{qbo_account_id: subledger_balance} the dashboard currently shows for the
     period — the SAME snapshot-backed builder the approval/close gates read.
 
@@ -1942,9 +1953,13 @@ async def _overview_subledgers(db: AsyncSession, period_end) -> dict[str, Decima
     it live — and freezing it onto the row lets an approved reconciliation hold
     exactly the reconciled balance shown at sign-off. Without it, the freeze later
     surfaces a stale stored value and manufactures a variance on a clean approval.
+
+    Pass a pre-built `ov` (read_overview_from_snapshots result) to reuse the
+    caller's overview instead of rebuilding it; omitted, it builds its own.
     """
     from modules.recons.overview import read_overview_from_snapshots
-    ov = await read_overview_from_snapshots(db, period_end)
+    if ov is None:
+        ov = await read_overview_from_snapshots(db, period_end)
     out: dict[str, Decimal] = {}
     for a in ov.get("accounts", []):
         try:
@@ -4380,16 +4395,20 @@ async def _bank_acct_missing_statement(
 
 
 async def _unreconciled_accounts(
-    db: AsyncSession, period_end, qbo_ids: list[str],
+    db: AsyncSession, period_end, qbo_ids: list[str], ov: dict | None = None,
 ) -> dict[str, str]:
     """Of the given accounts, return {qbo_account_id: reason} for those NOT
     reconciled for the period — reason is a short human string ('off by $X' or
     'not synced for this period'). Uses the same snapshot-backed builder the
     dashboard renders from, so the gate's variance matches the UI exactly. An
     account with no synced balance counts as unreconciled (you can't sign off an
-    account the period was never synced for)."""
+    account the period was never synced for).
+
+    Pass a pre-built `ov` (read_overview_from_snapshots result) to reuse the
+    caller's overview instead of rebuilding it; omitted, it builds its own."""
     from modules.recons.overview import is_reconciled, read_overview_from_snapshots
-    ov = await read_overview_from_snapshots(db, period_end)
+    if ov is None:
+        ov = await read_overview_from_snapshots(db, period_end)
     by_id = {a["qbo_id"]: a for a in ov.get("accounts", [])}
     out: dict[str, str] = {}
     for qid in set(qbo_ids):
