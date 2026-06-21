@@ -963,10 +963,10 @@ interface PeriodPreset {
 }
 
 function iso(d: Date): string {
-  // LOCAL date — NEVER toISOString().slice(0,10). For any timezone behind UTC
-  // (all of the US) that serializes a local midnight back a day — e.g. May 1
-  // local → "2026-04-30" — silently shifting every flux period boundary and
-  // making the whole analysis pull the wrong month's figures.
+  // LOCAL date — NEVER toISOString().slice(0,10). In any timezone AHEAD of UTC
+  // (IST / most of Europe & Asia) that serializes a local midnight back a day —
+  // May 1 local → "2026-04-30" — silently shifting every flux period boundary
+  // and making the whole analysis pull the wrong month's figures.
   return toISODate(d)
 }
 function lastDayOfMonth(year: number, monthIdx0: number): Date {

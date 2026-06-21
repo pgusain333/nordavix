@@ -89,8 +89,9 @@ function fmtMoney(s: string | number): string {
 function defaultPeriodEnd(): string {
   // Last day of the PRIOR month, as a LOCAL date. new Date(y, m, 0) is the last
   // day of month m-1; toISODate reads local components so it never shifts a day
-  // in a behind-UTC timezone — which would point the whole dashboard, and every
-  // ?period= deep-link into flux / schedules / insights, at the wrong month.
+  // in a timezone ahead of UTC (IST/EU/Asia) — which would point the whole
+  // dashboard, and every ?period= deep-link into flux / schedules / insights,
+  // at the wrong month.
   const now = new Date()
   return toISODate(new Date(now.getFullYear(), now.getMonth(), 0))
 }
