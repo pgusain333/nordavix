@@ -1,10 +1,11 @@
 /**
- * GL Accuracy — "Second Set of Eyes". Nordavix compares each vendor's coding to
- * its own history and surfaces only the entries that break a strong habit, each
- * backed by a real tally you can audit at a glance. Calm, trust-first: the hero
- * is reassurance ("N look right"), red is one static dot, the dollar stat is
- * "to reclassify" (P&L-neutral). Accept files a reclass into Adjustments;
- * Dismiss teaches it. Nothing is ever written to QuickBooks.
+ * GL Accuracy / Risk Radar — "Second Set of Eyes". Nordavix runs a catalog of
+ * deterministic checks over the period — vendor coding vs. the client's own
+ * history, missing recurring charges, duplicates, suspense / catch-all accounts
+ * and balance-sheet sanity — each backed by a real tally you can audit at a
+ * glance. Calm, trust-first: the hero is reassurance ("N look right"), red is one
+ * static dot, the dollar stat is "to reclassify" (P&L-neutral). Accept files a
+ * fix into Adjustments; Dismiss teaches it. Nothing is ever written to QuickBooks.
  */
 import { useState } from "react"
 import { useOrganization } from "@clerk/clerk-react"
@@ -168,7 +169,7 @@ export function GlAccuracyPage() {
             <h1 className="text-lg font-bold text-theme leading-tight">Risk Radar</h1>
             <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
               {scanned?.period === activePeriod
-                ? <>Nordavix checked <span className="text-theme font-semibold">{scanned.total.toLocaleString()} entries</span> against this client's own history.</>
+                ? <>Nordavix swept <span className="text-theme font-semibold">{scanned.total.toLocaleString()} entries</span> and your full chart of accounts.</>
                 : "A second pair of eyes on this period's books — deterministic, evidence-first, and never writes to QuickBooks."}
             </p>
           </div>
@@ -540,8 +541,8 @@ function ScanningCard() {
   return (
     <Card><div className="px-6 py-10 text-center">
       <div className="inline-flex items-center gap-2 mb-2"><Spinner className="h-5 w-5" />
-        <span className="text-sm font-semibold text-theme">Reading vendor histories…</span></div>
-      <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Comparing this period's postings against each vendor's own history.</p>
+        <span className="text-sm font-semibold text-theme">Running the full risk sweep…</span></div>
+      <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Checking vendor coding, recurring charges, duplicates, suspense accounts and balance-sheet sanity.</p>
     </div></Card>
   )
 }
@@ -556,7 +557,7 @@ function AllClearTrophy({ total, reduce }: { total: number; reduce: boolean }) {
       </motion.div>
       <h2 className="text-lg font-bold text-theme">Books look clean</h2>
       <p className="text-[13px] mt-1.5 mx-auto" style={{ color: "var(--text-muted)", maxWidth: 420 }}>
-        We checked {total ? `all ${total.toLocaleString()} entries` : "every entry"} against each vendor's history. Nothing to reclassify.
+        We ran every Risk Radar check — vendor coding, duplicates, missing accruals, suspense accounts and balance-sheet sanity — across {total ? `all ${total.toLocaleString()} entries` : "every entry"} and your full chart of accounts. Nothing needs attention.
       </p>
     </div>
   )
@@ -570,7 +571,7 @@ function FirstRun({ onRun, busy, hasPeriod }: { onRun: () => void; busy: boolean
       </div>
       <p className="text-sm font-semibold text-theme mb-1">Nordavix hasn't audited this period yet</p>
       <p className="text-[12px] mx-auto mb-4" style={{ color: "var(--text-muted)", maxWidth: 440 }}>
-        Run a check to compare every entry against its vendor's own posting history. We only compare a vendor's coding to its past — and never write to QuickBooks.
+        Run a sweep: Nordavix checks vendor coding, recurring charges, duplicates, suspense / catch-all accounts and balance-sheet sanity across this period and your full chart of accounts. It only reads — never writes to QuickBooks.
       </p>
       <Button size="sm" loading={busy} disabled={!hasPeriod} onClick={onRun} icon={<Sparkles size={14} strokeWidth={2} />}>
         Run accuracy check

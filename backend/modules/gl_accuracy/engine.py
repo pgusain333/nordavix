@@ -432,6 +432,207 @@ def _detector_round_dollar(current, history, snapshots, exceptions, opts) -> lis
     return flags
 
 
+# ── Structural detectors (chart-of-accounts balances, not the txn stream) ────
+#
+# These read the period's GL balance SNAPSHOTS — one row per account, EVERY
+# account type — instead of the expense-side transaction stream. That's how Risk
+# Radar reaches the whole chart of accounts (including the balance sheet), not
+# just vendor coding on P&L spend. Snapshot rows are the gl_balance_snapshots
+# shape: {qbo_account_id, account_name, account_number, account_type, balance}
+# with `balance` signed debit-positive (QBO TrialBalance convention).
+
+KIND_SUSPENSE = "suspense_account"
+KIND_AMOUNT_OUTLIER = "amount_outlier"
+KIND_CONTRA_BALANCE = "contra_balance"
+
+
+def _money(v: Any) -> str:
+    """'$1,234' / '$1,234.56' — abs value, thousands-separated, cents only when
+    they aren't zero. For human-readable detail strings."""
+    n = abs(_signed(v))
+    s = f"{n:,.2f}"
+    return "$" + (s[:-3] if s.endswith(".00") else s)
+
+
+# Catch-all / suspense accounts that should be cleared (recoded) before sign-off.
+# (name substring, human reason, base severity when material). The "uncategorized"
+# substring covers Uncategorized Expense / Income / Asset in one rule.
+_SUSPENSE_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    ("uncategorized", "an Uncategorized catch-all", "high"),
+    ("uncategorised", "an Uncategorised catch-all", "high"),
+    ("ask my accountant", "QuickBooks' “Ask My Accountant” holding account", "high"),
+    ("suspense", "a suspense account", "high"),
+    ("opening balance equity", "Opening Balance Equity (should clear after setup)", "medium"),
+)
+
+
+def _detector_suspense_accounts(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """Flag any catch-all / suspense account carrying a balance — Uncategorized
+    Expense/Income/Asset, Ask My Accountant, Opening Balance Equity, a generic
+    'suspense'. These quietly accumulate miscoded activity and must be cleared
+    before close. Reads balance SNAPSHOTS, so it covers every account type (not
+    just expense). Review-only flag — the fix is recoding, not a single JE."""
+    o = opts or {}
+    min_amt = o.get("suspense_min", Decimal("1"))       # treat sub-$1 as already clear
+    high_amt = o.get("suspense_high", Decimal("1000"))  # material → keep the pattern's high sev
+    flags: list[dict] = []
+    for s in snapshots:
+        name = str(s.get("account_name") or "").strip()
+        nl = _norm_vendor(name)
+        if not nl:
+            continue
+        bal = _signed(s.get("balance"))
+        if abs(bal) < min_amt:
+            continue
+        match = next(((reason, sev) for sub, reason, sev in _SUSPENSE_PATTERNS if sub in nl), None)
+        if not match:
+            continue
+        reason, base_sev = match
+        qid = str(s.get("qbo_account_id") or "")
+        sev = base_sev if abs(bal) >= high_amt else "medium"
+        flags.append({
+            "kind": KIND_SUSPENSE, "severity": sev, "confidence": sev, "action_kind": "flag",
+            "dedupe_key": qid or nl,
+            "title": f"{name or 'Suspense account'}: {_money(bal)} to clear",
+            "detail": (f"{name or 'This account'} is {reason}, and it's carrying {_money(bal)}. "
+                       f"Recode its entries to the right accounts before close."),
+            "vendor": name or "Suspense account", "amount": str(bal),
+            "posted_account_id": qid or None, "posted_account_name": name or None,
+            "suggested_account_id": None, "suggested_account_name": None,
+            "dominant_count": 0, "total_count": 0, "posted_count": 0,
+            "evidence": {"account_id": qid, "account_name": name,
+                         "account_type": s.get("account_type"), "balance": str(bal),
+                         "reason": reason},
+        })
+    return flags
+
+
+def _detector_amount_outlier(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """Flag a current-period entry whose amount dwarfs anything this vendor has
+    ever posted — a likely fat-finger or unusual charge to confirm. The baseline
+    is the vendor's OWN history (median + max of prior amounts); we flag only when
+    the entry BOTH exceeds the vendor's historical max AND clears a multiple of
+    its median, so naturally variable spend never trips. Review-only flag."""
+    o = opts or {}
+    min_history = int(o.get("outlier_min_history", 4))
+    mult = Decimal(str(o.get("outlier_mult", 4)))            # >= this * median
+    high_mult = Decimal(str(o.get("outlier_high_mult", 10)))
+    floor = o.get("outlier_floor", Decimal("500"))           # never flag small amounts
+    high_floor = o.get("outlier_high_floor", Decimal("5000"))
+
+    # vendor_norm -> prior abs amounts (across accounts; amount is a vendor trait).
+    hist_amts: dict[str, list[Decimal]] = {}
+    for t in history:
+        v = _norm_vendor(t.get("entity_name"))
+        if not v:
+            continue
+        a = abs(_signed(t.get("amount")))
+        if a > 0:
+            hist_amts.setdefault(v, []).append(a)
+
+    flags: list[dict] = []
+    for t in current:
+        v = _norm_vendor(t.get("entity_name"))
+        if not v:
+            continue
+        amt = abs(_signed(t.get("amount")))
+        if amt < floor:
+            continue
+        amts = hist_amts.get(v)
+        if not amts or len(amts) < min_history:
+            continue
+        med = _median(amts)
+        mx = max(amts)
+        if med <= 0 or amt <= mx or amt < med * mult:
+            continue  # within the vendor's seen range, or not a big-enough jump
+        vendor_disp = str(t.get("entity_name") or "").strip() or v
+        acct = str(t.get("qbo_account_id") or "")
+        acct_name = str(t.get("qbo_account_name") or "")
+        txn_id = str(t.get("qbo_txn_id") or "")
+        sev = "high" if (amt >= med * high_mult and amt >= high_floor) else "medium"
+        flags.append({
+            "kind": KIND_AMOUNT_OUTLIER, "severity": sev, "confidence": sev, "action_kind": "flag",
+            "dedupe_key": f"{v}:{txn_id}:{amt}",
+            "title": f"{vendor_disp}: unusually large {_money(amt)}",
+            "detail": (f"{vendor_disp} usually runs about {_money(med)} (max {_money(mx)} over "
+                       f"{len(amts)} prior entries); this one is {_money(amt)}. Confirm it's right."),
+            "vendor": vendor_disp, "amount": str(_signed(t.get("amount"))), "memo": t.get("memo"),
+            "posted_account_id": acct or None, "posted_account_name": acct_name or None,
+            "suggested_account_id": None, "suggested_account_name": None,
+            "qbo_txn_id": t.get("qbo_txn_id"), "txn_type": t.get("txn_type"),
+            "txn_number": t.get("txn_number"), "txn_date": t.get("txn_date"),
+            "dominant_count": 0, "total_count": len(amts), "posted_count": 0,
+            "evidence": {"amount": str(amt), "median": str(med), "max": str(mx),
+                         "prior_count": len(amts),
+                         "multiple_of_median": str((amt / med).quantize(Decimal("0.1")))},
+        })
+    return flags
+
+
+# Balance-sheet accounts that legitimately sit on the "wrong" side — never flagged
+# by the contra-balance detector (matched as a name substring, normalized).
+_CONTRA_OK: tuple[str, ...] = (
+    "accumulated depreciation", "accumulated amortization", "accumulated amortisation",
+    "allowance", "contra", "uncategorized", "uncategorised", "ask my accountant", "suspense",
+)
+
+
+def _normal_side(account_type: Any) -> str | None:
+    """A balance-sheet account's normal balance side ('debit' | 'credit'), or None
+    for equity / P&L / unknown types (out of scope for the contra-balance check —
+    equity and income/expense sign is too often legitimately either way)."""
+    t = str(account_type or "").lower()
+    if any(k in t for k in ("liabilit", "payable", "credit card")):
+        return "credit"
+    if any(k in t for k in ("receivable", "bank", "asset")):
+        return "debit"
+    return None
+
+
+def _detector_contra_balance(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """Flag an asset or liability account sitting on the WRONG side — A/P with a
+    debit balance, a bank/asset account negative, etc. Known contra accounts
+    (accumulated depreciation, allowances) are excluded by name; equity and P&L
+    are out of scope (their sign is often legitimate). Reads balance SNAPSHOTS.
+    Review-only flag."""
+    o = opts or {}
+    tol = o.get("contra_tol", Decimal("100"))          # ignore tiny wrong-side noise
+    high_amt = o.get("contra_high", Decimal("10000"))
+    flags: list[dict] = []
+    for s in snapshots:
+        side = _normal_side(s.get("account_type"))
+        if side is None:
+            continue
+        name = str(s.get("account_name") or "").strip()
+        nl = _norm_vendor(name)
+        if any(ok in nl for ok in _CONTRA_OK):
+            continue
+        bal = _signed(s.get("balance"))
+        if side == "debit" and bal < -tol:
+            wrong = "credit"
+        elif side == "credit" and bal > tol:
+            wrong = "debit"
+        else:
+            continue
+        qid = str(s.get("qbo_account_id") or "")
+        atype = str(s.get("account_type") or "account")
+        sev = "high" if abs(bal) >= high_amt else "medium"
+        flags.append({
+            "kind": KIND_CONTRA_BALANCE, "severity": sev, "confidence": sev, "action_kind": "flag",
+            "dedupe_key": qid or nl,
+            "title": f"{name or atype}: {_money(bal)} {wrong} balance (unexpected)",
+            "detail": (f"{name or 'This account'} is {atype} and normally carries a {side} balance, "
+                       f"but it's showing a {_money(bal)} {wrong} balance. Investigate before close."),
+            "vendor": name or atype, "amount": str(bal),
+            "posted_account_id": qid or None, "posted_account_name": name or None,
+            "suggested_account_id": None, "suggested_account_name": None,
+            "dominant_count": 0, "total_count": 0, "posted_count": 0,
+            "evidence": {"account_id": qid, "account_name": name, "account_type": atype,
+                         "balance": str(bal), "normal_side": side, "actual_side": wrong},
+        })
+    return flags
+
+
 # Ordered list of active detectors. R4+ append here.
 DETECTORS: list[dict[str, Any]] = [
     {"key": KIND_MISCLASSIFICATION, "fn": _detector_misclassification},
@@ -439,6 +640,9 @@ DETECTORS: list[dict[str, Any]] = [
     {"key": KIND_DUPLICATE, "fn": _detector_duplicates},
     {"key": KIND_LARGE_NO_MEMO, "fn": _detector_large_no_memo},
     {"key": KIND_ROUND_DOLLAR, "fn": _detector_round_dollar},
+    {"key": KIND_SUSPENSE, "fn": _detector_suspense_accounts},
+    {"key": KIND_AMOUNT_OUTLIER, "fn": _detector_amount_outlier},
+    {"key": KIND_CONTRA_BALANCE, "fn": _detector_contra_balance},
 ]
 
 

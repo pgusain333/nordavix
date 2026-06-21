@@ -81,6 +81,26 @@ async def _expense_account_ids(db: AsyncSession, tenant_id: uuid.UUID, period_en
     return out
 
 
+async def _all_snapshots(db: AsyncSession, tenant_id: uuid.UUID, period_end: date) -> list[dict]:
+    """Every account's balance snapshot for the period (all account types) — the
+    evidence for the structural detectors (suspense / contra-balance), which need
+    the full chart of accounts, not just the expense stream."""
+    rows = (await db.execute(
+        select(
+            GlBalanceSnapshot.qbo_account_id, GlBalanceSnapshot.account_name,
+            GlBalanceSnapshot.account_number, GlBalanceSnapshot.account_type,
+            GlBalanceSnapshot.balance,
+        ).where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.period_end == period_end,
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).all()
+    return [{"qbo_account_id": qid, "account_name": name, "account_number": num,
+             "account_type": atype, "balance": bal}
+            for qid, name, num, atype, bal in rows]
+
+
 def _finding_key(flag: dict) -> str:
     # Stable per-finding key for idempotent re-scan. A detector may supply its own
     # `dedupe_key` (e.g. missing-recurring has no current txn); otherwise we build
@@ -189,16 +209,20 @@ async def scan_period(
     hist_start = _shift_months(period_start, lookback_months)
     hist_end = period_start - timedelta(days=1)
 
+    # Structural detectors (suspense / contra-balance) read the full chart-of-
+    # accounts balance snapshots — every account type, not just expense — so Risk
+    # Radar reaches the balance sheet too. The vendor/transaction detectors still
+    # run on the expense + COGS stream, where coding decisions live. We run even
+    # when there are no expense accounts (the snapshots can still carry findings).
+    snapshots = await _all_snapshots(db, tenant_id, period_end)
     acct_ids = await _expense_account_ids(db, tenant_id, period_end)
-    if not acct_ids:
-        await _replace_open_findings(db, tenant_id, period_end, [])
-        return {"period_end": period_end.isoformat(), "scanned": 0, "accounts": 0,
-                "findings": 0, "high": 0, "medium": 0, "dollars": "0.00"}
-
-    current = await pull_gl_transactions_multi(conn, db, acct_ids, period_start, period_end)
-    history = await pull_gl_transactions_multi(conn, db, acct_ids, hist_start, hist_end)
+    current: list[dict] = []
+    history: list[dict] = []
+    if acct_ids:
+        current = await pull_gl_transactions_multi(conn, db, acct_ids, period_start, period_end)
+        history = await pull_gl_transactions_multi(conn, db, acct_ids, hist_start, hist_end)
     exceptions = await active_classification_exceptions(db)
-    flags = run_detectors(current, history, exceptions=exceptions)
+    flags = run_detectors(current, history, snapshots=snapshots, exceptions=exceptions)
     await _replace_open_findings(db, tenant_id, period_end, flags)
 
     open_findings = (await db.execute(

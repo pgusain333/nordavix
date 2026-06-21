@@ -4,7 +4,17 @@ The reputation risk is a FALSE accusation, so the no-flag cases — legitimate
 splits, thin history, sub-materiality, confirmed exceptions — are tested as hard
 as the positive ones. `detect_misclassifications` is pure, so these are fast.
 """
-from modules.gl_accuracy.engine import build_vendor_distribution, detect_misclassifications
+from modules.gl_accuracy.engine import (
+    KIND_AMOUNT_OUTLIER,
+    KIND_CONTRA_BALANCE,
+    KIND_SUSPENSE,
+    _detector_amount_outlier,
+    _detector_contra_balance,
+    _detector_suspense_accounts,
+    build_vendor_distribution,
+    detect_misclassifications,
+    run_detectors,
+)
 
 
 def _t(vendor, acct, amount="500", acct_name=None, txn_id=None):
@@ -116,3 +126,124 @@ def test_sort_high_then_dollars():
     ]
     flags = detect_misclassifications(current, history)
     assert [f["qbo_txn_id"] for f in flags] == ["small-high", "big-medium"]  # high first
+
+
+# ── Structural detector: suspense / catch-all accounts ─────────────────────────
+
+def _snap(name, atype, balance, qid="A1"):
+    return {"qbo_account_id": qid, "account_name": name, "account_number": None,
+            "account_type": atype, "balance": balance}
+
+
+def test_suspense_uncategorized_material_is_high():
+    snaps = [_snap("Uncategorized Expense", "Expense", "5000", qid="900")]
+    flags = _detector_suspense_accounts([], [], snaps, set(), {})
+    assert len(flags) == 1
+    f = flags[0]
+    assert f["kind"] == KIND_SUSPENSE and f["action_kind"] == "flag"
+    assert f["severity"] == "high" and f["posted_account_id"] == "900"
+
+
+def test_suspense_small_balance_is_medium():
+    snaps = [_snap("Ask My Accountant", "Expense", "250", qid="901")]
+    flags = _detector_suspense_accounts([], [], snaps, set(), {})
+    assert len(flags) == 1 and flags[0]["severity"] == "medium"
+
+
+def test_suspense_opening_balance_equity_is_medium_even_when_material():
+    snaps = [_snap("Opening Balance Equity", "Equity", "9000", qid="902")]
+    flags = _detector_suspense_accounts([], [], snaps, set(), {})
+    assert len(flags) == 1 and flags[0]["severity"] == "medium"
+
+
+def test_suspense_zero_balance_not_flagged():
+    snaps = [_snap("Uncategorized Income", "Income", "0", qid="903")]
+    assert _detector_suspense_accounts([], [], snaps, set(), {}) == []
+
+
+def test_suspense_real_account_not_flagged():
+    snaps = [_snap("Rent Expense", "Expense", "8000", qid="6100")]
+    assert _detector_suspense_accounts([], [], snaps, set(), {}) == []
+
+
+# ── Structural detector: amount outlier vs the vendor's own history ────────────
+
+def test_amount_outlier_flagged():
+    history = _hist("Office Depot", "6400", 4, amount="120")  # ~120 each, max 120
+    current = [_t("Office Depot", "6400", "4800", txn_id="o1")]
+    flags = _detector_amount_outlier(current, history, [], set(), {})
+    assert len(flags) == 1
+    assert flags[0]["kind"] == KIND_AMOUNT_OUTLIER and flags[0]["action_kind"] == "flag"
+    assert flags[0]["amount"] == "4800"  # signed amount preserved
+
+
+def test_amount_outlier_within_seen_range_not_flagged():
+    # The vendor has hit 5000 before, so 1000 is well within its range — never flag.
+    history = [_t("Acme", "6400", a, txn_id=f"h{i}") for i, a in enumerate(["100", "5000", "120", "130"])]
+    current = [_t("Acme", "6400", "1000", txn_id="a1")]
+    assert _detector_amount_outlier(current, history, [], set(), {}) == []
+
+
+def test_amount_outlier_thin_history_not_flagged():
+    history = _hist("NewVendor", "6400", 2, amount="100")  # < min_history (4)
+    current = [_t("NewVendor", "6400", "9000", txn_id="n1")]
+    assert _detector_amount_outlier(current, history, [], set(), {}) == []
+
+
+def test_amount_outlier_below_floor_not_flagged():
+    history = _hist("Tiny", "6400", 5, amount="11")  # max 11
+    current = [_t("Tiny", "6400", "400", txn_id="t1")]  # > max & > 4x median but < $500 floor
+    assert _detector_amount_outlier(current, history, [], set(), {}) == []
+
+
+def test_amount_outlier_modest_jump_not_flagged():
+    history = _hist("Steady", "6400", 4, amount="120")  # max 120, median 120
+    current = [_t("Steady", "6400", "300", txn_id="s1")]  # > max but < 4x median (480)
+    assert _detector_amount_outlier(current, history, [], set(), {}) == []
+
+
+# ── Structural detector: contra-normal balance ────────────────────────────────
+
+def test_contra_ap_debit_balance_flagged():
+    snaps = [_snap("Accounts Payable", "Accounts Payable", "5000", qid="2000")]  # debit on credit-normal
+    flags = _detector_contra_balance([], [], snaps, set(), {})
+    assert len(flags) == 1
+    assert flags[0]["kind"] == KIND_CONTRA_BALANCE and "debit" in flags[0]["title"].lower()
+
+
+def test_contra_bank_negative_flagged():
+    snaps = [_snap("Operating Checking", "Bank", "-5000", qid="1000")]  # credit on debit-normal
+    flags = _detector_contra_balance([], [], snaps, set(), {})
+    assert len(flags) == 1 and "credit" in flags[0]["title"].lower()
+
+
+def test_contra_normal_ap_not_flagged():
+    snaps = [_snap("Accounts Payable", "Accounts Payable", "-8000", qid="2000")]  # normal credit balance
+    assert _detector_contra_balance([], [], snaps, set(), {}) == []
+
+
+def test_contra_accumulated_depreciation_excluded():
+    snaps = [_snap("Accumulated Depreciation", "Fixed Asset", "-50000", qid="1500")]  # legit contra
+    assert _detector_contra_balance([], [], snaps, set(), {}) == []
+
+
+def test_contra_equity_out_of_scope():
+    snaps = [_snap("Owner Equity", "Equity", "5000", qid="3000")]  # equity sign is often legitimate
+    assert _detector_contra_balance([], [], snaps, set(), {}) == []
+
+
+def test_contra_below_tolerance_not_flagged():
+    snaps = [_snap("Accounts Payable", "Accounts Payable", "50", qid="2000")]  # < $100 tolerance
+    assert _detector_contra_balance([], [], snaps, set(), {}) == []
+
+
+# ── Orchestrator wires every detector over shared evidence ────────────────────
+
+def test_run_detectors_includes_structural_kinds():
+    history = _hist("AWS", "6010", 11, acct_name="Hosting")
+    current = [_t("AWS", "6400", "1240", acct_name="Office Supplies", txn_id="m1")]  # misclassification
+    snaps = [_snap("Uncategorized Expense", "Expense", "5000", qid="900"),
+             _snap("Accounts Payable", "Accounts Payable", "12000", qid="2000")]  # contra (debit bal)
+    flags = run_detectors(current, history, snapshots=snaps)
+    kinds = {f["kind"] for f in flags}
+    assert {"misclassification", KIND_SUSPENSE, KIND_CONTRA_BALANCE} <= kinds
