@@ -56,6 +56,15 @@ def _persist_draft(db: AsyncSession, tenant_id: uuid.UUID, user_id, thread_id, d
         created_by=user_id,
     ))
 
+
+def _attachment_marker(attachments) -> str:
+    """A short breadcrumb of attached filenames for the persisted transcript. The
+    file CONTENT is never stored (attachments are ephemeral) — only a note that one
+    was attached, so the conversation history reads sensibly."""
+    names = [a.name for a in (attachments or []) if getattr(a, "name", "")]
+    return f"\n\n[Attached: {', '.join(names)}]" if names else ""
+
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -80,6 +89,7 @@ async def ask(
             history=[m.model_dump() for m in (body.history or [])],
             user_role=user.role,
             user_powers=getattr(user, "delegated_powers", None),
+            attachments=body.attachments,
         )
     except Exception:
         logger.exception("assistant ask failed for tenant %s", tenant_id)
@@ -98,7 +108,7 @@ async def ask(
                 tenant_id=tenant_id,
                 user_id=user.id,
                 thread_id=body.thread_id,
-                question=question,
+                question=question + _attachment_marker(body.attachments),
                 answer=result["answer"],
                 sources=result.get("sources"),
             )
@@ -150,6 +160,7 @@ async def ask_stream(
                 history=history,
                 user_role=user.role,
                 user_powers=getattr(user, "delegated_powers", None),
+                attachments=body.attachments,
             ):
                 if ev.get("type") == "result":
                     answer = ev.get("answer", "")
@@ -169,7 +180,7 @@ async def ask_stream(
             try:
                 thread_id = await persist_turn(
                     db=db, tenant_id=tenant_id, user_id=user.id,
-                    thread_id=body.thread_id, question=question,
+                    thread_id=body.thread_id, question=question + _attachment_marker(body.attachments),
                     answer=answer, sources=sources,
                 )
                 for d in drafts:

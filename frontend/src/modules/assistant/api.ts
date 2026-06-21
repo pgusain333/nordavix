@@ -27,6 +27,14 @@ export interface AssistantLink {
   label: string
 }
 
+/** An ephemeral file the user attaches to a chat turn. `data` is base64 (no
+ *  `data:` prefix). Sent with the question; never stored server-side. */
+export interface AskAttachment {
+  name: string
+  mime: string
+  data: string
+}
+
 /** A one-click "prepare" action the copilot offers (run recon/flux agentic,
  *  propose-only). The chat triggers the existing endpoint on click. */
 export interface AssistantAction {
@@ -124,6 +132,7 @@ export const assistantApi = {
     threadId: string | null,
     onEvent: (ev: StreamEvent) => void,
     signal?: AbortSignal,
+    attachments?: AskAttachment[],
   ): Promise<void> => {
     const res = await fetch(`${API_BASE_URL}/api/assistant/ask/stream`, {
       method: "POST",
@@ -133,6 +142,7 @@ export const assistantApi = {
         period_end: periodEnd || null,
         history,
         thread_id: threadId || null,
+        attachments: attachments && attachments.length ? attachments : undefined,
       }),
       signal,
     })

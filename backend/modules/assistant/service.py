@@ -100,13 +100,27 @@ _SYSTEM_STATIC = (
     "client — the workspace you are called in. You answer from this client's REAL, "
     "synced data via your tools.\n\n"
     "GROUNDING (non-negotiable):\n"
-    "- Answer ONLY from what your tools return. Never invent or estimate a number, "
-    "balance, or status.\n"
+    "- For ANY fact about THIS client — a number, balance, status, who did what — "
+    "answer ONLY from what your tools return; never invent or estimate it. (General "
+    "accounting / GAAP / tax knowledge is the one exception — see below.)\n"
     "- When you state a figure, attribute it (account name/number + period).\n"
     "- If a tool returns no data (e.g. the month isn't synced), say so plainly and "
     "suggest the next step (e.g. \"run Sync for that month\").\n"
     "- Money is USD. Show variances with their sign and flag anything that doesn't "
     "tie out.\n\n"
+    "GENERAL ACCOUNTING KNOWLEDGE (the one exception to 'tools only'):\n"
+    "- You MAY answer general accounting, bookkeeping, GAAP, and tax questions from "
+    "your own professional knowledge — how to treat a prepaid, the journal entry for "
+    "an accrual, what a balance-sheet reconciliation should contain, the gist of a "
+    "standard. Don't refuse these; you're a knowledgeable close assistant, not only a "
+    "data lookup.\n"
+    "- Keep the two firmly separate: anything specific to THIS client (figures, "
+    "balances, statuses) still comes only from tools — never blend a guessed number "
+    "into a general explanation.\n"
+    "- Add a brief one-line caveat that it's general guidance, not formal tax or legal "
+    "advice, and a material or client-specific call should be confirmed against "
+    "authoritative sources or a licensed professional. Never fabricate citations, "
+    "code sections, or rates — if you're unsure of a specific, say so plainly.\n\n"
     "TOOL ROUTING — pick the smallest set of tools that answers the question, then "
     "answer. You CAN call several tools (even in one turn) for a broad question:\n"
     "- account balance → get_account_balance\n"
@@ -304,6 +318,7 @@ async def answer_question_stream(
     history: list[dict] | None = None,
     user_role: str | None = None,
     user_powers: list[str] | None = None,
+    attachments: list | None = None,
 ) -> AsyncIterator[dict]:
     """Run the grounded tool-use loop, STREAMING events as they happen.
 
@@ -319,7 +334,16 @@ async def answer_question_stream(
     which runs as the generator is exhausted, before the caller's writes).
     """
     messages: list[dict] = _history_messages(history)
-    messages.append({"role": "user", "content": question})
+    # Current turn = the question, plus any attachments parsed into content blocks
+    # (images → vision, PDFs/sheets → extracted text). EPHEMERAL: attachments ride
+    # this one turn only; history stays text-only, so files are never re-sent/stored.
+    user_content: list | str = question
+    if attachments:
+        from modules.assistant.attachments import build_attachment_blocks
+        att_blocks = build_attachment_blocks(attachments)
+        if att_blocks:
+            user_content = [{"type": "text", "text": question}, *att_blocks]
+    messages.append({"role": "user", "content": user_content})
 
     sources: list[dict] = []
     drafts: list[dict] = []
@@ -471,6 +495,7 @@ async def answer_question(
     history: list[dict] | None = None,
     user_role: str | None = None,
     user_powers: list[str] | None = None,
+    attachments: list | None = None,
 ) -> dict:
     """Non-streaming convenience wrapper (drains the stream into one dict). Kept for
     the JSON /ask endpoint and any caller that wants the whole answer at once."""
@@ -482,7 +507,7 @@ async def answer_question(
     charts: list[dict] = []
     async for ev in answer_question_stream(
         db=db, tenant_id=tenant_id, question=question, period_end=period_end, history=history,
-        user_role=user_role, user_powers=user_powers,
+        user_role=user_role, user_powers=user_powers, attachments=attachments,
     ):
         if ev.get("type") == "result":
             answer = ev["answer"]

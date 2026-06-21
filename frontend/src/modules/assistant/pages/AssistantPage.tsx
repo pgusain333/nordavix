@@ -14,7 +14,7 @@ import { motion } from "framer-motion"
 import {
   Sparkles, ArrowUp, Square, Plus, History, Clock, FileText, ArrowUpRight,
   Copy, Check, Download, Loader2, Play, AlertTriangle, Wallet, Scale, ClipboardList,
-  Trash2, X, PanelLeftClose, PanelLeftOpen,
+  Trash2, X, PanelLeftClose, PanelLeftOpen, Paperclip,
 } from "lucide-react"
 import {
   assistantApi,
@@ -43,6 +43,33 @@ interface ChatMsg {
   steps?: string[] // chatty progress lines shown while the answer is being worked on
   error?: boolean
   streaming?: boolean
+  attachments?: { name: string }[]  // ephemeral files the user attached to this turn
+}
+
+const ATTACH_ACCEPT = "image/png,image/jpeg,image/webp,image/gif,application/pdf,.xlsx,.csv,.txt"
+const ATTACH_MAX_FILES = 3
+const ATTACH_MAX_BYTES = 6 * 1024 * 1024
+const ATTACH_OK_MIME = /^(image\/(png|jpe?g|webp|gif)|application\/pdf|text\/(csv|plain)|application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet|application\/vnd\.ms-excel)$/
+const ATTACH_OK_EXT = /\.(png|jpe?g|webp|gif|pdf|xlsx|xlsm|csv|txt)$/i
+
+interface PendingAtt { name: string; mime: string; data: string; size: number }
+
+function attachAccepted(f: File): boolean {
+  return ATTACH_OK_MIME.test(f.type) || ATTACH_OK_EXT.test(f.name)
+}
+
+/** Read a File into base64 (no `data:` prefix) for the ephemeral attachment payload. */
+function readFileBase64(f: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onerror = () => reject(new Error("read failed"))
+    r.onload = () => {
+      const s = String(r.result || "")
+      const i = s.indexOf(",")
+      resolve(i >= 0 ? s.slice(i + 1) : s)
+    }
+    r.readAsDataURL(f)
+  })
 }
 
 function money(s: string | null | undefined): string {
@@ -126,6 +153,9 @@ export default function AssistantPage() {
   const qc = useQueryClient()
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [input, setInput] = useState("")
+  const [attachments, setAttachments] = useState<PendingAtt[]>([])
+  const [attachError, setAttachError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [threadId, setThreadId] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [streaming, setStreaming] = useState(false)
@@ -177,18 +207,41 @@ export default function AssistantPage() {
     })
   }
 
+  async function addFiles(files: File[]) {
+    if (!files.length || streaming) return
+    setAttachError(null)
+    const accepted: PendingAtt[] = []
+    for (const f of files) {
+      if (!attachAccepted(f)) { setAttachError(`${f.name}: unsupported file type.`); continue }
+      if (f.size > ATTACH_MAX_BYTES) { setAttachError(`${f.name}: too large (max 6 MB).`); continue }
+      try {
+        accepted.push({ name: f.name, mime: f.type || "application/octet-stream", data: await readFileBase64(f), size: f.size })
+      } catch { setAttachError(`${f.name}: couldn't read the file.`) }
+    }
+    if (accepted.length) {
+      setAttachments((prev) => {
+        const merged = [...prev, ...accepted]
+        if (merged.length > ATTACH_MAX_FILES) setAttachError(`You can attach up to ${ATTACH_MAX_FILES} files.`)
+        return merged.slice(0, ATTACH_MAX_FILES)
+      })
+    }
+  }
+
   async function send(text: string) {
-    const q = text.trim()
+    const atts = attachments
+    const q = text.trim() || (atts.length ? "Please review what I've attached." : "")
     if (!q || streaming) return
     const history = messages
       .filter((m) => !m.error)
       .map((m) => ({ role: m.role, content: m.content }))
     setMessages((prev) => [
       ...prev,
-      { role: "user", content: q },
+      { role: "user", content: q, attachments: atts.length ? atts.map((a) => ({ name: a.name })) : undefined },
       { role: "assistant", content: "", streaming: true, question: q, exportIntent: detectExportIntent(q), steps: [] },
     ])
     setInput("")
+    setAttachments([])
+    setAttachError(null)
     setStreaming(true)
     const ctrl = new AbortController()
     abortRef.current = ctrl
@@ -227,6 +280,7 @@ export default function AssistantPage() {
           }
         },
         ctrl.signal,
+        atts.map((a) => ({ name: a.name, mime: a.mime, data: a.data })),
       )
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === "AbortError"
@@ -314,7 +368,7 @@ export default function AssistantPage() {
   const composer = (
     <div className="w-full">
       <div
-        className="group flex items-end gap-2 rounded-2xl p-2 transition-shadow"
+        className="rounded-2xl p-2 transition-shadow"
         style={{
           background: "var(--surface)",
           border: "1px solid var(--border-strong)",
@@ -323,41 +377,89 @@ export default function AssistantPage() {
         onFocusCapture={(e) => (e.currentTarget.style.boxShadow = "0 0 0 3px var(--green-subtle), 0 8px 24px -16px rgba(0,0,0,.25)")}
         onBlurCapture={(e) => (e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,.04), 0 8px 24px -16px rgba(0,0,0,.25)")}
       >
-        <textarea
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value)
-            e.target.style.height = "auto"
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 176)}px`
-          }}
-          onKeyDown={onKeyDown}
-          rows={1}
-          placeholder="Ask about balances, variances, what's blocking close…"
-          className="max-h-44 flex-1 resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed outline-none placeholder:opacity-60"
-          style={{ color: "var(--text)", outline: "none", border: "none", boxShadow: "none", WebkitAppearance: "none" }}
-        />
-        {streaming ? (
-          <button
-            onClick={stop}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors"
-            style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
-            title="Stop"
-            aria-label="Stop generating"
-          >
-            <Square size={15} strokeWidth={2.4} fill="currentColor" />
-          </button>
-        ) : (
-          <button
-            onClick={() => void send(input)}
-            disabled={!input.trim()}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-opacity disabled:opacity-40"
-            style={{ background: "var(--green)", color: "#fff" }}
-            title="Send"
-            aria-label="Send"
-          >
-            <ArrowUp size={18} strokeWidth={2.2} />
-          </button>
+        {attachments.length > 0 && (
+          <div className="mb-1.5 flex flex-wrap gap-1.5 px-1">
+            {attachments.map((a, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11.5px]"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
+              >
+                <FileText size={12} className="shrink-0 opacity-70" />
+                <span className="max-w-[150px] truncate">{a.name}</span>
+                <button
+                  onClick={() => setAttachments((p) => p.filter((_, j) => j !== i))}
+                  className="opacity-60 transition-opacity hover:opacity-100"
+                  aria-label={`Remove ${a.name}`}
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
         )}
+        {attachError && (
+          <p className="mb-1.5 px-1.5 text-[11.5px]" style={{ color: "#dc2626" }}>{attachError}</p>
+        )}
+        <div className="group flex items-end gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={ATTACH_ACCEPT}
+            className="hidden"
+            onChange={(e) => { void addFiles(Array.from(e.target.files || [])); e.target.value = "" }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={streaming || attachments.length >= ATTACH_MAX_FILES}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors disabled:opacity-40"
+            style={{ color: "var(--text-muted)" }}
+            title="Attach a file or screenshot"
+            aria-label="Attach a file"
+          >
+            <Paperclip size={17} strokeWidth={2} />
+          </button>
+          <textarea
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value)
+              e.target.style.height = "auto"
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 176)}px`
+            }}
+            onKeyDown={onKeyDown}
+            onPaste={(e) => {
+              const imgs = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"))
+              if (imgs.length) { e.preventDefault(); void addFiles(imgs) }
+            }}
+            rows={1}
+            placeholder="Ask anything, or attach a screenshot / PDF / spreadsheet…"
+            className="max-h-44 flex-1 resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed outline-none placeholder:opacity-60"
+            style={{ color: "var(--text)", outline: "none", border: "none", boxShadow: "none", WebkitAppearance: "none" }}
+          />
+          {streaming ? (
+            <button
+              onClick={stop}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors"
+              style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+              title="Stop"
+              aria-label="Stop generating"
+            >
+              <Square size={15} strokeWidth={2.4} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={() => void send(input)}
+              disabled={!input.trim() && attachments.length === 0}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-opacity disabled:opacity-40"
+              style={{ background: "var(--green)", color: "#fff" }}
+              title="Send"
+              aria-label="Send"
+            >
+              <ArrowUp size={18} strokeWidth={2.2} />
+            </button>
+          )}
+        </div>
       </div>
       <p className="mt-2 px-1 text-center text-[11px]" style={{ color: "var(--text-muted)" }}>
         Grounded in your synced data · read-only · never posts to QuickBooks without you.
@@ -696,6 +798,20 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
           style={{ background: "var(--green-subtle)", color: "var(--text)", whiteSpace: "pre-wrap" }}
         >
           {msg.content}
+          {!!msg.attachments?.length && (
+            <div className="mt-1.5 flex flex-wrap gap-1" style={{ whiteSpace: "normal" }}>
+              {msg.attachments.map((a, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px]"
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
+                >
+                  <Paperclip size={10} className="shrink-0" />
+                  <span className="max-w-[160px] truncate">{a.name}</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </motion.div>
     )

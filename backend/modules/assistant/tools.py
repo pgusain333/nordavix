@@ -343,13 +343,17 @@ TOOL_DEFS: list[dict[str, Any]] = [
             "them where to act — e.g. after drafting an entry link to 'adjustments', "
             "or to review a reconciliation link to 'reconciliations'. Valid targets: "
             "dashboard, reconciliations, flux, schedules, adjustments, close, risk, "
-            "insights, financials."
+            "insights, financials. For 'reconciliations' you MAY pass `account` "
+            "(number or name) to deep-link straight INTO that one account's "
+            "reconciliation — prefer this whenever the answer is about a specific "
+            "account, so the user lands on it, not the list."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "target": {"type": "string", "description": "One of the valid targets."},
                 "label": {"type": "string", "description": "Optional button label; defaults to the section name."},
+                "account": {"type": "string", "description": "Reconciliations only — an account number or name; opens that account's reconciliation directly (e.g. '2500')."},
             },
             "required": ["target"],
         },
@@ -1071,7 +1075,26 @@ async def dispatch_tool(
         if target not in _LINK_TARGETS:
             return {"ok": False, "error": f"Unknown target. Valid: {', '.join(_LINK_TARGETS)}."}
         path, default_label = _LINK_TARGETS[target]
-        return {"ok": True, "link": {"path": path, "label": ti.get("label") or default_label}}
+        label = ti.get("label") or default_label
+        # Deep-link straight into one account's reconciliation drawer when an account
+        # is given — the recon dashboard opens it from the `#acct=<id>` URL hash.
+        acct = (ti.get("account") or "").strip()
+        if target == "reconciliations" and acct:
+            like = f"%{acct}%"
+            row = (await db.execute(
+                select(GlBalanceSnapshot).where(
+                    GlBalanceSnapshot.period_end == pe,
+                    (GlBalanceSnapshot.account_number.ilike(like))
+                    | (GlBalanceSnapshot.account_name.ilike(like))
+                    | (GlBalanceSnapshot.qbo_account_id == acct),
+                ).limit(1)
+            )).scalars().first()
+            if row is not None:
+                path = f"/app/reconciliations/period/{pe.isoformat()}#acct={row.qbo_account_id}"
+                if not ti.get("label"):
+                    acct_label = f"{row.account_number or ''} {row.account_name or ''}".strip()
+                    label = f"Open {acct_label or acct} reconciliation"
+        return {"ok": True, "link": {"path": path, "label": label}}
 
     if name == "suggest_action":
         kind = (ti.get("kind") or "").strip().lower()
