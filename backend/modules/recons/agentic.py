@@ -1616,15 +1616,91 @@ def _generate_narrative(
 # negative.
 
 
+@dataclass(frozen=True)
+class _SchedulePreload:
+    """Every ACTIVE schedule row for the tenant, pre-bucketed by the GL account
+    each branch of `_schedule_backed_subledger` filters on. Lets the overview
+    resolve all schedule-backed accounts from memory instead of firing 5-7
+    queries PER account (the dashboard N+1). The buckets hold the exact same rows
+    the per-account queries would return — same `is_active` filter, same key
+    column — so the downstream subledger math is byte-for-byte unchanged."""
+    prepaid_by_acct: dict[str, list]
+    accrual_by_acct: dict[str, list]
+    fa_cost_by_acct: dict[str, list]
+    fa_dep_by_acct: dict[str, list]
+    lease_liab_by_acct: dict[str, list]
+    lease_rou_by_acct: dict[str, list]
+    loan_by_acct: dict[str, list]
+
+
+def _bucket_schedules(prepaids, accruals, fixed_assets, leases, loans) -> _SchedulePreload:
+    """Pure: bucket already-fetched ACTIVE schedule rows by the account column
+    each `_schedule_backed_subledger` branch keys on. Fixed assets bucket TWICE
+    (cost account + accumulated-depreciation account) and leases TWICE (liability
+    account + ROU asset account), mirroring that function's seven branches
+    exactly. No DB / no I/O, so it's unit-testable on plain row stand-ins."""
+    def _by(rows, attr):
+        out: dict[str, list] = {}
+        for r in rows:
+            k = getattr(r, attr, None)
+            if k:
+                out.setdefault(k, []).append(r)
+        return out
+
+    return _SchedulePreload(
+        prepaid_by_acct=_by(prepaids, "qbo_account_id"),
+        accrual_by_acct=_by(accruals, "qbo_account_id"),
+        fa_cost_by_acct=_by(fixed_assets, "qbo_account_id"),
+        fa_dep_by_acct=_by(fixed_assets, "accumulated_dep_qbo_account_id"),
+        lease_liab_by_acct=_by(leases, "qbo_account_id"),
+        lease_rou_by_acct=_by(leases, "rou_qbo_account_id"),
+        loan_by_acct=_by(loans, "qbo_account_id"),
+    )
+
+
+async def _preload_active_schedules(db: AsyncSession) -> _SchedulePreload:
+    """Fetch every ACTIVE schedule row — 5 queries total, one per type — and
+    bucket them for O(1) per-account lookup. Tenant scoping is applied by the
+    session's filter listener, exactly like the per-account queries this
+    replaces. Ordered by (created_at, id) so a multi-item account yields a
+    deterministic je_items / sl_entries order."""
+    from models.schedule import (
+        ScheduleAccrual,
+        ScheduleFixedAsset,
+        ScheduleLease,
+        ScheduleLoan,
+        SchedulePrepaid,
+    )
+
+    async def _active(Model):
+        return list((await db.execute(
+            select(Model).where(Model.is_active.is_(True)).order_by(Model.created_at, Model.id)
+        )).scalars().all())
+
+    return _bucket_schedules(
+        await _active(SchedulePrepaid),
+        await _active(ScheduleAccrual),
+        await _active(ScheduleFixedAsset),
+        await _active(ScheduleLease),
+        await _active(ScheduleLoan),
+    )
+
+
 async def _schedule_backed_subledger(
     db: AsyncSession,
     tenant_id: uuid.UUID,  # noqa: ARG001 — tenant filter applied via session event listener
     qbo_account_id: str,
     period_end: date,
+    preloaded: _SchedulePreload | None = None,
 ) -> dict | None:
     """If `qbo_account_id` is tied to a Nordavix Schedule, return the
     schedule-derived subledger info. Otherwise return None and the caller
     falls back to the GL-based logic.
+
+    Pass `preloaded` (from `_preload_active_schedules`) to resolve the rows from
+    memory instead of querying per account — the overview does this to avoid an
+    N+1. Omitted, each branch queries the DB exactly as before (unchanged for
+    every other caller).
 
     Returns:
       {
@@ -1683,12 +1759,15 @@ async def _schedule_backed_subledger(
         }
 
     # ── Prepaid (debit-natural asset) ────────────────────────────────
-    prepaids = list((await db.execute(
-        select(SchedulePrepaid).where(
-            SchedulePrepaid.qbo_account_id == qbo_account_id,
-            SchedulePrepaid.is_active.is_(True),
-        )
-    )).scalars().all())
+    if preloaded is not None:
+        prepaids = list(preloaded.prepaid_by_acct.get(qbo_account_id, []))
+    else:
+        prepaids = list((await db.execute(
+            select(SchedulePrepaid).where(
+                SchedulePrepaid.qbo_account_id == qbo_account_id,
+                SchedulePrepaid.is_active.is_(True),
+            )
+        )).scalars().all())
     if prepaids:
         # Roll-forward: Opening + Additions − Amortization = Closing (sl_signed).
         sl = ZERO
@@ -1748,12 +1827,15 @@ async def _schedule_backed_subledger(
         return {"schedule_type": "prepaid", "sl_signed": _q(sl), "item_count": len(prepaids), "je_items": je, "sl_entries": sl_entries}
 
     # ── Accrual (credit-natural liability) ───────────────────────────
-    accruals = list((await db.execute(
-        select(ScheduleAccrual).where(
-            ScheduleAccrual.qbo_account_id == qbo_account_id,
-            ScheduleAccrual.is_active.is_(True),
-        )
-    )).scalars().all())
+    if preloaded is not None:
+        accruals = list(preloaded.accrual_by_acct.get(qbo_account_id, []))
+    else:
+        accruals = list((await db.execute(
+            select(ScheduleAccrual).where(
+                ScheduleAccrual.qbo_account_id == qbo_account_id,
+                ScheduleAccrual.is_active.is_(True),
+            )
+        )).scalars().all())
     if accruals:
         sl_pos = ZERO
         opening_signed = ZERO
@@ -1794,12 +1876,15 @@ async def _schedule_backed_subledger(
         return {"schedule_type": "accrual", "sl_signed": _q(-sl_pos), "item_count": len(accruals), "je_items": je, "sl_entries": sl_entries}
 
     # ── Fixed Asset COST account (debit-natural asset) ───────────────
-    fas_cost = list((await db.execute(
-        select(ScheduleFixedAsset).where(
-            ScheduleFixedAsset.qbo_account_id == qbo_account_id,
-            ScheduleFixedAsset.is_active.is_(True),
-        )
-    )).scalars().all())
+    if preloaded is not None:
+        fas_cost = list(preloaded.fa_cost_by_acct.get(qbo_account_id, []))
+    else:
+        fas_cost = list((await db.execute(
+            select(ScheduleFixedAsset).where(
+                ScheduleFixedAsset.qbo_account_id == qbo_account_id,
+                ScheduleFixedAsset.is_active.is_(True),
+            )
+        )).scalars().all())
     if fas_cost:
         sl = ZERO
         opening_signed = ZERO
@@ -1843,12 +1928,15 @@ async def _schedule_backed_subledger(
         return {"schedule_type": "fixed_asset_cost", "sl_signed": _q(sl), "item_count": len(fas_cost), "je_items": je, "sl_entries": sl_entries}
 
     # ── Fixed Asset ACCUMULATED DEP contra-asset (credit-natural) ────
-    fas_dep = list((await db.execute(
-        select(ScheduleFixedAsset).where(
-            ScheduleFixedAsset.accumulated_dep_qbo_account_id == qbo_account_id,
-            ScheduleFixedAsset.is_active.is_(True),
-        )
-    )).scalars().all())
+    if preloaded is not None:
+        fas_dep = list(preloaded.fa_dep_by_acct.get(qbo_account_id, []))
+    else:
+        fas_dep = list((await db.execute(
+            select(ScheduleFixedAsset).where(
+                ScheduleFixedAsset.accumulated_dep_qbo_account_id == qbo_account_id,
+                ScheduleFixedAsset.is_active.is_(True),
+            )
+        )).scalars().all())
     if fas_dep:
         sl_pos = ZERO
         opening_signed = ZERO
@@ -1877,12 +1965,15 @@ async def _schedule_backed_subledger(
         return {"schedule_type": "fixed_asset_accdep", "sl_signed": _q(-sl_pos), "item_count": len(fas_dep), "je_items": je, "sl_entries": sl_entries}
 
     # ── Lease LIABILITY (credit-natural) ─────────────────────────────
-    leases_liab = list((await db.execute(
-        select(ScheduleLease).where(
-            ScheduleLease.qbo_account_id == qbo_account_id,
-            ScheduleLease.is_active.is_(True),
-        )
-    )).scalars().all())
+    if preloaded is not None:
+        leases_liab = list(preloaded.lease_liab_by_acct.get(qbo_account_id, []))
+    else:
+        leases_liab = list((await db.execute(
+            select(ScheduleLease).where(
+                ScheduleLease.qbo_account_id == qbo_account_id,
+                ScheduleLease.is_active.is_(True),
+            )
+        )).scalars().all())
     if leases_liab:
         sl_pos = ZERO
         opening_signed = ZERO
@@ -1940,12 +2031,15 @@ async def _schedule_backed_subledger(
             return {"schedule_type": "lease_liability", "sl_signed": _q(-sl_pos), "item_count": active_count, "je_items": je, "payment_entries": pay_entries, "sl_entries": sl_entries}
 
     # ── Lease ROU asset (debit-natural) ──────────────────────────────
-    leases_rou = list((await db.execute(
-        select(ScheduleLease).where(
-            ScheduleLease.rou_qbo_account_id == qbo_account_id,
-            ScheduleLease.is_active.is_(True),
-        )
-    )).scalars().all())
+    if preloaded is not None:
+        leases_rou = list(preloaded.lease_rou_by_acct.get(qbo_account_id, []))
+    else:
+        leases_rou = list((await db.execute(
+            select(ScheduleLease).where(
+                ScheduleLease.rou_qbo_account_id == qbo_account_id,
+                ScheduleLease.is_active.is_(True),
+            )
+        )).scalars().all())
     if leases_rou:
         sl = ZERO
         opening_signed = ZERO
@@ -2006,12 +2100,15 @@ async def _schedule_backed_subledger(
             return {"schedule_type": "lease_rou", "sl_signed": _q(sl), "item_count": active_count, "je_items": je, "sl_entries": sl_entries}
 
     # ── Loan (credit-natural liability) ──────────────────────────────
-    loans = list((await db.execute(
-        select(ScheduleLoan).where(
-            ScheduleLoan.qbo_account_id == qbo_account_id,
-            ScheduleLoan.is_active.is_(True),
-        )
-    )).scalars().all())
+    if preloaded is not None:
+        loans = list(preloaded.loan_by_acct.get(qbo_account_id, []))
+    else:
+        loans = list((await db.execute(
+            select(ScheduleLoan).where(
+                ScheduleLoan.qbo_account_id == qbo_account_id,
+                ScheduleLoan.is_active.is_(True),
+            )
+        )).scalars().all())
     if loans:
         sl_pos = ZERO
         opening_signed = ZERO

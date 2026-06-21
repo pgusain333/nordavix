@@ -569,9 +569,17 @@ async def _build_overview_from_qbo_data(
     # (a few small queries) so the per-account calc only runs for accounts that
     # actually have a schedule — the snapshot read stays fast for everyone else.
     from core.db.base import current_tenant_id as _current_tenant_id
-    from modules.recons.agentic import _schedule_backed_subledger
+    from modules.recons.agentic import _preload_active_schedules, _schedule_backed_subledger
     tid = _current_tenant_id.get()
     sched_account_ids = await _schedule_backed_account_ids(session)
+    # Preload every active schedule row ONCE (5 queries) and reuse it for every
+    # schedule-backed account in the loop below — instead of 5-7 queries PER
+    # account (the dashboard N+1). Built only when schedule-backed accounts
+    # exist; the buckets hold the same rows the per-account queries would return,
+    # so each subledger is identical, just resolved from memory.
+    sched_preload = (
+        await _preload_active_schedules(session) if sched_account_ids else None
+    )
 
     out_accounts: list[dict] = []
     for a in accounts_meta:
@@ -654,7 +662,7 @@ async def _build_overview_from_qbo_data(
         sched_sub = None
         if qbo_id in sched_account_ids and not is_frozen:
             try:
-                sched_sub = await _schedule_backed_subledger(session, tid, qbo_id, period_end)
+                sched_sub = await _schedule_backed_subledger(session, tid, qbo_id, period_end, preloaded=sched_preload)
             except Exception:
                 logger.warning(
                     "overview: schedule subledger calc failed for %s @ %s — "
