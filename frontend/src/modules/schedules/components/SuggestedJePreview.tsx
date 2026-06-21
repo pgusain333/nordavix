@@ -44,6 +44,7 @@ import type {
   MissedAccrualCandidate,
   PrepaidCandidate,
 } from "@/modules/schedules/types"
+import { toISODate } from "@/core/lib/dates"
 
 type Variant =
   | { kind: "prepaid";        candidate: PrepaidCandidate }
@@ -114,7 +115,7 @@ function pickAccrualJes(c: MissedAccrualCandidate): SuggestedJe[] {
     const d = new Date(periodEnd + "T00:00:00")
     d.setMonth(d.getMonth() + 1)
     d.setDate(1)
-    return d.toISOString().slice(0, 10)
+    return toISODate(d)
   })()
   const acctName = c.gl_account_name
 

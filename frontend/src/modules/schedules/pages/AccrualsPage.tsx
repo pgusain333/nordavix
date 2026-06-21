@@ -23,7 +23,7 @@ import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
 import { ClosedPeriodBanner } from "@/modules/schedules/components/ClosedPeriodBanner"
 import { schedulesApi } from "@/modules/schedules/api"
-import { formatDate } from "@/core/lib/dates"
+import { formatDate, toISODate } from "@/core/lib/dates"
 import type { AccrualItem, MissedAccrualCandidate } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
 
@@ -53,7 +53,7 @@ interface AccrualPrefill {
 function defaultPeriodEnd(): string {
   const now = new Date()
   const last = new Date(now.getFullYear(), now.getMonth(), 0)
-  return last.toISOString().slice(0, 10)
+  return toISODate(last)
 }
 function fmt(s: string | null | undefined): string {
   const n = parseFloat(s ?? "0") || 0
@@ -119,7 +119,7 @@ export function AccrualsPage() {
     // Compute first-of-next-month for reverses_on
     const ad = new Date(accrualDate + "T00:00:00")
     const reverses = new Date(ad.getFullYear(), ad.getMonth() + 1, 1)
-    const reversesIso = reverses.toISOString().slice(0, 10)
+    const reversesIso = toISODate(reverses)
 
     const amount = c.ai_suggested_amount || c.gl_amount
     const vendor = c.ai_vendor || c.gl_vendor || ""

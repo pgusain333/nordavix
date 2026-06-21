@@ -27,7 +27,7 @@ import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
 import { ClosedPeriodBanner } from "@/modules/schedules/components/ClosedPeriodBanner"
 import { schedulesApi } from "@/modules/schedules/api"
-import { formatDate } from "@/core/lib/dates"
+import { formatDate, toISODate } from "@/core/lib/dates"
 import type { FixedAssetCandidate, FixedAssetItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsPage"
 
@@ -57,7 +57,7 @@ interface FixedAssetPrefill {
 function defaultPeriodEnd(): string {
   const now = new Date()
   const last = new Date(now.getFullYear(), now.getMonth(), 0)
-  return last.toISOString().slice(0, 10)
+  return toISODate(last)
 }
 function fmt(s: string | null | undefined): string {
   const n = parseFloat(s ?? "0") || 0

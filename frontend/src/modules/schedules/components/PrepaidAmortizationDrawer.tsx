@@ -28,6 +28,7 @@ import { useMemo } from "react"
 import { motion } from "framer-motion"
 import { X, FileText, CheckCircle2 } from "lucide-react"
 import type { PrepaidItem, PrepaidAmortMethod } from "@/modules/schedules/types"
+import { toISODate } from "@/core/lib/dates"
 
 interface Props {
   item:     PrepaidItem
@@ -64,7 +65,7 @@ function lastOfMonth(year: number, month: number): Date {
 }
 
 function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10)
+  return toISODate(d)
 }
 
 function daysInclusive(start: Date, end: Date): number {

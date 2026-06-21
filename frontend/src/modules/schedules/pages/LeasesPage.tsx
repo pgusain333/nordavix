@@ -31,11 +31,12 @@ import { ClosedPeriodBanner } from "@/modules/schedules/components/ClosedPeriodB
 import { schedulesApi } from "@/modules/schedules/api"
 import type { LeaseItem } from "@/modules/schedules/types"
 import { Field, inputCls, inputStyle, addMonthsIso } from "@/modules/schedules/pages/PrepaidsPage"
+import { toISODate } from "@/core/lib/dates"
 
 function defaultPeriodEnd(): string {
   const now = new Date()
   const last = new Date(now.getFullYear(), now.getMonth(), 0)
-  return last.toISOString().slice(0, 10)
+  return toISODate(last)
 }
 function fmt(s: string | null | undefined): string {
   const n = parseFloat(s ?? "0") || 0

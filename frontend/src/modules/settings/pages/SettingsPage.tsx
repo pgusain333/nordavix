@@ -41,7 +41,7 @@ import { SkeletonBlock } from "@/core/ui/Skeleton"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { apiClient } from "@/core/api/client"
-import { formatDate } from "@/core/lib/dates"
+import { formatDate, toISODate } from "@/core/lib/dates"
 import { workspaceApi, type WorkspaceMember, type AiUsage } from "@/modules/workspace/api"
 import {
   CompanyForm, readMeta, writeMeta, type CompanyMeta,
@@ -1071,7 +1071,7 @@ function DataExportSection() {
   const [periodEnd, setPeriodEnd] = useState<string>(() => {
     const d = new Date()
     const last = new Date(d.getFullYear(), d.getMonth(), 0)
-    return last.toISOString().slice(0, 10)
+    return toISODate(last)
   })
 
   /** Pull the Period Export workbook as a binary blob, then trigger a

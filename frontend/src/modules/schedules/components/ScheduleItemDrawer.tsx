@@ -15,6 +15,7 @@ import type {
   LeaseItem,
   LoanItem,
 } from "@/modules/schedules/types"
+import { toISODate } from "@/core/lib/dates"
 
 type Variant =
   | { kind: "fixed_asset"; item: FixedAssetItem }
@@ -35,7 +36,7 @@ function fmt(n: number | string): string {
 function monthsBetween(start: string, monthsToAdd: number): string {
   const d = new Date(start + "T00:00:00")
   d.setMonth(d.getMonth() + monthsToAdd)
-  return d.toISOString().slice(0, 10)
+  return toISODate(d)
 }
 
 function buildFaSchedule(item: FixedAssetItem) {
@@ -54,7 +55,7 @@ function buildFaSchedule(item: FixedAssetItem) {
     accum = Math.round((accum + monthly) * 100) / 100
     const nbv = Math.max(0, Math.round((cost - accum) * 100) / 100)
     rows.push({
-      period_end: last.toISOString().slice(0, 10),
+      period_end: toISODate(last),
       expense:    monthly,
       accum,
       nbv,
@@ -84,7 +85,7 @@ function buildLoanSchedule(item: LoanItem) {
     const d = new Date(periodEndApprox + "T00:00:00")
     const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
     rows.push({
-      period_end: last.toISOString().slice(0, 10),
+      period_end: toISODate(last),
       interest,
       principal:  principalPmt,
       balance:    bal,
@@ -116,7 +117,7 @@ function buildLeaseSchedule(item: LeaseItem) {
     const d = new Date(periodEndApprox + "T00:00:00")
     const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
     rows.push({
-      period_end: last.toISOString().slice(0, 10),
+      period_end: toISODate(last),
       interest,
       principal,
       balance: bal,

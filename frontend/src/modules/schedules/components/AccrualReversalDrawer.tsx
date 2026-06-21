@@ -11,6 +11,7 @@ import { useMemo } from "react"
 import { motion } from "framer-motion"
 import { X, FileText, CheckCircle2, AlertCircle } from "lucide-react"
 import type { AccrualItem } from "@/modules/schedules/types"
+import { toISODate } from "@/core/lib/dates"
 
 interface Props {
   item:     AccrualItem
@@ -30,7 +31,7 @@ function daysBetween(a: string, b: string): number {
 
 export function AccrualReversalDrawer({ item, onClose }: Props) {
   const amount = parseFloat(item.amount) || 0
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
+  const today = useMemo(() => toISODate(new Date()), [])
   const isReversed = item.is_reversed ||
     (item.reverses_on !== null && item.reverses_on <= today)
   const reversalDate = item.reverses_on

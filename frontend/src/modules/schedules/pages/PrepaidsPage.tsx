@@ -193,7 +193,7 @@ export function PrepaidsPage() {
     if (c.ai_service_months && c.ai_service_months > 0) {
       const s = new Date(start + "T00:00:00")
       const e = new Date(s.getFullYear(), s.getMonth() + c.ai_service_months, s.getDate() - 1)
-      end = e.toISOString().slice(0, 10)
+      end = toISODate(e)
     }
     const vendor = c.ai_vendor || c.gl_vendor || ""
     const description = vendor
@@ -240,7 +240,7 @@ export function PrepaidsPage() {
     const dur = pe.getTime() - ps.getTime()
     const newStart = new Date(pe.getTime() + 86_400_000)
     const newEnd   = new Date(newStart.getTime() + dur)
-    const iso = (d: Date) => d.toISOString().slice(0, 10)
+    const iso = (d: Date) => toISODate(d)
 
     setDialogState({
       open: true,

@@ -19,7 +19,7 @@ import { AccountPicker } from "@/modules/schedules/components/AccountPicker"
 import { LearnedDefaultChip } from "@/modules/schedules/components/LearnedDefaultChip"
 import { ImportScheduleFromQboBanner, ImportTh, importMoneyFmt } from "@/modules/schedules/components/ImportScheduleFromQboBanner"
 import type { LoanImportPreview } from "@/modules/schedules/api"
-import { formatDate } from "@/core/lib/dates"
+import { formatDate, toISODate } from "@/core/lib/dates"
 import { RollForwardCard } from "@/modules/schedules/components/RollForwardCard"
 import { ScheduleItemDrawer } from "@/modules/schedules/components/ScheduleItemDrawer"
 import { GlAccountCell } from "@/modules/schedules/components/GlAccountCell"
@@ -33,7 +33,7 @@ import { Field, inputCls, inputStyle } from "@/modules/schedules/pages/PrepaidsP
 function defaultPeriodEnd(): string {
   const now = new Date()
   const last = new Date(now.getFullYear(), now.getMonth(), 0)
-  return last.toISOString().slice(0, 10)
+  return toISODate(last)
 }
 function fmt(s: string | null | undefined): string {
   const n = parseFloat(s ?? "0") || 0

@@ -19,7 +19,7 @@ import { PageHeader } from "@/core/ui/PageHeader"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Spinner } from "@/core/ui/components"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
-import { formatDate, formatDateTime } from "@/core/lib/dates"
+import { formatDate, formatDateTime, toISODate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import { reviewApi, type ReviewFinding, type ReviewState, type Severity } from "../api"
 
@@ -47,7 +47,7 @@ const LINK_META: Record<string, { label: string; path: string }> = {
 function defaultPeriod(): string {
   const d = new Date()
   const last = new Date(d.getFullYear(), d.getMonth(), 0)
-  return last.toISOString().slice(0, 10)
+  return toISODate(last)
 }
 
 // ── JE-anomaly helpers (the rich finding card) ──────────────────────────────────

@@ -54,6 +54,7 @@ import {
   type ConsolidatedRow,
 } from "@/modules/intercompany/api"
 import { useQboConnection } from "@/modules/flux/hooks"
+import { toISODate } from "@/core/lib/dates"
 
 type Tab = "accounts" | "eliminations" | "consolidated"
 
@@ -68,7 +69,7 @@ function fmtMoney(s: string | number | null | undefined): string {
 
 function defaultPeriodEnd(): string {
   const d = new Date(); d.setDate(0)
-  return d.toISOString().slice(0, 10)
+  return toISODate(d)
 }
 
 const KIND_META: Record<IcKind, { label: string; fg: string; bg: string }> = {

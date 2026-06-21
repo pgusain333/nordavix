@@ -19,7 +19,7 @@ import { PageHeader } from "@/core/ui/PageHeader"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Spinner } from "@/core/ui/components"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
-import { formatDate } from "@/core/lib/dates"
+import { formatDate, toISODate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import { financialsApi } from "@/modules/financials/api"
 import { closeApi } from "@/modules/close/api"
@@ -31,7 +31,7 @@ import {
 function defaultPeriod(): string {
   const d = new Date()
   const last = new Date(d.getFullYear(), d.getMonth(), 0)
-  return last.toISOString().slice(0, 10)
+  return toISODate(last)
 }
 
 /** "2026-04-30" → "April 2026" for the empty-state CTA copy. */

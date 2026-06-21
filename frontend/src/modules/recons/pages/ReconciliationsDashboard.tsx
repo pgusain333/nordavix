@@ -23,7 +23,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { ClientRequestsPanel } from "@/modules/pbc/ClientRequestsPanel"
 import { ErrorBoundary } from "@/core/ui/ErrorBoundary"
 import { motion, AnimatePresence } from "framer-motion"
-import { formatDate, formatDateLong, formatDateTime } from "@/core/lib/dates"
+import { formatDate, formatDateLong, formatDateTime, toISODate } from "@/core/lib/dates"
 import { useDemoMode } from "@/core/demo/DemoModeProvider"
 import {
   RefreshCw,
@@ -117,7 +117,7 @@ function defaultPeriodEnd(): string {
   // Default: last day of previous month — common close period
   const d = new Date()
   d.setDate(0)  // last day of previous month
-  return d.toISOString().slice(0, 10)
+  return toISODate(d)
 }
 
 // Categorical accent palette for account groups (small dots / left-borders

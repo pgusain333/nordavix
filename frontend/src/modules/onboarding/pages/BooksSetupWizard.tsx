@@ -22,6 +22,7 @@ import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { reconsApi, type SeedPreviewAccount } from "@/modules/recons/api"
 import { useQboConnection } from "@/modules/flux/hooks"
+import { toISODate } from "@/core/lib/dates"
 
 /**
  * Coerce any error shape (axios, fetch, raw Error, plain object) into a
@@ -80,7 +81,7 @@ function defaultBooksStart(): string {
   // Default: first of current month — typical "go-live" pick for accountants.
   const d = new Date()
   d.setDate(1)
-  return d.toISOString().slice(0, 10)
+  return toISODate(d)
 }
 
 export function BooksSetupWizard() {
