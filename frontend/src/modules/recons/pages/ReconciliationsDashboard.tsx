@@ -2745,10 +2745,11 @@ function InlineSubledgerForm({
     .reduce((n, it) => n + signedAmount(it), 0)
   // MANUAL reconciling items only — these adjust a schedule-backed subledger on
   // top of the schedule's authoritative balance (the schedule's own lines are
-  // never ticked here, so they can't double-count).
-  const manualSum = selectedItems
-    .filter((it) => (it.txn_id ?? "").startsWith("manual-"))
-    .reduce((n, it) => n + signedAmount(it), 0)
+  // never ticked here, so they can't double-count). For schedule-backed accounts
+  // these are ALSO the lines shown in the build-up (with edit/delete), so the
+  // closing foots visibly: schedule base + manual items = closing.
+  const manualItems = selectedItems.filter((it) => (it.txn_id ?? "").startsWith("manual-"))
+  const manualSum = manualItems.reduce((n, it) => n + signedAmount(it), 0)
 
   // Subledger is CALCULATED now, not typed: opening (rolled forward from
   // the prior period) ± reconciling items = closing subledger. This
