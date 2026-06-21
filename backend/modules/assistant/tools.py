@@ -116,6 +116,29 @@ TOOL_DEFS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_related",
+        "description": (
+            "How an account connects across the close — its slice of the "
+            "accounting knowledge graph. Returns the schedule that SUPPORTS its "
+            "reconciliation, the GL-accuracy findings RAISED ON it, and the "
+            "adjusting entries that EXPLAIN or AFFECT it, grouped by relationship. "
+            "Use to trace the full story behind a balance — 'what's connected to "
+            "<account>', 'what's the story behind <account>', 'why is <account> "
+            "flagged', 'what relates to this reconciliation' — before explaining it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account": {
+                    "type": "string",
+                    "description": "Account number or name fragment, e.g. '1400' or 'prepaid'.",
+                },
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+            },
+            "required": ["account"],
+        },
+    },
+    {
         "name": "recall",
         "description": (
             "Search this client's PAST records — prior flux narratives (variance "
@@ -525,6 +548,61 @@ async def dispatch_tool(
                 {"kind": n.get("kind"), "text": n.get("text"), "match": n.get("match")}
                 for n in notes
             ],
+        }
+
+    if name == "get_related":
+        q = (ti.get("account") or "").strip()
+        if not q:
+            return {"error": "account is required."}
+        like = f"%{q}%"
+        row = (await db.execute(
+            select(GlBalanceSnapshot).where(
+                GlBalanceSnapshot.period_end == pe,
+                (GlBalanceSnapshot.account_number.ilike(like))
+                | (GlBalanceSnapshot.account_name.ilike(like))
+                | (GlBalanceSnapshot.qbo_account_id == q),
+            ).limit(1)
+        )).scalars().first()
+        if row is None:
+            return {"ok": False, "period_end": pe.isoformat(),
+                    "note": f"No account matching '{q}' for {pe.isoformat()}."}
+
+        # Traverse the knowledge graph: the account's own edges (findings on it,
+        # JEs affecting it) PLUS its reconciliation's edges (the schedule that
+        # supports it, JEs explaining it). Read-only; resolved to real names.
+        from core.graph import RELATIONS, Node, neighbors
+        from core.graph.resolve import resolve_nodes
+
+        qid = row.qbo_account_id
+        seeds = [Node("account", qid), Node("reconciliation", f"{qid}:{pe.isoformat()}")]
+        seen: set[tuple[str, str, str]] = set()
+        nbrs = []
+        for sn in seeds:
+            for nb in await neighbors(db, sn):
+                k = (nb.node.type, nb.node.id, nb.relation)
+                if k in seen:
+                    continue
+                seen.add(k)
+                nbrs.append(nb)
+        views = await resolve_nodes(db, [nb.node for nb in nbrs])
+        grouped: dict[str, list[dict]] = {}
+        for nb in nbrs:
+            v = views.get((nb.node.type, nb.node.id))
+            if v is None:
+                continue
+            grouped.setdefault(nb.relation, []).append(
+                {"type": v.type, "name": v.label, "status": v.status}
+            )
+        connections = [
+            {"relationship": RELATIONS[r].label if r in RELATIONS else r.replace("_", " "), "items": items}
+            for r, items in grouped.items()
+        ]
+        return {
+            "account": f"{row.account_number or ''} {row.account_name or ''}".strip(),
+            "period_end": pe.isoformat(),
+            "connections": connections,
+            "total": sum(len(c["items"]) for c in connections),
+            "note": None if connections else "No connections recorded for this account yet.",
         }
 
     if name == "recall":
