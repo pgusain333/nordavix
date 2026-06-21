@@ -88,6 +88,43 @@ async def broadcast_workspace(
     return recipients
 
 
+async def notify_user(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    recipient_user_id: uuid.UUID,
+    type: str,
+    title: str,
+    body: str | None = None,
+    link: str | None = None,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+) -> None:
+    """In-app ping to a SINGLE user, with its own commit, best-effort — never raises.
+
+    For background/system results addressed to the person who triggered them
+    (sync finished, watchdog findings, agentic preparer done). Unlike the
+    review-routing producers above, this deliberately notifies the ACTOR: it's
+    "your job finished / the system found something", not "someone else acted",
+    so the actor-exclusion doesn't apply. In-app only — no email — so these
+    walk-away nudges never add to inbox noise. Safe to call after the host
+    operation has already committed; a failure here can't affect it.
+    """
+    try:
+        notify(
+            db, tenant_id=tenant_id, recipient_user_id=recipient_user_id,
+            type=type, title=title, body=body, link=link,
+            entity_type=entity_type, entity_id=entity_id,
+        )
+        await db.commit()
+    except Exception:
+        logger.warning("notify_user (%s) failed", type, exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+
 async def resolve_email_targets(
     db: AsyncSession,
     recipient_ids: list[uuid.UUID],

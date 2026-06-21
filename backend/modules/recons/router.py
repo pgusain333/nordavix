@@ -308,6 +308,25 @@ async def run_agentic_endpoint(
             metadata={"summary": f"Ran the agentic preparer on all open accounts for {pe}"},
         )
         await db.commit()
+        # Ping the person who kicked off the run — agentic prep is a walk-away
+        # action, so the bell tells them it's done + what it touched. In-app,
+        # best-effort; never affects the run result.
+        try:
+            from modules.notifications.service import notify_user
+            parts = []
+            if result.prepared:
+                parts.append(f"{result.prepared} prepared")
+            if result.analyzed:
+                parts.append(f"{result.analyzed} AI-analyzed")
+            summary_txt = ", ".join(parts) if parts else "no accounts changed"
+            await notify_user(
+                db, tenant_id=tenant_id, recipient_user_id=user.id,
+                type="agentic_done", title="AI preparer finished",
+                body=f"Agentic run on {pe.isoformat()}: {summary_txt}.",
+                link="/app/reconciliations", entity_type="period", entity_id=pe.isoformat(),
+            )
+        except Exception:
+            logger.warning("agentic-done notification failed", exc_info=True)
         # asdict converts the nested dataclasses → plain dict for JSON
         return asdict(result)
     except HTTPException:
@@ -468,12 +487,35 @@ async def sync_overview_endpoint(
     )
     await db.commit()
 
+    # Tell the person who ran the sync that it finished — Sync is a walk-away
+    # action (several seconds of QBO calls), so the bell is how they learn it's
+    # done and whether anything needs another look. In-app ping to the actor;
+    # best-effort, never affects the sync result.
+    try:
+        from modules.notifications.service import notify_user
+        n_acct = len(overview.get("accounts", []))
+        reflagged = overview.get("reflagged") or 0
+        body = f"{n_acct} account{'' if n_acct == 1 else 's'} refreshed from QuickBooks."
+        if reflagged:
+            body += (
+                f" {reflagged} approved reconciliation"
+                f"{'' if reflagged == 1 else 's'} no longer tie out and were reopened."
+            )
+        await notify_user(
+            db, tenant_id=tenant_id, recipient_user_id=user.id,
+            type="sync_complete", title="QuickBooks sync complete", body=body,
+            link="/app/reconciliations", entity_type="period", entity_id=pe.isoformat(),
+        )
+    except Exception:
+        logger.warning("sync-complete notification failed", exc_info=True)
+
     # A second pair of eyes runs on its own right after the sync: the GL-accuracy
     # watchdog re-checks this period's vendor coding in the background, so flags
     # are waiting without anyone clicking "Scan". It owns its session + errors —
-    # a scan failure can never affect this sync (see service.run_auto_scan).
+    # a scan failure can never affect this sync (see service.run_auto_scan). It
+    # also pings the actor in-app if it turns up anything worth reviewing.
     from modules.gl_accuracy.service import run_auto_scan
-    background_tasks.add_task(run_auto_scan, tenant_id, pe)
+    background_tasks.add_task(run_auto_scan, tenant_id, pe, user.id)
 
     return overview
 

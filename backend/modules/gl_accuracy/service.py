@@ -247,8 +247,15 @@ async def scan_period(
     }
 
 
-async def run_auto_scan(tenant_id: uuid.UUID, period_end: date) -> None:
+async def run_auto_scan(
+    tenant_id: uuid.UUID, period_end: date,
+    recipient_user_id: uuid.UUID | None = None,
+) -> None:
     """Watchdog pass triggered right after a QuickBooks sync, as a BackgroundTask.
+
+    When `recipient_user_id` is set (the post-sync hook passes the person who ran
+    the sync), an in-app ping goes to them if the scan turns up findings — so the
+    flags don't sit unseen until someone happens to open Risk Radar.
 
     Runs in its own session with its own error handling: a scan failure must
     never surface to — or fail — the sync that scheduled it. Idempotent, since
@@ -275,6 +282,23 @@ async def run_auto_scan(tenant_id: uuid.UUID, period_end: date) -> None:
                           "scanned": summary["scanned"]},
             )
             await session.commit()
+            # If a human triggered this (the post-sync hook passes their id) and
+            # the watchdog turned up anything, ping them in-app so the findings
+            # don't sit unseen. Best-effort; addressed to the actor — this is a
+            # "the system found something" result, not someone else's action.
+            if recipient_user_id and summary.get("findings"):
+                from modules.notifications.service import notify_user
+                n = summary["findings"]
+                high = summary.get("high", 0)
+                body = f"Risk Radar flagged {n} item{'' if n == 1 else 's'} to review after the sync"
+                body += f" ({high} high-severity)." if high else "."
+                await notify_user(
+                    session, tenant_id=tenant_id, recipient_user_id=recipient_user_id,
+                    type="risk_findings",
+                    title=f"Risk Radar found {n} issue{'' if n == 1 else 's'}",
+                    body=body, link="/app/gl-accuracy",
+                    entity_type="period", entity_id=period_end.isoformat(),
+                )
         except Exception:  # noqa: BLE001
             logger.exception("Auto GL-accuracy scan failed: tenant=%s period=%s", tenant_id, period_end)
 

@@ -362,6 +362,9 @@ export function ReconciliationsDashboard() {
       // The agentic run may have drafted proposed adjusting entries — refresh
       // the inline cards + Adjustments queue so they appear without a reload.
       qc.invalidateQueries({ queryKey: ["adjustments"] })
+      // The run queued an in-app "AI preparer finished" ping server-side —
+      // refresh the bell/toaster so it shows now, not on the next 45s poll.
+      qc.invalidateQueries({ queryKey: ["notifications"] })
     },
     onError: (err: unknown) => {
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }
@@ -547,6 +550,10 @@ export function ReconciliationsDashboard() {
       // without this it kept showing the pre-sync transactions until a hard
       // refresh. Invalidate so any open/next drawer reflects the fresh pull.
       qc.invalidateQueries({ queryKey: ["recon-period-entries"] })
+      // Sync queued a "complete" ping server-side (the background watchdog may
+      // add a Risk Radar ping moments later) — refresh the bell/toaster now so
+      // the confirmation shows immediately rather than on the next poll.
+      qc.invalidateQueries({ queryKey: ["notifications"] })
       const n = data.accounts.length
       const when = new Date().toLocaleTimeString()
       const r = data.reflagged ?? 0
