@@ -138,17 +138,28 @@ async def sync_overview(
     if not accounts_meta:
         return _empty_overview(period_end, synced=False)
 
+    # Pull the period-end TrialBalance ONCE and reuse it for BOTH the GL snapshot
+    # and the per-account TB map below; also hand capture_snapshot the BS account
+    # list we already pulled above. Avoids re-fetching the same report + list
+    # (~2 fewer QBO calls per Sync). Identical data; if this pull fails, tb_report
+    # stays None and each consumer falls back to its own fetch (prior behavior).
+    tb_report: dict | None = None
+    try:
+        from core.qbo_tb import fetch_trial_balance
+        tb_report = await fetch_trial_balance(conn, period_end)
+    except Exception:
+        logger.exception("Shared TrialBalance pull failed during sync for %s", period_end)
+        tb_report = None
+
     # Capture per-account GL balances (BS + P&L) → gl_balance_snapshots.
-    # capture_snapshot pre-pulls the QBO TrialBalance itself, so we
-    # reuse its result via a fresh _qbo_trial_balance_by_account call —
-    # not ideal but the parsed shape is different and refactoring the
-    # capture function to share is more churn than it's worth.
     # capture_snapshot returns -1 if the QBO TB pull (or commit) failed: the
     # financials snapshot wasn't refreshed, so Financial Statements for this
     # period would render STALE. Surface that instead of silently continuing.
     snapshot_error: str | None = None
     try:
-        snap_written = await capture_snapshot(session, tid, period_end, conn=conn)
+        snap_written = await capture_snapshot(
+            session, tid, period_end, conn=conn, tb_report=tb_report, bs_accts=accounts_meta,
+        )
         if snap_written < 0:
             snapshot_error = (
                 "Couldn't refresh the financial-statement snapshot from QuickBooks — "
@@ -172,7 +183,7 @@ async def sync_overview(
     # No QBO fallback. If the prior period isn't reconciled yet,
     # the current period's opening is $0 until that happens.
 
-    tb_balances = await _qbo_trial_balance_by_account(conn, session, period_end)
+    tb_balances = await _qbo_trial_balance_by_account(conn, session, period_end, report=tb_report)
     # Ingest integrity: a real QBO trial balance always ties (Σdebits = Σcredits),
     # so a parsed imbalance (or an empty pull → rows == 0) means our ingest is
     # incomplete. Record it so the dashboard can flag + close can block.
@@ -1149,16 +1160,22 @@ async def _qbo_trial_balance_by_account(
     conn: QboConnection,
     session: AsyncSession,  # kept for backward-compat; unused
     period_end: date,
+    report: dict | None = None,
 ) -> TbBalances:
     """
     Thin wrapper around the shared core.qbo_tb fetcher + parser.
     Both Reconciliations and Flux Analysis go through core.qbo_tb so
     they're guaranteed to hit QBO with identical parameters and parse
     the response identically.
+
+    `report` lets the caller pass an already-pulled TrialBalance (the sync path
+    pulls it once and shares it) to avoid a second identical QBO fetch; omitted
+    elsewhere, it falls back to fetching.
     """
     from core.qbo_tb import TbBalances, fetch_trial_balance, parse_trial_balance  # noqa: F401
     try:
-        report = await fetch_trial_balance(conn, period_end)
+        if report is None:
+            report = await fetch_trial_balance(conn, period_end)
     except Exception:
         logger.exception("TrialBalance pull failed for %s", period_end)
         return {"by_id": {}, "by_name": {}, "rows": 0}

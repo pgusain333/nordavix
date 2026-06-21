@@ -32,6 +32,8 @@ async def capture_snapshot(
     tenant_id: uuid.UUID,
     period_end: date,
     conn: QboConnection | None = None,
+    tb_report: dict | None = None,
+    bs_accts: list[dict] | None = None,
 ) -> int:
     """
     Pull every active QBO account + its balance at period_end via the
@@ -54,7 +56,9 @@ async def capture_snapshot(
         return 0
 
     try:
-        report = await fetch_trial_balance(conn, period_end)
+        # Reuse the caller's already-pulled TrialBalance when provided (the recons
+        # sync pulls it once and shares it) — identical data, one fewer QBO call.
+        report = tb_report if tb_report is not None else await fetch_trial_balance(conn, period_end)
         parsed = parse_trial_balance(report)
     except Exception:
         logger.exception("Snapshot TB pull failed for %s", period_end)
@@ -64,7 +68,8 @@ async def capture_snapshot(
     # need account_type which only the /query gives us. Pull the
     # account list in the same shape the recons module uses + merge.
     from modules.recons.overview import _list_balance_sheet_accounts
-    bs_accts = await _list_balance_sheet_accounts(conn, db)
+    if bs_accts is None:
+        bs_accts = await _list_balance_sheet_accounts(conn, db)
 
     # Also pull P&L accounts so the snapshot covers everything the
     # Income Statement needs.
