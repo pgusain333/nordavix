@@ -10,7 +10,7 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CheckCheck, FileText, Save, Download, Lock, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react"
+import { CheckCheck, FileText, Save, Download, Lock, RefreshCw, CheckCircle2, AlertCircle, Network, ChevronDown } from "lucide-react"
 
 import { SkeletonTable } from "@/core/ui/Skeleton"
 import { PageHeader } from "@/core/ui/PageHeader"
@@ -18,6 +18,7 @@ import { formatDate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import { adjustmentsApi, type AdjustmentStatus, type CheckPostedResult, type ProposedEntry, type ProposedEntryList } from "../api"
 import { ProposedEntryCard } from "../components/ProposedEntryCard"
+import { RelatedPanel } from "@/modules/graph/RelatedPanel"
 import { patchAdjustments } from "../optimistic"
 
 const SOURCE_META: Record<string, { label: string; hint: string }> = {
@@ -367,13 +368,7 @@ export function AdjustmentsPage() {
                 </div>
                 <div className="space-y-3">
                   {group.map((e) => (
-                    <div key={e.id}>
-                      <div className="flex items-center gap-1.5 mb-1 text-[10px] uppercase tracking-wide"
-                        style={{ color: "var(--text-muted)" }}>
-                        <span>Period {formatDate(e.period_end)}</span>
-                      </div>
-                      <ProposedEntryCard entry={e} canReview={canReview} canEdit={canEdit} />
-                    </div>
+                    <EntryRow key={e.id} entry={e} canReview={canReview} canEdit={canEdit} />
                   ))}
                 </div>
               </div>
@@ -381,6 +376,48 @@ export function AdjustmentsPage() {
           })
         )}
       </div>
+    </div>
+  )
+}
+
+// ── One queue row: the entry card + a lazy "Related" disclosure ──────────────
+// The graph panel mounts only when opened, and only for accepted/posted entries
+// (open/dismissed drafts have no edges yet — a JE's edges are written on accept).
+function EntryRow({ entry, canReview, canEdit }: {
+  entry:     ProposedEntry
+  canReview: boolean
+  canEdit:   boolean
+}) {
+  const [showRelated, setShowRelated] = useState(false)
+  const hasGraph = entry.status === "accepted" || entry.status === "posted"
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1 text-[10px] uppercase tracking-wide"
+        style={{ color: "var(--text-muted)" }}>
+        <span>Period {formatDate(entry.period_end)}</span>
+      </div>
+      <ProposedEntryCard entry={entry} canReview={canReview} canEdit={canEdit} />
+      {hasGraph && (
+        <>
+          <button
+            type="button"
+            onClick={() => setShowRelated((v) => !v)}
+            className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium transition-opacity hover:opacity-80"
+            style={{ color: "var(--text-muted)" }}
+          >
+            <Network size={12} strokeWidth={2} />
+            {showRelated ? "Hide related" : "Related"}
+            <ChevronDown size={12} strokeWidth={2}
+              style={{ transform: showRelated ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+          </button>
+          {showRelated && (
+            <div className="mt-2 rounded-xl p-3"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <RelatedPanel nodeType="journal_entry" nodeId={entry.id} periodEnd={entry.period_end} />
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
