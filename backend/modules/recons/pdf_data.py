@@ -135,7 +135,7 @@ async def gather_account_pdf_data(
             sched = None
 
     if sched is not None:
-        from modules.recons.overview import _SCHEDULE_SL_LABEL
+        from modules.recons.overview import _SCHEDULE_SL_LABEL, _sum_manual_reconciling_items
         sl_signed = Decimal(str(sched.get("sl_signed") or "0"))
         sl_entries = sched.get("sl_entries") or []
         # sl_entries[0] is the opening (roll-forward anchor); the rest are this
@@ -159,18 +159,22 @@ async def gather_account_pdf_data(
             }
             for i, e in enumerate(sl_entries[1:], start=1)
         ]
-        # The schedule is the COMPLETE subledger — its closing already includes
-        # the period's amortization / depreciation / accretion, so nothing is
-        # added on top (matching the dashboard). The build-up IS the schedule's
-        # own roll-forward (opening + activity); only explicitly-open
-        # (cleared=False) saved items still flow through, for the separate "open
-        # items" section.
-        subledger_balance = sl_signed
+        # The schedule's own roll-forward (opening + activity) is the BASE
+        # subledger. MANUAL reconciling items (txn_id "manual-…") adjust it on top
+        # — e.g. a payment in GL not yet in the schedule — so they sum into the
+        # subledger AND render in the build-up. The build-up still foots: opening +
+        # schedule activity (== sl_signed) + manual items = sl_signed + manual.
+        # Other open (cleared=False) saved items flow to the separate "open items"
+        # section, as before. The schedule's OWN JEs are never manual, so no
+        # double-count.
+        saved_items = (review.reconciling_items if review else []) or []
+        manual_items = [it for it in saved_items if str(it.get("txn_id") or "").startswith("manual-")]
         open_items = [
-            it for it in ((review.reconciling_items if review else []) or [])
-            if it.get("cleared") is False
+            it for it in saved_items
+            if it.get("cleared") is False and not str(it.get("txn_id") or "").startswith("manual-")
         ]
-        reconciling_items_out = schedule_items + open_items
+        subledger_balance = sl_signed + _sum_manual_reconciling_items(saved_items)
+        reconciling_items_out = schedule_items + manual_items + open_items
     elif review and review.subledger_total is not None:
         subledger_balance = Decimal(review.subledger_total)
     else:

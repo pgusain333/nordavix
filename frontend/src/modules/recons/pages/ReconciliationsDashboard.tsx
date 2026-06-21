@@ -2743,6 +2743,12 @@ function InlineSubledgerForm({
   const selectedSum = selectedItems
     .filter((it) => !(it.txn_id ?? "").startsWith("schedule-"))
     .reduce((n, it) => n + signedAmount(it), 0)
+  // MANUAL reconciling items only — these adjust a schedule-backed subledger on
+  // top of the schedule's authoritative balance (the schedule's own lines are
+  // never ticked here, so they can't double-count).
+  const manualSum = selectedItems
+    .filter((it) => (it.txn_id ?? "").startsWith("manual-"))
+    .reduce((n, it) => n + signedAmount(it), 0)
 
   // Subledger is CALCULATED now, not typed: opening (rolled forward from
   // the prior period) ± reconciling items = closing subledger. This
@@ -2787,12 +2793,13 @@ function InlineSubledgerForm({
       ? parseFloat(scheduleSub.subledger_balance)
       : null
   const baseBalance = scheduleBaseBalance ?? openingBalance
-  // For schedule-backed accounts the Nordavix schedule is the COMPLETE subledger
-  // — its closing already includes this period's amortization / depreciation /
-  // accretion — so ticked GL items must NOT add on top (that double-counted the
+  // For schedule-backed accounts the Nordavix schedule is the BASE subledger —
+  // its closing already includes this period's amortization / depreciation /
+  // accretion. MANUAL reconciling items adjust it on top (e.g. a payment in GL
+  // not yet in the schedule); ticked GL rows must NOT (that double-counted the
   // schedule's own amortization JEs the agentic preparer ticks). Non-schedule
   // accounts keep the opening + ticked-items build-up.
-  const computedSubledger = baseBalance + (scheduleBaseBalance != null ? 0 : selectedSum)
+  const computedSubledger = baseBalance + (scheduleBaseBalance != null ? manualSum : selectedSum)
   // Label for the build-up's base line when it's a schedule balance.
   const scheduleBaseLabel = scheduleBaseBalance != null
     ? `Per Nordavix ${SCHEDULE_TYPE_LABEL[scheduleSub?.schedule_type ?? ""] ?? "schedule"} schedule`

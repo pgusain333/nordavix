@@ -281,6 +281,22 @@ def is_reconciled(gl_balance: Decimal, subledger_balance: Decimal) -> bool:
     return abs(gl_balance - subledger_balance) <= RECON_TOLERANCE
 
 
+def _sum_manual_reconciling_items(items: list[dict] | None) -> Decimal:
+    """Sum of MANUAL reconciling items (txn_id 'manual-…'), in the GL's signed
+    convention. These let a preparer adjust a schedule-backed subledger on top of
+    the schedule's authoritative balance (e.g. a payment in GL not yet in the
+    schedule). Only manual items count — never the schedule's OWN ticked
+    amortization JEs, which are already in the schedule balance (double-count)."""
+    total = Decimal("0")
+    for it in (items or []):
+        if str((it or {}).get("txn_id") or "").startswith("manual-"):
+            try:
+                total += Decimal(str(it.get("amount") or "0"))
+            except Exception:
+                continue
+    return total
+
+
 async def read_overview_from_snapshots(
     session: AsyncSession,
     period_end: date,
@@ -637,16 +653,15 @@ async def _build_overview_from_qbo_data(
         is_schedule_backed = sched_sub is not None
 
         if sched_sub is not None:
-            # The Nordavix schedule is the COMPLETE subledger: its closing
-            # already includes this period's amortization / depreciation /
-            # accretion, so nothing is added on top. (An earlier pass added
-            # "ticked reconciling items" — but the agentic preparer ticks the
-            # schedule's OWN amortization JEs, which double-counted them: the
-            # schedule already reflects them. The schedule is the single source
-            # of truth; a genuine GL-vs-schedule gap shows as an honest variance
-            # and is fixed in the schedule, not papered over with a tick.)
+            # The Nordavix schedule is the BASE subledger: its closing already
+            # includes this period's amortization / depreciation / accretion.
+            # MANUAL reconciling items adjust it on top (e.g. a payment in GL not
+            # yet in the schedule). Only manual items count — never the schedule's
+            # OWN ticked amortization JEs, which are already in sl_signed (ticking
+            # those double-counted them; that's why generic ticks are excluded).
             sl_signed = Decimal(str(sched_sub.get("sl_signed") or "0"))
-            subledger_balance = sl_signed.quantize(Decimal("0.01"))
+            manual_adj = _sum_manual_reconciling_items(review.reconciling_items if review else [])
+            subledger_balance = (sl_signed + manual_adj).quantize(Decimal("0.01"))
             source = _schedule_subledger_source(str(sched_sub.get("schedule_type") or ""), 0)
             has_detail = True
             # The schedule is the source — not a roll-forward, not a manual seed.
