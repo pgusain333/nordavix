@@ -3469,16 +3469,18 @@ function InlineSubledgerForm({
         />
       )}
 
-      {/* Schedule-backed: the schedule IS the subledger, so ticked GL items
-          don't adjust it — pass empty items so the card shows base = closing
-          (the per-item schedule activity is shown above in the Schedule-vs-GL
-          panel). Non-schedule accounts keep the opening + ticked-items build-up. */}
+      {/* Schedule-backed: the schedule is the base subledger; only MANUAL
+          reconciling items adjust it on top (ticked GL rows don't, to avoid
+          double-counting the schedule's own JEs). Pass the manual items so they
+          render as build-up lines (with edit/delete) and the closing foots:
+          schedule base + manual = closing. Non-schedule accounts keep the
+          opening + ticked-items build-up. */}
       <SubledgerBuildup
         openingBalance={baseBalance}
         scheduleBaseLabel={scheduleBaseLabel}
         prior={prior}
-        selectedItems={scheduleBaseBalance != null ? [] : selectedItems}
-        selectedSum={scheduleBaseBalance != null ? 0 : selectedSum}
+        selectedItems={scheduleBaseBalance != null ? manualItems : selectedItems}
+        selectedSum={scheduleBaseBalance != null ? manualSum : selectedSum}
         computedSubledger={computedSubledger}
         flipSign={flipSign}
         readOnly={readOnly}
