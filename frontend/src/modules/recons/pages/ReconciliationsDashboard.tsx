@@ -2800,18 +2800,35 @@ function InlineSubledgerForm({
     isScheduleBacked && scheduleSub?.subledger_balance != null && account.review_status !== "approved"
       ? parseFloat(scheduleSub.subledger_balance)
       : null
-  const baseBalance = scheduleBaseBalance ?? openingBalance
+  // Frozen schedule-backed account: an approved rec is an audit record, so the
+  // build-up must NOT re-derive from the live schedule (gated above) NOR from
+  // opening + items (which omits the schedule's amortization and would show a
+  // phantom variance the instant the account is approved). The schedule value was
+  // captured into subledger_total at approval — show THAT frozen value as the
+  // base = closing so the drawer foots to exactly what was signed off.
+  const frozenScheduleBase =
+    isScheduleBacked && account.review_status === "approved" && account.subledger_balance != null
+      ? parseFloat(account.subledger_balance)
+      : null
+  const baseBalance = frozenScheduleBase ?? scheduleBaseBalance ?? openingBalance
   // For schedule-backed accounts the Nordavix schedule is the BASE subledger —
   // its closing already includes this period's amortization / depreciation /
   // accretion. MANUAL reconciling items adjust it on top (e.g. a payment in GL
   // not yet in the schedule); ticked GL rows must NOT (that double-counted the
   // schedule's own amortization JEs the agentic preparer ticks). Non-schedule
-  // accounts keep the opening + ticked-items build-up.
-  const computedSubledger = baseBalance + (scheduleBaseBalance != null ? manualSum : selectedSum)
+  // accounts keep the opening + ticked-items build-up. A frozen schedule-backed
+  // account shows the captured value alone — manual items were baked into it at
+  // approval, so re-adding them would double-count.
+  const computedSubledger =
+    frozenScheduleBase != null
+      ? frozenScheduleBase
+      : baseBalance + (scheduleBaseBalance != null ? manualSum : selectedSum)
   // Label for the build-up's base line when it's a schedule balance.
-  const scheduleBaseLabel = scheduleBaseBalance != null
-    ? `Per Nordavix ${SCHEDULE_TYPE_LABEL[scheduleSub?.schedule_type ?? ""] ?? "schedule"} schedule`
-    : null
+  const scheduleBaseLabel = frozenScheduleBase != null
+    ? `Per Nordavix ${SCHEDULE_TYPE_LABEL[scheduleSub?.schedule_type ?? ""] ?? "schedule"} schedule (as approved)`
+    : scheduleBaseBalance != null
+      ? `Per Nordavix ${SCHEDULE_TYPE_LABEL[scheduleSub?.schedule_type ?? ""] ?? "schedule"} schedule`
+      : null
 
   // Auto-save: when the user ticks an item (or edits the manual list)
   // debounce 500ms and push to the backend so the top KPI cards (which
@@ -3486,8 +3503,8 @@ function InlineSubledgerForm({
         openingBalance={baseBalance}
         scheduleBaseLabel={scheduleBaseLabel}
         prior={prior}
-        selectedItems={scheduleBaseBalance != null ? manualItems : selectedItems}
-        selectedSum={scheduleBaseBalance != null ? manualSum : selectedSum}
+        selectedItems={frozenScheduleBase != null ? [] : scheduleBaseBalance != null ? manualItems : selectedItems}
+        selectedSum={frozenScheduleBase != null ? 0 : scheduleBaseBalance != null ? manualSum : selectedSum}
         computedSubledger={computedSubledger}
         flipSign={flipSign}
         readOnly={readOnly}

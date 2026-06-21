@@ -1040,6 +1040,11 @@ async def update_account_review_status(
         )
     )).scalar_one_or_none()
 
+    # Filled at the approval gate below (while the row is still editable, so a
+    # schedule-backed account is read from its live schedule) and frozen onto the
+    # row in the 'approved' branch.
+    approved_subledger: Decimal | None = None
+
     # Reopen gate: un-approving an approved reconciliation (back to pending or
     # reviewed) is a reviewer/admin action. Preparers can still reset their own
     # not-yet-approved work.
@@ -1098,6 +1103,12 @@ async def update_account_review_status(
                     "subledger, then approve."
                 ),
             )
+        # Tie-out passed. Capture the EXACT subledger the dashboard shows right
+        # now — while the row is still 'reviewed', so a schedule-backed account is
+        # computed from its LIVE schedule, not its (possibly stale) stored
+        # subledger_total. Frozen onto the row in the 'approved' branch so the
+        # sign-off holds this reconciled balance and can never gain a variance.
+        approved_subledger = (await _overview_subledgers(db, pe)).get(qbo_account_id)
 
     # NOTE: "Mark prepared" (reviewed) deliberately has NO tie-out gate — a
     # preparer can mark an account prepared with a documented variance / open
@@ -1144,6 +1155,11 @@ async def update_account_review_status(
             row.prepared_at = now
         row.approved_by = user.id
         row.approved_at = now
+        # Freeze the displayed (gate-checked) subledger captured above so the
+        # sign-off holds exactly the reconciled balance shown at approval and can
+        # never drift — for schedule-backed accounts this corrects a stale stored
+        # value that would otherwise surface as a phantom variance on approval.
+        _apply_approval_freeze(row, approved_subledger)
     elif status_value == "pending":
         # Re-opening for editing always clears the actor stamps.
         row.prepared_by = None
@@ -1311,6 +1327,7 @@ async def bulk_update_account_review_status(
     # (reviewed / pending / flagged) act on every selected account.
     skipped: list[dict[str, str]] = []
     approvable_ids: list[str] = ids
+    displayed_subs: dict[str, Decimal] = {}
     if status_value == "approved":
         # 1. Maker/checker: a non-admin can't approve an account whose manual
         #    subledger they entered themselves. Admins bypass (master access).
@@ -1329,6 +1346,10 @@ async def bulk_update_account_review_status(
                 missing_statement.add(qid)
         # 3. GL must tie to the subledger within the materiality floor.
         unrec = await _unreconciled_accounts(db, pe, ids)
+        # Capture every account's displayed subledger NOW — before any row flips
+        # to 'approved' below — so schedule-backed accounts are still read from
+        # their live schedule. Frozen onto each approved row further down.
+        displayed_subs = await _overview_subledgers(db, pe)
 
         reasons: dict[str, str] = {}
         for qid in ids:
@@ -1397,16 +1418,15 @@ async def bulk_update_account_review_status(
             if status_value == "approved":
                 rows_for_freeze.append((qid, r))
 
-    # Freeze the dashboard's displayed subledger onto every row being
-    # approved that doesn't already have one — same close-and-roll
-    # safety net as the per-row endpoint. Without this, bulk-approving
-    # a batch of accounts leaves subledger_total NULL and the next
-    # period's opening fails to roll forward properly.
+    # Freeze the displayed (gate-checked) subledger onto every approved row so the
+    # sign-off holds exactly the reconciled balance shown at approval and can never
+    # drift. Overwrites only when it diverges from the stored value — schedule-
+    # backed accounts show the live schedule, not subledger_total, so without this
+    # the freeze surfaces a stale value and manufactures a variance. Also still
+    # freezes the default when a row had no stored subledger (the close-and-roll
+    # safety net the per-row path now shares).
     for qid, r in rows_for_freeze:
-        if r.subledger_total is None:
-            await _freeze_displayed_subledger(
-                db, tenant_id, qid, pe, r, user,
-            )
+        _apply_approval_freeze(r, displayed_subs.get(qid))
 
     from core.audit.log import write_audit_event
     await write_audit_event(
@@ -1910,6 +1930,50 @@ def _fmt_money_simple(v: Decimal) -> str:
     sign = -1 if v < 0 else 1
     n = f"{abs(v).quantize(Decimal('0.01')):,.2f}"
     return f"$({n})" if sign < 0 else f"${n}"
+
+
+async def _overview_subledgers(db: AsyncSession, period_end) -> dict[str, Decimal]:
+    """{qbo_account_id: subledger_balance} the dashboard currently shows for the
+    period — the SAME snapshot-backed builder the approval/close gates read.
+
+    For schedule-backed accounts (prepaid / accrual / FA / lease / loan) this is
+    the LIVE schedule balance, NOT the stored subledger_total. Capturing it at the
+    moment of approval — while the row is still editable, so the builder computes
+    it live — and freezing it onto the row lets an approved reconciliation hold
+    exactly the reconciled balance shown at sign-off. Without it, the freeze later
+    surfaces a stale stored value and manufactures a variance on a clean approval.
+    """
+    from modules.recons.overview import read_overview_from_snapshots
+    ov = await read_overview_from_snapshots(db, period_end)
+    out: dict[str, Decimal] = {}
+    for a in ov.get("accounts", []):
+        try:
+            out[a["qbo_id"]] = Decimal(str(a["subledger_balance"]))
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            continue
+    return out
+
+
+def _apply_approval_freeze(row, displayed: Decimal | None) -> None:
+    """Freeze the gate-checked displayed subledger onto an account being approved
+    so the sign-off can't drift afterward.
+
+    Overwrites subledger_total ONLY when it diverges from the displayed value:
+    schedule-backed accounts show the live schedule (not subledger_total), so this
+    corrects a stale stored value that would otherwise surface as a phantom
+    variance the instant the account is approved. A stored value that already
+    matches (e.g. a manual override entered by the preparer) is left untouched so
+    its provenance / maker-checker stamp survives. `displayed` is None only for an
+    account absent from the overview, which can't pass the tie-out gate anyway."""
+    if displayed is None:
+        return
+    stored = Decimal(row.subledger_total) if row.subledger_total is not None else None
+    if stored is not None and (displayed - stored).copy_abs() <= Decimal("0.005"):
+        return  # already matches — keep the existing value + its provenance
+    row.subledger_total = displayed.quantize(Decimal("0.01"))
+    row.subledger_source = "Auto-frozen on approval — the reconciled balance shown at sign-off"
+    row.subledger_entered_by = None  # system-computed at approval, not a manual override
+    row.subledger_entered_at = datetime.now(UTC)
 
 
 # ── Close / re-open period (lock the books) ─────────────────────────────────
