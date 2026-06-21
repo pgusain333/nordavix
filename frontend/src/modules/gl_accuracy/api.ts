@@ -8,6 +8,7 @@ export type GlFindingStatus = "open" | "in_adjustments" | "dismissed" | "acknowl
 
 export interface GlFinding {
   id:                       string
+  finding_key:              string   // stable graph-node id for this finding
   period_end:               string
   // ── Risk Radar envelope (every finding) ──
   kind:                     string          // "misclassification" | future detectors

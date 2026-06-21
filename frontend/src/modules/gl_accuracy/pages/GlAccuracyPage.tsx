@@ -21,6 +21,7 @@ import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { closeApi } from "@/modules/close/api"
 import { workspaceApi } from "@/modules/workspace/api"
 import { ProposedEntryCard } from "@/modules/adjustments/components/ProposedEntryCard"
+import { RelatedPanel } from "@/modules/graph/RelatedPanel"
 import type { ProposedEntry } from "@/modules/adjustments/api"
 import { glAccuracyApi, type GlFinding } from "@/modules/gl_accuracy/api"
 
@@ -489,6 +490,11 @@ function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck,
                     ? <>What Nordavix knows — <span style={{ color: "var(--text-muted)" }}>{f.vendor} → {f.posted_account_name || f.posted_account_id} is correct. I won't flag this pairing again.</span></>
                     : <span style={{ color: "var(--text-muted)" }}>{f.status === "acknowledged" ? "Reviewed and handled." : "Marked not an issue."}</span>}
                   </p>
+                </div>
+              )}
+              {f.finding_key && (
+                <div style={{ borderTop: "1px solid var(--border)", marginTop: 6, paddingTop: 12 }}>
+                  <RelatedPanel nodeType="finding" nodeId={f.finding_key} periodEnd={f.period_end} />
                 </div>
               )}
             </div>

@@ -266,6 +266,7 @@ def _composed_title(f: GlAccuracyFinding) -> str:
 def serialize_finding(f: GlAccuracyFinding) -> dict:
     return {
         "id": str(f.id),
+        "finding_key": f.finding_key,
         "period_end": f.period_end.isoformat(),
         "kind": f.kind or "misclassification",
         "severity": f.severity or f.confidence or "medium",
