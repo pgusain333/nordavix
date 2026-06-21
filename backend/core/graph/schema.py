@@ -37,6 +37,7 @@ NODE_TYPES: frozenset[str] = frozenset(
         "task",
         "schedule",
         "memo",
+        "evidence",
         "period",
     }
 )
@@ -71,9 +72,10 @@ RELATIONS: dict[str, RelationSpec] = {
     # A journal entry touches an account.
     "affects": RelationSpec("affected_by", _t("journal_entry"), _t("account"), "affects"),
     "affected_by": RelationSpec("affects", _t("account"), _t("journal_entry"), "affected by"),
-    # A schedule (or memo) supports a reconciliation as its subledger / evidence.
-    "supports": RelationSpec("supported_by", _t("schedule", "memo"), _t("reconciliation"), "supports"),
-    "supported_by": RelationSpec("supports", _t("reconciliation"), _t("schedule", "memo"), "supported by"),
+    # A schedule, memo, or uploaded evidence supports a reconciliation (its
+    # subledger / backing documentation).
+    "supports": RelationSpec("supported_by", _t("schedule", "memo", "evidence"), _t("reconciliation"), "supports"),
+    "supported_by": RelationSpec("supports", _t("reconciliation"), _t("schedule", "memo", "evidence"), "supported by"),
     # A finding was raised on an account.
     "found_on": RelationSpec("has_finding", _t("finding"), _t("account"), "found on"),
     "has_finding": RelationSpec("found_on", _t("account"), _t("finding"), "has finding"),

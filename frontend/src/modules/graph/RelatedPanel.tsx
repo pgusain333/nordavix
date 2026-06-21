@@ -23,6 +23,7 @@ import {
   Landmark,
   MessageSquare,
   Network,
+  Paperclip,
   Scale,
   type LucideIcon,
 } from "lucide-react"
@@ -48,6 +49,7 @@ const TYPE_META: Record<string, { icon: LucideIcon; tint: string; bg: string }> 
   flux_variance:  { icon: GitCompareArrows, tint: "#96702F", bg: "rgba(150,112,47,0.12)" },
   task:           { icon: CheckCircle2,     tint: "#3C5A76", bg: "rgba(60,90,118,0.12)" },
   memo:           { icon: MessageSquare,    tint: "#5C6660", bg: "rgba(92,102,96,0.12)" },
+  evidence:       { icon: Paperclip,        tint: "#7A4A52", bg: "rgba(122,74,82,0.12)" },
   period:         { icon: Calendar,         tint: "#5C6660", bg: "rgba(92,102,96,0.12)" },
 }
 
@@ -277,10 +279,11 @@ function RelatedSkeleton() {
 function labelForType(t: string, n: number): string {
   const singular: Record<string, string> = {
     account: "account", journal_entry: "entry", finding: "finding", schedule: "schedule",
-    reconciliation: "reconciliation", flux_variance: "variance", task: "task", memo: "memo", period: "period",
+    reconciliation: "reconciliation", flux_variance: "variance", task: "task", memo: "note",
+    evidence: "evidence", period: "period",
   }
   const word = singular[t] ?? t.replace("_", " ")
-  if (n === 1) return word
+  if (n === 1 || word === "evidence") return word  // "evidence" is uncountable
   // simple pluralization fit for our nouns
   return word.endsWith("y") ? `${word.slice(0, -1)}ies` : `${word}s`
 }

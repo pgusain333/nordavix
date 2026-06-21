@@ -18,9 +18,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.graph.service import Node
+from models.comment import Comment
 from models.gl_accuracy_finding import GlAccuracyFinding
 from models.gl_balance_snapshot import GlBalanceSnapshot
 from models.proposed_entry import ProposedEntry
+from models.subledger_evidence import SubledgerEvidence
 
 _SCHEDULE_HUMAN = {
     "prepaid": "Prepaid",
@@ -56,6 +58,16 @@ def _fmt_period(iso: str) -> str:
         return date.fromisoformat(iso).strftime("%b %Y")
     except ValueError:
         return iso
+
+
+def _as_uuids(ids: set[str]) -> list[uuid.UUID]:
+    out: list[uuid.UUID] = []
+    for s in ids:
+        try:
+            out.append(uuid.UUID(s))
+        except ValueError:
+            continue
+    return out
 
 
 async def resolve_nodes(db: AsyncSession, nodes: list[Node]) -> dict[tuple[str, str], NodeView]:
@@ -130,6 +142,33 @@ async def resolve_nodes(db: AsyncSession, nodes: list[Node]) -> dict[tuple[str, 
         for k in f_keys:
             out.setdefault(("finding", k), NodeView(
                 "finding", k, "GL accuracy finding", "Finding", href="/app/gl-accuracy"))
+
+    # ── memo: a discussion comment (body snippet) ───────────────────────────
+    memo_ids = by_type.get("memo") or set()
+    if memo_ids:
+        uuids = _as_uuids(memo_ids)
+        if uuids:
+            for c in (await db.execute(
+                select(Comment).where(Comment.id.in_(uuids))
+            )).scalars():
+                body = (c.body or "").strip().replace("\n", " ")
+                label = (body[:80] + "…") if len(body) > 80 else (body or "Note")
+                out[("memo", str(c.id))] = NodeView("memo", str(c.id), label, "Note")
+        for s in memo_ids:
+            out.setdefault(("memo", s), NodeView("memo", s, "Note", "Note"))
+
+    # ── evidence: an uploaded supporting file (filename) ────────────────────
+    ev_ids = by_type.get("evidence") or set()
+    if ev_ids:
+        uuids = _as_uuids(ev_ids)
+        if uuids:
+            for ev in (await db.execute(
+                select(SubledgerEvidence).where(SubledgerEvidence.id.in_(uuids))
+            )).scalars():
+                out[("evidence", str(ev.id))] = NodeView(
+                    "evidence", str(ev.id), ev.file_name or "Evidence", "Evidence")
+        for s in ev_ids:
+            out.setdefault(("evidence", s), NodeView("evidence", s, "Evidence file", "Evidence"))
 
     # ── schedule: parse the composite id "type:qid:period" ──────────────────
     for sid in by_type.get("schedule") or set():

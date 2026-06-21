@@ -382,6 +382,21 @@ async def accept_finding(
     finding.linked_proposed_entry_id = pe.id
     finding.status_changed_by = user_id
     finding.status_changed_at = datetime.now(UTC)
+
+    # Knowledge graph: the adjusting entry explains the finding it resolves —
+    # closing the loop from "flag" to "fix". Best-effort; never break the accept.
+    try:
+        from core.db.base import tenant_scope
+        from core.graph import Node, link
+
+        with tenant_scope(tenant_id):
+            await link(
+                db, Node("journal_entry", str(pe.id)), "explains",
+                Node("finding", finding.finding_key), origin="system", created_by=user_id,
+            )
+    except Exception:
+        logger.exception("graph link failed for accepted finding %s (non-fatal)", finding.id)
+
     return pe.id
 
 

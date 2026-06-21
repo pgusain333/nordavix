@@ -3181,6 +3181,21 @@ async def upload_account_evidence(
             "mime_unrecognized": mime not in _ALLOWED_EVIDENCE_MIMES,
         },
     )
+
+    # Knowledge graph: this uploaded file supports the account's reconciliation.
+    try:
+        from core.db.base import tenant_scope
+        from core.graph import Node, link
+        with tenant_scope(tenant_id):
+            await link(
+                db, Node("evidence", str(row.id)), "supports",
+                Node("reconciliation", f"{qbo_account_id}:{pe.isoformat()}"),
+                origin="system", created_by=user.id,
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("graph link failed for evidence upload (non-fatal)")
+
     await db.commit()
     await db.refresh(row)
     return _serialize_evidence(row)

@@ -34,7 +34,10 @@ from core.graph import (
 def test_validate_edge_accepts_known_triples():
     validate_edge("journal_entry", "explains", "reconciliation")
     validate_edge("journal_entry", "affects", "account")
+    validate_edge("journal_entry", "explains", "finding")     # finding → fix loop
     validate_edge("schedule", "supports", "reconciliation")
+    validate_edge("evidence", "supports", "reconciliation")   # uploaded file
+    validate_edge("memo", "documents", "reconciliation")      # discussion note
     validate_edge("finding", "found_on", "account")
 
 

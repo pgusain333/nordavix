@@ -149,6 +149,22 @@ async def create_comment(
             "preview": audit_preview,
         },
     )
+
+    # Knowledge graph: a note on a reconciliation documents it. entity_id is
+    # already the recon node id ("<qbo_account_id>:<period>"). Best-effort.
+    if row.entity_type == "reconciliation":
+        try:
+            from core.db.base import tenant_scope
+            from core.graph import Node, link
+            with tenant_scope(tenant_id):
+                await link(
+                    db, Node("memo", str(row.id)), "documents",
+                    Node("reconciliation", row.entity_id), origin="system", created_by=user.id,
+                )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("graph link failed for comment (non-fatal)")
+
     await db.commit()
 
     # @mentions → in-app notifications + (best-effort) email. Never let a
