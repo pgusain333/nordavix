@@ -56,7 +56,7 @@ function prefetchRoute(path: string): void {
   // Strip query/hash + the /app prefix for matching.
   const p = path.replace(/[?#].*$/, "").replace(/^\/app\/?/, "")
   switch (p) {
-    case "":               return // Dashboard is eager
+    case "":               void import("@/modules/dashboard/pages/DashboardHome");          return
     case "assistant":      void import("@/modules/assistant/pages/AssistantPage");            return
     case "autopilot":      void import("@/modules/autopilot/pages/AutopilotPage");          return
     case "close":          void import("@/modules/close/pages/CloseWorkflowPage");          return
@@ -662,10 +662,15 @@ function UtilLink({ to, icon: Icon, label, title, isCollapsed, onClose }: {
   isCollapsed: boolean
   onClose?: () => void
 }) {
+  const qc = useQueryClient()
   return (
     <NavLink
       to={to}
       onClick={onClose}
+      // Prefetch the destination's lazy chunk on hover/focus, same as the main
+      // nav rows — so Settings / Help open instantly instead of waiting for JS.
+      onMouseEnter={() => { prefetchRoute(to); prefetchData(qc, to) }}
+      onFocus={() => { prefetchRoute(to); prefetchData(qc, to) }}
       title={isCollapsed ? label : title}
       className={({ isActive }) =>
         cn(
