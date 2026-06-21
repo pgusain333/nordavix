@@ -484,6 +484,18 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
   const allChecked = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id))
   const someChecked = visibleIds.some((id) => selected.has(id))
 
+  // Selection lives in table `meta` (read fresh each render) rather than being
+  // captured in the column closures — so toggling a checkbox no longer rebuilds
+  // `columns`, which would otherwise re-run the sort + filter row models over
+  // every row on each click. Behavior is identical; only the per-toggle work drops.
+  interface SelectMeta {
+    selected: Set<string>
+    allChecked: boolean
+    someChecked: boolean
+    visibleIds: string[]
+    setSelected: (s: Set<string>) => void
+  }
+
   const columns = useMemo(() => [
     // Checkbox column — same pattern as the recon accounts table. Click
     // anywhere on this cell is stopped from bubbling to the row's
@@ -491,34 +503,38 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     col.display({
       id: "_select",
       size: 36,
-      header: () => (
-        <input
-          type="checkbox"
-          aria-label="Select all visible"
-          checked={allChecked}
-          ref={(el) => { if (el) el.indeterminate = !allChecked && someChecked }}
-          onChange={(e) => {
-            const next = new Set(selected)
-            if (e.target.checked) visibleIds.forEach((id) => next.add(id))
-            else                  visibleIds.forEach((id) => next.delete(id))
-            setSelected(next)
-          }}
-          onClick={(e) => e.stopPropagation()}
-        />
-      ),
+      header: ({ table }) => {
+        const m = table.options.meta as SelectMeta
+        return (
+          <input
+            type="checkbox"
+            aria-label="Select all visible"
+            checked={m.allChecked}
+            ref={(el) => { if (el) el.indeterminate = !m.allChecked && m.someChecked }}
+            onChange={(e) => {
+              const next = new Set(m.selected)
+              if (e.target.checked) m.visibleIds.forEach((id) => next.add(id))
+              else                  m.visibleIds.forEach((id) => next.delete(id))
+              m.setSelected(next)
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        )
+      },
       cell: (c) => {
+        const m = c.table.options.meta as SelectMeta
         const id = c.row.original.id
-        const checked = selected.has(id)
+        const checked = m.selected.has(id)
         return (
           <input
             type="checkbox"
             aria-label={`Select variance ${c.row.original.account_name}`}
             checked={checked}
             onChange={() => {
-              const next = new Set(selected)
+              const next = new Set(m.selected)
               if (next.has(id)) next.delete(id)
               else              next.add(id)
-              setSelected(next)
+              m.setSelected(next)
             }}
             onClick={(e) => e.stopPropagation()}
           />
@@ -738,13 +754,13 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
         )
       },
     }),
-  // selected / visibleIds / *Checked are intentionally in deps so the
-  // header checkbox + per-row checked state re-render on selection
-  // change. allChecked / someChecked are derived from selected +
-  // visibleIds so listing those covers them.
+  // The _select column reads selection from table `meta` (fresh each render), so
+  // `selected` is intentionally NOT a dep — keeping `columns` stable across
+  // checkbox toggles avoids re-running the sort/filter row models on every click.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [approve, tbId, periodCurrent, periodPrior, selected, filter, rows, expectedView])
+  ], [approve, tbId, periodCurrent, periodPrior, filter, rows, expectedView])
 
+  const tableMeta: SelectMeta = { selected, allChecked, someChecked, visibleIds, setSelected }
   const table = useReactTable({
     data:               filtered,
     columns,
@@ -753,6 +769,9 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     getCoreRowModel:    getCoreRowModel(),
     getSortedRowModel:  getSortedRowModel(),
     getFilteredRowModel:getFilteredRowModel(),
+    // Selection for the _select column — read fresh each render so toggling a
+    // checkbox doesn't rebuild `columns` (and thus the sorted/filtered models).
+    meta: tableMeta,
   })
 
   // ── Render ─────────────────────────────────────────────────────────────────
