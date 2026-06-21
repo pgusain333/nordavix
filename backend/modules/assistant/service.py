@@ -377,6 +377,7 @@ async def answer_question_stream(
 
         for _turn in range(_MAX_TURNS):
             turn_text: list[str] = []
+            streamed = False
             async with _aclient.messages.stream(
                 model=settings.assistant_model,
                 max_tokens=_MAX_TOKENS,
@@ -390,10 +391,13 @@ async def answer_question_stream(
                         yield {"type": "step", "label": _step_phrase(event.content_block.name, step_no)}
                         step_no += 1
                     elif et == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
-                        # Buffer text; do NOT stream it yet. If this turn ends up
-                        # calling a tool, that text was just preamble and is dropped
-                        # (no flicker) — only the final turn's text is ever shown.
+                        # Stream the answer token-by-token (the typing effect) so the
+                        # first words land immediately and the wait feels short. If
+                        # this turn turns out to be a DATA-fetch tool turn, the text
+                        # was "let me check…" preamble and we clear it with a `reset`.
                         turn_text.append(event.delta.text)
+                        streamed = True
+                        yield {"type": "delta", "text": event.delta.text}
                 final = await stream.get_final_message()
             _record(final)
 
@@ -429,23 +433,21 @@ async def answer_question_stream(
                     })
                 messages.append({"role": "user", "content": results})
                 # If this turn called ONLY output tools (a link / action / chart /
-                # draft to ATTACH to the answer — not a data fetch), its buffered
-                # text IS the answer: reveal it and stop. Otherwise that text was
-                # "let me check…" preamble before a fetch — drop it (it was never
-                # streamed) and let the next turn produce the real answer.
+                # draft to ATTACH to the answer — not a data fetch), the text it just
+                # streamed IS the answer: keep it and stop. Otherwise this was a
+                # data-fetch turn and any streamed text was "let me check…" preamble —
+                # clear it with a reset and let the next turn produce the real answer.
                 tool_names = {b.name for b in final.content if b.type == "tool_use"}
                 if tool_names and tool_names <= _OUTPUT_TOOLS:
                     final_answer = "".join(turn_text).strip()
-                    if final_answer:
-                        yield {"type": "delta", "text": final_answer}
                     break
+                if streamed:
+                    yield {"type": "reset"}
                 continue
 
-            # Final turn (no more tools): the buffered text IS the answer — reveal
-            # it now, in one clean piece after the progress lines (no mid-stream switch).
+            # Final turn (no more tools): the answer already streamed token-by-token
+            # above — just record it for the result payload + persistence.
             final_answer = "".join(turn_text).strip()
-            if final_answer:
-                yield {"type": "delta", "text": final_answer}
             break
 
         # If we still have no answer text — the loop ran out of turns mid-tool, OR

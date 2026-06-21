@@ -258,6 +258,10 @@ export default function AssistantPage() {
             patchLast((m) => ({ ...m, steps: [...(m.steps || []), ev.label] }))
           } else if (ev.type === "delta") {
             patchLast((m) => ({ ...m, content: m.content + ev.text }))
+          } else if (ev.type === "reset") {
+            // A data-fetch turn streamed "let me check…" preamble — clear it so the
+            // real answer streams into a clean bubble.
+            patchLast((m) => ({ ...m, content: "" }))
           } else if (ev.type === "result") {
             patchLast((m) => ({
               ...m,
