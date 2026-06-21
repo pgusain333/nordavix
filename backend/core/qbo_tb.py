@@ -91,6 +91,51 @@ async def fetch_trial_balance(
     return resp.json()
 
 
+async def fetch_profit_and_loss(
+    conn: QboConnection,
+    period_end: date,
+    *,
+    period_start: date | None = None,
+    accounting_method: str = "Accrual",
+) -> dict:
+    """
+    Pull the QBO ProfitAndLoss report for [period_start..period_end]. Returns raw
+    QBO JSON.
+
+    Unlike TrialBalance — which reports income/expense accounts as fiscal-YTD
+    as-of the end date — ProfitAndLoss ranges P&L activity to the exact dates, so
+    it's the correct source for a single-period (month / quarter) flux column.
+    `period_start` defaults to Jan 1 of the period_end year (YTD) when not given.
+
+    Raises RuntimeError on any non-2xx response; callers wrap it.
+    """
+    from core.db.session import AsyncSessionLocal
+    from modules.recons.service import _refresh_token_if_needed
+
+    async with AsyncSessionLocal() as session:
+        token = await _refresh_token_if_needed(conn, session)
+
+    start = period_start or date(period_end.year, 1, 1)
+    params = {
+        "start_date":        start.isoformat(),
+        "end_date":          period_end.isoformat(),
+        "accounting_method": accounting_method,
+        "minorversion":      "65",
+    }
+    url = f"{settings.qbo_base_url}/v3/company/{conn.realm_id}/reports/ProfitAndLoss"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await request_with_retry(
+            lambda: client.get(url, headers=headers, params=params),
+            label="QBO ProfitAndLoss",
+        )
+    if resp.status_code == 401:
+        raise RuntimeError("QBO returned 401 — reconnect QuickBooks.")
+    if resp.status_code != 200:
+        raise RuntimeError(f"QBO ProfitAndLoss pull failed ({resp.status_code}): {resp.text[:500]}")
+    return resp.json()
+
+
 def _dec(val: object) -> Decimal:
     """Parse a numeric value from QBO report text. Handles parens for negatives."""
     if val is None or val == "":

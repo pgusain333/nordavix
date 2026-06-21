@@ -515,12 +515,71 @@ async def create_accounts_and_variances(
     return accounts_created, variances_created, material_count
 
 
+# Income-statement QBO account types. For a single-period flux, these get their
+# TrialBalance fiscal-YTD figure replaced with true period activity from the
+# ProfitAndLoss report (see parse_qbo_pl_amounts + the override below).
+_PL_QBO_TYPES = {"Income", "Other Income", "Cost of Goods Sold", "Expense", "Other Expense"}
+_PL_CREDIT_NATURAL = {"Income", "Other Income"}
+
+
+def _is_pl_type(qbo_acct_type: str | None) -> bool:
+    return qbo_acct_type in _PL_QBO_TYPES
+
+
+def _pl_to_signed(qbo_acct_type: str | None, amount: Decimal | None) -> Decimal:
+    """Convert a ProfitAndLoss report amount (income +, expense +) into the
+    TrialBalance's debit-positive convention used everywhere else in flux:
+    income / other income are credit-natural → flip negative; COGS / expense /
+    other expense stay positive. Keeps variance, classification, and display
+    identical to the TB path — only the magnitude (period vs YTD) changes."""
+    a = amount if amount is not None else Decimal(0)
+    return -a if qbo_acct_type in _PL_CREDIT_NATURAL else a
+
+
+def parse_qbo_pl_amounts(report: dict) -> dict[str, Decimal]:
+    """{qbo_account_id: amount} from a QBO ProfitAndLoss report (single period).
+
+    Amount is the account's activity over the report's date range exactly as QBO
+    presents it (income positive, expense positive). Leaf rows carry the
+    Account.Id in ColData[0].id; section / total / subtotal / Net Income /
+    Gross Profit summary rows are skipped. The amount is the last column (the
+    single period total)."""
+    def to_decimal(v: str) -> Decimal:
+        try:
+            s = (v or "").replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip()
+            return Decimal(s) if s else Decimal(0)
+        except (InvalidOperation, ValueError):
+            return Decimal(0)
+
+    out: dict[str, Decimal] = {}
+
+    def walk(rows: list[dict]) -> None:
+        for r in rows:
+            cols = r.get("ColData") or []
+            if cols:
+                acct_id = cols[0].get("id")
+                first = (cols[0].get("value") or "").strip()
+                if acct_id and first and not first.lower().startswith(
+                    ("total", "subtotal", "net income", "net loss", "gross profit", "net operating")
+                ):
+                    amt = to_decimal(cols[-1].get("value", "")) if len(cols) > 1 else Decimal(0)
+                    out[str(acct_id)] = amt
+            sub = r.get("Rows", {}).get("Row", []) or []
+            if sub:
+                walk(sub)
+
+    walk(report.get("Rows", {}).get("Row", []) or [])
+    return out
+
+
 def parse_qbo_trial_balance_report(
     report_current: dict,
     report_prior: dict,
     overrides: dict[str, str],
     *,
     qbo_acct_lookup: dict[str, dict] | None = None,
+    pl_current: dict[str, Decimal] | None = None,
+    pl_prior: dict[str, Decimal] | None = None,
 ) -> list[dict]:
     """
     Convert two QBO TrialBalance report JSON payloads (current + prior period)
@@ -610,13 +669,25 @@ def parse_qbo_trial_balance_report(
     for key in set(current) | set(prior):
         cur_bal = current.get(key, Decimal(0))
         pri_bal = prior.get(key, Decimal(0))
-        if cur_bal == 0 and pri_bal == 0:
-            continue
 
         display_name, qbo_id = meta.get(key, (key, None))
         qbo_record = qbo_acct_lookup.get(str(qbo_id)) if qbo_id else None
-
         qbo_acct_type = (qbo_record or {}).get("AccountType") if qbo_record else None
+
+        # Income-statement accounts: a TrialBalance reports them as fiscal-YTD, so
+        # for a single-period (month / quarter) flux we swap in the TRUE period
+        # activity from the ProfitAndLoss report (which ranges to the exact dates).
+        # Balance-sheet accounts keep the TB point-in-time balance. Signed to the
+        # TB's debit-positive convention so variance / classification / display are
+        # unaffected — only the magnitude changes. Done before the zero-skip so an
+        # account with YTD activity but none THIS period correctly drops out.
+        if qbo_id and pl_current is not None and _is_pl_type(qbo_acct_type):
+            cur_bal = _pl_to_signed(qbo_acct_type, pl_current.get(str(qbo_id)))
+            pri_bal = _pl_to_signed(qbo_acct_type, (pl_prior or {}).get(str(qbo_id)))
+
+        if cur_bal == 0 and pri_bal == 0:
+            continue
+
         if qbo_record:
             # Trust the canonical QBO record — it has the proper AcctNum + Name.
             acct_num  = str(qbo_record.get("AcctNum") or "").strip()
