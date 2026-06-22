@@ -27,8 +27,10 @@ import * as makerCheckerControls            from "@/marketing/blog/posts/maker-c
 import * as compoundingMemory              from "@/marketing/blog/posts/compounding-memory"
 import * as closeByRole                    from "@/marketing/blog/posts/month-end-close-cfo-controller-outsourced-accounting"
 import * as balanceSheetAccountSchedules   from "@/marketing/blog/posts/balance-sheet-account-schedules"
+import * as protectFinancialData           from "@/marketing/blog/posts/how-nordavix-protects-financial-data"
 
 const RAW_POSTS: BlogPostModule[] = [
+  protectFinancialData            as BlogPostModule,
   balanceSheetAccountSchedules    as BlogPostModule,
   closeByRole                     as BlogPostModule,
   compoundingMemory               as BlogPostModule,

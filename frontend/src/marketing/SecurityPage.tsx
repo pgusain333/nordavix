@@ -76,22 +76,32 @@ const SECTIONS: LegalSection[] = [
   },
   {
     id: "isolation",
-    title: "Your workspace is walled off",
+    title: "Your workspace is walled off — twice",
     body: (
       <>
         <p>
-          Nordavix is multi-tenant, and isolation between workspaces is enforced at the{" "}
-          <strong>database layer</strong> — not left to each individual query to remember.
+          Nordavix is multi-tenant, so the line that must never be crossed is one firm
+          seeing another firm's data. We don't trust a single safeguard with that — we
+          built <strong>two independent walls</strong>, so isolation holds even if a piece
+          of application code had a bug.
         </p>
         <ul>
           <li>
-            <strong>Automatic scoping</strong> — a session-level filter appends your
-            workspace's identity to every database read. A query simply cannot return
-            another workspace's rows, even if a bug forgot to filter.
+            <strong>Wall one — automatic query scoping.</strong> A session-level filter
+            stamps your workspace's identity onto every database read. A query simply
+            cannot return another workspace's rows — and it <em>fails closed</em>: if the
+            workspace context is ever missing, the query errors out rather than returning
+            anything.
           </li>
           <li>
-            <strong>Writes are scoped too</strong> — data is written and updated only
-            within your own workspace.
+            <strong>Wall two — the database enforces it too.</strong> On top of that,
+            PostgreSQL row-level security policies sit on every one of our workspace
+            tables (about 50 of them). Even a query that somehow slipped past the
+            application layer is refused by the database itself.
+          </li>
+          <li>
+            <strong>Writes are checked for ownership</strong> — before any bulk update or
+            delete, we verify you actually own the records involved.
           </li>
           <li>
             <strong>Read-only surfaces stay read-only</strong> — shared experiences like
@@ -101,8 +111,11 @@ const SECTIONS: LegalSection[] = [
           </li>
         </ul>
         <p>
-          One firm's books can never appear in another firm's workspace. For CPA firms
-          serving many clients, the same boundary keeps each client's data separated.
+          One firm's books can never appear in another firm's workspace. And because this
+          is the highest-stakes boundary in the product, the exact bug we'd most fear —
+          one tenant's data bleeding into another's — is locked shut by an automated test
+          that fails our build if it ever reappears. For CPA firms serving many clients,
+          the same boundary keeps each client's data separated.
         </p>
       </>
     ),
@@ -231,8 +244,10 @@ const SECTIONS: LegalSection[] = [
             on a managed rotation, encrypted at rest.
           </li>
           <li>
-            <strong>Abuse protection</strong> — the API enforces rate limits and spend
-            caps to keep the service stable and predictable.
+            <strong>Abuse &amp; cost protection</strong> — the API enforces per-workspace
+            rate limits, and AI features run under a per-workspace monthly spend cap, so
+            the service stays stable and costs stay predictable — no single integration or
+            runaway loop can degrade it.
           </li>
           <li>
             <strong>Monitoring</strong> — health checks and error monitoring let us catch
@@ -297,6 +312,34 @@ const SECTIONS: LegalSection[] = [
           <a href="/privacy#sharing-and-subprocessors">Privacy Policy</a>. Material
           changes are announced in advance where commercially reasonable.
         </p>
+      </>
+    ),
+  },
+  {
+    id: "development",
+    title: "How we build and ship",
+    body: (
+      <>
+        <p>
+          Security isn't only about the running system — it's about how changes reach it.
+        </p>
+        <ul>
+          <li>
+            <strong>Security tests gate every release.</strong> Our automated test suite
+            includes the workspace-isolation checks described above. If any of them fail,
+            the build does not ship — full stop.
+          </li>
+          <li>
+            <strong>Fixed issues stay fixed.</strong> When we find and fix a security or
+            correctness issue, we add a permanent test that re-checks it on every build,
+            so it can't quietly come back.
+          </li>
+          <li>
+            <strong>Accuracy is tested too.</strong> The same pipeline runs
+            accounting-correctness checks — tie-outs, sign conventions, schedule math —
+            because a wrong number is its own kind of risk.
+          </li>
+        </ul>
       </>
     ),
   },
