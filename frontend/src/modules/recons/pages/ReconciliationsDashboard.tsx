@@ -1819,15 +1819,19 @@ export function ReconciliationsDashboard() {
                           />
                         </th>
                         {[
-                          { label: "Account No.", w: "100px" },
-                          { label: "Account", w: "auto" },
-                          { label: "Type", w: "130px" },
-                          { label: "GL Balance", w: "120px", right: true },
-                          { label: "Subledger", w: "120px", right: true },
-                          { label: "Variance", w: "120px", right: true },
-                          { label: "Attachments", w: "100px", center: true },
-                          { label: "Status", w: "120px" },
-                          { label: "", w: "120px" },
+                          { label: "Account No.", w: "110px" },
+                          // Fixed (not "auto") so the Account column can't absorb ALL the
+                          // table's slack — that was leaving a large dead band between the
+                          // name and the data columns. With every column sized, w-full
+                          // spreads the remaining width evenly across the row.
+                          { label: "Account", w: "240px" },
+                          { label: "Type", w: "150px" },
+                          { label: "GL Balance", w: "150px", right: true },
+                          { label: "Subledger", w: "150px", right: true },
+                          { label: "Variance", w: "150px", right: true },
+                          { label: "Attachments", w: "120px", center: true },
+                          { label: "Status", w: "150px" },
+                          { label: "", w: "300px" },
                         ].map((h, i) => (
                           <th
                             key={i}
@@ -2054,12 +2058,12 @@ export function ReconciliationsDashboard() {
                                     border: "1px solid var(--border-strong)",
                                     background: "var(--surface)",
                                   }}
-                                  title="See how this subledger balance was computed"
+                                  title="View the GL entries that make up this balance"
                                   onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--green)")}
                                   onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border-strong)")}
                                 >
                                   <Eye size={11} strokeWidth={1.8} />
-                                  Subledger
+                                  GL Entries
                                 </button>
                                 {/* Variance button removed per user direction
                                     — the inline accordion already surfaces
