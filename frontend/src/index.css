@@ -55,16 +55,19 @@
   color-scheme: light;
 }
 
-/* ── CSS design tokens — dark mode ("pine night") ─────────────────────────── */
+/* ── CSS design tokens — dark mode ("neutral night" — Linear-style) ───────────
+   Neutral charcoal surfaces; the brand green is kept as the ACCENT only
+   (buttons, links, active nav pill, positive/approved tints). Light mode is
+   unchanged. */
 .dark {
-  --bg:           #0A1F1A;   /* deep pine — one shade under the rail */
-  --surface:      #102B24;
-  --surface-2:    #15332B;
-  --border:       #1D4036;
-  --border-strong:#2B5547;
-  --text:         #F2EFE7;   /* warm cream-white */
-  --text-2:       #B6C2BA;
-  --text-muted:   #7E8F86;
+  --bg:           #0A0A0B;   /* neutral near-black (Linear-style) */
+  --surface:      #151517;   /* cards */
+  --surface-2:    #1C1C1F;   /* inset panels / table headers */
+  --border:       #2A2A2E;
+  --border-strong:#3A3A40;
+  --text:         #ECEDEE;   /* near-white, neutral */
+  --text-2:       #A8A8AE;
+  --text-muted:   #85858C;
   --green:        #7FB89B;   /* sage — marketing's quiet support on dark */
   --green-light:  #9CCDB3;
   --green-subtle: #16352B;
@@ -84,12 +87,13 @@
   --accent:          #9CC4AD;  /* AI moments — soft sage; calm, no neon */
   --accent-subtle:   #18382D;
   --accent-border:   #2C5A47;
-  /* Sidebar — same pine rail as light mode (consistent brand anchor). */
-  --nav-bg:       #0C2620;
-  --nav-border:   rgba(244,241,233,0.10);
+  /* Sidebar — neutral charcoal rail in dark mode (Linear-style); the active
+     pill stays brand green as the accent. Light mode keeps its pine rail. */
+  --nav-bg:       #121214;
+  --nav-border:   rgba(255,255,255,0.09);
   --nav-active:   #2E7A55;
-  --nav-hover:    rgba(244,241,233,0.07);
-  --nav-text:     rgba(244,241,233,0.74);
+  --nav-hover:    rgba(255,255,255,0.06);
+  --nav-text:     rgba(255,255,255,0.70);
   --nav-text-act: #FFFFFF;
   --card-shadow:  0 1px 3px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20);
   --card-shadow-hover: 0 4px 16px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25);
