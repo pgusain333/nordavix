@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from "react"
 import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react"
 import { Routes, Route, Navigate, useLocation } from "react-router-dom"
 import { AnimatePresence, motion } from "framer-motion"
+import { Analytics } from "@vercel/analytics/react"
 import { HomePage } from "@/marketing/HomePage"
 import { TopProgressBar } from "@/core/ui/TopProgressBar"
 import { CookieBanner } from "@/core/consent/CookieBanner"
@@ -258,6 +259,7 @@ export default function App() {
         <Route path="*"       element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
+    <Analytics />
     </>
   )
 }
