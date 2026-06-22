@@ -365,6 +365,7 @@ export function Body() {
         <li><strong>You&apos;re on QBO today but heading to NetSuite:</strong> Numeric — it follows you up-market across ERPs.</li>
         <li><strong>You&apos;re a bookkeeping/CAS firm managing many clients:</strong> Double or Xenett for fast review; pair with a close engine if you need real reconciliations and flux.</li>
         <li><strong>You just want cheap balance-sheet recs + a checklist:</strong> Easy Month End.</li>
+        <li><strong>Putting client books in a tool and security is non-negotiable:</strong> read{" "}<Link to="/blog/how-nordavix-protects-financial-data">how Nordavix protects your financial data</Link> — two-wall workspace isolation, encrypted credentials, read-only QuickBooks, and no AI training on your data.</li>
         <li><strong>You&apos;re a large, public, multi-entity company on SAP/Oracle:</strong> none of these — see our{" "}<Link to="/blog/month-end-close-software">full close software buyer&apos;s guide</Link> covering BlackLine, FloQast, and Trintech.</li>
       </ul>
 

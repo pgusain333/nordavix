@@ -36,7 +36,11 @@ const SECTIONS: LegalSection[] = [
           We'd rather be specific and honest than wave around badges: where something is
           on our roadmap rather than already done, you'll see us say so. For the legal
           detail on what we collect and your rights, see the{" "}
-          <a href="/privacy">Privacy Policy</a>.
+          <a href="/privacy">Privacy Policy</a>. For a plain-English walkthrough of how
+          it all fits together, read{" "}
+          <a href="/blog/how-nordavix-protects-financial-data">
+            How Nordavix protects your clients' financial data
+          </a>.
         </p>
       </>
     ),

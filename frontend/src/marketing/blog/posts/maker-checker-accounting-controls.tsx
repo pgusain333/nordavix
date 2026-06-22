@@ -253,6 +253,15 @@ export function Body() {
         without anyone reading a memo, it's working.
       </aside>
 
+      <p>
+        Controls only matter if the underlying data is safe, too. Here&apos;s{" "}
+        <Link to="/blog/how-nordavix-protects-financial-data">
+          how we protect your clients&apos; financial data
+        </Link>{" "}
+        — two-wall workspace isolation, encrypted credentials, and a read-only
+        QuickBooks connection.
+      </p>
+
       <h2>FAQ</h2>
       <h3>What is the maker-checker process in accounting?</h3>
       <p>

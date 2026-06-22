@@ -104,7 +104,7 @@ function LimeBtn({ to, children }: { to: string; children: ReactNode }) {
 const NAV = [
   { label: "Platform", to: "#platform", anchor: true },
   { label: "Workflow", to: "#workflow", anchor: true },
-  { label: "Security", to: "#security", anchor: true },
+  { label: "Security", to: "/security", anchor: false },
   { label: "Blog", to: "/blog", anchor: false },
   { label: "FAQ", to: "#faq", anchor: true },
 ]
