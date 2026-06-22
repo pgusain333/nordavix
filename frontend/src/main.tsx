@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider, keepPreviousData } from "@tanstack/re
 import { BrowserRouter } from "react-router-dom"
 import { MotionConfig } from "framer-motion"
 import { HelmetProvider } from "react-helmet-async"
+import { Analytics } from "@vercel/analytics/react"
 import App from "./App"
 import DevShell from "./DevShell"
 import { ThemeProvider } from "@/core/theme/ThemeProvider"
@@ -92,6 +93,7 @@ if (IS_DEV_PLACEHOLDER) {
           <QueryClientProvider client={queryClient}>
             <BrowserRouter>
               <DevShell />
+              <Analytics />
             </BrowserRouter>
           </QueryClientProvider>
         </ThemeProvider>
@@ -115,6 +117,7 @@ if (IS_DEV_PLACEHOLDER) {
                 <MotionConfig reducedMotion="user">
                   <App />
                 </MotionConfig>
+                <Analytics />
               </BrowserRouter>
             </QueryClientProvider>
           </LazyClerkProvider>
