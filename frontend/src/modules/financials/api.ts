@@ -273,8 +273,11 @@ async function exportFinancialsExcel(
 async function exportScheduleExcel(
   slug: string, periodEnd: string, periodStart: string | undefined,
   comparative: boolean, source: FinancialSource,
+  comparativeBasis: ComparativeBasis = "prior_year",
 ): Promise<void> {
-  const params: Record<string, string | boolean> = { period_end: periodEnd, comparative, source }
+  const params: Record<string, string | boolean> = {
+    period_end: periodEnd, comparative, source, comparative_basis: comparativeBasis,
+  }
   if (periodStart) params.period_start = periodStart
   await downloadXlsx(`/api/exports/financials/${slug}`, params, `${slug}-${periodEnd}.xlsx`)
 }

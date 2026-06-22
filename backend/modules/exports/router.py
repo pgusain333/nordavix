@@ -307,6 +307,7 @@ async def export_financial_schedule(
     period_start: str | None = Query(None),
     comparative: bool = Query(True),
     source: str = Query("nordavix", description="nordavix | quickbooks"),
+    comparative_basis: str = Query("prior_year", description="prior_year | prior_month"),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """A single financial schedule (cover + one sheet) as .xlsx."""
@@ -323,6 +324,7 @@ async def export_financial_schedule(
             slug=schedule, db=db, tenant_id=tenant_id, period_end=pe, period_start=ps,
             comparative=comparative, source=source,
             company_name=company_name, generated_by_name=generated_by,
+            comparative_basis=comparative_basis,
         )
     except Exception as exc:
         logger.exception("Financial schedule export failed (%s)", schedule)

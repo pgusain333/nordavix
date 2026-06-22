@@ -302,6 +302,21 @@ export function FinancialsPage() {
     onError: (e: Error) => setExportError(e.message),
   })
 
+  // Per-statement Excel — one .xlsx file per statement, surfaced right next to
+  // Export PDF. Uses the SAME effective period-start + comparative basis as the
+  // schedules panel (and the on-screen statement) so the workbook matches what
+  // the user is looking at. CF's QBO fallback + BS's point-in-time handling are
+  // applied server-side, exactly like the existing schedule export.
+  const excelMut = useMutation({
+    mutationFn: ({ kind }: { kind: "is" | "bs" | "cf" }) => {
+      const slug = kind === "is" ? "income-statement" : kind === "bs" ? "balance-sheet" : "cash-flow"
+      const ps = periodMode === "custom" ? periodStart : firstDayOfYear(periodEnd)
+      return financialsApi.exportScheduleExcel(slug, periodEnd, ps, comparative, source, comparativeBasis)
+    },
+    onMutate: () => setExportError(null),
+    onError: (e: Error) => setExportError(e.message),
+  })
+
   // Executive Report — single AI-narrated, multi-page board package.
   // Only callable when books are closed (server-enforced); UI shows
   // the card whenever the selected period_end maps to a closed
@@ -468,6 +483,12 @@ export function FinancialsPage() {
                 isClosed={stmt?.is_closed ?? false}
                 onExport={(kind, draft) => exportMut.mutate({ kind, draft })}
                 loading={exportMut.isPending}
+              />
+            )}
+            {hasLoaded && (
+              <ExcelExportButton
+                onExport={(kind) => excelMut.mutate({ kind })}
+                loading={excelMut.isPending}
               />
             )}
           </div>
@@ -1028,7 +1049,7 @@ function SchedulesExportCard({
       if (slug === "__full__") {
         await financialsApi.exportFinancialsExcel(periodEnd, periodStart, comparative, source, comparativeBasis)
       } else {
-        await financialsApi.exportScheduleExcel(slug, periodEnd, periodStart, comparative, source)
+        await financialsApi.exportScheduleExcel(slug, periodEnd, periodStart, comparative, source, comparativeBasis)
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Export failed")
@@ -1428,6 +1449,85 @@ function ExportButton({ isClosed, onExport, loading }: {
                 Draft PDFs carry a DRAFT watermark. Close the books for this period to download finals.
               </p>
             )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// ── ExcelExportButton ───────────────────────────────────────────────────────
+// One .xlsx file per statement, beside Export PDF. Each file is a cover sheet +
+// the single statement, in the same monochrome CPA-workpaper styling as the full
+// package — no DRAFT/FINAL stamp (Excel workbooks aren't watermarked).
+
+function ExcelExportButton({ onExport, loading }: {
+  onExport: (kind: "is" | "bs" | "cf") => void
+  loading: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    function h(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener("mousedown", h)
+    return () => document.removeEventListener("mousedown", h)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <Button size="sm" variant="outline" onClick={() => setOpen(!open)}
+        icon={<Download size={14} strokeWidth={1.8} />}
+        loading={loading}>
+        Export Excel
+      </Button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0,  scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.96 }}
+            transition={{ duration: 0.12, ease: "easeOut" }}
+            className="absolute right-0 top-full mt-1.5 z-50 rounded-xl overflow-hidden min-w-[280px] origin-top-right"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border-strong)",
+              boxShadow: "0 12px 32px -8px rgba(0,0,0,0.30), 0 2px 6px -2px rgba(0,0,0,0.10)",
+            }}>
+            <div className="px-4 py-2.5"
+              style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              <p className="text-[10px] font-bold uppercase tracking-wider"
+                style={{ color: "var(--text-muted)" }}>
+                Download
+              </p>
+              <p className="text-xs font-semibold text-theme mt-0.5">
+                One statement as Excel (.xlsx)
+              </p>
+            </div>
+            {([
+              { key: "is", label: "Income Statement", sub: TAB_SUB.is, Icon: TrendingUp },
+              { key: "bs", label: "Balance Sheet",    sub: TAB_SUB.bs, Icon: Scale },
+              { key: "cf", label: "Cash Flow",        sub: TAB_SUB.cf, Icon: BarChart3 },
+            ] as const).map((opt) => (
+              <button key={opt.key}
+                onClick={() => { onExport(opt.key); setOpen(false) }}
+                className="w-full text-left px-4 py-2.5 transition-colors flex items-center gap-3"
+                style={{ background: "transparent" }}
+                onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"}
+                onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.background = "transparent"}
+              >
+                <opt.Icon size={13} strokeWidth={1.8}
+                  style={{ color: "var(--text-muted)" }} className="shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium text-theme">{opt.label}</p>
+                  <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                    {opt.sub}
+                  </p>
+                </div>
+                <Download size={12} strokeWidth={1.8}
+                  style={{ color: "var(--text-muted)" }} className="shrink-0" />
+              </button>
+            ))}
           </motion.div>
         )}
       </AnimatePresence>

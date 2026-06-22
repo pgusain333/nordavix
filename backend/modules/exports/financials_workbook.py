@@ -511,13 +511,15 @@ async def build_single_financial_workbook(
     source: str,
     company_name: str,
     generated_by_name: str,
+    comparative_basis: str = "prior_year",
 ) -> bytes:
     """Cover + a single financial schedule."""
     if slug not in _BUILDERS:
         raise ValueError(f"Unknown financial schedule: {slug}")
     label = FINANCIAL_SHEET_LABELS[slug]
     ctx = _Ctx(db=db, tenant_id=tenant_id, period_end=period_end,
-               period_start=period_start, comparative=comparative, source=source)
+               period_start=period_start, comparative=comparative, source=source,
+               comparative_basis=comparative_basis)
     wb = _new_wb()
     build_cover_sheet(
         wb,
