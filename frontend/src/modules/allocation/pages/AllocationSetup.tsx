@@ -12,8 +12,9 @@ import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   AlertTriangle, Building2, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight,
-  Layers, ListTree, Users, XCircle,
+  Layers, ListTree, Settings as SettingsIcon, Users, XCircle,
 } from "lucide-react"
+import { useSearchParams } from "react-router-dom"
 import { toISODate } from "@/core/lib/dates"
 import { Spinner } from "@/core/ui"
 import { allocationApi } from "../api"
@@ -21,15 +22,27 @@ import { PoolsPanel } from "../components/PoolsPanel"
 import { AccountsPanel } from "../components/AccountsPanel"
 import { SpacesPanel } from "../components/SpacesPanel"
 import { EmployeesPanel } from "../components/EmployeesPanel"
+import { SettingsPanel } from "../components/SettingsPanel"
 
-type TabId = "pools" | "accounts" | "spaces" | "employees"
+type TabId = "pools" | "accounts" | "spaces" | "employees" | "settings"
 
 const TABS: { id: TabId; label: string; icon: typeof Layers }[] = [
   { id: "pools",     label: "Pools",     icon: Layers },
   { id: "accounts",  label: "Accounts",  icon: ListTree },
   { id: "spaces",    label: "Spaces",    icon: Building2 },
   { id: "employees", label: "Employees", icon: Users },
+  { id: "settings",  label: "Settings",  icon: SettingsIcon },
 ]
+
+/** Map a readiness item's `fix` hint onto the tab that resolves it. */
+function tabForFix(fix: string): TabId {
+  if (fix.includes("pools"))     return "pools"
+  if (fix.includes("accounts"))  return "accounts"
+  if (fix.includes("spaces"))    return "spaces"
+  if (fix.includes("employees")) return "employees"
+  if (fix.includes("settings"))  return "settings"
+  return "pools"
+}
 
 export function AllocationSetup() {
   // Declared before the queries whose option closures read them.
@@ -37,7 +50,19 @@ export function AllocationSetup() {
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth() - 1, 1)
   })
-  const [tab, setTab] = useState<TabId>("pools")
+  // ?tab= lets the nav and the readiness checklist deep-link a specific panel,
+  // so "no inventory account" can route straight to where it's fixed.
+  const [params, setParams] = useSearchParams()
+  const urlTab = params.get("tab") as TabId | null
+  const [tab, setTabState] = useState<TabId>(
+    urlTab && TABS.some((t) => t.id === urlTab) ? urlTab : "pools",
+  )
+  const setTab = (id: TabId) => {
+    setTabState(id)
+    const next = new URLSearchParams(params)
+    next.set("tab", id)
+    setParams(next, { replace: true })
+  }
 
   // Local calendar dates — never toISOString(), which shifts the month in any
   // timezone behind UTC and would silently allocate the wrong period.
@@ -103,13 +128,22 @@ export function AllocationSetup() {
                 </span>
               </div>
 
+              {/* Every item routes to the tab that fixes it — a checklist you
+                  can't act on is just a list of complaints. */}
               {readiness.blockers.length > 0 && (
                 <ul className="mt-3 space-y-1.5">
                   {readiness.blockers.map((b) => (
-                    <li key={b.code} className="flex items-start gap-2 text-xs" style={{ color: "var(--text)" }}>
-                      <XCircle size={13} strokeWidth={2} className="mt-[2px] shrink-0"
-                        style={{ color: "var(--danger)" }} />
-                      {b.message}
+                    <li key={b.code}>
+                      <button onClick={() => setTab(tabForFix(b.fix))}
+                        className="flex items-start gap-2 text-xs text-left hover:opacity-80"
+                        style={{ color: "var(--text)" }}>
+                        <XCircle size={13} strokeWidth={2} className="mt-[2px] shrink-0"
+                          style={{ color: "var(--danger)" }} />
+                        <span>
+                          {b.message}
+                          <span className="ml-1.5 font-medium" style={{ color: "var(--green)" }}>Fix</span>
+                        </span>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -117,10 +151,14 @@ export function AllocationSetup() {
               {readiness.warnings.length > 0 && (
                 <ul className="mt-2 space-y-1.5">
                   {readiness.warnings.map((w) => (
-                    <li key={w.code} className="flex items-start gap-2 text-xs" style={{ color: "var(--text-2)" }}>
-                      <AlertTriangle size={13} strokeWidth={2} className="mt-[2px] shrink-0"
-                        style={{ color: "var(--warn)" }} />
-                      {w.message}
+                    <li key={w.code}>
+                      <button onClick={() => setTab(tabForFix(w.fix))}
+                        className="flex items-start gap-2 text-xs text-left hover:opacity-80"
+                        style={{ color: "var(--text-2)" }}>
+                        <AlertTriangle size={13} strokeWidth={2} className="mt-[2px] shrink-0"
+                          style={{ color: "var(--warn)" }} />
+                        <span>{w.message}</span>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -169,6 +207,7 @@ export function AllocationSetup() {
         {tab === "accounts"  && <AccountsPanel periodStart={periodStart} periodEnd={periodEnd} />}
         {tab === "spaces"    && <SpacesPanel />}
         {tab === "employees" && <EmployeesPanel />}
+        {tab === "settings"  && <SettingsPanel />}
       </div>
     </div>
   )

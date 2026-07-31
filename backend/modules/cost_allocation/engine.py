@@ -483,10 +483,15 @@ def build_reclass_entry(
             "credit": str(ln.capitalized) if credit else "0.00",
         })
 
+    # description/memo are ASCII on purpose: they land in the QuickBooks import
+    # CSV and then in QBO's own memo field. "Section 471(c)" reads identically to
+    # "§471(c)" and can't be mangled by a spreadsheet or an importer guessing at
+    # the encoding. The rationale below is UI-only and never exported, so it
+    # keeps the typographic form.
     return {
-        "description": f"§471(c) cost capitalization — {period_end}",
+        "description": f"Section 471(c) cost capitalization - {period_end}",
         "lines": lines,
-        "memo": "Capitalize production-related costs into inventory per the §471(c) allocation.",
+        "memo": "Capitalize production-related costs into inventory per the Section 471(c) allocation.",
         "rationale": (
             f"Direct production {result.direct_total} plus allocated overhead "
             f"{result.allocated_total} capitalized into inventory; "

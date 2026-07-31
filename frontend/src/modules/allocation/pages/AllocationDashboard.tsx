@@ -1,142 +1,196 @@
 /**
- * AllocationDashboard — the practice roster, and the landing screen for
- * Nordavix Allocate.
+ * AllocationDashboard — where a §471(c) client stands right now.
  *
- * One row per cannabis client for the selected month: eligibility, whether the
- * allocation drivers are current, what capitalized, and where the run stands.
+ * Scoped to the ACTIVE client, not a multi-client roster. A practice-wide roster
+ * needs a cross-tenant read and belongs with the firm Command Center pattern;
+ * showing a placeholder roster here would be worse than showing real data for
+ * the client actually selected.
  *
- * S0 SCOPE: this is the shell. The roster endpoint is S4 (it reads across
- * tenants via get_system_db, the same pattern the close app's Command Center
- * uses), and the allocation engine that produces the numbers is S2. Until then
- * this deliberately renders an empty state rather than placeholder figures —
- * fabricated dollar amounts on an accounting surface are worse than no amounts.
+ * The page answers three questions in order: is this client ready, what did the
+ * last run conclude, and what do I do next.
  */
 import { useMemo, useState } from "react"
-import { Building2, CalendarDays, ChevronLeft, ChevronRight } from "lucide-react"
-
-interface Kpi {
-  label: string
-  value: string
-  tone?: "default" | "positive" | "danger"
-}
-
-function monthLabel(d: Date): string {
-  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" })
-}
+import { useQuery } from "@tanstack/react-query"
+import { Link } from "react-router-dom"
+import {
+  AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight,
+  Play, Settings2, XCircle,
+} from "lucide-react"
+import { toISODate } from "@/core/lib/dates"
+import { Spinner } from "@/core/ui"
+import { allocationApi, factorPct, money } from "../api"
 
 export function AllocationDashboard() {
-  // Default to the prior calendar month — the one a practice is actually
-  // working. Built from local date parts (never toISOString, which shifts the
-  // month in any timezone behind UTC).
   const [anchor, setAnchor] = useState(() => {
-    const now = new Date()
-    return new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const n = new Date()
+    return new Date(n.getFullYear(), n.getMonth() - 1, 1)
   })
 
-  const kpis: Kpi[] = useMemo(() => [
-    { label: "Clients",   value: "—" },
-    { label: "Approved",  value: "—", tone: "positive" },
-    { label: "In review", value: "—" },
-    { label: "Blocked",   value: "—", tone: "danger" },
-  ], [])
+  const periodEnd = useMemo(
+    () => toISODate(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0)),
+    [anchor],
+  )
 
-  const shiftMonth = (delta: number) =>
-    setAnchor((d) => new Date(d.getFullYear(), d.getMonth() + delta, 1))
+  const { data: readiness, isLoading: loadingReadiness } = useQuery({
+    queryKey: ["allocation", "readiness", periodEnd],
+    queryFn:  () => allocationApi.getReadiness(periodEnd),
+  })
+  const { data: runs = [], isLoading: loadingRuns } = useQuery({
+    queryKey: ["allocation", "runs"],
+    queryFn:  allocationApi.listRuns,
+  })
+
+  const current = runs.find((r) => r.period_end === periodEnd && r.status !== "superseded")
+  const shift = (d: number) => setAnchor((a) => new Date(a.getFullYear(), a.getMonth() + d, 1))
+
+  const Kpi = ({ label, value, tone }: { label: string; value: string; tone?: string }) => (
+    <div className="rounded-lg px-3.5 py-3"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{label}</div>
+      <div className="text-lg font-semibold tabular-nums mt-0.5" style={{ color: tone ?? "var(--text)" }}>
+        {value}
+      </div>
+    </div>
+  )
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-6xl mx-auto px-5 py-6 space-y-5">
+      <div className="max-w-5xl mx-auto px-5 py-6 space-y-5">
 
-        {/* Header */}
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-lg font-semibold text-theme tracking-tight">Clients</h1>
+            <h1 className="text-lg font-semibold text-theme tracking-tight">Cost allocation</h1>
             <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-              §471(c) cost allocation · one run per client per month
+              §471(c) inventory costing for the active client
             </p>
           </div>
-
-          {/* Period stepper */}
-          <div
-            className="flex items-center gap-1 rounded-lg px-1 py-1"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-          >
-            <button
-              onClick={() => shiftMonth(-1)}
-              className="flex items-center justify-center h-7 w-7 rounded-md transition-colors"
-              style={{ color: "var(--text-2)" }}
-              aria-label="Previous month"
-            >
+          <div className="flex items-center gap-1 rounded-lg px-1 py-1"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <button onClick={() => shift(-1)} aria-label="Previous month"
+              className="h-7 w-7 grid place-items-center rounded-md" style={{ color: "var(--text-2)" }}>
               <ChevronLeft size={15} strokeWidth={1.8} />
             </button>
             <span className="flex items-center gap-1.5 px-2 text-[13px] font-medium text-theme whitespace-nowrap">
               <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-              {monthLabel(anchor)}
+              {anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
             </span>
-            <button
-              onClick={() => shiftMonth(1)}
-              className="flex items-center justify-center h-7 w-7 rounded-md transition-colors"
-              style={{ color: "var(--text-2)" }}
-              aria-label="Next month"
-            >
+            <button onClick={() => shift(1)} aria-label="Next month"
+              className="h-7 w-7 grid place-items-center rounded-md" style={{ color: "var(--text-2)" }}>
               <ChevronRight size={15} strokeWidth={1.8} />
             </button>
           </div>
         </div>
 
-        {/* KPI strip */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-          {kpis.map((k) => (
-            <div
-              key={k.label}
-              className="rounded-lg px-3.5 py-3"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-            >
-              <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{k.label}</div>
-              <div
-                className="text-xl font-semibold tabular-nums mt-0.5"
-                style={{
-                  color:
-                    k.tone === "positive" ? "var(--positive)"
-                    : k.tone === "danger" ? "var(--danger)"
-                    : "var(--text)",
-                }}
-              >
-                {k.value}
+        {/* Status */}
+        <div className="rounded-xl p-4"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          {loadingReadiness ? (
+            <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
+              <Spinner className="h-4 w-4" /> Checking this client…
+            </div>
+          ) : !readiness ? (
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>Couldn&rsquo;t load status.</p>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                {readiness.ready
+                  ? <CheckCircle2 size={17} strokeWidth={2} style={{ color: "var(--positive)" }} />
+                  : <XCircle size={17} strokeWidth={2} style={{ color: "var(--danger)" }} />}
+                <span className="text-sm font-semibold text-theme">
+                  {readiness.ready ? "Ready to run" : "Setup incomplete"}
+                </span>
               </div>
-            </div>
-          ))}
+              {readiness.blockers.length > 0 && (
+                <ul className="mt-2.5 space-y-1">
+                  {readiness.blockers.map((b) => (
+                    <li key={b.code} className="text-xs" style={{ color: "var(--text-2)" }}>{b.message}</li>
+                  ))}
+                </ul>
+              )}
+              {readiness.warnings.map((w) => (
+                <p key={w.code} className="mt-2 flex items-start gap-1.5 text-xs" style={{ color: "var(--text-2)" }}>
+                  <AlertTriangle size={12} strokeWidth={2} className="mt-[3px] shrink-0"
+                    style={{ color: "var(--warn)" }} />
+                  {w.message}
+                </p>
+              ))}
+
+              <div className="flex flex-wrap gap-2 mt-3.5">
+                <Link to="/allocation/runs"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium"
+                  style={{ background: "var(--green)", color: "#fff" }}>
+                  <Play size={13} strokeWidth={2} /> Go to runs
+                </Link>
+                <Link to="/allocation/setup"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium"
+                  style={{ color: "var(--text-2)", border: "1px solid var(--border)" }}>
+                  <Settings2 size={13} strokeWidth={2} /> Setup
+                </Link>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Roster */}
-        <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div
-            className="grid grid-cols-[minmax(0,2fr)_1fr_1fr_0.7fr_1fr] gap-3 px-4 py-2.5 text-[11px]"
-            style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}
-          >
-            <span>Client</span>
-            <span>Drivers</span>
-            <span className="text-right">Capitalized</span>
-            <span className="text-right">Rate</span>
-            <span className="text-right">Status</span>
-          </div>
-
-          <div className="px-6 py-14 flex flex-col items-center text-center">
-            <div
-              className="h-11 w-11 rounded-full flex items-center justify-center mb-3"
-              style={{ background: "var(--green-subtle)" }}
-            >
-              <Building2 size={19} strokeWidth={1.7} style={{ color: "var(--green)" }} />
+        {/* This month's conclusion */}
+        {current && !current.blocked_reason && (
+          <div className="space-y-2.5">
+            <h2 className="text-[13px] font-semibold text-theme">
+              {anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" })} allocation
+            </h2>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+              <Kpi label="Total expenses" value={money(current.total_expenses)} />
+              <Kpi label="Capitalized" value={money(current.capitalized_total)} tone="var(--green)" />
+              <Kpi label="Disallowed (280E)" value={money(current.disallowed_total)} tone="var(--danger)" />
+              <Kpi label="Occupancy factor" value={factorPct(current.occupancy_factor)} />
             </div>
-            <p className="text-sm font-medium text-theme">No clients set up for allocation yet</p>
-            <p className="text-xs mt-1.5 max-w-md leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              A client becomes eligible for a monthly run once three things exist: its
-              square-footage registry, its employee classifications, and its
-              account&rarr;pool map. Those live under Setup.
-            </p>
+            <Link to="/allocation/runs"
+              className="inline-flex items-center gap-1 text-xs font-medium"
+              style={{ color: "var(--green)" }}>
+              Open the workpaper and journal entry <ArrowRight size={12} strokeWidth={2} />
+            </Link>
           </div>
-        </div>
+        )}
 
+        {/* Recent runs */}
+        <div>
+          <h2 className="text-[13px] font-semibold text-theme mb-2">Recent runs</h2>
+          {loadingRuns ? (
+            <div className="flex justify-center py-8"><Spinner className="h-5 w-5" /></div>
+          ) : runs.length === 0 ? (
+            <div className="rounded-xl px-6 py-10 text-center"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <p className="text-sm font-medium text-theme">No allocations yet</p>
+              <p className="text-xs mt-1 max-w-sm mx-auto" style={{ color: "var(--text-muted)" }}>
+                Finish setup, then run a month. Each run produces a workpaper and a
+                reclass journal entry you can export to QuickBooks.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-xl overflow-hidden"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              {runs.slice(0, 6).map((r, i) => (
+                <Link key={r.id} to="/allocation/runs"
+                  className="grid grid-cols-[minmax(0,1.2fr)_1fr_1fr_auto] gap-3 items-center px-4 py-2.5"
+                  style={{ borderTop: i === 0 ? undefined : "1px solid var(--border)" }}>
+                  <span className="text-[13px] text-theme">
+                    {new Date(r.period_end + "T00:00:00").toLocaleDateString("en-US", {
+                      month: "short", year: "numeric",
+                    })}
+                  </span>
+                  <span className="text-[12px] tabular-nums text-right" style={{ color: "var(--text-2)" }}>
+                    {money(r.capitalized_total)}
+                  </span>
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    {r.blocked_reason ? "blocked" : r.has_journal_entry ? "JE ready" : "no JE"}
+                  </span>
+                  <span className="text-[11px] justify-self-end" style={{ color: "var(--text-muted)" }}>
+                    {r.status.replace("_", " ")}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

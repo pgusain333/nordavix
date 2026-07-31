@@ -4,6 +4,9 @@
     GET  /api/allocation/runs             list runs, newest period first
     GET  /api/allocation/runs/{id}        one run + its per-account detail
     POST /api/allocation/runs/{id}/approve   maker-checker sign-off
+    GET  /api/allocation/runs/{id}/journal-entry       the reclass JE (preview)
+    GET  /api/allocation/runs/{id}/journal-entry.csv   QBO JE import CSV
+    GET  /api/allocation/runs/{id}/workpaper.csv       per-account detail
 
 Every handler is tenant-scoped by the standard dependencies; TenantBase filters
 SELECTs automatically and writes carry tenant_id explicitly.
@@ -11,10 +14,14 @@ SELECTs automatically and writes carry tenant_id explicitly.
 Maker-checker mirrors the close app: a preparer can compute a run, but approving
 one requires `reviewer`, and nobody can approve a run they prepared themselves.
 """
+import csv
+import io
 import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +30,9 @@ from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, require_role
 from core.db.session import get_db
 from models.cost_allocation import AllocRun, AllocRunLine
+from models.proposed_entry import ProposedEntry
 from models.user import User
+from modules.adjustments.service import build_qbo_je_csv
 from modules.cost_allocation.service import run_allocation, serialize_run
 
 router = APIRouter()
@@ -107,6 +116,157 @@ async def get_run(
         .order_by(AllocRunLine.pool_name, AllocRunLine.account_number, AllocRunLine.qbo_account_id)
     )).scalars().all()
     return serialize_run(run, list(lines))
+
+
+async def _load_run(db: AsyncSession, run_id: uuid.UUID) -> AllocRun:
+    run = (await db.execute(select(AllocRun).where(AllocRun.id == run_id))).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Allocation run not found.")
+    return run
+
+
+async def _load_entry(db: AsyncSession, run: AllocRun) -> ProposedEntry | None:
+    """The reclass entry this run produced, keyed on (source, source_ref)."""
+    return (await db.execute(
+        select(ProposedEntry).where(
+            ProposedEntry.source == "allocation",
+            ProposedEntry.source_ref == str(run.id),
+        ).order_by(ProposedEntry.created_at.desc())
+    )).scalars().first()
+
+
+@router.get("/runs/{run_id}/journal-entry")
+async def get_journal_entry(
+    run_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The reclass journal entry for review before it's exported or posted.
+
+    Returns `available: false` with a reason rather than 404 when there's
+    nothing to post — no inventory account configured, or nothing capitalized —
+    so the UI can explain the gap instead of showing a broken panel.
+    """
+    run = await _load_run(db, run_id)
+    entry = await _load_entry(db, run)
+    if entry is None:
+        return {
+            "available": False,
+            "reason": (
+                "No journal entry was produced. Set the inventory account under "
+                "Settings, then re-run the period."
+                if not run.blocked_reason else run.blocked_reason
+            ),
+            "lines": [], "total_debits": "0.00", "total_credits": "0.00", "balanced": True,
+        }
+
+    lines = entry.lines or []
+    dr = sum((Decimal(str(ln.get("debit") or 0)) for ln in lines), Decimal("0.00"))
+    cr = sum((Decimal(str(ln.get("credit") or 0)) for ln in lines), Decimal("0.00"))
+    return {
+        "available": True,
+        "reason": None,
+        "entry_id": str(entry.id),
+        "status": entry.status,
+        "description": entry.description,
+        "memo": entry.memo,
+        "rationale": entry.rationale,
+        "period_end": entry.period_end.isoformat(),
+        "lines": lines,
+        "total_debits": f"{dr:.2f}",
+        "total_credits": f"{cr:.2f}",
+        "balanced": dr == cr,
+    }
+
+
+@router.get("/runs/{run_id}/journal-entry.csv")
+async def export_journal_entry_csv(
+    run_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The reclass entry as a QuickBooks Online 'Import journal entries' CSV.
+
+    Uses the SAME builder as the Adjustments export, so the column layout is
+    identical to the one already proven against QBO — one row per JE line,
+    lines sharing a Journal No so QBO groups them into a single entry. Labelled
+    471C-n rather than ADJ-n so a capitalization entry is recognisable in
+    QuickBooks without opening it.
+    """
+    run = await _load_run(db, run_id)
+    entry = await _load_entry(db, run)
+    if entry is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This run produced no journal entry. Set the inventory account "
+                "under Settings, then re-run the period."
+            ),
+        )
+
+    csv_text = build_qbo_je_csv([entry], journal_no_prefix="471C")
+    filename = f"471c-journal-entry-{run.period_end.isoformat()}.csv"
+    return Response(
+        # utf-8-sig — the BOM is what makes Excel read a QBO account name like
+        # "Café supplies" correctly instead of as mojibake.
+        content=csv_text.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/runs/{run_id}/workpaper.csv")
+async def export_workpaper_csv(
+    run_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The per-account allocation detail — the workpaper body, for review or
+    attaching to the tax file. Header rows carry the drivers actually applied,
+    so the file stands on its own away from the app."""
+    run = await _load_run(db, run_id)
+    lines = (await db.execute(
+        select(AllocRunLine)
+        .where(AllocRunLine.run_id == run_id)
+        .order_by(AllocRunLine.pool_name, AllocRunLine.account_number, AllocRunLine.qbo_account_id)
+    )).scalars().all()
+
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["Section 471(c) cost allocation workpaper"])
+    w.writerow(["Period", f"{run.period_start.isoformat()} to {run.period_end.isoformat()}"])
+    w.writerow(["Status", run.status])
+    w.writerow(["Payroll factor", run.payroll_factor or ""])
+    w.writerow(["Occupancy factor", run.occupancy_factor or ""])
+    w.writerow([])
+    w.writerow([
+        "Account no.", "Account", "Pool", "Treatment", "Driver", "Rate applied",
+        "Gross", "Capitalized", "Disallowed",
+    ])
+    for ln in lines:
+        w.writerow([
+            ln.account_number or "", ln.account_name or ln.qbo_account_id,
+            ln.pool_name, ln.treatment, ln.driver or "",
+            f"{ln.driver_pct:.6f}" if ln.driver_pct is not None else "",
+            f"{ln.gross_amount:.2f}", f"{ln.capitalized_amount:.2f}", f"{ln.disallowed_amount:.2f}",
+        ])
+    w.writerow([])
+    w.writerow([
+        "", "TOTAL", "", "", "", "",
+        f"{run.total_expenses or 0:.2f}",
+        f"{run.capitalized_total or 0:.2f}",
+        f"{run.disallowed_total or 0:.2f}",
+    ])
+
+    filename = f"471c-workpaper-{run.period_end.isoformat()}.csv"
+    return Response(
+        content=buf.getvalue().encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/runs/{run_id}/approve")

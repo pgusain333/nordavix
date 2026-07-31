@@ -26,7 +26,7 @@ const NAV: NavItem[] = [
   { label: "Clients",  path: "/allocation",          icon: Building2,         end: true },
   { label: "Runs",     path: "/allocation/runs",     icon: ListChecks },
   { label: "Setup",    path: "/allocation/setup",    icon: SlidersHorizontal },
-  { label: "Settings", path: "/allocation/settings", icon: Settings },
+  { label: "Settings", path: "/allocation/setup?tab=settings", icon: Settings },
 ]
 
 interface Props {

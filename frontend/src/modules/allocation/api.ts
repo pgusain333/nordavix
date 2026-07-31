@@ -300,7 +300,74 @@ async function approveRun(id: string): Promise<AllocRun> {
   return data
 }
 
+// ── Journal entry + exports ───────────────────────────────────────────────────
+
+export interface JeLine {
+  account_name: string
+  account_qbo_id?: string | null
+  debit: string
+  credit: string
+}
+
+export interface JournalEntry {
+  available: boolean
+  reason: string | null
+  entry_id?: string
+  status?: string
+  description?: string
+  memo?: string | null
+  rationale?: string | null
+  period_end?: string
+  lines: JeLine[]
+  total_debits: string
+  total_credits: string
+  balanced: boolean
+}
+
+async function getJournalEntry(runId: string): Promise<JournalEntry> {
+  const { data } = await apiClient.get<JournalEntry>(`${BASE}/runs/${runId}/journal-entry`)
+  return data
+}
+
+/** Download a CSV the server generated. Honors the server's filename. */
+async function downloadCsv(path: string, fallbackName: string): Promise<void> {
+  const resp = await apiClient.get(path, { responseType: "blob", timeout: 60_000 })
+  const cd = (resp.headers as Record<string, string>)["content-disposition"] ?? ""
+  const name = cd.match(/filename="([^"]+)"/)?.[1] ?? fallbackName
+  const url = URL.createObjectURL(new Blob([resp.data], { type: "text/csv;charset=utf-8" }))
+  const a = document.createElement("a")
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/** QuickBooks Online "Import journal entries" CSV for the run's reclass entry. */
+async function downloadJournalEntryCsv(runId: string, periodEnd: string): Promise<void> {
+  await downloadCsv(`${BASE}/runs/${runId}/journal-entry.csv`, `471c-journal-entry-${periodEnd}.csv`)
+}
+
+/** The per-account allocation detail — the workpaper body. */
+async function downloadWorkpaperCsv(runId: string, periodEnd: string): Promise<void> {
+  await downloadCsv(`${BASE}/runs/${runId}/workpaper.csv`, `471c-workpaper-${periodEnd}.csv`)
+}
+
+export interface QboAccount {
+  qbo_account_id: string
+  account_number: string | null
+  account_name: string
+  account_type: string
+}
+
+async function listInventoryAccounts(): Promise<QboAccount[]> {
+  const { data } = await apiClient.get<QboAccount[]>(`${BASE}/inventory-accounts`)
+  return data
+}
+
 export const allocationApi = {
+  getJournalEntry, downloadJournalEntryCsv, downloadWorkpaperCsv, listInventoryAccounts,
   getSettings, updateSettings,
   listPools, createPool, updatePool, deactivatePool, seedDefaultPools,
   listAccounts, mapAccount,

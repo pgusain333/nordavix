@@ -547,12 +547,16 @@ def match_entry_to_qbo(entry: ProposedEntry, qbo_jes: list[dict]) -> str | None:
     return None
 
 
-def build_qbo_je_csv(entries: list[ProposedEntry]) -> str:
+def build_qbo_je_csv(entries: list[ProposedEntry], *, journal_no_prefix: str = "ADJ") -> str:
     """Render saved adjusting entries as a QuickBooks Online Accountant
     'Import journal entries' CSV. Each JE line is a row; the lines of one entry
-    share a Journal No (``ADJ-n``) so QBO groups them into a single journal
+    share a Journal No (``<prefix>-n``) so QBO groups them into a single journal
     entry. Journal Date is the period end (MM/DD/YYYY). Only the entries passed
-    in are included — the caller filters to the saved/approved set."""
+    in are included — the caller filters to the saved/approved set.
+
+    `journal_no_prefix` lets a different producer label its entries — the
+    §471(c) allocation uses "471C" so a capitalization entry is recognisable in
+    QuickBooks without opening it. Defaults to the original "ADJ"."""
     import csv
     import io
 
@@ -560,7 +564,7 @@ def build_qbo_je_csv(entries: list[ProposedEntry]) -> str:
     writer = csv.writer(buf, lineterminator="\n")
     writer.writerow(_QBO_JE_HEADERS)
     for i, e in enumerate(entries, start=1):
-        journal_no = f"ADJ-{i}"
+        journal_no = f"{journal_no_prefix}-{i}"
         jdate = e.period_end.strftime("%m/%d/%Y")
         description = (e.memo or e.description or "").strip()[:1000]
         for ln in (e.lines or []):

@@ -615,6 +615,46 @@ async def import_payroll(
 
 # ── Readiness ─────────────────────────────────────────────────────────────────
 
+@router.get("/inventory-accounts")
+async def list_inventory_accounts(
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Balance-sheet accounts the reclass entry could debit.
+
+    Exists so the inventory account is PICKED from the client's real chart
+    rather than typed as an id — a typo there produces a journal entry that
+    posts to the wrong account.
+    """
+    from modules.cost_allocation.service import _fetch_account_types
+
+    conn = (await db.execute(select(QboConnection))).scalars().first()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="QuickBooks isn't connected for this client.")
+
+    try:
+        accounts = await _fetch_account_types(conn, db)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Could not read accounts from QuickBooks: {exc}"
+        ) from exc
+
+    wanted = {"Other Current Asset", "Current Asset", "Inventory", "Fixed Asset", "Other Asset"}
+    out = [
+        {
+            "qbo_account_id": aid,
+            "account_number": str(a.get("AcctNum") or "") or None,
+            "account_name": str(a.get("Name") or ""),
+            "account_type": str(a.get("AccountType") or ""),
+        }
+        for aid, a in accounts.items()
+        if str(a.get("AccountType") or "") in wanted
+    ]
+    out.sort(key=lambda r: (r["account_number"] or "", r["account_name"]))
+    return out
+
+
 @router.get("/readiness")
 async def readiness(
     tenant_id: CurrentTenantId,
