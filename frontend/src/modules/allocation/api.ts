@@ -306,6 +306,55 @@ async function approveRun(id: string): Promise<AllocRun> {
   return data
 }
 
+// ── Payroll register ──────────────────────────────────────────────────────────
+
+export interface PayrollPreviewRow {
+  name: string | null
+  external_id: string | null
+  gross_wages: string
+  employer_taxes: string
+  benefits: string
+  /** Null when the row didn't match a classified employee. */
+  matched_employee_id: string | null
+  matched_name: string | null
+  matched_function: string | null
+}
+
+export interface PayrollPreview {
+  headers: string[]
+  mapping: Record<string, string | null>
+  rows: PayrollPreviewRow[]
+  matched_count: number
+  unmatched_count: number
+}
+
+/** Parse a register and show what WOULD import. Writes nothing. */
+async function previewPayroll(file: File): Promise<PayrollPreview> {
+  const form = new FormData()
+  form.append("file", file)
+  const { data } = await apiClient.post<PayrollPreview>(`${BASE}/payroll/preview`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 60_000,
+  })
+  return data
+}
+
+async function importPayroll(body: {
+  period_start: string
+  period_end: string
+  create_missing: boolean
+  rows: {
+    external_id: string | null
+    name: string | null
+    gross_wages: number
+    employer_taxes: number
+    benefits: number
+  }[]
+}): Promise<{ imported: number; unmatched: string[]; created: string[]; period_end: string }> {
+  const { data } = await apiClient.post(`${BASE}/payroll/import`, body, { timeout: 60_000 })
+  return data
+}
+
 // ── Journal entry + exports ───────────────────────────────────────────────────
 
 export interface JeLine {
@@ -373,6 +422,7 @@ async function listInventoryAccounts(): Promise<QboAccount[]> {
 }
 
 export const allocationApi = {
+  previewPayroll, importPayroll,
   getJournalEntry, downloadJournalEntryCsv, downloadWorkpaperCsv, listInventoryAccounts,
   getSettings, updateSettings,
   listPools, createPool, updatePool, deactivatePool, seedDefaultPools,

@@ -449,6 +449,50 @@ def test_new_registry_rows_apply_to_a_closed_period():
     assert is_effective(epoch, date(2026, 6, 30), period_end) is True
 
 
+# ── Payroll register column detection ─────────────────────────────────────────
+
+def test_payroll_columns_detected_across_providers():
+    """Every provider names the same three things differently.
+
+    Gated because a mis-detected column is silent: read the wrong column as
+    gross pay and the payroll factor shifts, changing how much cost capitalizes.
+    """
+    from modules.cost_allocation.payroll_parser import detect_payroll_columns, to_decimal
+
+    adp = detect_payroll_columns(
+        ["Associate ID", "Employee Name", "Gross Pay", "Employer Taxes", "Employer Benefits"],
+    )
+    assert adp["external_id"] == "Associate ID"
+    assert adp["name"] == "Employee Name"
+    assert adp["gross_wages"] == "Gross Pay"
+    assert adp["employer_taxes"] == "Employer Taxes"
+
+    gusto = detect_payroll_columns(["Employee", "Employee ID", "Gross Earnings", "Company Taxes"])
+    assert gusto["name"] == "Employee"
+    assert gusto["external_id"] == "Employee ID"
+    assert gusto["gross_wages"] == "Gross Earnings"
+    assert gusto["employer_taxes"] == "Company Taxes"
+
+    # "Gross Pay" must win over a bare "Pay Period", and a column is claimed once.
+    tricky = detect_payroll_columns(["Pay Period", "Worker", "Gross Pay", "Payroll Taxes"])
+    assert tricky["gross_wages"] == "Gross Pay"
+    assert tricky["name"] == "Worker"
+    claimed = [v for v in tricky.values() if v]
+    assert len(claimed) == len(set(claimed)), tricky
+
+    # Missing columns resolve to None rather than grabbing something wrong.
+    sparse = detect_payroll_columns(["Employee", "Gross Pay"])
+    assert sparse["employer_taxes"] is None and sparse["benefits"] is None
+
+    # Money cells as they actually arrive in exports.
+    assert to_decimal("$1,234.56") == D("1234.56")
+    assert to_decimal("(500.00)") == D("-500.00")
+    assert to_decimal("") == D("0.00")
+    assert to_decimal("—") == D("0.00")
+    assert to_decimal(None) == D("0.00")
+    assert to_decimal("garbage") == D("0.00")
+
+
 if __name__ == "__main__":
     test_factors_are_fractions_in_range()
     test_every_line_splits_to_gross_and_total_is_preserved()
@@ -462,4 +506,5 @@ if __name__ == "__main__":
     test_reclass_entry_balances_including_negative_amounts()
     test_template_defaults_to_disallowed_when_unsure()
     test_new_registry_rows_apply_to_a_closed_period()
+    test_payroll_columns_detected_across_providers()
     print("ALLOCATION_ENGINE_OK")

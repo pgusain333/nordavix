@@ -11,8 +11,8 @@
 import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
-  AlertTriangle, Building2, CalendarDays, CheckCircle2,
-  Layers, ListTree, Settings as SettingsIcon, Users, XCircle,
+  AlertTriangle, Building2, CalendarDays, CheckCircle2, Layers, ListTree,
+  Receipt, Settings as SettingsIcon, Users, XCircle,
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { Spinner } from "@/core/ui"
@@ -22,15 +22,17 @@ import { AccountsPanel } from "../components/AccountsPanel"
 import { SpacesPanel } from "../components/SpacesPanel"
 import { EmployeesPanel } from "../components/EmployeesPanel"
 import { SettingsPanel } from "../components/SettingsPanel"
+import { PayrollPanel } from "../components/PayrollPanel"
 import { MonthPicker, monthRange, useAllocationPeriod } from "../components/MonthPicker"
 
-type TabId = "pools" | "accounts" | "spaces" | "employees" | "settings"
+type TabId = "pools" | "accounts" | "spaces" | "employees" | "payroll" | "settings"
 
 const TABS: { id: TabId; label: string; icon: typeof Layers }[] = [
   { id: "pools",     label: "Pools",     icon: Layers },
   { id: "accounts",  label: "Accounts",  icon: ListTree },
   { id: "spaces",    label: "Spaces",    icon: Building2 },
   { id: "employees", label: "Employees", icon: Users },
+  { id: "payroll",   label: "Payroll",   icon: Receipt },
   { id: "settings",  label: "Settings",  icon: SettingsIcon },
 ]
 
@@ -40,6 +42,7 @@ function tabForFix(fix: string): TabId {
   if (fix.includes("accounts"))  return "accounts"
   if (fix.includes("spaces"))    return "spaces"
   if (fix.includes("employees")) return "employees"
+  if (fix.includes("payroll"))   return "payroll"
   if (fix.includes("settings"))  return "settings"
   return "pools"
 }
@@ -185,6 +188,7 @@ export function AllocationSetup() {
         {tab === "accounts"  && <AccountsPanel periodStart={periodStart} periodEnd={periodEnd} />}
         {tab === "spaces"    && <SpacesPanel periodEnd={periodEnd} />}
         {tab === "employees" && <EmployeesPanel periodEnd={periodEnd} />}
+        {tab === "payroll"   && <PayrollPanel periodStart={periodStart} periodEnd={periodEnd} />}
         {tab === "settings"  && <SettingsPanel />}
       </div>
     </div>

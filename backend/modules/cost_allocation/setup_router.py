@@ -18,7 +18,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +34,7 @@ from models.cost_allocation import (
 )
 from models.qbo_connection import QboConnection
 from models.user import User
+from modules.cost_allocation.payroll_parser import match_rows, parse_payroll_file
 from modules.cost_allocation.service import fetch_expense_chart
 from modules.cost_allocation.setup_service import (
     MAP_EPOCH,
@@ -544,6 +545,57 @@ class PayrollImportBody(BaseModel):
     period_start: date
     period_end: date
     rows: list[PayrollRowBody]
+    # Create an unclassified employee for any row that didn't match, so a first
+    # import doesn't require hand-entering the whole roster. They land at 0%
+    # production — wrong in the conservative direction, and visible on the
+    # Employees tab for the preparer to classify.
+    create_missing: bool = False
+
+
+@router.post("/payroll/preview")
+async def preview_payroll(
+    tenant_id: CurrentTenantId,
+    file: UploadFile = File(...),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Parse an uploaded register and show what WOULD be imported.
+
+    Nothing is written. The response carries the detected column mapping, the
+    parsed rows, and which employee each row matched — so the preparer confirms
+    the guess before any wage lands in a factor.
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=422, detail="That file is empty.")
+    try:
+        headers, mapping, rows = parse_payroll_file(raw, file.filename or "register.csv")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not read that payroll register: {exc}",
+        ) from exc
+
+    if not rows:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No employee rows found. Check that the file has a header row "
+                "with an employee name and a gross pay column."
+            ),
+        )
+
+    employees = (await db.execute(select(AllocEmployee))).scalars().all()
+    matched = match_rows(rows, list(employees))
+    return {
+        "headers": headers,
+        "mapping": mapping,
+        "rows": matched,
+        "matched_count": sum(1 for r in matched if r["matched_employee_id"]),
+        "unmatched_count": sum(1 for r in matched if not r["matched_employee_id"]),
+    }
 
 
 @router.post("/payroll/import", status_code=status.HTTP_201_CREATED)
@@ -576,6 +628,7 @@ async def import_payroll(
 
     imported = 0
     unmatched: list[str] = []
+    created: list[str] = []
     batch = uuid.uuid4().hex[:16]
 
     for row in body.rows:
@@ -584,6 +637,23 @@ async def import_payroll(
             emp = by_ext.get(row.external_id)
         if emp is None and row.name:
             emp = by_name.get(row.name.strip().lower())
+
+        if emp is None and body.create_missing and row.name:
+            # Unclassified and 0% production: the wage counts in the DENOMINATOR
+            # of the payroll factor but not the numerator, so an unreviewed
+            # roster understates capitalization rather than overstating it.
+            emp = AllocEmployee(
+                id=uuid.uuid4(), tenant_id=tenant_id, name=row.name.strip(),
+                external_id=row.external_id, function="shared",
+                production_pct=_d(0), effective_from=MAP_EPOCH, active=True,
+            )
+            db.add(emp)
+            await db.flush()
+            by_name[emp.name.strip().lower()] = emp
+            if emp.external_id:
+                by_ext[emp.external_id] = emp
+            created.append(emp.name)
+
         if emp is None:
             unmatched.append(row.name or row.external_id or "(unnamed)")
             continue
@@ -607,6 +677,7 @@ async def import_payroll(
         action="allocation.payroll_imported", entity_type="alloc_payroll_entry", entity_id=None,
         metadata={"summary": (
             f"Imported {imported} payroll rows for {body.period_end.isoformat()}"
+            + (f"; created {len(created)} employees" if created else "")
             + (f"; {len(unmatched)} unmatched" if unmatched else "")
         )},
     )
@@ -614,6 +685,7 @@ async def import_payroll(
     return {
         "imported": imported,
         "unmatched": unmatched,
+        "created": created,
         "period_end": body.period_end.isoformat(),
     }
 
