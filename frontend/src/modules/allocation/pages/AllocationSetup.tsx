@@ -187,7 +187,7 @@ export function AllocationSetup() {
         {tab === "pools"     && <PoolsPanel />}
         {tab === "accounts"  && <AccountsPanel periodStart={periodStart} periodEnd={periodEnd} />}
         {tab === "spaces"    && <SpacesPanel periodEnd={periodEnd} />}
-        {tab === "employees" && <EmployeesPanel periodEnd={periodEnd} />}
+        {tab === "employees" && <EmployeesPanel periodEnd={periodEnd} onGoToPayroll={() => setTab("payroll")} />}
         {tab === "payroll"   && <PayrollPanel periodStart={periodStart} periodEnd={periodEnd} />}
         {tab === "settings"  && <SettingsPanel />}
       </div>

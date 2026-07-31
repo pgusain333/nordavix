@@ -37,6 +37,19 @@ _HINTS: dict[str, tuple[str, ...]] = {
         "employee name", "employee full name", "full name", "worker name",
         "employee", "worker", "name",
     ),
+    # Providers carry the client's own org structure — ADP "Home Department",
+    # Gusto "Department", KayaPush "Location/Department". It's the client's own
+    # classification of the person, which makes it the best available signal for
+    # production vs retail vs admin.
+    "department": (
+        "home department", "department description", "department name",
+        "department", "dept", "division", "cost center", "work location",
+        "location",
+    ),
+    "job_title": (
+        "job title", "position title", "position", "job description", "title",
+        "role", "occupation", "job",
+    ),
     "gross_wages": (
         "gross pay", "gross wages", "total gross", "gross earnings", "gross",
         "total earnings", "earnings", "wages", "salary",
@@ -52,8 +65,65 @@ _HINTS: dict[str, tuple[str, ...]] = {
 }
 
 # Order matters: a column is claimed once, by the first role that wants it, so
-# roles whose hints are narrower are resolved first.
-_ROLE_ORDER = ("external_id", "gross_wages", "employer_taxes", "benefits", "name")
+# roles whose hints are narrower are resolved first. `job_title` resolves before
+# `name` so "Employee Name" vs "Job Title" can't cross-claim.
+_ROLE_ORDER = (
+    "external_id", "gross_wages", "employer_taxes", "benefits",
+    "department", "job_title", "name",
+)
+
+# ── Department / title → suggested function ──────────────────────────────────
+# Non-production groups are checked FIRST: when a department name is ambiguous,
+# the suggestion must fall on the side that does NOT capitalize — same ordering
+# principle as the COA template. Unknown → "shared" at 0%.
+_FUNCTION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("retail", (
+        "retail", "dispensary", "budtend", "sales", "store", "front of house",
+        "cashier", "delivery", "curbside",
+    )),
+    ("admin", (
+        "admin", "office", "human resource", "hr", "finance", "account",
+        "compliance", "legal", "marketing", "security",
+    )),
+    ("management", ("management", "executive", "general manager", "gm", "director")),
+    ("cultivation", (
+        "cultivat", "grow", "garden", "flower", "veg", "nursery", "propagation",
+        "harvest", "trim", "post harvest",
+    )),
+    ("processing", (
+        "process", "extract", "manufactur", "lab", "kitchen", "infusion",
+        "production",
+    )),
+    ("packaging", ("packag", "labeling", "labelling")),
+)
+
+# Kept in step with engine.PRODUCTION_EMPLOYEE_FUNCTIONS.
+_PRODUCTION_FUNCTIONS = frozenset({"cultivation", "processing", "packaging"})
+
+
+def suggest_employee_function(
+    department: str | None, job_title: str | None,
+) -> tuple[str, int, str]:
+    """(function, default production %, reason) from the register's own labels.
+
+    The department is the CLIENT's classification of the person — their books
+    and records — which is exactly what §471(c) keys off. Still a suggestion:
+    the preview shows it per row and the preparer confirms before import.
+
+    Department outranks title ("Retail — Inventory Specialist" is retail), and
+    with nothing recognizable the person lands in "shared" at 0% production —
+    counted against the payroll factor but never toward it.
+    """
+    for source, label in (("department", department), ("job title", job_title)):
+        text = (label or "").strip().lower()
+        if not text:
+            continue
+        for function, keywords in _FUNCTION_RULES:
+            for kw in keywords:
+                if kw in text:
+                    pct = 100 if function in _PRODUCTION_FUNCTIONS else 0
+                    return function, pct, f"{source} '{label}' matched '{kw}'"
+    return "shared", 0, "no recognizable department or title — left unclassified"
 
 
 def detect_payroll_columns(headers: list[str]) -> dict[str, str | None]:
@@ -149,15 +219,80 @@ def parse_payroll_file(
         if gross == 0 and taxes == 0 and benefits == 0:
             continue  # nothing to allocate for this person this period
 
+        department = cell(raw, "department")
+        job_title = cell(raw, "job_title")
+        function, pct, reason = suggest_employee_function(department, job_title)
+
         rows.append({
             "name": name or None,
             "external_id": external_id or None,
+            "department": department or None,
+            "job_title": job_title or None,
             "gross_wages": str(gross),
             "employer_taxes": str(taxes),
             "benefits": str(benefits),
+            "suggested_function": function,
+            "suggested_production_pct": pct,
+            "suggestion_reason": reason,
         })
 
-    return headers, resolved, rows
+    return headers, resolved, aggregate_rows(rows)
+
+
+def aggregate_rows(rows: list[dict]) -> list[dict]:
+    """Combine repeated appearances of the same person into one row.
+
+    Registers routinely list somebody more than once in a month — semi-monthly
+    payroll is two runs, and some exports emit a row per earnings code. The
+    month's wage for that person is the SUM of those rows.
+
+    This is also what stops the import crashing: alloc_payroll_entry is UNIQUE
+    on (tenant, employee, period), so two rows for one person meant two inserts
+    for the same key, an IntegrityError, and a 500 the browser reported as a
+    bare "Network Error".
+
+    Identity is external_id when present, else the lower-cased name — the same
+    precedence the matcher uses, so aggregation and matching can't disagree.
+    """
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+
+    for row in rows:
+        key = (row.get("external_id") or "").strip().lower()
+        if not key:
+            key = f"name:{(row.get('name') or '').strip().lower()}"
+        if not key or key == "name:":
+            continue
+
+        if key not in merged:
+            merged[key] = {**row, "pay_runs": 1}
+            order.append(key)
+            continue
+
+        prior = merged[key]
+        prior["pay_runs"] += 1
+        for field in ("gross_wages", "employer_taxes", "benefits"):
+            prior[field] = str(to_decimal(prior[field]) + to_decimal(row[field]))
+        # Keep the first non-empty department/title — later rows for the same
+        # person are the same job, and a blank on a later run shouldn't erase it.
+        for field in ("department", "job_title"):
+            if not prior.get(field) and row.get(field):
+                prior[field] = row[field]
+        if not prior.get("name") and row.get("name"):
+            prior["name"] = row["name"]
+
+    # Re-derive the suggestion once the department/title are fully populated.
+    out: list[dict] = []
+    for key in order:
+        row = merged[key]
+        function, pct, reason = suggest_employee_function(
+            row.get("department"), row.get("job_title"),
+        )
+        row["suggested_function"] = function
+        row["suggested_production_pct"] = pct
+        row["suggestion_reason"] = reason
+        out.append(row)
+    return out
 
 
 def match_rows(rows: list[dict], employees: list) -> list[dict]:

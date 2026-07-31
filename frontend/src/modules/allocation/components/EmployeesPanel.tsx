@@ -1,17 +1,22 @@
 /**
- * EmployeesPanel — who counts as production, and by how much.
+ * EmployeesPanel — review who counts as production, and by how much.
  *
- * QuickBooks won't tell a grower from a budtender, so the classification lives
- * here. Production % handles the working owner who spends 60% of their time in
- * the grow: the split is stated once and applied consistently, which is exactly
- * what an examiner wants to see.
+ * The roster is BUILT BY THE PAYROLL IMPORT, not typed here. The register
+ * already carries the client's own department and job title, which is the
+ * books-and-records basis §471(c) keys off — far better evidence than a
+ * preparer's unsourced judgement, and far less work than re-keying a roster.
  *
- * Wages are NOT entered here — they arrive monthly from the payroll register,
- * so the classification stays stable while the dollars change.
+ * So this screen's job is confirmation: it surfaces the register's labels
+ * beside the function they produced, and puts the people nobody has classified
+ * at the top, because those are the only ones that need a decision. Manual add
+ * stays available for someone genuinely off-payroll (an owner drawing no wage).
+ *
+ * Wages are not entered here — they arrive monthly with the register, so the
+ * classification stays stable while the dollars change.
  */
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus, Trash2, Users } from "lucide-react"
+import { ArrowRight, CheckCircle2, Plus, Trash2, Upload, Users } from "lucide-react"
 import { Button, Input, Select, Spinner } from "@/core/ui"
 import { allocationApi, type Employee, type EmployeeInput } from "../api"
 import { isEffective } from "./MonthPicker"
@@ -25,16 +30,24 @@ const PRODUCTION = new Set(["cultivation", "processing", "packaging"])
 
 const EMPTY: EmployeeInput = { name: "", function: "cultivation", production_pct: 100 }
 
-export function EmployeesPanel({ periodEnd }: { periodEnd: string }) {
+interface Props {
+  periodEnd: string
+  /** Jump to the Payroll tab — where the roster actually comes from. */
+  onGoToPayroll?: () => void
+}
+
+export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
   const [form, setForm] = useState<EmployeeInput>(EMPTY)
   const [editing, setEditing] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const qc = useQueryClient()
 
   const { data: employees = [], isLoading } = useQuery({
     queryKey: ["allocation", "employees"],
     queryFn:  allocationApi.listEmployees,
+    staleTime: 30_000,
   })
 
   // Active AND in force for the period on screen — the same rule the run
@@ -45,6 +58,21 @@ export function EmployeesPanel({ periodEnd }: { periodEnd: string }) {
     ),
     [employees, periodEnd],
   )
+
+  // Unclassified first: those are the only rows that need a decision.
+  const sorted = useMemo(() => {
+    const rank = (e: Employee) =>
+      e.function === "shared" && Number(e.production_pct) === 0 ? 0 : 1
+    return [...live].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+  }, [live])
+
+  const stats = useMemo(() => {
+    const unclassified = live.filter(
+      (e) => e.function === "shared" && Number(e.production_pct) === 0,
+    ).length
+    const production = live.filter((e) => Number(e.production_pct) > 0).length
+    return { unclassified, production }
+  }, [live])
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["allocation", "employees"] })
@@ -63,11 +91,29 @@ export function EmployeesPanel({ periodEnd }: { periodEnd: string }) {
   })
   const retire = useMutation({ mutationFn: allocationApi.retireEmployee, onSuccess: invalidate, onError })
 
+  /** Inline reclassify straight from the row — the common action. */
+  const reclassify = useMutation({
+    mutationFn: (v: { e: Employee; fn: string }) =>
+      allocationApi.updateEmployee(v.e.id, {
+        name: v.e.name,
+        function: v.fn,
+        production_pct: PRODUCTION.has(v.fn) ? 100 : 0,
+        external_id: v.e.external_id,
+        department: v.e.department,
+        job_title: v.e.job_title,
+      }),
+    onMutate: (v) => { setBusyId(v.e.id); setError(null) },
+    onSettled: () => setBusyId(null),
+    onSuccess: invalidate,
+    onError,
+  })
+
   function startEdit(e: Employee) {
     setEditing(e.id)
     setForm({
       name: e.name, function: e.function,
       production_pct: Number(e.production_pct), external_id: e.external_id,
+      department: e.department, job_title: e.job_title,
     })
     setError(null); setShowForm(true)
   }
@@ -81,23 +127,55 @@ export function EmployeesPanel({ periodEnd }: { periodEnd: string }) {
     save.mutate({ ...form, name: form.name.trim() })
   }
 
-  if (isLoading) return <div className="flex justify-center py-10"><Spinner className="h-5 w-5" /></div>
+  if (isLoading) {
+    return (
+      <div className="rounded-xl px-4 py-10 flex justify-center"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <Spinner className="h-5 w-5" />
+      </div>
+    )
+  }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 ndvx-fade-in">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-          {live.length} classified · wages come from the monthly payroll register
+          {live.length} on the roster · {stats.production} count as production
+          {stats.unclassified > 0 && (
+            <span style={{ color: "var(--warn)" }}> · {stats.unclassified} unclassified</span>
+          )}
         </p>
-        <Button onClick={() => { setEditing(null); setForm(EMPTY); setError(null); setShowForm((v) => !v) }}
-          icon={<Plus size={14} strokeWidth={1.8} />}>
-          Add employee
-        </Button>
+        <div className="flex gap-2">
+          {onGoToPayroll && (
+            <Button variant="outline" onClick={onGoToPayroll}
+              icon={<Upload size={14} strokeWidth={1.8} />}>
+              Import register
+            </Button>
+          )}
+          <Button variant="outline"
+            onClick={() => { setEditing(null); setForm(EMPTY); setError(null); setShowForm((v) => !v) }}
+            icon={<Plus size={14} strokeWidth={1.8} />}>
+            Add manually
+          </Button>
+        </div>
       </div>
 
+      {stats.unclassified > 0 && (
+        <p className="text-[11px] flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
+          <Users size={12} strokeWidth={2} className="mt-[2px] shrink-0" />
+          Unclassified people sit at 0% production — their wages count against the
+          payroll factor but not toward it, so capitalization is understated until
+          you set their function. Change it inline below.
+        </p>
+      )}
+
       {showForm && (
-        <div className="rounded-xl p-4 space-y-3"
+        <div className="rounded-xl p-4 space-y-3 ndvx-fade-in"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            Most people arrive with the payroll register. Add manually only for
+            someone genuinely off-payroll.
+          </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
               <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Name</span>
@@ -148,6 +226,8 @@ export function EmployeesPanel({ periodEnd }: { periodEnd: string }) {
         </div>
       )}
 
+      {error && !showForm && <p className="text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
+
       {live.length === 0 ? (
         <div className="rounded-xl px-6 py-12 flex flex-col items-center text-center"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -155,44 +235,81 @@ export function EmployeesPanel({ periodEnd }: { periodEnd: string }) {
             style={{ background: "var(--green-subtle)" }}>
             <Users size={18} strokeWidth={1.7} style={{ color: "var(--green)" }} />
           </div>
-          <p className="text-sm font-medium text-theme">No employees classified</p>
-          <p className="text-xs mt-1 max-w-sm" style={{ color: "var(--text-muted)" }}>
-            Payroll-driven pools need to know who works in production. QuickBooks
-            can&rsquo;t tell a grower from a budtender, so the split is stated here.
+          <p className="text-sm font-medium text-theme">No roster yet</p>
+          <p className="text-xs mt-1 max-w-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            Import the payroll register and the roster builds itself — the file&rsquo;s own
+            department and job title classify each person, so there&rsquo;s nothing to type.
           </p>
+          {onGoToPayroll && (
+            <button onClick={onGoToPayroll}
+              className="inline-flex items-center gap-1 text-xs font-medium mt-3"
+              style={{ color: "var(--green)" }}>
+              Import the register <ArrowRight size={12} strokeWidth={2} />
+            </button>
+          )}
         </div>
       ) : (
         <div className="rounded-xl overflow-hidden"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div className="grid grid-cols-[minmax(0,2fr)_1fr_1fr_auto] gap-3 px-4 py-2.5 text-[11px]"
+          <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1.1fr)_auto_auto] gap-3 px-4 py-2.5 text-[11px]"
             style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
-            <span>Employee</span><span>Function</span>
-            <span className="text-right">Production</span><span />
+            <span>Employee</span>
+            <span>Per the register</span>
+            <span>Function</span>
+            <span className="text-right">Production</span>
+            <span />
           </div>
-          {live.map((e, i) => (
-            <div key={e.id} className="grid grid-cols-[minmax(0,2fr)_1fr_1fr_auto] gap-3 items-center px-4 py-2.5"
-              style={{ borderTop: i === 0 ? undefined : "1px solid var(--border)" }}>
-              <div className="min-w-0">
-                <div className="text-[13px] text-theme truncate">{e.name}</div>
-                {e.external_id && (
-                  <div className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>{e.external_id}</div>
-                )}
+          {sorted.map((e, i) => {
+            const unclassified = e.function === "shared" && Number(e.production_pct) === 0
+            return (
+              <div key={e.id}
+                className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1.1fr)_auto_auto] gap-3 items-center px-4 py-2 transition-colors"
+                style={{
+                  borderTop: i === 0 ? undefined : "1px solid var(--border)",
+                  background: unclassified ? "var(--warn-subtle)" : undefined,
+                  opacity: busyId === e.id ? 0.55 : 1,
+                }}>
+                <div className="min-w-0">
+                  <div className="text-[13px] text-theme truncate">{e.name}</div>
+                  {e.external_id && (
+                    <div className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>{e.external_id}</div>
+                  )}
+                </div>
+                <div className="min-w-0 text-[11.5px]" style={{ color: "var(--text-2)" }}>
+                  <div className="truncate">{e.department ?? "—"}</div>
+                  {e.job_title && (
+                    <div className="truncate text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+                      {e.job_title}
+                    </div>
+                  )}
+                </div>
+                <Select value={e.function} disabled={busyId === e.id}
+                  onChange={(ev) => reclassify.mutate({ e, fn: ev.target.value })}>
+                  {FUNCTIONS.map((f) => (
+                    <option key={f} value={f}>
+                      {f[0].toUpperCase() + f.slice(1)}{PRODUCTION.has(f) ? " (production)" : ""}
+                    </option>
+                  ))}
+                </Select>
+                <span className="text-right text-[13px] tabular-nums whitespace-nowrap"
+                  style={{ color: Number(e.production_pct) > 0 ? "var(--green)" : "var(--text-muted)" }}>
+                  {Number(e.production_pct) > 0 && (
+                    <CheckCircle2 size={11} strokeWidth={2.4} className="inline mr-1 -mt-0.5" />
+                  )}
+                  {Number(e.production_pct).toFixed(0)}%
+                </span>
+                <div className="flex items-center gap-1 justify-self-end">
+                  <button onClick={() => startEdit(e)}
+                    className="text-[12px] font-medium px-2 py-1 rounded-md"
+                    style={{ color: "var(--green)" }}>Edit</button>
+                  <button onClick={() => retire.mutate(e.id)} aria-label={`Remove ${e.name}`}
+                    className="p-1 rounded-md" style={{ color: "var(--text-muted)" }}>
+                    <Trash2 size={14} strokeWidth={1.8} />
+                  </button>
+                </div>
               </div>
-              <span className="text-[12px] capitalize" style={{ color: "var(--text-2)" }}>{e.function}</span>
-              <span className="text-right text-[13px] tabular-nums"
-                style={{ color: Number(e.production_pct) > 0 ? "var(--green)" : "var(--text-muted)" }}>
-                {Number(e.production_pct).toFixed(0)}%
-              </span>
-              <div className="flex items-center gap-1">
-                <button onClick={() => startEdit(e)} className="text-[12px] font-medium px-2 py-1 rounded-md"
-                  style={{ color: "var(--green)" }}>Edit</button>
-                <button onClick={() => retire.mutate(e.id)} aria-label={`Retire ${e.name}`}
-                  className="p-1 rounded-md" style={{ color: "var(--text-muted)" }}>
-                  <Trash2 size={14} strokeWidth={1.8} />
-                </button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

@@ -14,6 +14,7 @@ Mounted under the same /api/allocation prefix as the run endpoints.
 Writes require `preparer`; changing the method election requires `reviewer`,
 since it's the tax position rather than bookkeeping.
 """
+import logging
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -49,6 +50,7 @@ from modules.cost_allocation.setup_service import (
 from modules.cost_allocation.templates import suggest_mapping
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _d(v) -> Decimal | None:
@@ -539,6 +541,12 @@ class PayrollRowBody(BaseModel):
     gross_wages: float = 0
     employer_taxes: float = 0
     benefits: float = 0
+    # Carried from the register so a newly created employee arrives already
+    # classified, with the client's own labels as the evidence for it.
+    department: str | None = None
+    job_title: str | None = None
+    function: str | None = None
+    production_pct: float | None = None
 
 
 class PayrollImportBody(BaseModel):
@@ -617,14 +625,23 @@ async def import_payroll(
     by_ext = {e.external_id: e for e in employees if e.external_id}
     by_name = {e.name.strip().lower(): e for e in employees}
 
-    existing = {
-        (p.employee_id): p for p in (await db.execute(
+    # Keyed by employee so a person can only ever have ONE entry per period.
+    # alloc_payroll_entry is UNIQUE on (tenant, employee, period): this dict is
+    # updated as we go, so a register listing somebody twice (semi-monthly runs,
+    # or a row per earnings code) accumulates onto the same entry instead of
+    # attempting a second insert — which used to raise IntegrityError and
+    # surface in the browser as an unexplained "Network Error".
+    entries: dict[uuid.UUID, AllocPayrollEntry] = {
+        p.employee_id: p for p in (await db.execute(
             select(AllocPayrollEntry).where(
                 AllocPayrollEntry.period_start == body.period_start,
                 AllocPayrollEntry.period_end == body.period_end,
             )
         )).scalars().all()
     }
+    # Which entries this import has already written to, so the first row for a
+    # person REPLACES the prior month's figure and later rows ADD to it.
+    touched: set[uuid.UUID] = set()
 
     imported = 0
     unmatched: list[str] = []
@@ -639,13 +656,19 @@ async def import_payroll(
             emp = by_name.get(row.name.strip().lower())
 
         if emp is None and body.create_missing and row.name:
-            # Unclassified and 0% production: the wage counts in the DENOMINATOR
-            # of the payroll factor but not the numerator, so an unreviewed
-            # roster understates capitalization rather than overstating it.
+            # The register's own department/title drive the suggested function.
+            # When nothing is recognizable this lands on "shared" at 0%: the
+            # wage counts in the DENOMINATOR of the payroll factor but not the
+            # numerator, so an unreviewed roster understates capitalization
+            # rather than overstating it.
+            function = row.function or "shared"
+            pct = row.production_pct if row.production_pct is not None else 0
             emp = AllocEmployee(
                 id=uuid.uuid4(), tenant_id=tenant_id, name=row.name.strip(),
-                external_id=row.external_id, function="shared",
-                production_pct=_d(0), effective_from=MAP_EPOCH, active=True,
+                external_id=row.external_id,
+                department=(row.department or None), job_title=(row.job_title or None),
+                function=function, production_pct=_d(pct),
+                effective_from=MAP_EPOCH, active=True,
             )
             db.add(emp)
             await db.flush()
@@ -653,24 +676,41 @@ async def import_payroll(
             if emp.external_id:
                 by_ext[emp.external_id] = emp
             created.append(emp.name)
+        elif emp is not None and (row.department or row.job_title):
+            # Keep the source labels current on someone already on file — it's
+            # the evidence behind their classification.
+            emp.department = row.department or emp.department
+            emp.job_title = row.job_title or emp.job_title
 
         if emp is None:
             unmatched.append(row.name or row.external_id or "(unnamed)")
             continue
 
-        entry = existing.get(emp.id)
+        entry = entries.get(emp.id)
         if entry is None:
             entry = AllocPayrollEntry(
                 id=uuid.uuid4(), tenant_id=tenant_id, employee_id=emp.id,
                 period_start=body.period_start, period_end=body.period_end,
             )
             db.add(entry)
-        entry.gross_wages = _d(row.gross_wages)
-        entry.employer_taxes = _d(row.employer_taxes)
-        entry.benefits = _d(row.benefits)
+            entries[emp.id] = entry
+
+        if emp.id in touched:
+            # Same person again in this file — accumulate.
+            entry.gross_wages    = (entry.gross_wages or _d(0)) + _d(row.gross_wages)
+            entry.employer_taxes = (entry.employer_taxes or _d(0)) + _d(row.employer_taxes)
+            entry.benefits       = (entry.benefits or _d(0)) + _d(row.benefits)
+        else:
+            # First sight this import — replace whatever was there before, so
+            # re-importing a corrected register doesn't double-count.
+            entry.gross_wages    = _d(row.gross_wages)
+            entry.employer_taxes = _d(row.employer_taxes)
+            entry.benefits       = _d(row.benefits)
+            touched.add(emp.id)
+            imported += 1
+
         entry.source = "import"
         entry.import_batch = batch
-        imported += 1
 
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
@@ -681,7 +721,26 @@ async def import_payroll(
             + (f"; {len(unmatched)} unmatched" if unmatched else "")
         )},
     )
-    await db.commit()
+
+    # An unhandled exception here returns a 500 that never passes through the
+    # CORS middleware, so the browser reports it as "Network Error" with nothing
+    # to act on. Commit failures become a real message instead.
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.exception(
+            "allocation payroll import failed for tenant %s period %s",
+            tenant_id, body.period_end,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Could not save the payroll register. This usually means the file "
+                "lists the same employee under two different identities. Check the "
+                f"preview for duplicates and try again. ({type(exc).__name__})"
+            ),
+        ) from exc
     return {
         "imported": imported,
         "unmatched": unmatched,

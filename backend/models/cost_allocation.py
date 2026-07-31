@@ -242,6 +242,15 @@ class AllocEmployee(TenantBase):
     external_id:     Mapped[str | None] = mapped_column(String(80), index=True)
     qbo_employee_id: Mapped[str | None] = mapped_column(String(50))
 
+    # The client's OWN labels, carried straight from the payroll register (ADP
+    # "Home Department", Gusto "Department", plus job title). Kept because they
+    # are the books-and-records basis for the classification below — an examiner
+    # asking "why is this person production?" gets "their employer's own payroll
+    # department says Cultivation", which is far stronger than a preparer's
+    # unsourced judgement.
+    department: Mapped[str | None] = mapped_column(String(120))
+    job_title:  Mapped[str | None] = mapped_column(String(120))
+
     # cultivation | processing | packaging | retail | admin | management | shared
     function: Mapped[str] = mapped_column(String(24), nullable=False)
     production_pct: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False, default=0)

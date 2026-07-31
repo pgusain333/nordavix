@@ -175,6 +175,7 @@ def serialize_employee(e: AllocEmployee) -> dict:
     return {
         "id": str(e.id), "name": e.name, "external_id": e.external_id,
         "qbo_employee_id": e.qbo_employee_id, "function": e.function,
+        "department": e.department, "job_title": e.job_title,
         "production_pct": str(e.production_pct),
         "default_production_pct": str(100 if e.function in PRODUCTION_EMPLOYEE_FUNCTIONS else 0),
         "effective_from": e.effective_from.isoformat(),

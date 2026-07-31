@@ -493,6 +493,81 @@ def test_payroll_columns_detected_across_providers():
     assert to_decimal("garbage") == D("0.00")
 
 
+# ── Repeated register rows must aggregate, not collide ────────────────────────
+
+def test_repeated_employees_aggregate_into_one_row():
+    """The bug behind the import's unexplained "Network Error".
+
+    alloc_payroll_entry is UNIQUE on (tenant, employee, period). A register
+    listing somebody twice — semi-monthly payroll is two runs, and some exports
+    emit a row per earnings code — produced two inserts for the same key, an
+    IntegrityError, and a 500 that never passed through the CORS middleware, so
+    the browser showed only "Network Error".
+
+    Aggregating is also the correct accounting: the month's wage for a person is
+    the sum of that month's pay runs.
+    """
+    from modules.cost_allocation.payroll_parser import aggregate_rows
+
+    rows = [
+        {"name": "Jane Doe", "external_id": "E1", "department": "Cultivation", "job_title": None,
+         "gross_wages": "1000.00", "employer_taxes": "100.00", "benefits": "50.00"},
+        {"name": "Jane Doe", "external_id": "E1", "department": "", "job_title": None,
+         "gross_wages": "1200.50", "employer_taxes": "120.00", "benefits": "50.00"},
+        {"name": "Bob Ray", "external_id": "E2", "department": "Retail", "job_title": None,
+         "gross_wages": "900.00", "employer_taxes": "90.00", "benefits": "0.00"},
+    ]
+    out = aggregate_rows(rows)
+    assert len(out) == 2, out
+
+    jane = next(r for r in out if r["external_id"] == "E1")
+    assert jane["gross_wages"] == "2200.50"
+    assert jane["employer_taxes"] == "220.00"
+    assert jane["benefits"] == "100.00"
+    assert jane["pay_runs"] == 2
+    # A blank department on the second run must not erase the first.
+    assert jane["department"] == "Cultivation"
+    assert jane["suggested_function"] == "cultivation"
+
+    bob = next(r for r in out if r["external_id"] == "E2")
+    assert bob["pay_runs"] == 1 and bob["suggested_function"] == "retail"
+
+    # Falls back to name when the register carries no employee id.
+    no_ids = aggregate_rows([
+        {"name": "Sam Lee", "external_id": None, "department": None, "job_title": None,
+         "gross_wages": "500.00", "employer_taxes": "0", "benefits": "0"},
+        {"name": "sam lee", "external_id": None, "department": None, "job_title": None,
+         "gross_wages": "250.00", "employer_taxes": "0", "benefits": "0"},
+    ])
+    assert len(no_ids) == 1 and no_ids[0]["gross_wages"] == "750.00"
+
+
+def test_department_drives_the_suggested_function_conservatively():
+    """The register's own department is the client's books-and-records answer to
+    "is this person production?" — better evidence than a preparer's judgement.
+
+    Still conservative: ambiguous or unknown lands on shared/0%, so an
+    unreviewed roster understates capitalization rather than overstating it.
+    """
+    from modules.cost_allocation.payroll_parser import suggest_employee_function
+
+    assert suggest_employee_function("Cultivation", None)[:2] == ("cultivation", 100)
+    assert suggest_employee_function("Post Harvest", None)[:2] == ("cultivation", 100)
+    assert suggest_employee_function("Extraction Lab", None)[:2] == ("processing", 100)
+    assert suggest_employee_function("Packaging", None)[:2] == ("packaging", 100)
+    assert suggest_employee_function("Dispensary", None)[:2] == ("retail", 0)
+    assert suggest_employee_function("Accounting", None)[:2] == ("admin", 0)
+
+    # Department outranks title: a "Retail — Inventory Specialist" is retail.
+    assert suggest_employee_function("Retail", "Production Assistant")[0] == "retail"
+    # Title is used when there's no department.
+    assert suggest_employee_function(None, "Head Grower")[0] == "cultivation"
+    # Nothing recognizable → unclassified, never production.
+    unknown = suggest_employee_function("Zone 4", "Specialist II")
+    assert unknown[0] == "shared" and unknown[1] == 0
+    assert suggest_employee_function(None, None)[:2] == ("shared", 0)
+
+
 if __name__ == "__main__":
     test_factors_are_fractions_in_range()
     test_every_line_splits_to_gross_and_total_is_preserved()
@@ -507,4 +582,6 @@ if __name__ == "__main__":
     test_template_defaults_to_disallowed_when_unsure()
     test_new_registry_rows_apply_to_a_closed_period()
     test_payroll_columns_detected_across_providers()
+    test_repeated_employees_aggregate_into_one_row()
+    test_department_drives_the_suggested_function_conservatively()
     print("ALLOCATION_ENGINE_OK")

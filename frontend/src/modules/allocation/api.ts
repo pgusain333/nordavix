@@ -64,6 +64,9 @@ export interface Employee {
   name: string
   external_id: string | null
   qbo_employee_id: string | null
+  /** From the payroll register — the evidence behind the classification. */
+  department: string | null
+  job_title: string | null
   function: string
   production_pct: string
   default_production_pct: string
@@ -252,6 +255,8 @@ export interface EmployeeInput {
   function: string
   production_pct: number
   external_id?: string | null
+  department?: string | null
+  job_title?: string | null
 }
 
 async function listEmployees(): Promise<Employee[]> {
@@ -311,9 +316,18 @@ async function approveRun(id: string): Promise<AllocRun> {
 export interface PayrollPreviewRow {
   name: string | null
   external_id: string | null
+  /** The client's own labels, straight from the register. */
+  department: string | null
+  job_title: string | null
   gross_wages: string
   employer_taxes: string
   benefits: string
+  /** How many times this person appeared in the file (pay runs, earnings codes). */
+  pay_runs: number
+  /** Function inferred from the department/title, with the reason. */
+  suggested_function: string
+  suggested_production_pct: number
+  suggestion_reason: string
   /** Null when the row didn't match a classified employee. */
   matched_employee_id: string | null
   matched_name: string | null
@@ -349,6 +363,11 @@ async function importPayroll(body: {
     gross_wages: number
     employer_taxes: number
     benefits: number
+    department: string | null
+    job_title: string | null
+    /** Applied only when creating a new employee. */
+    function: string | null
+    production_pct: number | null
   }[]
 }): Promise<{ imported: number; unmatched: string[]; created: string[]; period_end: string }> {
   const { data } = await apiClient.post(`${BASE}/payroll/import`, body, { timeout: 60_000 })
