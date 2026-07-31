@@ -117,7 +117,7 @@ export function PoolsPanel() {
         </p>
         <div className="flex gap-2">
           {pools.length === 0 && (
-            <Button variant="secondary" onClick={() => seed.mutate()} loading={seed.isPending}
+            <Button variant="outline" onClick={() => seed.mutate()} loading={seed.isPending}
               icon={<Sparkles size={14} strokeWidth={1.8} />}>
               Use cannabis template
             </Button>
@@ -193,7 +193,7 @@ export function PoolsPanel() {
 
           <div className="flex gap-2">
             <Button onClick={submit} loading={save.isPending}>{editing ? "Save changes" : "Create pool"}</Button>
-            <Button variant="secondary" onClick={() => { setShowForm(false); setEditing(null); setError(null) }}>
+            <Button variant="outline" onClick={() => { setShowForm(false); setEditing(null); setError(null) }}>
               Cancel
             </Button>
           </div>

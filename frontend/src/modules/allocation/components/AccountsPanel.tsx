@@ -126,7 +126,7 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
           {data.unmapped_count > 0 && ` · ${data.unmapped_count} to review`}
         </p>
         {highConfidence.length > 0 && (
-          <Button variant="secondary" onClick={acceptHighConfidence} loading={busy}
+          <Button variant="outline" onClick={acceptHighConfidence} loading={busy}
             icon={<CheckCheck size={14} strokeWidth={1.8} />}>
             Accept {highConfidence.length} high-confidence
           </Button>

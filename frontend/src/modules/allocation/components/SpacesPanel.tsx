@@ -150,7 +150,7 @@ export function SpacesPanel() {
           {error && <p className="text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
           <div className="flex gap-2">
             <Button onClick={submit} loading={save.isPending}>{editing ? "Save changes" : "Add space"}</Button>
-            <Button variant="secondary" onClick={() => { setShowForm(false); setEditing(null); setError(null) }}>
+            <Button variant="outline" onClick={() => { setShowForm(false); setEditing(null); setError(null) }}>
               Cancel
             </Button>
           </div>

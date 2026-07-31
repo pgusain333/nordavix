@@ -133,7 +133,7 @@ export function EmployeesPanel() {
             <Button onClick={submit} loading={save.isPending}>
               {editing ? "Save changes" : "Add employee"}
             </Button>
-            <Button variant="secondary" onClick={() => { setShowForm(false); setEditing(null); setError(null) }}>
+            <Button variant="outline" onClick={() => { setShowForm(false); setEditing(null); setError(null) }}>
               Cancel
             </Button>
           </div>
