@@ -101,6 +101,7 @@ _INVARIANT_FILES = {
     "test_qbo_retry.py",          # QBO 429 / 5xx retry-backoff contract
     "test_qbo_token_refresh.py",  # per-realm serialized token refresh (no race)
     "test_autopilot_watchdog.py", # stale autopilot-run reclaim (no permanent lock-out)
+    "test_allocation_engine.py",  # §471(c) allocation (penny-exact pools, §280E split)
 }
 
 
