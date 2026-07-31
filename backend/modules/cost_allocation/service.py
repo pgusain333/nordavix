@@ -55,6 +55,7 @@ from modules.cost_allocation.engine import (
     allocate_period,
     build_factors,
     build_reclass_entry,
+    is_effective,
     roll_forward_cogs,
 )
 from modules.flux.service import parse_qbo_pl_amounts
@@ -72,11 +73,12 @@ EXPENSE_ACCOUNT_TYPES = frozenset({"Expense", "Other Expense", "Cost of Goods So
 # ── Loading the client's configuration ────────────────────────────────────────
 
 def _effective(rows, period_end: date):
-    """Rows in force at period_end (effective-dated registries)."""
-    return [
-        r for r in rows
-        if r.effective_from <= period_end and (r.effective_to is None or r.effective_to >= period_end)
-    ]
+    """Rows in force at period_end (effective-dated registries).
+
+    The rule itself lives in the engine, where it's covered by the deploy gate —
+    it decides which drivers a run can see.
+    """
+    return [r for r in rows if is_effective(r.effective_from, r.effective_to, period_end)]
 
 
 async def load_config(db: AsyncSession, period_end: date):
@@ -205,6 +207,50 @@ async def fetch_period_expenses(
             account_name=(str(meta.get("Name")) if meta.get("Name") else None),
         ))
     rows.sort(key=lambda r: (r.account_number or "", r.qbo_account_id))
+    return rows, accounts
+
+
+async def fetch_expense_chart(
+    conn: QboConnection, db: AsyncSession, period_start: date, period_end: date,
+) -> tuple[list[ExpenseRow], dict[str, dict]]:
+    """EVERY active expense account, with this period's amount where there is one.
+
+    Distinct from fetch_period_expenses, which returns only what moved in the
+    month — right for a RUN, wrong for the mapping screen. An account with no
+    March activity still needs a pool before April's run, so showing only the
+    active ones left most of the chart unmappable and made setup look broken.
+
+    The period amount is context here, not a gate: if the P&L pull fails the
+    chart still lists, just without amounts, because the user can still map.
+    """
+    accounts = await _fetch_account_types(conn, db)
+    if not accounts:
+        raise AllocationInputError(
+            "Could not read the QuickBooks chart of accounts. Retry, or reconnect "
+            "QuickBooks."
+        )
+
+    amounts: dict[str, Decimal] = {}
+    try:
+        report = await fetch_profit_and_loss(conn, period_end, period_start=period_start)
+        amounts = {str(k): v for k, v in parse_qbo_pl_amounts(report).items()}
+    except Exception:
+        logger.warning(
+            "allocation: P&L pull failed while listing the expense chart — "
+            "accounts will list without period amounts.", exc_info=True,
+        )
+
+    rows: list[ExpenseRow] = []
+    for acct_id, meta in accounts.items():
+        if str(meta.get("AccountType")) not in EXPENSE_ACCOUNT_TYPES:
+            continue
+        rows.append(ExpenseRow(
+            qbo_account_id=str(acct_id),
+            amount=amounts.get(str(acct_id), ZERO),
+            account_number=(str(meta.get("AcctNum")) if meta.get("AcctNum") else None),
+            account_name=(str(meta.get("Name")) if meta.get("Name") else None),
+        ))
+    rows.sort(key=lambda r: (r.account_number or "", r.account_name or "", r.qbo_account_id))
     return rows, accounts
 
 

@@ -9,27 +9,18 @@
  * The page answers three questions in order: is this client ready, what did the
  * last run conclude, and what do I do next.
  */
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import {
-  AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight,
-  Play, Settings2, XCircle,
+  AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, Play, Settings2, XCircle,
 } from "lucide-react"
-import { toISODate } from "@/core/lib/dates"
 import { Spinner } from "@/core/ui"
 import { allocationApi, factorPct, money } from "../api"
+import { MonthPicker, defaultPeriodEnd } from "../components/MonthPicker"
 
 export function AllocationDashboard() {
-  const [anchor, setAnchor] = useState(() => {
-    const n = new Date()
-    return new Date(n.getFullYear(), n.getMonth() - 1, 1)
-  })
-
-  const periodEnd = useMemo(
-    () => toISODate(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0)),
-    [anchor],
-  )
+  const [periodEnd, setPeriodEnd] = useState(defaultPeriodEnd)
 
   const { data: readiness, isLoading: loadingReadiness } = useQuery({
     queryKey: ["allocation", "readiness", periodEnd],
@@ -41,7 +32,6 @@ export function AllocationDashboard() {
   })
 
   const current = runs.find((r) => r.period_end === periodEnd && r.status !== "superseded")
-  const shift = (d: number) => setAnchor((a) => new Date(a.getFullYear(), a.getMonth() + d, 1))
 
   const Kpi = ({ label, value, tone }: { label: string; value: string; tone?: string }) => (
     <div className="rounded-lg px-3.5 py-3"
@@ -64,20 +54,9 @@ export function AllocationDashboard() {
               §471(c) inventory costing for the active client
             </p>
           </div>
-          <div className="flex items-center gap-1 rounded-lg px-1 py-1"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <button onClick={() => shift(-1)} aria-label="Previous month"
-              className="h-7 w-7 grid place-items-center rounded-md" style={{ color: "var(--text-2)" }}>
-              <ChevronLeft size={15} strokeWidth={1.8} />
-            </button>
-            <span className="flex items-center gap-1.5 px-2 text-[13px] font-medium text-theme whitespace-nowrap">
-              <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-              {anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-            </span>
-            <button onClick={() => shift(1)} aria-label="Next month"
-              className="h-7 w-7 grid place-items-center rounded-md" style={{ color: "var(--text-2)" }}>
-              <ChevronRight size={15} strokeWidth={1.8} />
-            </button>
+          <div className="flex items-center gap-2">
+            <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+            <MonthPicker value={periodEnd} onChange={setPeriodEnd} />
           </div>
         </div>
 
@@ -135,7 +114,7 @@ export function AllocationDashboard() {
         {current && !current.blocked_reason && (
           <div className="space-y-2.5">
             <h2 className="text-[13px] font-semibold text-theme">
-              {anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" })} allocation
+              {new Date(periodEnd + "T00:00:00").toLocaleDateString("en-US", { month: "long", year: "numeric" })} allocation
             </h2>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
               <Kpi label="Total expenses" value={money(current.total_expenses)} />

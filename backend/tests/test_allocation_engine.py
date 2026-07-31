@@ -411,6 +411,44 @@ def test_template_defaults_to_disallowed_when_unsure():
     assert typed.pool_name == DIRECT and typed.confidence == "medium"
 
 
+# ── Effective dating: setup must apply to the period being set up ─────────────
+
+def test_new_registry_rows_apply_to_a_closed_period():
+    """The bug this pins: setup that silently did nothing.
+
+    Registries are read as-of the period being worked, which is normally a month
+    that has already closed. Rows were being stamped with today's date, so every
+    space, employee and account mapping a user entered failed this check for the
+    very period they were setting up. Readiness still said "no square footage"
+    right after they'd entered it, and nothing errored.
+
+    The fix is MAP_EPOCH (setup_service): a FIRST row is "has always been true"
+    and applies to every period; only a CHANGE to something existing is dated.
+    """
+    from datetime import date
+
+    from modules.cost_allocation.engine import is_effective
+
+    period_end = date(2026, 6, 30)   # a month that has closed
+    today      = date(2026, 7, 31)   # when the user is doing the setup
+    epoch      = date(2000, 1, 1)    # MAP_EPOCH
+
+    # The bug: stamped with today, invisible to the period being set up.
+    assert is_effective(today, None, period_end) is False
+    # The fix: a first-time row applies to that period, and to earlier ones.
+    assert is_effective(epoch, None, period_end) is True
+    assert is_effective(epoch, None, date(2019, 1, 31)) is True
+
+    # A dated CHANGE applies from its own period forward, not before.
+    changed_from = date(2026, 6, 1)
+    assert is_effective(changed_from, None, period_end) is True
+    assert is_effective(changed_from, None, date(2026, 5, 31)) is False
+
+    # A closed row stops applying after its end date, and still applies on it.
+    assert is_effective(epoch, date(2026, 5, 31), period_end) is False
+    assert is_effective(epoch, date(2026, 6, 30), period_end) is True
+
+
 if __name__ == "__main__":
     test_factors_are_fractions_in_range()
     test_every_line_splits_to_gross_and_total_is_preserved()
@@ -423,4 +461,5 @@ if __name__ == "__main__":
     test_eligibility_gate_blocks_above_threshold_and_picks_the_prong()
     test_reclass_entry_balances_including_negative_amounts()
     test_template_defaults_to_disallowed_when_unsure()
+    test_new_registry_rows_apply_to_a_closed_period()
     print("ALLOCATION_ENGINE_OK")

@@ -38,6 +38,19 @@ logger = logging.getLogger(__name__)
 # examined allocation, so it's surfaced as a warning rather than left implicit.
 DRIVER_STALE_DAYS = 365
 
+# The date a FIRST-TIME registry row starts from.
+#
+# Registries are effective-dated and every read is evaluated as-of the period
+# being worked, which is normally a month that has already closed. Stamping a
+# new row with today's date therefore made it invisible to the very period the
+# user was setting up — they'd add square footage, and readiness would still say
+# there was none. Setup silently did nothing.
+#
+# So the first row for a thing is "has always been true": it applies to every
+# period, forward and back. Only a CHANGE to something that already exists is
+# dated, because only then is there history worth preserving.
+MAP_EPOCH = date(2000, 1, 1)
+
 
 async def get_or_create_settings(db: AsyncSession, tenant_id: uuid.UUID) -> AllocSettings:
     cfg = (await db.execute(select(AllocSettings))).scalars().first()
@@ -111,20 +124,28 @@ async def set_account_pool(
         )
     )).scalars().first()
 
-    if live is not None:
+    if live is None:
+        # First time this account has been mapped — there's no history to
+        # preserve, so it applies to every period rather than only to months
+        # after today. Without this, mapping an account never took effect for
+        # the (already closed) period the user was working on.
+        starts = MAP_EPOCH
+    else:
         if live.pool_id == pool_id:
             # Same pool — refresh the denormalized labels and stop.
             live.account_number = account_number or live.account_number
             live.account_name = account_name or live.account_name
             return live
-        # The partial-unique index allows one live row per account, so the old
-        # one must close before the new one opens.
-        live.effective_to = max(effective_from - timedelta(days=1), live.effective_from)
+        # A real change: date it from the period being worked so the new pool
+        # applies there, and close the old row the day before so the partial
+        # unique index (one live row per account) still holds.
+        starts = effective_from
+        live.effective_to = max(starts - timedelta(days=1), live.effective_from)
 
     row = AllocAccountMap(
         id=uuid.uuid4(), tenant_id=tenant_id, qbo_account_id=qbo_account_id,
         account_number=account_number, account_name=account_name,
-        pool_id=pool_id, effective_from=effective_from,
+        pool_id=pool_id, effective_from=starts,
     )
     db.add(row)
     await db.flush()

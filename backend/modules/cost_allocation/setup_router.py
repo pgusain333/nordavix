@@ -34,8 +34,9 @@ from models.cost_allocation import (
 )
 from models.qbo_connection import QboConnection
 from models.user import User
-from modules.cost_allocation.service import fetch_period_expenses
+from modules.cost_allocation.service import fetch_expense_chart
 from modules.cost_allocation.setup_service import (
+    MAP_EPOCH,
     compute_readiness,
     get_or_create_settings,
     seed_default_pools,
@@ -294,7 +295,9 @@ async def list_accounts(
     mapped = {m.qbo_account_id: m for m in account_map_rows}
 
     try:
-        expenses, accounts_meta = await fetch_period_expenses(conn, db, period_start, period_end)
+        # The whole expense chart, not just what moved this month — an
+        # account with no activity in the viewed period still needs a pool.
+        expenses, accounts_meta = await fetch_expense_chart(conn, db, period_start, period_end)
     except Exception as exc:
         raise HTTPException(
             status_code=502, detail=f"Could not read accounts from QuickBooks: {exc}"
@@ -395,7 +398,9 @@ async def create_space(
         id=uuid.uuid4(), tenant_id=tenant_id, name=body.name.strip(),
         function=body.function, square_feet=_d(body.square_feet),
         production_pct=_d(body.production_pct),
-        effective_from=body.effective_from or date.today(), notes=body.notes,
+        # MAP_EPOCH, not today — see setup_service. A space stamped with
+        # today's date is invisible to the (already closed) month being set up.
+        effective_from=body.effective_from or MAP_EPOCH, notes=body.notes,
     )
     db.add(space)
     await db.commit()
@@ -475,7 +480,7 @@ async def create_employee(
         id=uuid.uuid4(), tenant_id=tenant_id, name=body.name.strip(),
         external_id=body.external_id, qbo_employee_id=body.qbo_employee_id,
         function=body.function, production_pct=_d(body.production_pct),
-        effective_from=body.effective_from or date.today(), active=True,
+        effective_from=body.effective_from or MAP_EPOCH, active=True,
     )
     db.add(emp)
     await db.commit()

@@ -63,6 +63,9 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
         pool_id: v.poolId,
         account_number: v.row.account_number,
         account_name: v.row.account_name,
+        // Date a CHANGE into the period on screen so the new pool applies
+        // there. A first-time mapping is backdated server-side regardless.
+        effective_from: periodStart,
       }),
     onSuccess: invalidate,
     onError: (e: unknown) => {
@@ -77,7 +80,8 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
       for (const row of highConfidence) {
         const poolId = poolIdByName.get(row.suggested_pool!)
         if (poolId) await allocationApi.mapAccount(row.qbo_account_id, {
-          pool_id: poolId, account_number: row.account_number, account_name: row.account_name,
+          pool_id: poolId, account_number: row.account_number,
+          account_name: row.account_name, effective_from: periodStart,
         })
       }
       invalidate()

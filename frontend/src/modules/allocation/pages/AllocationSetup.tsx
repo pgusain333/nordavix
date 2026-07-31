@@ -11,11 +11,10 @@
 import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
-  AlertTriangle, Building2, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight,
+  AlertTriangle, Building2, CalendarDays, CheckCircle2,
   Layers, ListTree, Settings as SettingsIcon, Users, XCircle,
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
-import { toISODate } from "@/core/lib/dates"
 import { Spinner } from "@/core/ui"
 import { allocationApi } from "../api"
 import { PoolsPanel } from "../components/PoolsPanel"
@@ -23,6 +22,7 @@ import { AccountsPanel } from "../components/AccountsPanel"
 import { SpacesPanel } from "../components/SpacesPanel"
 import { EmployeesPanel } from "../components/EmployeesPanel"
 import { SettingsPanel } from "../components/SettingsPanel"
+import { MonthPicker, defaultPeriodEnd, monthRange } from "../components/MonthPicker"
 
 type TabId = "pools" | "accounts" | "spaces" | "employees" | "settings"
 
@@ -46,10 +46,7 @@ function tabForFix(fix: string): TabId {
 
 export function AllocationSetup() {
   // Declared before the queries whose option closures read them.
-  const [anchor, setAnchor] = useState(() => {
-    const now = new Date()
-    return new Date(now.getFullYear(), now.getMonth() - 1, 1)
-  })
+  const [periodEnd, setPeriodEnd] = useState(defaultPeriodEnd)
   // ?tab= lets the nav and the readiness checklist deep-link a specific panel,
   // so "no inventory account" can route straight to where it's fixed.
   const [params, setParams] = useSearchParams()
@@ -65,20 +62,14 @@ export function AllocationSetup() {
   }
 
   // Local calendar dates — never toISOString(), which shifts the month in any
-  // timezone behind UTC and would silently allocate the wrong period.
-  const { periodStart, periodEnd } = useMemo(() => ({
-    periodStart: toISODate(new Date(anchor.getFullYear(), anchor.getMonth(), 1)),
-    periodEnd:   toISODate(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0)),
-  }), [anchor])
+  // timezone behind UTC and would silently address the wrong period.
+  const { periodStart } = useMemo(() => monthRange(periodEnd), [periodEnd])
 
   const { data: readiness, isLoading } = useQuery({
     queryKey: ["allocation", "readiness", periodEnd],
     queryFn:  () => allocationApi.getReadiness(periodEnd),
     staleTime: 15_000,
   })
-
-  const shiftMonth = (d: number) =>
-    setAnchor((a) => new Date(a.getFullYear(), a.getMonth() + d, 1))
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -91,22 +82,9 @@ export function AllocationSetup() {
               Pools, account mapping, square footage and employee classifications
             </p>
           </div>
-          <div className="flex items-center gap-1 rounded-lg px-1 py-1"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <button onClick={() => shiftMonth(-1)} aria-label="Previous month"
-              className="flex items-center justify-center h-7 w-7 rounded-md"
-              style={{ color: "var(--text-2)" }}>
-              <ChevronLeft size={15} strokeWidth={1.8} />
-            </button>
-            <span className="flex items-center gap-1.5 px-2 text-[13px] font-medium text-theme whitespace-nowrap">
-              <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-              {anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-            </span>
-            <button onClick={() => shiftMonth(1)} aria-label="Next month"
-              className="flex items-center justify-center h-7 w-7 rounded-md"
-              style={{ color: "var(--text-2)" }}>
-              <ChevronRight size={15} strokeWidth={1.8} />
-            </button>
+          <div className="flex items-center gap-2">
+            <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+            <MonthPicker value={periodEnd} onChange={setPeriodEnd} />
           </div>
         </div>
 

@@ -12,14 +12,12 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import {
-  AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Play,
-} from "lucide-react"
-import { toISODate } from "@/core/lib/dates"
+import { AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, Play } from "lucide-react"
 import { Button, Input, Spinner } from "@/core/ui"
 import { allocationApi, factorPct, money, type AllocRun } from "../api"
 import { WorkpaperTable } from "../components/WorkpaperTable"
 import { JournalEntryPanel } from "../components/JournalEntryPanel"
+import { MonthPicker, defaultPeriodEnd, monthRange } from "../components/MonthPicker"
 
 const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
   draft:       { bg: "var(--surface-2)",   fg: "var(--text-2)" },
@@ -30,10 +28,7 @@ const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
 
 export function AllocationRuns() {
   // Declared before the queries whose closures read them.
-  const [anchor, setAnchor] = useState(() => {
-    const n = new Date()
-    return new Date(n.getFullYear(), n.getMonth() - 1, 1)
-  })
+  const [periodEnd, setPeriodEnd] = useState(defaultPeriodEnd)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [beginning, setBeginning] = useState("")
   const [ending, setEnding] = useState("")
@@ -41,10 +36,7 @@ export function AllocationRuns() {
   const [error, setError] = useState<string | null>(null)
   const qc = useQueryClient()
 
-  const { periodStart, periodEnd } = useMemo(() => ({
-    periodStart: toISODate(new Date(anchor.getFullYear(), anchor.getMonth(), 1)),
-    periodEnd:   toISODate(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0)),
-  }), [anchor])
+  const { periodStart } = useMemo(() => monthRange(periodEnd), [periodEnd])
 
   const { data: runs = [], isLoading } = useQuery({
     queryKey: ["allocation", "runs"],
@@ -99,9 +91,9 @@ export function AllocationRuns() {
     },
   })
 
-  const shift = (d: number) => {
-    setAnchor((a) => new Date(a.getFullYear(), a.getMonth() + d, 1))
-    setSelectedId(null)
+  const pickMonth = (pe: string) => {
+    setPeriodEnd(pe)
+    setSelectedId(null)   // show the new month's run, not the last viewed one
     setError(null)
   }
 
@@ -123,20 +115,9 @@ export function AllocationRuns() {
               One §471(c) allocation per client per month
             </p>
           </div>
-          <div className="flex items-center gap-1 rounded-lg px-1 py-1"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <button onClick={() => shift(-1)} aria-label="Previous month"
-              className="h-7 w-7 grid place-items-center rounded-md" style={{ color: "var(--text-2)" }}>
-              <ChevronLeft size={15} strokeWidth={1.8} />
-            </button>
-            <span className="flex items-center gap-1.5 px-2 text-[13px] font-medium text-theme whitespace-nowrap">
-              <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-              {anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-            </span>
-            <button onClick={() => shift(1)} aria-label="Next month"
-              className="h-7 w-7 grid place-items-center rounded-md" style={{ color: "var(--text-2)" }}>
-              <ChevronRight size={15} strokeWidth={1.8} />
-            </button>
+          <div className="flex items-center gap-2">
+            <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+            <MonthPicker value={periodEnd} onChange={pickMonth} />
           </div>
         </div>
 

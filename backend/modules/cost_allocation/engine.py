@@ -234,6 +234,23 @@ def compute_payroll_factor(rows: Sequence[PayrollRow]) -> tuple[Decimal, dict[st
     }
 
 
+def is_effective(effective_from: Any, effective_to: Any, period_end: Any) -> bool:
+    """Is an effective-dated registry row in force at period_end?
+
+    Small, but it decides which spaces, employees and account mappings the run
+    can see — so it decides the drivers, and therefore the numbers.
+
+    It's here (and gated) because getting it subtly wrong is silent: rows stamped
+    with today's date fail this check for any month that has already closed, so
+    a user could complete setup and have every single thing they entered be
+    invisible to the period they were setting up. Nothing errored; setup just
+    did nothing. See MAP_EPOCH in setup_service for the other half of the fix.
+    """
+    if effective_from > period_end:
+        return False
+    return effective_to is None or effective_to >= period_end
+
+
 def required_base_drivers(pools: Sequence[PoolSpec]) -> frozenset[str]:
     """Which base factors these pools actually need.
 

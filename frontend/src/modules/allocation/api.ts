@@ -207,7 +207,13 @@ async function listAccounts(periodStart: string, periodEnd: string): Promise<Acc
 
 async function mapAccount(
   qboAccountId: string,
-  body: { pool_id: string; account_number?: string | null; account_name?: string | null },
+  body: {
+    pool_id: string
+    account_number?: string | null
+    account_name?: string | null
+    /** Only honoured when re-pooling; a first mapping is backdated server-side. */
+    effective_from?: string
+  },
 ): Promise<{ qbo_account_id: string; pool_id: string; pool_name: string }> {
   const { data } = await apiClient.put(`${BASE}/accounts/${qboAccountId}`, body)
   return data
