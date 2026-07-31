@@ -370,6 +370,47 @@ def test_reclass_entry_balances_including_negative_amounts():
     ) is None
 
 
+# ── The COA template must never guess in the aggressive direction ─────────────
+
+def test_template_defaults_to_disallowed_when_unsure():
+    """The risk here is asymmetric, so the default has to lean one way.
+
+    Over-capitalizing moves cost into inventory that §280E says should have
+    stayed disallowed — the aggressive direction, and the one an examiner
+    challenges. Under-capitalizing only costs deductions the preparer will
+    notice. So an unmatched account must land in the excluded pool, and no
+    keyword alone may produce a high-confidence capitalized mapping.
+    """
+    from modules.cost_allocation.templates import (
+        DIRECT,
+        EXCLUDED,
+        FACILITY,
+        suggest_pool,
+    )
+
+    # Unrecognized → excluded, and flagged for review.
+    unknown = suggest_pool("Miscellaneous expense", "6999")
+    assert unknown.pool_name == EXCLUDED and unknown.confidence == "low"
+
+    # Recognizable production and facility costs still route correctly.
+    assert suggest_pool("Nutrients and soil", "5010").pool_name == DIRECT
+    assert suggest_pool("Building rent", "6010").pool_name == FACILITY
+
+    # Retail-qualified costs must NOT be captured by the facility rules —
+    # "dispensary rent" is selling expense, not production overhead.
+    for name in ("Dispensary rent", "Retail utilities", "Storefront security"):
+        assert suggest_pool(name).pool_name == EXCLUDED, name
+
+    # No keyword alone may high-confidence something into inventory.
+    for name in ("Nutrients", "Packaging", "Lab testing", "Extraction solvent"):
+        s = suggest_pool(name)
+        assert s.pool_name == DIRECT and s.confidence != "high", (name, s)
+
+    # A COGS account type is a strong hint but still only a suggestion.
+    typed = suggest_pool("Unlabelled production cost", "5999", "Cost of Goods Sold")
+    assert typed.pool_name == DIRECT and typed.confidence == "medium"
+
+
 if __name__ == "__main__":
     test_factors_are_fractions_in_range()
     test_every_line_splits_to_gross_and_total_is_preserved()
@@ -381,4 +422,5 @@ if __name__ == "__main__":
     test_deterministic_and_negative_amount_safe()
     test_eligibility_gate_blocks_above_threshold_and_picks_the_prong()
     test_reclass_entry_balances_including_negative_amounts()
+    test_template_defaults_to_disallowed_when_unsure()
     print("ALLOCATION_ENGINE_OK")

@@ -17,6 +17,7 @@ from modules.autopilot.router import router as autopilot_router
 from modules.close_workflow.router import router as close_workflow_router
 from modules.comments.router import router as comments_router
 from modules.cost_allocation.router import router as cost_allocation_router
+from modules.cost_allocation.setup_router import router as cost_allocation_setup_router
 from modules.email.router import router as email_router
 from modules.exports.router import router as exports_router
 from modules.feedback.router import router as feedback_router
@@ -147,6 +148,7 @@ app.include_router(adjustments_router,    prefix="/api/adjustments",  tags=["adj
 # Nordavix Allocate — §471(c) cost allocation. A separate product surface; the
 # close app's routes are unaffected.
 app.include_router(cost_allocation_router, prefix="/api/allocation",  tags=["allocation"])
+app.include_router(cost_allocation_setup_router, prefix="/api/allocation", tags=["allocation-setup"])
 app.include_router(assistant_router,      prefix="/api/assistant",    tags=["assistant"])
 app.include_router(pbc_router,            prefix="/api/pbc",          tags=["pbc"])
 app.include_router(pbc_public_router,     prefix="/api/pbc-public",   tags=["pbc-public"])
