@@ -13,6 +13,16 @@ from models.close_review import CloseReview, CloseReviewFinding
 from models.close_step import CloseStepInstance, CloseTemplateStep
 from models.closed_period import ClosedPeriod
 from models.comment import Comment
+from models.cost_allocation import (
+    AllocAccountMap,
+    AllocEmployee,
+    AllocPayrollEntry,
+    AllocPool,
+    AllocRun,
+    AllocRunLine,
+    AllocSettings,
+    AllocSpace,
+)
 from models.evidence_request import EvidenceRequest
 from models.feedback import Feedback
 from models.gl_accuracy_finding import GlAccuracyFinding
@@ -49,6 +59,14 @@ __all__ = [
     "Account",
     "AccountReviewStatus",
     "AIUsage",
+    "AllocAccountMap",
+    "AllocEmployee",
+    "AllocPayrollEntry",
+    "AllocPool",
+    "AllocRun",
+    "AllocRunLine",
+    "AllocSettings",
+    "AllocSpace",
     "AssistantMessage",
     "AssistantThread",
     "KpiTarget",

@@ -25,6 +25,10 @@ import { Badge } from "@/core/ui/components"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { FeedbackDialog } from "@/core/ui/FeedbackDialog"
 import { WorkspaceSwitcher } from "@/core/layout/WorkspaceSwitcher"
+// PRODUCT switcher (close ↔ §471(c) cost allocation) — a different axis from
+// WorkspaceSwitcher above, which switches the client COMPANY. Kept separate on
+// purpose: confusing "which product" with "which client" causes real errors.
+import { ProductSwitcher } from "@/core/layout/ProductSwitcher"
 import { workspaceApi } from "@/modules/workspace/api"
 import { tasksApi } from "@/modules/tasks/api"
 import { reconsApi } from "@/modules/recons/api"
@@ -467,6 +471,9 @@ export function LeftNav({ onClose }: Props) {
           </button>
         )}
       </div>
+
+      {/* Product switcher — the seam to Nordavix Allocate (§471(c)). */}
+      <ProductSwitcher current="close" collapsed={isCollapsed} onNavigate={onClose} />
 
       {/* Org name — click to rename (hidden when collapsed) */}
       {organization && !isCollapsed && (

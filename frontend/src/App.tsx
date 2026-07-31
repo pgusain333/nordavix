@@ -24,6 +24,11 @@ import { MOTION, EASE } from "@/core/motion"
 // Lazy: everything else, each its own chunk fetched on first navigation.
 const ThreePaneLayout = lazy(() => import("@/core/layout/ThreePaneLayout").then(m => ({ default: m.ThreePaneLayout })))
 const WorkspaceGate   = lazy(() => import("@/core/auth/WorkspaceGate").then(m => ({ default: m.WorkspaceGate })))
+// Nordavix Allocate — §471(c) cost allocation. A separate PRODUCT sharing the
+// Clerk login, with its own shell + nav + dashboard. Its own chunks, so a
+// close-app user never downloads it (and vice versa).
+const AllocationLayout = lazy(() => import("@/modules/allocation/AllocationLayout").then(m => ({ default: m.AllocationLayout })))
+const AllocationRoutes = lazy(() => import("@/modules/allocation/AllocationRoutes").then(m => ({ default: m.AllocationRoutes })))
 const AuthPage        = lazy(() => import("@/modules/auth/pages/AuthPage").then(m => ({ default: m.AuthPage })))
 const DashboardHome   = lazy(() => import("@/modules/dashboard/pages/DashboardHome").then(m => ({ default: m.DashboardHome })))
 const FluxDashboard           = lazy(() => import("@/modules/flux/pages/FluxDashboard").then(m => ({ default: m.FluxDashboard })))
@@ -247,6 +252,29 @@ export default function App() {
                   <ThreePaneLayout>
                     <AppRoutes />
                   </ThreePaneLayout>
+                </WorkspaceGate>
+              </SignedIn>
+            </>
+          }
+        />
+
+        {/* Nordavix Allocate — §471(c) cost allocation for cannabis clients.
+            A SIBLING of /app/*, not a child: its own shell, nav and dashboard,
+            so nothing here can affect the month-end close app. Same Clerk
+            session and same WorkspaceGate (an active company is still
+            required), because allocation is always run for a specific client. */}
+        <Route
+          path="/allocation/*"
+          element={
+            <>
+              <SignedOut>
+                <RedirectToSignIn />
+              </SignedOut>
+              <SignedIn>
+                <WorkspaceGate>
+                  <AllocationLayout>
+                    <AllocationRoutes />
+                  </AllocationLayout>
                 </WorkspaceGate>
               </SignedIn>
             </>

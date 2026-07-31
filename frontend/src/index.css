@@ -456,3 +456,27 @@
    is removed when the app shell unmounts). Tune the one value below to taste:
    15px ≈ 94% (gentle), 14px ≈ 88%, 13px ≈ 81% (aggressive). */
 html.app-dense { font-size: 15px; }
+
+/* ── Nordavix Allocate — product accent ────────────────────────────────────
+   The §471(c) cost-allocation product is a SEPARATE product sharing one login,
+   so staff must be able to tell at a glance which one they're in — half a
+   second of ambiguity is a real error risk when both surfaces show dollars.
+   AllocationLayout adds `workspace-allocation` to <html> while mounted.
+
+   Only the BRAND accent moves (--green + the nav rail). The semantic tokens
+   (--positive / --danger / --warn / --info) are deliberately untouched, so
+   approved-green, error-red and warning-amber keep meaning exactly what they
+   mean in the close app. Amber/bronze reads as "tax & advisory" and is far
+   enough from the close app's pine to register instantly. */
+html.workspace-allocation {
+  --green:        #9A6B22;
+  --green-light:  #B8873A;
+  --green-subtle: #F7EEDC;
+  --nav-active:   #8A6420;
+}
+html.workspace-allocation.dark {
+  --green:        #D9A84E;
+  --green-light:  #E8C077;
+  --green-subtle: #3A2C12;
+  --nav-active:   #7A5A1C;
+}
