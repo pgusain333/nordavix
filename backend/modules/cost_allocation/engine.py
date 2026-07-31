@@ -441,6 +441,62 @@ def allocate_period(
 
 # ── Inventory roll-forward ────────────────────────────────────────────────────
 
+def build_reclass_entry(
+    result: AllocationResult,
+    *,
+    inventory_account_id: str,
+    inventory_account_name: str,
+    period_end: Any,
+) -> dict | None:
+    """The monthly journal entry: Dr inventory / Cr the expense accounts.
+
+    Pure, and here rather than in the service, because it has a sharp edge worth
+    locking behind the deploy gate: `replace_open_proposals` SILENTLY DROPS an
+    unbalanced entry. A malformed JE wouldn't error — it would just never appear
+    in the Adjustments queue, and nobody would know the capitalization went
+    unposted.
+
+    The edge is negative capitalized amounts. An expense account carrying a net
+    credit for the period (a vendor rebate, a reversal) gets a negative
+    capitalized share. Writing that as a negative CREDIT would be normalized to
+    zero downstream and silently unbalance the entry, so it's written as a
+    positive DEBIT instead — which is also what it actually is.
+
+    Returns None when there's nothing to post.
+    """
+    postable = [ln for ln in result.lines if ln.capitalized != ZERO]
+    if not postable or result.capitalized_total <= ZERO:
+        return None
+
+    lines: list[dict[str, str]] = [{
+        "account_name": inventory_account_name or "Inventory",
+        "account_qbo_id": inventory_account_id,
+        "debit": str(result.capitalized_total),
+        "credit": "0.00",
+    }]
+    for ln in postable:
+        credit = ln.capitalized > ZERO
+        lines.append({
+            "account_name": ln.account_name or ln.qbo_account_id,
+            "account_qbo_id": ln.qbo_account_id,
+            "debit":  "0.00" if credit else str(-ln.capitalized),
+            "credit": str(ln.capitalized) if credit else "0.00",
+        })
+
+    return {
+        "description": f"§471(c) cost capitalization — {period_end}",
+        "lines": lines,
+        "memo": "Capitalize production-related costs into inventory per the §471(c) allocation.",
+        "rationale": (
+            f"Direct production {result.direct_total} plus allocated overhead "
+            f"{result.allocated_total} capitalized into inventory; "
+            f"{result.disallowed_total} remains non-production and is disallowed "
+            "under §280E. See the allocation workpaper for the drivers applied."
+        ),
+        "confidence": "high",
+    }
+
+
 def roll_forward_cogs(
     beginning_inventory: Decimal,
     capitalized: Decimal,

@@ -28,6 +28,7 @@ from modules.cost_allocation.engine import (
     SpaceRow,
     allocate_period,
     build_factors,
+    build_reclass_entry,
     compute_occupancy_factor,
     compute_payroll_factor,
     evaluate_eligibility,
@@ -305,6 +306,70 @@ def test_eligibility_gate_blocks_above_threshold_and_picks_the_prong():
     assert long_history.gross_receipts_3yr_avg == D("9000000.00")
 
 
+# ── The reclass journal entry must balance ────────────────────────────────────
+
+def _sums(entry):
+    dr = sum(D(ln["debit"]) for ln in entry["lines"])
+    cr = sum(D(ln["credit"]) for ln in entry["lines"])
+    return dr, cr
+
+
+def test_reclass_entry_balances_including_negative_amounts():
+    """An unbalanced entry is SILENTLY DROPPED by replace_open_proposals.
+
+    That's the reason this is a gating test rather than a nicety: a malformed
+    entry wouldn't raise, it would just never reach the Adjustments queue and
+    the capitalization would quietly go unposted.
+    """
+    _, result = _run()
+    entry = build_reclass_entry(
+        result, inventory_account_id="1300",
+        inventory_account_name="Inventory", period_end="2026-03-31",
+    )
+    assert entry is not None
+    dr, cr = _sums(entry)
+    assert dr == cr, (dr, cr)
+    # The single debit is the whole capitalized amount.
+    assert D(entry["lines"][0]["debit"]) == result.capitalized_total
+    # Only accounts that actually capitalized appear.
+    assert len(entry["lines"]) == 1 + len([ln for ln in result.lines if ln.capitalized != D(0)])
+
+    # The sharp edge: an expense account with a net CREDIT for the period gets a
+    # negative capitalized share. Written as a negative credit it would be
+    # normalized to zero downstream and unbalance the entry, so it must appear
+    # as a positive debit instead.
+    pools = [PoolSpec("Facility", "allocated", driver="fixed", fixed_pct=D("50"))]
+    expenses = [ExpenseRow("6010", D("1000.00"), "6010", "Rent"),
+                ExpenseRow("6020", D("-200.00"), "6020", "Utility rebate")]
+    mapping = {"6010": "Facility", "6020": "Facility"}
+    mixed = allocate_period(expenses, mapping, pools, build_factors(pools))
+
+    entry2 = build_reclass_entry(
+        mixed, inventory_account_id="1300",
+        inventory_account_name="Inventory", period_end="2026-03-31",
+    )
+    assert entry2 is not None
+    dr2, cr2 = _sums(entry2)
+    assert dr2 == cr2, (dr2, cr2)
+    # No negative amount is ever written into a debit or credit field.
+    for ln in entry2["lines"]:
+        assert D(ln["debit"]) >= D(0) and D(ln["credit"]) >= D(0), ln
+    # The rebate landed on the debit side.
+    rebate = [ln for ln in entry2["lines"] if ln["account_qbo_id"] == "6020"][0]
+    assert D(rebate["debit"]) == D("100.00") and D(rebate["credit"]) == D("0.00")
+
+    # Nothing capitalized → nothing to post.
+    excluded_only = [PoolSpec("Selling", "excluded")]
+    nothing = allocate_period(
+        [ExpenseRow("7010", D("5000.00"))], {"7010": "Selling"},
+        excluded_only, build_factors(excluded_only),
+    )
+    assert build_reclass_entry(
+        nothing, inventory_account_id="1300",
+        inventory_account_name="Inventory", period_end="2026-03-31",
+    ) is None
+
+
 if __name__ == "__main__":
     test_factors_are_fractions_in_range()
     test_every_line_splits_to_gross_and_total_is_preserved()
@@ -315,4 +380,5 @@ if __name__ == "__main__":
     test_unsound_inputs_raise_rather_than_guess()
     test_deterministic_and_negative_amount_safe()
     test_eligibility_gate_blocks_above_threshold_and_picks_the_prong()
+    test_reclass_entry_balances_including_negative_amounts()
     print("ALLOCATION_ENGINE_OK")

@@ -82,6 +82,14 @@ class AllocSettings(TenantBase):
     election_attested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     election_attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # The inventory account the monthly reclass entry DEBITS (capitalized cost
+    # moving out of expense and into inventory). Without it the run still
+    # completes and the workpaper is still produced — only the proposed journal
+    # entry is withheld, because guessing the debit target would be worse than
+    # asking. Name is snapshotted for display alongside the id.
+    inventory_account_id:   Mapped[str | None] = mapped_column(String(50))
+    inventory_account_name: Mapped[str | None] = mapped_column(String(200))
+
     # "MM-DD" — most cannabis clients are calendar-year, but not all.
     fiscal_year_end: Mapped[str | None] = mapped_column(String(5))
     # Override the statutory §448(c) gross-receipts threshold (indexed annually).
