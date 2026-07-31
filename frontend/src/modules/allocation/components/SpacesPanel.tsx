@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Building2, Plus, Trash2 } from "lucide-react"
 import { Button, Input, Select, Spinner } from "@/core/ui"
 import { allocationApi, type Space, type SpaceInput } from "../api"
+import { isEffective } from "./MonthPicker"
 
 const FUNCTIONS = [
   "cultivation", "processing", "curing", "packaging",
@@ -24,7 +25,7 @@ const PRODUCTION = new Set(["cultivation", "processing", "curing", "packaging"])
 
 const EMPTY: SpaceInput = { name: "", function: "cultivation", square_feet: 0, production_pct: null }
 
-export function SpacesPanel() {
+export function SpacesPanel({ periodEnd }: { periodEnd: string }) {
   const [form, setForm] = useState<SpaceInput>(EMPTY)
   const [editing, setEditing] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -36,7 +37,16 @@ export function SpacesPanel() {
     queryFn:  allocationApi.listSpaces,
   })
 
-  const live = useMemo(() => spaces.filter((s) => !s.effective_to), [spaces])
+  // In force for the period being viewed — NOT merely undeleted. Showing
+  // every row here while readiness filtered by period is what made the
+  // screen contradict itself.
+  const live = useMemo(
+    () => spaces.filter((s) => isEffective(s.effective_from, s.effective_to, periodEnd)),
+    [spaces, periodEnd],
+  )
+  const hiddenCount = spaces.filter(
+    (s) => !s.effective_to && !isEffective(s.effective_from, s.effective_to, periodEnd),
+  ).length
   const totals = useMemo(() => {
     let total = 0, production = 0
     for (const s of live) {
@@ -95,6 +105,11 @@ export function SpacesPanel() {
             {totals.factor.toFixed(2)}% production
           </span>{" "}
           — the occupancy driver
+          {hiddenCount > 0 && (
+            <span style={{ color: "var(--warn)" }}>
+              {" "}· {hiddenCount} not yet in effect this period
+            </span>
+          )}
         </p>
         <Button onClick={() => { setEditing(null); setForm(EMPTY); setError(null); setShowForm((v) => !v) }}
           icon={<Plus size={14} strokeWidth={1.8} />}>

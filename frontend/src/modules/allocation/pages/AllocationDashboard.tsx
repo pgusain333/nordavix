@@ -9,7 +9,6 @@
  * The page answers three questions in order: is this client ready, what did the
  * last run conclude, and what do I do next.
  */
-import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import {
@@ -17,10 +16,10 @@ import {
 } from "lucide-react"
 import { Spinner } from "@/core/ui"
 import { allocationApi, factorPct, money } from "../api"
-import { MonthPicker, defaultPeriodEnd } from "../components/MonthPicker"
+import { MonthPicker, useAllocationPeriod } from "../components/MonthPicker"
 
 export function AllocationDashboard() {
-  const [periodEnd, setPeriodEnd] = useState(defaultPeriodEnd)
+  const [periodEnd, setPeriodEnd] = useAllocationPeriod()
 
   const { data: readiness, isLoading: loadingReadiness } = useQuery({
     queryKey: ["allocation", "readiness", periodEnd],

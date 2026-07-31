@@ -22,7 +22,7 @@ import { AccountsPanel } from "../components/AccountsPanel"
 import { SpacesPanel } from "../components/SpacesPanel"
 import { EmployeesPanel } from "../components/EmployeesPanel"
 import { SettingsPanel } from "../components/SettingsPanel"
-import { MonthPicker, defaultPeriodEnd, monthRange } from "../components/MonthPicker"
+import { MonthPicker, monthRange, useAllocationPeriod } from "../components/MonthPicker"
 
 type TabId = "pools" | "accounts" | "spaces" | "employees" | "settings"
 
@@ -46,7 +46,7 @@ function tabForFix(fix: string): TabId {
 
 export function AllocationSetup() {
   // Declared before the queries whose option closures read them.
-  const [periodEnd, setPeriodEnd] = useState(defaultPeriodEnd)
+  const [periodEnd, setPeriodEnd] = useAllocationPeriod()
   // ?tab= lets the nav and the readiness checklist deep-link a specific panel,
   // so "no inventory account" can route straight to where it's fixed.
   const [params, setParams] = useSearchParams()
@@ -183,8 +183,8 @@ export function AllocationSetup() {
 
         {tab === "pools"     && <PoolsPanel />}
         {tab === "accounts"  && <AccountsPanel periodStart={periodStart} periodEnd={periodEnd} />}
-        {tab === "spaces"    && <SpacesPanel />}
-        {tab === "employees" && <EmployeesPanel />}
+        {tab === "spaces"    && <SpacesPanel periodEnd={periodEnd} />}
+        {tab === "employees" && <EmployeesPanel periodEnd={periodEnd} />}
         {tab === "settings"  && <SettingsPanel />}
       </div>
     </div>

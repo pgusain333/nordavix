@@ -17,7 +17,7 @@ import { Button, Input, Spinner } from "@/core/ui"
 import { allocationApi, factorPct, money, type AllocRun } from "../api"
 import { WorkpaperTable } from "../components/WorkpaperTable"
 import { JournalEntryPanel } from "../components/JournalEntryPanel"
-import { MonthPicker, defaultPeriodEnd, monthRange } from "../components/MonthPicker"
+import { MonthPicker, monthRange, useAllocationPeriod } from "../components/MonthPicker"
 
 const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
   draft:       { bg: "var(--surface-2)",   fg: "var(--text-2)" },
@@ -28,7 +28,7 @@ const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
 
 export function AllocationRuns() {
   // Declared before the queries whose closures read them.
-  const [periodEnd, setPeriodEnd] = useState(defaultPeriodEnd)
+  const [periodEnd, setPeriodEnd] = useAllocationPeriod()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [beginning, setBeginning] = useState("")
   const [ending, setEnding] = useState("")

@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Plus, Trash2, Users } from "lucide-react"
 import { Button, Input, Select, Spinner } from "@/core/ui"
 import { allocationApi, type Employee, type EmployeeInput } from "../api"
+import { isEffective } from "./MonthPicker"
 
 const FUNCTIONS = [
   "cultivation", "processing", "packaging",
@@ -24,7 +25,7 @@ const PRODUCTION = new Set(["cultivation", "processing", "packaging"])
 
 const EMPTY: EmployeeInput = { name: "", function: "cultivation", production_pct: 100 }
 
-export function EmployeesPanel() {
+export function EmployeesPanel({ periodEnd }: { periodEnd: string }) {
   const [form, setForm] = useState<EmployeeInput>(EMPTY)
   const [editing, setEditing] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -36,7 +37,14 @@ export function EmployeesPanel() {
     queryFn:  allocationApi.listEmployees,
   })
 
-  const live = useMemo(() => employees.filter((e) => e.active), [employees])
+  // Active AND in force for the period on screen — the same rule the run
+  // applies, so the count here can't disagree with readiness.
+  const live = useMemo(
+    () => employees.filter(
+      (e) => e.active && isEffective(e.effective_from, e.effective_to, periodEnd),
+    ),
+    [employees, periodEnd],
+  )
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["allocation", "employees"] })
