@@ -6,8 +6,9 @@
  * independently — adding a screen here can't affect the close app's routing.
  */
 import { Navigate, Route, Routes } from "react-router-dom"
-import { ListChecks, Settings, SlidersHorizontal } from "lucide-react"
+import { ListChecks, Settings } from "lucide-react"
 import { AllocationDashboard } from "./pages/AllocationDashboard"
+import { AllocationSetup } from "./pages/AllocationSetup"
 import { AllocationStub } from "./pages/AllocationStub"
 
 export function AllocationRoutes() {
@@ -30,20 +31,7 @@ export function AllocationRoutes() {
         }
       />
 
-      <Route
-        path="setup"
-        element={
-          <AllocationStub
-            title="Setup"
-            icon={SlidersHorizontal}
-            summary="Square footage, employee classifications, and the account-to-pool map"
-            pending={[
-              "S1 — CRUD over the three registries (tables and migration 064 are live)",
-              "The default cannabis chart-of-accounts template",
-            ]}
-          />
-        }
-      />
+      <Route path="setup" element={<AllocationSetup />} />
 
       <Route
         path="settings"
