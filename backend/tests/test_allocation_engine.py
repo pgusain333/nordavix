@@ -321,18 +321,43 @@ def test_reclass_entry_balances_including_negative_amounts():
     entry wouldn't raise, it would just never reach the Adjustments queue and
     the capitalization would quietly go unposted.
     """
+    from modules.cost_allocation.engine import cogs_account_name, required_cogs_accounts
+
     _, result = _run()
-    entry = build_reclass_entry(
-        result, inventory_account_id="1300",
-        inventory_account_name="Inventory", period_end="2026-03-31",
-    )
+    entry = build_reclass_entry(result, period_end="2026-03-31")
     assert entry is not None
     dr, cr = _sums(entry)
     assert dr == cr, (dr, cr)
-    # The single debit is the whole capitalized amount.
-    assert D(entry["lines"][0]["debit"]) == result.capitalized_total
-    # Only accounts that actually capitalized appear.
-    assert len(entry["lines"]) == 1 + len([ln for ln in result.lines if ln.capitalized != D(0)])
+    # Total debits equal the capitalized total: every account is reclassed into
+    # its own mirror COGS account rather than into one inventory line.
+    assert dr == result.capitalized_total, (dr, result.capitalized_total)
+
+    # One Dr/Cr PAIR per capitalized account.
+    capitalized_lines = [ln for ln in result.lines if ln.capitalized != D(0)]
+    assert len(entry["lines"]) == 2 * len(capitalized_lines)
+
+    # The debit side names the mirror account; the credit side keeps the source
+    # account AND its QBO id, so the credit posts to the real account.
+    rent = next(ln for ln in capitalized_lines if ln.account_name == "Rent")
+    debit_line = next(
+        ln for ln in entry["lines"] if ln["account_name"] == cogs_account_name("Rent")
+    )
+    credit_line = next(
+        ln for ln in entry["lines"]
+        if ln["account_name"] == "Rent" and D(ln["credit"]) > 0
+    )
+    assert D(debit_line["debit"]) == rent.capitalized
+    assert D(credit_line["credit"]) == rent.capitalized
+    assert credit_line["account_qbo_id"] == rent.qbo_account_id
+    # The mirror account carries no QBO id — it may not exist there yet.
+    assert not debit_line.get("account_qbo_id")
+
+    # The accounts that must exist in QuickBooks before the CSV will import.
+    needed = required_cogs_accounts(result)
+    assert cogs_account_name("Rent") in needed
+    assert len(needed) == len({cogs_account_name(ln.account_name) for ln in capitalized_lines})
+    # Nothing disallowed leaks into COGS.
+    assert cogs_account_name("Marketing") not in needed
 
     # The sharp edge: an expense account with a net CREDIT for the period gets a
     # negative capitalized share. Written as a negative credit it would be
@@ -344,19 +369,17 @@ def test_reclass_entry_balances_including_negative_amounts():
     mapping = {"6010": "Facility", "6020": "Facility"}
     mixed = allocate_period(expenses, mapping, pools, build_factors(pools))
 
-    entry2 = build_reclass_entry(
-        mixed, inventory_account_id="1300",
-        inventory_account_name="Inventory", period_end="2026-03-31",
-    )
+    entry2 = build_reclass_entry(mixed, period_end="2026-03-31")
     assert entry2 is not None
     dr2, cr2 = _sums(entry2)
     assert dr2 == cr2, (dr2, cr2)
     # No negative amount is ever written into a debit or credit field.
     for ln in entry2["lines"]:
         assert D(ln["debit"]) >= D(0) and D(ln["credit"]) >= D(0), ln
-    # The rebate landed on the debit side.
-    rebate = [ln for ln in entry2["lines"] if ln["account_qbo_id"] == "6020"][0]
-    assert D(rebate["debit"]) == D("100.00") and D(rebate["credit"]) == D("0.00")
+    # The rebate reverses the pair: the source account is DEBITED back, and its
+    # mirror COGS account is credited — never a negative in either field.
+    rebate_src = [ln for ln in entry2["lines"] if ln.get("account_qbo_id") == "6020"][0]
+    assert D(rebate_src["debit"]) == D("100.00") and D(rebate_src["credit"]) == D("0.00")
 
     # Nothing capitalized → nothing to post.
     excluded_only = [PoolSpec("Selling", "excluded")]
@@ -364,10 +387,7 @@ def test_reclass_entry_balances_including_negative_amounts():
         [ExpenseRow("7010", D("5000.00"))], {"7010": "Selling"},
         excluded_only, build_factors(excluded_only),
     )
-    assert build_reclass_entry(
-        nothing, inventory_account_id="1300",
-        inventory_account_name="Inventory", period_end="2026-03-31",
-    ) is None
+    assert build_reclass_entry(nothing, period_end="2026-03-31") is None
 
 
 # ── The COA template must never guess in the aggressive direction ─────────────

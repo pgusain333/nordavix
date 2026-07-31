@@ -97,6 +97,9 @@ export function PayrollPanel({ periodStart, periodEnd }: Props) {
       if (fileRef.current) fileRef.current.value = ""
       qc.invalidateQueries({ queryKey: ["allocation", "employees"] })
       qc.invalidateQueries({ queryKey: ["allocation", "readiness"] })
+      // The standing "register imported" banner reads from the server, so it
+      // has to be refetched or the screen still says nothing was imported.
+      qc.invalidateQueries({ queryKey: ["allocation", "payroll-status"] })
     },
     onError: (e) => fail(e, "Import failed."),
   })

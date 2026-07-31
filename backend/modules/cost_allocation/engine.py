@@ -458,26 +458,60 @@ def allocate_period(
 
 # ── Inventory roll-forward ────────────────────────────────────────────────────
 
-def build_reclass_entry(
-    result: AllocationResult,
-    *,
-    inventory_account_id: str,
-    inventory_account_name: str,
-    period_end: Any,
-) -> dict | None:
-    """The monthly journal entry: Dr inventory / Cr the expense accounts.
+# Every capitalized expense account is mirrored by a COGS account named with
+# this prefix, so "Rent" pairs with "Other COGS - Rent". Keeping the source
+# account's name in the COGS account is what makes the reclass self-documenting:
+# an examiner reading the trial balance can see exactly which expense each COGS
+# figure came from, without opening a workpaper.
+COGS_PREFIX = "Other COGS - "
+
+
+def cogs_account_name(source_account_name: str) -> str:
+    return f"{COGS_PREFIX}{source_account_name}"
+
+
+def required_cogs_accounts(result: AllocationResult) -> list[str]:
+    """The COGS accounts this run's entry needs, in posting order.
+
+    Surfaced so the accounts can be created in QuickBooks before the CSV is
+    imported — QBO's journal-entry import matches on account NAME and rejects
+    the file if one doesn't exist yet.
+    """
+    seen: dict[str, None] = {}
+    for ln in result.lines:
+        if ln.capitalized == ZERO:
+            continue
+        seen.setdefault(cogs_account_name(ln.account_name or ln.qbo_account_id), None)
+    return list(seen)
+
+
+def build_reclass_entry(result: AllocationResult, *, period_end: Any) -> dict | None:
+    """The monthly journal entry: Dr "Other COGS - X" / Cr X, per account.
+
+    Each capitalized expense account is reclassed into its own mirror COGS
+    account rather than into a single inventory line. That keeps the origin of
+    every COGS figure visible on the face of the trial balance — "Other COGS -
+    Rent" is self-evidently the inventoriable share of rent — which is the
+    §471(c) story an examiner asks for.
+
+    NOTE ON METHOD: this moves cost within the income statement (expense → COGS)
+    rather than onto the balance sheet as inventory. It expenses the capitalized
+    amount in the period. That's the common cannabis approach and it lines up
+    with how COGS is reported on Form 1125-A, but it is NOT the same as a full
+    absorption roll-forward, where cost sits in inventory until the product
+    sells. The run still computes the roll-forward figures when inventory
+    balances are supplied; they just aren't what this entry posts.
 
     Pure, and here rather than in the service, because it has a sharp edge worth
     locking behind the deploy gate: `replace_open_proposals` SILENTLY DROPS an
     unbalanced entry. A malformed JE wouldn't error — it would just never appear
-    in the Adjustments queue, and nobody would know the capitalization went
-    unposted.
+    in the Adjustments queue, and nobody would know the reclass went unposted.
 
     The edge is negative capitalized amounts. An expense account carrying a net
     credit for the period (a vendor rebate, a reversal) gets a negative
-    capitalized share. Writing that as a negative CREDIT would be normalized to
-    zero downstream and silently unbalance the entry, so it's written as a
-    positive DEBIT instead — which is also what it actually is.
+    capitalized share; the pair is simply reversed so no negative is ever
+    written into a debit or credit field, where it would normalize to zero and
+    silently unbalance the entry.
 
     Returns None when there's nothing to post.
     """
@@ -485,20 +519,29 @@ def build_reclass_entry(
     if not postable or result.capitalized_total <= ZERO:
         return None
 
-    lines: list[dict[str, str]] = [{
-        "account_name": inventory_account_name or "Inventory",
-        "account_qbo_id": inventory_account_id,
-        "debit": str(result.capitalized_total),
-        "credit": "0.00",
-    }]
+    lines: list[dict[str, str]] = []
     for ln in postable:
-        credit = ln.capitalized > ZERO
-        lines.append({
-            "account_name": ln.account_name or ln.qbo_account_id,
-            "account_qbo_id": ln.qbo_account_id,
-            "debit":  "0.00" if credit else str(-ln.capitalized),
-            "credit": str(ln.capitalized) if credit else "0.00",
-        })
+        source = ln.account_name or ln.qbo_account_id
+        amount = ln.capitalized
+        if amount > ZERO:
+            lines.append({
+                "account_name": cogs_account_name(source),
+                "debit": str(amount), "credit": "0.00",
+            })
+            lines.append({
+                "account_name": source, "account_qbo_id": ln.qbo_account_id,
+                "debit": "0.00", "credit": str(amount),
+            })
+        else:
+            # Reversal: the expense account is being put back, not taken out.
+            lines.append({
+                "account_name": cogs_account_name(source),
+                "debit": "0.00", "credit": str(-amount),
+            })
+            lines.append({
+                "account_name": source, "account_qbo_id": ln.qbo_account_id,
+                "debit": str(-amount), "credit": "0.00",
+            })
 
     # description/memo are ASCII on purpose: they land in the QuickBooks import
     # CSV and then in QBO's own memo field. "Section 471(c)" reads identically to
@@ -506,14 +549,16 @@ def build_reclass_entry(
     # the encoding. The rationale below is UI-only and never exported, so it
     # keeps the typographic form.
     return {
-        "description": f"Section 471(c) cost capitalization - {period_end}",
+        "description": f"Section 471(c) cost reclass to COGS - {period_end}",
         "lines": lines,
-        "memo": "Capitalize production-related costs into inventory per the Section 471(c) allocation.",
+        "memo": "Reclass production-related costs to COGS per the Section 471(c) allocation.",
         "rationale": (
             f"Direct production {result.direct_total} plus allocated overhead "
-            f"{result.allocated_total} capitalized into inventory; "
+            f"{result.allocated_total} reclassed to COGS; "
             f"{result.disallowed_total} remains non-production and is disallowed "
-            "under §280E. See the allocation workpaper for the drivers applied."
+            "under §280E. Each expense account is mirrored by an "
+            "'Other COGS - …' account so the origin of every COGS figure stays "
+            "visible. See the allocation workpaper for the drivers applied."
         ),
         "confidence": "high",
     }

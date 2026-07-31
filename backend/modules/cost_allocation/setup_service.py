@@ -259,15 +259,6 @@ async def compute_readiness(db: AsyncSession, period_end: date) -> dict:
                 "fix": "setup/payroll",
             })
 
-    if cfg is None or not cfg.inventory_account_id:
-        warnings.append({
-            "code": "no_inventory_account",
-            "message": (
-                "No inventory account set — the allocation will compute and the "
-                "workpaper will be produced, but the reclass journal entry is withheld."
-            ),
-            "fix": "setup/settings",
-        })
     if cfg is not None and cfg.has_afs and cfg.method == "books_records":
         blockers.append({
             "code": "afs_method_conflict",

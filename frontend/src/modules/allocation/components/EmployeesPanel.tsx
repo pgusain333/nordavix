@@ -16,7 +16,7 @@
  */
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowRight, CheckCircle2, Plus, Trash2, Upload, Users } from "lucide-react"
+import { ArrowRight, CheckCircle2, Percent, Plus, Trash2, Upload, Users } from "lucide-react"
 import { Button, Input, Select, Spinner } from "@/core/ui"
 import { allocationApi, type Employee, type EmployeeInput } from "../api"
 import { isEffective } from "./MonthPicker"
@@ -71,7 +71,11 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
       (e) => e.function === "shared" && Number(e.production_pct) === 0,
     ).length
     const production = live.filter((e) => Number(e.production_pct) > 0).length
-    return { unclassified, production }
+    const split = live.filter((e) => {
+      const pct = Number(e.production_pct)
+      return pct > 0 && pct < 100
+    }).length
+    return { unclassified, production, split }
   }, [live])
 
   const invalidate = () => {
@@ -91,13 +95,20 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
   })
   const retire = useMutation({ mutationFn: allocationApi.retireEmployee, onSuccess: invalidate, onError })
 
-  /** Inline reclassify straight from the row — the common action. */
+  /** Inline reclassify straight from the row — the common action.
+   *
+   *  `pct` is passed separately from `fn` on purpose. Plenty of people work
+   *  across the line — a manager who spends part of the month in the grow, a
+   *  packager who covers the counter at weekends — and forcing their wage to
+   *  100% or 0% based on a single job label would misstate the payroll factor
+   *  in whichever direction the label happened to fall. Changing the function
+   *  offers a default; the percentage is the preparer's to state. */
   const reclassify = useMutation({
-    mutationFn: (v: { e: Employee; fn: string }) =>
+    mutationFn: (v: { e: Employee; fn?: string; pct?: number }) =>
       allocationApi.updateEmployee(v.e.id, {
         name: v.e.name,
-        function: v.fn,
-        production_pct: PRODUCTION.has(v.fn) ? 100 : 0,
+        function: v.fn ?? v.e.function,
+        production_pct: v.pct ?? Number(v.e.production_pct),
         external_id: v.e.external_id,
         department: v.e.department,
         job_title: v.e.job_title,
@@ -141,6 +152,7 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>
           {live.length} on the roster · {stats.production} count as production
+          {stats.split > 0 && <span> · {stats.split} split</span>}
           {stats.unclassified > 0 && (
             <span style={{ color: "var(--warn)" }}> · {stats.unclassified} unclassified</span>
           )}
@@ -160,12 +172,19 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
         </div>
       </div>
 
+      <p className="text-[11px] flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
+        <Percent size={12} strokeWidth={2} className="mt-[2px] shrink-0" />
+        Anyone who works both sides of the line gets a SPLIT, not a label. Set the
+        production % directly — a manager at 40%, a packager who covers the counter
+        at 70%. Choosing a function only pre-fills it; the percentage is what the
+        payroll factor actually uses, so state the share you can support.
+      </p>
       {stats.unclassified > 0 && (
         <p className="text-[11px] flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
           <Users size={12} strokeWidth={2} className="mt-[2px] shrink-0" />
-          Unclassified people sit at 0% production — their wages count against the
-          payroll factor but not toward it, so capitalization is understated until
-          you set their function. Change it inline below.
+          Unclassified people sit at 0% — their wages count against the payroll
+          factor but not toward it, so capitalization is understated until you
+          set them.
         </p>
       )}
 
@@ -251,19 +270,19 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
       ) : (
         <div className="rounded-xl overflow-hidden"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1.1fr)_auto_auto] gap-3 px-4 py-2.5 text-[11px]"
+          <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1.1fr)_110px_auto] gap-3 px-4 py-2.5 text-[11px]"
             style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
             <span>Employee</span>
             <span>Per the register</span>
             <span>Function</span>
-            <span className="text-right">Production</span>
+            <span className="text-right">Production %</span>
             <span />
           </div>
           {sorted.map((e, i) => {
             const unclassified = e.function === "shared" && Number(e.production_pct) === 0
             return (
               <div key={e.id}
-                className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1.1fr)_auto_auto] gap-3 items-center px-4 py-2 transition-colors"
+                className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1.1fr)_110px_auto] gap-3 items-center px-4 py-2 transition-colors"
                 style={{
                   borderTop: i === 0 ? undefined : "1px solid var(--border)",
                   background: unclassified ? "var(--warn-subtle)" : undefined,
@@ -284,20 +303,32 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
                   )}
                 </div>
                 <Select value={e.function} disabled={busyId === e.id}
-                  onChange={(ev) => reclassify.mutate({ e, fn: ev.target.value })}>
+                  onChange={(ev) => {
+                    const fn = ev.target.value
+                    // A function change PRE-FILLS the split; it doesn't dictate it.
+                    reclassify.mutate({ e, fn, pct: PRODUCTION.has(fn) ? 100 : 0 })
+                  }}>
                   {FUNCTIONS.map((f) => (
                     <option key={f} value={f}>
                       {f[0].toUpperCase() + f.slice(1)}{PRODUCTION.has(f) ? " (production)" : ""}
                     </option>
                   ))}
                 </Select>
-                <span className="text-right text-[13px] tabular-nums whitespace-nowrap"
-                  style={{ color: Number(e.production_pct) > 0 ? "var(--green)" : "var(--text-muted)" }}>
+                <div className="flex items-center gap-1 justify-self-end">
                   {Number(e.production_pct) > 0 && (
-                    <CheckCircle2 size={11} strokeWidth={2.4} className="inline mr-1 -mt-0.5" />
+                    <CheckCircle2 size={11} strokeWidth={2.4}
+                      style={{ color: "var(--green)" }} className="shrink-0" />
                   )}
-                  {Number(e.production_pct).toFixed(0)}%
-                </span>
+                  <Input type="number" min="0" max="100" disabled={busyId === e.id}
+                    defaultValue={Number(e.production_pct)}
+                    style={{ width: 72, textAlign: "right" }}
+                    onBlur={(ev) => {
+                      const v = Number(ev.target.value)
+                      if (v !== Number(e.production_pct) && v >= 0 && v <= 100) {
+                        reclassify.mutate({ e, pct: v })
+                      }
+                    }} />
+                </div>
                 <div className="flex items-center gap-1 justify-self-end">
                   <button onClick={() => startEdit(e)}
                     className="text-[12px] font-medium px-2 py-1 rounded-md"

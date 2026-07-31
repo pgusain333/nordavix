@@ -20,7 +20,6 @@ import { allocationApi } from "../api"
 export function SettingsPanel() {
   const [method, setMethod] = useState<"books_records" | "afs" | "">("")
   const [hasAfs, setHasAfs] = useState<boolean | null>(null)
-  const [invId, setInvId] = useState<string>("")
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const qc = useQueryClient()
@@ -30,28 +29,14 @@ export function SettingsPanel() {
     queryFn:  allocationApi.getSettings,
   })
 
-  // QBO may be disconnected; the picker degrades to a message rather than
-  // blocking the rest of the form.
-  const { data: accounts, isError: accountsError } = useQuery({
-    queryKey: ["allocation", "inventory-accounts"],
-    queryFn:  allocationApi.listInventoryAccounts,
-    retry: false,
-  })
-
   const effMethod = method || cfg?.method || "books_records"
   const effHasAfs = hasAfs ?? cfg?.has_afs ?? false
-  const effInvId  = invId || cfg?.inventory_account_id || ""
 
   const save = useMutation({
-    mutationFn: () => {
-      const picked = accounts?.find((a) => a.qbo_account_id === effInvId)
-      return allocationApi.updateSettings({
-        method: effMethod as "books_records" | "afs",
-        has_afs: effHasAfs,
-        inventory_account_id: effInvId || null,
-        inventory_account_name: picked?.account_name ?? cfg?.inventory_account_name ?? null,
-      })
-    },
+    mutationFn: () => allocationApi.updateSettings({
+      method: effMethod as "books_records" | "afs",
+      has_afs: effHasAfs,
+    }),
     onSuccess: () => {
       setSaved(true); setError(null)
       qc.invalidateQueries({ queryKey: ["allocation", "settings"] })
@@ -115,27 +100,14 @@ export function SettingsPanel() {
           </div>
         )}
 
-        <div className="pt-1" style={{ borderTop: "1px solid var(--border)" }}>
-          <h3 className="text-sm font-semibold text-theme mt-3">Inventory account</h3>
-          <p className="text-[11px] mt-0.5 mb-2" style={{ color: "var(--text-muted)" }}>
-            The account the reclass entry debits. Without it the allocation still runs
-            and the workpaper is still produced — only the journal entry is withheld.
+        <div className="pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+          <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            No inventory account to choose: the monthly entry debits a mirror
+            &ldquo;Other COGS &ndash; &lt;account&gt;&rdquo; account for each expense it reclasses,
+            and credits the original account. Keeping the source account&rsquo;s name in the
+            COGS account is what makes the reclass self-documenting on the face of the
+            trial balance.
           </p>
-          {accountsError ? (
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Couldn&rsquo;t read the chart of accounts from QuickBooks.
-              {cfg?.inventory_account_name && ` Currently set to ${cfg.inventory_account_name}.`}
-            </p>
-          ) : (
-            <Select value={effInvId} onChange={(e) => setInvId(e.target.value)}>
-              <option value="">Not set — journal entry withheld</option>
-              {(accounts ?? []).map((a) => (
-                <option key={a.qbo_account_id} value={a.qbo_account_id}>
-                  {a.account_number ? `${a.account_number} · ` : ""}{a.account_name}
-                </option>
-              ))}
-            </Select>
-          )}
         </div>
 
         {error && <p className="text-xs" style={{ color: "var(--danger)" }}>{error}</p>}

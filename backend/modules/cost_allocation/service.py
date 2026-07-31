@@ -371,43 +371,35 @@ async def run_allocation(
         ))
 
     # ── The reclass entry, into the existing Adjustments queue.
-    if cfg and cfg.inventory_account_id:
-        entry = build_reclass_entry(
-            result,
-            inventory_account_id=cfg.inventory_account_id,
-            inventory_account_name=cfg.inventory_account_name or "Inventory",
-            period_end=period_end.isoformat(),
+    # No account to configure: each capitalized expense account is reclassed
+    # into its own mirror "Other COGS - <account>" account, so the entry is
+    # always producible and the origin of every COGS figure stays visible.
+    entry = build_reclass_entry(result, period_end=period_end.isoformat())
+    if entry is not None:
+        inserted = await replace_open_proposals(
+            db, tenant_id=tenant_id, source="allocation", source_ref=str(run.id),
+            period_end=period_end, entries=[entry], created_by=user_id,
         )
-        if entry is not None:
-            inserted = await replace_open_proposals(
-                db, tenant_id=tenant_id, source="allocation", source_ref=str(run.id),
-                period_end=period_end, entries=[entry], created_by=user_id,
-            )
-            if inserted:
-                # Resolve the entry's REAL id rather than assuming one. The link
-                # is keyed on (source, source_ref) — source_ref is the run id —
-                # but storing the actual id keeps the run self-describing.
-                run.proposed_entry_id = (await db.execute(
-                    select(ProposedEntry.id).where(
-                        ProposedEntry.source == "allocation",
-                        ProposedEntry.source_ref == str(run.id),
-                        ProposedEntry.period_end == period_end,
-                        ProposedEntry.status == "open",
-                    )
-                )).scalars().first()
-            else:
-                # Only reachable if the entry failed the balance check, which
-                # the deploy-gating test makes very unlikely — but never claim a
-                # journal entry exists when none was written.
-                logger.warning(
-                    "allocation run %s: reclass entry was not persisted "
-                    "(failed the balance check).", run.id,
+        if inserted:
+            # Resolve the entry's REAL id rather than assuming one. The link
+            # is keyed on (source, source_ref) — source_ref is the run id —
+            # but storing the actual id keeps the run self-describing.
+            run.proposed_entry_id = (await db.execute(
+                select(ProposedEntry.id).where(
+                    ProposedEntry.source == "allocation",
+                    ProposedEntry.source_ref == str(run.id),
+                    ProposedEntry.period_end == period_end,
+                    ProposedEntry.status == "open",
                 )
-    else:
-        logger.info(
-            "allocation run %s: no inventory account configured — workpaper produced, "
-            "journal entry withheld", run.id,
-        )
+            )).scalars().first()
+        else:
+            # Only reachable if the entry failed the balance check, which
+            # the deploy-gating test makes very unlikely — but never claim a
+            # journal entry exists when none was written.
+            logger.warning(
+                "allocation run %s: reclass entry was not persisted "
+                "(failed the balance check).", run.id,
+            )
 
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user_id,

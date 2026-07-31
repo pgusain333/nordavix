@@ -9,6 +9,7 @@
  * The page answers three questions in order: is this client ready, what did the
  * last run conclude, and what do I do next.
  */
+import { useOrganization } from "@clerk/clerk-react"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import {
@@ -20,6 +21,10 @@ import { MonthPicker, useAllocationPeriod } from "../components/MonthPicker"
 
 export function AllocationDashboard() {
   const [periodEnd, setPeriodEnd] = useAllocationPeriod()
+  // Which client this is. Every figure on the page belongs to one company,
+  // and running the wrong client's allocation is an easy mistake to make
+  // when the screen never says whose numbers these are.
+  const { organization } = useOrganization()
 
   const { data: readiness, isLoading: loadingReadiness } = useQuery({
     queryKey: ["allocation", "readiness", periodEnd],
@@ -48,9 +53,11 @@ export function AllocationDashboard() {
 
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-lg font-semibold text-theme tracking-tight">Cost allocation</h1>
+            <h1 className="text-lg font-semibold text-theme tracking-tight">
+              {organization?.name ?? "Cost allocation"}
+            </h1>
             <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-              §471(c) inventory costing for the active client
+              §471(c) cost allocation{organization?.name ? "" : " — no client selected"}
             </p>
           </div>
           <div className="flex items-center gap-2">

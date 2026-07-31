@@ -1,10 +1,14 @@
 /**
  * JournalEntryPanel — the reclass entry, reviewable before it leaves the app.
  *
- * Dr inventory / Cr the expense accounts for their capitalized share. Shown as
- * a real two-column journal so a preparer can read it the way they'd read it in
- * QuickBooks, with an explicit balanced check — an entry that doesn't foot must
- * never look postable.
+ * Each capitalized expense account is reclassed into its own mirror COGS
+ * account — Dr "Other COGS - Rent" / Cr "Rent" — so the origin of every COGS
+ * figure stays visible on the face of the trial balance. Shown as a real
+ * two-column journal with an explicit balanced check, because an entry that
+ * doesn't foot must never look postable.
+ *
+ * The mirror accounts have to EXIST in QuickBooks before the CSV will import —
+ * QBO matches journal lines on account name — so they're listed up front.
  *
  * Export is the QuickBooks Online "Import journal entries" CSV, generated
  * server-side by the same builder the Adjustments export uses, so the column
@@ -60,7 +64,7 @@ export function JournalEntryPanel({ runId, periodEnd }: Props) {
         <div>
           <h3 className="text-sm font-semibold text-theme">Reclass journal entry</h3>
           <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            Capitalizes production cost into inventory
+Reclasses production cost into COGS
           </p>
         </div>
         <div className="flex gap-2">
@@ -128,6 +132,24 @@ export function JournalEntryPanel({ runId, periodEnd }: Props) {
             <span className="text-right tabular-nums text-theme">{money(je.total_debits)}</span>
             <span className="text-right tabular-nums text-theme">{money(je.total_credits)}</span>
           </div>
+
+          {je.cogs_accounts.length > 0 && (
+            <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
+              <p className="text-[11px] font-medium text-theme">
+                Create these {je.cogs_accounts.length} accounts in QuickBooks first
+              </p>
+              <p className="text-[10.5px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                QuickBooks matches journal lines on account name and rejects the file if
+                one is missing. Add them as Cost of Goods Sold accounts.
+              </p>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {je.cogs_accounts.map((a) => (
+                  <span key={a} className="rounded-md px-2 py-0.5 text-[11px]"
+                    style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>{a}</span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {je.rationale && (
             <p className="px-4 py-3 text-[11px] leading-relaxed"

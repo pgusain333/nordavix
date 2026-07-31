@@ -560,6 +560,108 @@ class PayrollImportBody(BaseModel):
     create_missing: bool = False
 
 
+@router.get("/payroll")
+async def get_payroll(
+    tenant_id: CurrentTenantId,
+    period_end: date = Query(...),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """What's already imported for this period.
+
+    Exists because the import used to leave no trace: the preview cleared, the
+    panel returned to its empty state, and there was no way to tell a successful
+    import from one that never happened. This is read on every visit so the
+    screen always states the truth.
+
+    Also returns the resulting payroll factor, computed the same way the engine
+    does — production-weighted labor cost over total labor cost — so the number
+    that drives capitalization is visible where it's created.
+    """
+    period_start = period_end.replace(day=1)
+    entries = (await db.execute(
+        select(AllocPayrollEntry).where(
+            AllocPayrollEntry.period_start >= period_start,
+            AllocPayrollEntry.period_end <= period_end,
+        )
+    )).scalars().all()
+
+    if not entries:
+        return {
+            "imported": False, "people": 0,
+            "total_labor": "0.00", "production_labor": "0.00",
+            "payroll_factor": None, "imported_at": None, "rows": [],
+        }
+
+    employees = {
+        e.id: e for e in (await db.execute(select(AllocEmployee))).scalars().all()
+    }
+
+    total = Decimal("0.00")
+    production = Decimal("0.00")
+    rows: list[dict] = []
+    for entry in entries:
+        emp = employees.get(entry.employee_id)
+        cost = (entry.gross_wages or Decimal(0)) + (entry.employer_taxes or Decimal(0)) \
+            + (entry.benefits or Decimal(0))
+        pct = (emp.production_pct if emp else Decimal(0)) or Decimal(0)
+        total += cost
+        production += cost * pct / Decimal(100)
+        rows.append({
+            "employee_id": str(entry.employee_id),
+            "name": emp.name if emp else "(removed)",
+            "department": emp.department if emp else None,
+            "job_title": emp.job_title if emp else None,
+            "function": emp.function if emp else None,
+            "production_pct": str(pct),
+            "gross_wages": str(entry.gross_wages or 0),
+            "employer_taxes": str(entry.employer_taxes or 0),
+            "benefits": str(entry.benefits or 0),
+            "labor_cost": str(cost),
+            "source": entry.source,
+        })
+    rows.sort(key=lambda r: Decimal(r["labor_cost"]), reverse=True)
+
+    factor = (production / total) if total > 0 else None
+    latest = max((e.updated_at or e.created_at) for e in entries)
+    return {
+        "imported": True,
+        "people": len(entries),
+        "total_labor": f"{total:.2f}",
+        "production_labor": f"{production:.2f}",
+        "payroll_factor": f"{factor:.6f}" if factor is not None else None,
+        "imported_at": latest.isoformat() if latest else None,
+        "rows": rows,
+    }
+
+
+@router.delete("/payroll")
+async def clear_payroll(
+    tenant_id: CurrentTenantId,
+    period_end: date = Query(...),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Remove this period's register so a corrected one can replace it cleanly."""
+    from sqlalchemy import delete as sa_delete
+
+    period_start = period_end.replace(day=1)
+    await db.execute(
+        sa_delete(AllocPayrollEntry).where(
+            AllocPayrollEntry.tenant_id == tenant_id,
+            AllocPayrollEntry.period_start >= period_start,
+            AllocPayrollEntry.period_end <= period_end,
+        )
+    )
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="allocation.payroll_cleared", entity_type="alloc_payroll_entry", entity_id=None,
+        metadata={"summary": f"Cleared the payroll register for {period_end.isoformat()}"},
+    )
+    await db.commit()
+    return {"cleared": True, "period_end": period_end.isoformat()}
+
+
 @router.post("/payroll/preview")
 async def preview_payroll(
     tenant_id: CurrentTenantId,

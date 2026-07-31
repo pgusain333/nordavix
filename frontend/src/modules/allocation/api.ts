@@ -374,6 +374,42 @@ async function importPayroll(body: {
   return data
 }
 
+export interface PayrollStatusRow {
+  employee_id: string
+  name: string
+  department: string | null
+  job_title: string | null
+  function: string | null
+  production_pct: string
+  gross_wages: string
+  employer_taxes: string
+  benefits: string
+  labor_cost: string
+  source: string
+}
+
+export interface PayrollStatus {
+  imported: boolean
+  people: number
+  total_labor: string
+  production_labor: string
+  payroll_factor: string | null
+  imported_at: string | null
+  rows: PayrollStatusRow[]
+}
+
+/** What's already imported for a period — so the screen can state the truth. */
+async function getPayrollStatus(periodEnd: string): Promise<PayrollStatus> {
+  const { data } = await apiClient.get<PayrollStatus>(`${BASE}/payroll`, {
+    params: { period_end: periodEnd },
+  })
+  return data
+}
+
+async function clearPayroll(periodEnd: string): Promise<void> {
+  await apiClient.delete(`${BASE}/payroll`, { params: { period_end: periodEnd } })
+}
+
 // ── Journal entry + exports ───────────────────────────────────────────────────
 
 export interface JeLine {
@@ -396,6 +432,8 @@ export interface JournalEntry {
   total_debits: string
   total_credits: string
   balanced: boolean
+  /** Mirror COGS accounts that must exist in QBO before the CSV will import. */
+  cogs_accounts: string[]
 }
 
 async function getJournalEntry(runId: string): Promise<JournalEntry> {
@@ -441,7 +479,7 @@ async function listInventoryAccounts(): Promise<QboAccount[]> {
 }
 
 export const allocationApi = {
-  previewPayroll, importPayroll,
+  previewPayroll, importPayroll, getPayrollStatus, clearPayroll,
   getJournalEntry, downloadJournalEntryCsv, downloadWorkpaperCsv, listInventoryAccounts,
   getSettings, updateSettings,
   listPools, createPool, updatePool, deactivatePool, seedDefaultPools,

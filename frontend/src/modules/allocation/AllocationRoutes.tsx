@@ -10,6 +10,7 @@
  */
 import { Navigate, Route, Routes } from "react-router-dom"
 import { AllocationDashboard } from "./pages/AllocationDashboard"
+import { AllocationPayroll } from "./pages/AllocationPayroll"
 import { AllocationRuns } from "./pages/AllocationRuns"
 import { AllocationSetup } from "./pages/AllocationSetup"
 
@@ -17,7 +18,8 @@ export function AllocationRoutes() {
   return (
     <Routes>
       <Route index element={<AllocationDashboard />} />
-      <Route path="runs"  element={<AllocationRuns />} />
+      <Route path="runs"    element={<AllocationRuns />} />
+      <Route path="payroll" element={<AllocationPayroll />} />
       <Route path="setup" element={<AllocationSetup />} />
       <Route path="settings" element={<Navigate to="/allocation/setup?tab=settings" replace />} />
       <Route path="*" element={<Navigate to="/allocation" replace />} />

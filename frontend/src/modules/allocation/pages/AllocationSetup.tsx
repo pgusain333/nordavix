@@ -12,9 +12,9 @@ import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   AlertTriangle, Building2, CalendarDays, CheckCircle2, Layers, ListTree,
-  Receipt, Settings as SettingsIcon, Users, XCircle,
+  Settings as SettingsIcon, Users, XCircle,
 } from "lucide-react"
-import { useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { Spinner } from "@/core/ui"
 import { allocationApi } from "../api"
 import { PoolsPanel } from "../components/PoolsPanel"
@@ -22,17 +22,15 @@ import { AccountsPanel } from "../components/AccountsPanel"
 import { SpacesPanel } from "../components/SpacesPanel"
 import { EmployeesPanel } from "../components/EmployeesPanel"
 import { SettingsPanel } from "../components/SettingsPanel"
-import { PayrollPanel } from "../components/PayrollPanel"
 import { MonthPicker, monthRange, useAllocationPeriod } from "../components/MonthPicker"
 
-type TabId = "pools" | "accounts" | "spaces" | "employees" | "payroll" | "settings"
+type TabId = "pools" | "accounts" | "spaces" | "employees" | "settings"
 
 const TABS: { id: TabId; label: string; icon: typeof Layers }[] = [
   { id: "pools",     label: "Pools",     icon: Layers },
   { id: "accounts",  label: "Accounts",  icon: ListTree },
   { id: "spaces",    label: "Spaces",    icon: Building2 },
   { id: "employees", label: "Employees", icon: Users },
-  { id: "payroll",   label: "Payroll",   icon: Receipt },
   { id: "settings",  label: "Settings",  icon: SettingsIcon },
 ]
 
@@ -42,12 +40,12 @@ function tabForFix(fix: string): TabId {
   if (fix.includes("accounts"))  return "accounts"
   if (fix.includes("spaces"))    return "spaces"
   if (fix.includes("employees")) return "employees"
-  if (fix.includes("payroll"))   return "payroll"
   if (fix.includes("settings"))  return "settings"
   return "pools"
 }
 
 export function AllocationSetup() {
+  const navigate = useNavigate()
   // Declared before the queries whose option closures read them.
   const [periodEnd, setPeriodEnd] = useAllocationPeriod()
   // ?tab= lets the nav and the readiness checklist deep-link a specific panel,
@@ -115,7 +113,9 @@ export function AllocationSetup() {
                 <ul className="mt-3 space-y-1.5">
                   {readiness.blockers.map((b) => (
                     <li key={b.code}>
-                      <button onClick={() => setTab(tabForFix(b.fix))}
+                      <button onClick={() => (b.fix.includes("payroll")
+                        ? navigate("/allocation/payroll")
+                        : setTab(tabForFix(b.fix)))}
                         className="flex items-start gap-2 text-xs text-left hover:opacity-80"
                         style={{ color: "var(--text)" }}>
                         <XCircle size={13} strokeWidth={2} className="mt-[2px] shrink-0"
@@ -133,7 +133,9 @@ export function AllocationSetup() {
                 <ul className="mt-2 space-y-1.5">
                   {readiness.warnings.map((w) => (
                     <li key={w.code}>
-                      <button onClick={() => setTab(tabForFix(w.fix))}
+                      <button onClick={() => (w.fix.includes("payroll")
+                        ? navigate("/allocation/payroll")
+                        : setTab(tabForFix(w.fix)))}
                         className="flex items-start gap-2 text-xs text-left hover:opacity-80"
                         style={{ color: "var(--text-2)" }}>
                         <AlertTriangle size={13} strokeWidth={2} className="mt-[2px] shrink-0"
@@ -187,8 +189,10 @@ export function AllocationSetup() {
         {tab === "pools"     && <PoolsPanel />}
         {tab === "accounts"  && <AccountsPanel periodStart={periodStart} periodEnd={periodEnd} />}
         {tab === "spaces"    && <SpacesPanel periodEnd={periodEnd} />}
-        {tab === "employees" && <EmployeesPanel periodEnd={periodEnd} onGoToPayroll={() => setTab("payroll")} />}
-        {tab === "payroll"   && <PayrollPanel periodStart={periodStart} periodEnd={periodEnd} />}
+        {tab === "employees" && (
+          <EmployeesPanel periodEnd={periodEnd}
+            onGoToPayroll={() => navigate("/allocation/payroll")} />
+        )}
         {tab === "settings"  && <SettingsPanel />}
       </div>
     </div>

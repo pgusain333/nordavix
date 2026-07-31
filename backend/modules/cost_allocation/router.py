@@ -145,8 +145,8 @@ async def get_journal_entry(
     """The reclass journal entry for review before it's exported or posted.
 
     Returns `available: false` with a reason rather than 404 when there's
-    nothing to post — no inventory account configured, or nothing capitalized —
-    so the UI can explain the gap instead of showing a broken panel.
+    nothing to post, so the UI can explain the gap instead of showing a broken
+    panel. Also lists the mirror COGS accounts the CSV needs to exist in QBO.
     """
     run = await _load_run(db, run_id)
     entry = await _load_entry(db, run)
@@ -154,16 +154,25 @@ async def get_journal_entry(
         return {
             "available": False,
             "reason": (
-                "No journal entry was produced. Set the inventory account under "
-                "Settings, then re-run the period."
-                if not run.blocked_reason else run.blocked_reason
+                run.blocked_reason
+                or "Nothing capitalized this period, so there is no entry to post."
             ),
             "lines": [], "total_debits": "0.00", "total_credits": "0.00", "balanced": True,
+            "cogs_accounts": [],
         }
 
     lines = entry.lines or []
     dr = sum((Decimal(str(ln.get("debit") or 0)) for ln in lines), Decimal("0.00"))
     cr = sum((Decimal(str(ln.get("credit") or 0)) for ln in lines), Decimal("0.00"))
+    # The mirror COGS accounts have to exist in QuickBooks before the CSV will
+    # import — QBO matches journal lines on account NAME and rejects the file
+    # otherwise. Surfaced so they can be created first rather than discovered
+    # by a failed import.
+    cogs_accounts = sorted({
+        str(ln.get("account_name") or "")
+        for ln in lines
+        if not ln.get("account_qbo_id") and str(ln.get("account_name") or "")
+    })
     return {
         "available": True,
         "reason": None,
@@ -177,6 +186,7 @@ async def get_journal_entry(
         "total_debits": f"{dr:.2f}",
         "total_credits": f"{cr:.2f}",
         "balanced": dr == cr,
+        "cogs_accounts": cogs_accounts,
     }
 
 
