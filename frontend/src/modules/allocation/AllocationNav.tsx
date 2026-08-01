@@ -9,7 +9,8 @@
  */
 import { NavLink, useNavigate } from "react-router-dom"
 import {
-  Building2, ListChecks, Receipt, Settings, SlidersHorizontal, X, type LucideIcon,
+  Building2, CalendarCheck2, ListChecks, Receipt, Settings, SlidersHorizontal, X,
+  type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/core/ui/utils"
 import { ProductSwitcher } from "@/core/layout/ProductSwitcher"
@@ -28,6 +29,9 @@ const NAV: NavItem[] = [
   // Its own entry, not a Setup tab: setup happens once, the register is
   // imported every month.
   { label: "Payroll",  path: "/allocation/payroll",  icon: Receipt },
+  // The twelve monthly runs become one figure on a return — a different job
+  // from running a month, so it gets its own place rather than a tab.
+  { label: "Year end", path: "/allocation/year-end", icon: CalendarCheck2 },
   { label: "Setup",    path: "/allocation/setup",    icon: SlidersHorizontal },
   { label: "Settings", path: "/allocation/setup?tab=settings", icon: Settings },
 ]

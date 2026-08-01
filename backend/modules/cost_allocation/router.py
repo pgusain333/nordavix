@@ -366,6 +366,173 @@ async def _client_name(db: AsyncSession, tenant_id: uuid.UUID) -> str:
     return row or "the taxpayer"
 
 
+# ── Year end ──────────────────────────────────────────────────────────────────
+
+@router.get("/annual/years")
+async def annual_years(
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Tax years this client has runs in, newest first."""
+    from models.cost_allocation import AllocSettings
+    from modules.cost_allocation.annual import available_tax_years
+
+    cfg = (await db.execute(select(AllocSettings))).scalars().first()
+    fye = cfg.fiscal_year_end if cfg else None
+    period_ends = list((await db.execute(select(AllocRun.period_end))).scalars().all())
+    return {
+        "fiscal_year_end": fye,
+        "years": available_tax_years(period_ends, date.today(), fye),
+    }
+
+
+@router.get("/annual")
+async def annual_rollup(
+    tenant_id: CurrentTenantId,
+    tax_year: int,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The year rolled up, with the checklist of what it's made of.
+
+    Reports before it totals: missing months, unapproved months, months never
+    confirmed posted, and breaks in the inventory chain. An annual figure that
+    can't say what it contains isn't a figure anyone should sign.
+    """
+    from modules.cost_allocation.annual import build_annual
+
+    if not 2000 <= tax_year <= 2100:
+        raise HTTPException(status_code=422, detail="tax_year is out of range.")
+    return await build_annual(db, tenant_id=tenant_id, tax_year=tax_year)
+
+
+@router.get("/annual/workpaper.csv")
+async def annual_workpaper_csv(
+    tenant_id: CurrentTenantId,
+    tax_year: int,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The year-end workpaper: the checklist, the monthly roll, the account
+    detail and the Form 1125-A lines, in one file for the tax return file.
+
+    The exceptions are printed even when there are none, so a reviewer can see
+    the control ran rather than infer it from silence.
+    """
+    from modules.cost_allocation.annual import build_annual
+
+    if not 2000 <= tax_year <= 2100:
+        raise HTTPException(status_code=422, detail="tax_year is out of range.")
+    data = await build_annual(db, tenant_id=tenant_id, tax_year=tax_year)
+    name = await _client_name(db, tenant_id)
+    check = data["checklist"]
+
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["Section 471(c) annual cost allocation workpaper"])
+    w.writerow(["Client", name])
+    w.writerow(["Tax year", tax_year])
+    w.writerow(["Period", f"{data['year_start']} to {data['year_end']}"])
+    w.writerow(["Prepared", datetime.now(UTC).date().isoformat()])
+    w.writerow([])
+
+    w.writerow(["Completeness"])
+    w.writerow(["Complete", "Yes" if data["complete"] else "No"])
+    w.writerow(["Months expected", check["months_expected"]])
+    w.writerow(["Months present", check["months_present"]])
+    w.writerow(["Missing months", ", ".join(check["missing_periods"]) or "None"])
+    w.writerow(["Not approved", ", ".join(check["unapproved_periods"]) or "None"])
+    w.writerow(["Not confirmed posted", ", ".join(check["unposted_periods"]) or "None"])
+    w.writerow([
+        "Inventory chain breaks",
+        ", ".join(
+            f"{b['period_end']} opens at {b['beginning']} vs {b['prior_ending']} closing "
+            f"{b['prior_period_end']}"
+            for b in check["inventory_breaks"]
+        ) or "None",
+    ])
+    w.writerow(["Months without inventory", ", ".join(check["periods_missing_inventory"]) or "None"])
+    w.writerow([
+        "Section 448(c) test concluded",
+        "Yes" if check["eligibility_concluded"] else "No",
+    ])
+    w.writerow([])
+
+    w.writerow(["Monthly roll"])
+    w.writerow([
+        "Period end", "Status", "Posted", "Total expenses", "Capitalized", "Disallowed",
+        "Beginning inventory", "Purchases", "Ending inventory",
+    ])
+    for m in data["months"]:
+        w.writerow([
+            m["period_end"], m["status"], "Yes" if m["posted"] else "No",
+            m["total_expenses"] or "", m["capitalized"] or "", m["disallowed"] or "",
+            m["beginning_inventory"] or "", m["purchases"] or "", m["ending_inventory"] or "",
+        ])
+    t = data["totals"]
+    w.writerow(["TOTAL", "", "", t["total_expenses"], t["capitalized"], t["disallowed"]])
+    w.writerow([])
+
+    w.writerow(["Capitalized by pool"])
+    w.writerow(["Pool", "Capitalized", "Form 1125-A line"])
+    for p in data["by_pool"]:
+        w.writerow([
+            p["pool_name"], p["capitalized"],
+            "3 - cost of labor" if p["form_1125a_line"] == "labor" else "5 - other costs",
+        ])
+    w.writerow([])
+
+    w.writerow(["Account detail"])
+    w.writerow(["Account no.", "Account", "Pool", "Treatment", "Gross", "Capitalized", "Disallowed"])
+    for a in data["by_account"]:
+        w.writerow([
+            a["account_number"] or "", a["account_name"] or a["qbo_account_id"],
+            a["pool_name"], a["treatment"], a["gross"], a["capitalized"], a["disallowed"],
+        ])
+    w.writerow([])
+
+    rf = data["roll_forward"]
+    w.writerow(["Inventory roll-forward"])
+    if rf:
+        w.writerow(["Beginning inventory", rf["beginning_inventory"]])
+        w.writerow(["Capitalized cost", rf["capitalized"]])
+        w.writerow(["Purchases", rf["purchases"]])
+        w.writerow(["Ending inventory", rf["ending_inventory"]])
+        w.writerow(["Cost of goods sold", rf["cogs"]])
+    else:
+        w.writerow(["Not available - beginning or ending inventory was not captured"])
+    w.writerow([])
+
+    f = data["form_1125a"]
+    w.writerow(["Form 1125-A"])
+    w.writerow(["Line 1", "Inventory at beginning of year", f["line_1_beginning_inventory"]])
+    w.writerow(["Line 2", "Purchases", f["line_2_purchases"]])
+    w.writerow(["Line 3", "Cost of labor", f["line_3_cost_of_labor"]])
+    w.writerow(["Line 5", "Other costs", f["line_5_other_costs"]])
+    w.writerow(["Line 6", "Total", f["line_6_total"]])
+    w.writerow(["Line 7", "Inventory at end of year", f["line_7_ending_inventory"]])
+    w.writerow(["Line 8", "Cost of goods sold", f["line_8_cogs"]])
+    w.writerow([])
+    w.writerow([
+        "Note",
+        "Line 4 (additional Section 263A costs) is not presented: Section 280E denies "
+        "Section 263A to this taxpayer, which is why Section 471(c) is used.",
+    ])
+    if not data["complete"]:
+        w.writerow([
+            "Note",
+            "These figures are built on an incomplete year. See Completeness above.",
+        ])
+
+    filename = f"471c-annual-workpaper-{tax_year}.csv"
+    return Response(
+        content=buf.getvalue().encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/runs/{run_id}/approve")
 async def approve_run(
     run_id: uuid.UUID,

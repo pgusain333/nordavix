@@ -13,7 +13,10 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Layers, Plus, Sparkles, Trash2 } from "lucide-react"
 import { Button, Input, Select, Spinner } from "@/core/ui"
-import { allocationApi, type Driver, type Pool, type PoolInput, type Treatment } from "../api"
+import {
+  allocationApi,
+  type Driver, type Form1125aLine, type Pool, type PoolInput, type Treatment,
+} from "../api"
 
 const TREATMENT_LABEL: Record<Treatment, string> = {
   direct:    "Direct — 100% inventoriable",
@@ -28,9 +31,18 @@ const DRIVER_LABEL: Record<Driver, string> = {
   fixed:     "Fixed rate",
 }
 
+// Which Form 1125-A line the pool's capitalized cost reaches at year end. It
+// can't be inferred from the driver — a pool allocated ON payroll may hold rent
+// — so it's asked once here rather than guessed every January.
+const LINE_LABEL: Record<Form1125aLine, string> = {
+  other: "Line 5 — other costs",
+  labor: "Line 3 — cost of labor",
+}
+
 const EMPTY: PoolInput = {
   name: "", treatment: "allocated", driver: "occupancy",
-  blend_payroll_wt: 50, blend_occupancy_wt: 50, fixed_pct: null, sort_order: 0,
+  blend_payroll_wt: 50, blend_occupancy_wt: 50, fixed_pct: null,
+  form_1125a_line: "other", sort_order: 0,
 }
 
 export function PoolsPanel() {
@@ -75,6 +87,7 @@ export function PoolsPanel() {
       blend_payroll_wt: p.blend_payroll_wt ? Number(p.blend_payroll_wt) : 50,
       blend_occupancy_wt: p.blend_occupancy_wt ? Number(p.blend_occupancy_wt) : 50,
       fixed_pct: p.fixed_pct ? Number(p.fixed_pct) : null,
+      form_1125a_line: p.form_1125a_line ?? "other",
       sort_order: p.sort_order, notes: p.notes,
     })
     setError(null)
@@ -187,6 +200,24 @@ export function PoolsPanel() {
                 </label>
               </>
             )}
+
+            {/* Excluded pools never reach the form — nothing is capitalized. */}
+            {form.treatment !== "excluded" && (
+              <label className="block sm:col-span-2">
+                <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>
+                  Form 1125-A line
+                </span>
+                <Select value={form.form_1125a_line ?? "other"}
+                  onChange={(e) => setForm({ ...form, form_1125a_line: e.target.value as Form1125aLine })}>
+                  {(Object.keys(LINE_LABEL) as Form1125aLine[]).map((l) => (
+                    <option key={l} value={l}>{LINE_LABEL[l]}</option>
+                  ))}
+                </Select>
+                <span className="text-[10.5px] mt-1 block" style={{ color: "var(--text-muted)" }}>
+                  Presentation only — line 6 and cost of goods sold are the same either way.
+                </span>
+              </label>
+            )}
           </div>
 
           {error && <p className="text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
@@ -227,6 +258,9 @@ export function PoolsPanel() {
                   {p.driver && ` · ${DRIVER_LABEL[p.driver]}`}
                   {p.driver === "blended" && ` ${p.blend_payroll_wt}/${p.blend_occupancy_wt}`}
                   {p.driver === "fixed" && ` ${p.fixed_pct}%`}
+                  {p.treatment !== "excluded" && (
+                    ` · 1125-A ${p.form_1125a_line === "labor" ? "line 3" : "line 5"}`
+                  )}
                 </div>
               </div>
               <button onClick={() => startEdit(p)}

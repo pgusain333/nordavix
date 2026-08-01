@@ -33,8 +33,10 @@ run is a visible task; a silently wrong one is a bad tax return.
 """
 from __future__ import annotations
 
+import calendar
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -741,4 +743,237 @@ def evaluate_eligibility(
         has_afs=has_afs,
         method="afs" if has_afs else "books_records",
         reason=None,
+    )
+
+
+# ── Year end ──────────────────────────────────────────────────────────────────
+
+def fiscal_year_bounds(tax_year: int, fiscal_year_end: str | None) -> tuple[date, date]:
+    """First and last day of a client's tax year.
+
+    `fiscal_year_end` is "MM-DD" as stored on alloc_settings; None or unparseable
+    means the calendar year, which is what nearly every cannabis client uses.
+
+    A June year end means tax year 2025 runs 2024-07-01 → 2025-06-30, so the
+    START is in the PRIOR calendar year. Getting that backwards would roll up
+    twelve real months belonging to the wrong return.
+    """
+    month, day = 12, 31
+    if fiscal_year_end:
+        try:
+            m_str, d_str = fiscal_year_end.split("-")
+            m, d = int(m_str), int(d_str)
+            if 1 <= m <= 12 and 1 <= d <= calendar.monthrange(tax_year, m)[1]:
+                month, day = m, d
+        except (ValueError, TypeError):
+            pass  # keep the calendar year rather than fail the roll-up
+    end = date(tax_year, month, day)
+    # Twelve months back, then one day forward: 2025-06-30 → 2024-07-01.
+    start_month = month + 1
+    start_year = tax_year - 1
+    if start_month > 12:
+        start_month, start_year = 1, tax_year
+    return date(start_year, start_month, 1), end
+
+
+def tax_year_for(period_end: date, fiscal_year_end: str | None) -> int:
+    """Which tax year a month belongs to.
+
+    Only interesting off the calendar year: with a June year end, September 2024
+    is part of tax year 2025. Filing it under 2024 would put the month on a
+    return that was already signed.
+    """
+    candidate = period_end.year
+    if period_end > fiscal_year_bounds(candidate, fiscal_year_end)[1]:
+        return candidate + 1
+    return candidate
+
+
+def expected_period_ends(tax_year: int, fiscal_year_end: str | None) -> tuple[date, ...]:
+    """The twelve month-end dates a complete tax year should contain.
+
+    The roll-up compares the runs it found against this list, so a month nobody
+    ever ran shows up as missing instead of silently reducing the annual total.
+    """
+    start, end = fiscal_year_bounds(tax_year, fiscal_year_end)
+    out: list[date] = []
+    year, month = start.year, start.month
+    for _ in range(12):
+        last = calendar.monthrange(year, month)[1]
+        out.append(min(date(year, month, last), end))
+        month += 1
+        if month > 12:
+            month, year = 1, year + 1
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class MonthlyResult:
+    """One month's concluded allocation, as it feeds the annual figure."""
+    period_end: Any
+    total_expenses: Decimal
+    capitalized: Decimal
+    disallowed: Decimal
+    status: str            # draft | in_review | approved | superseded
+    posted: bool           # confirmed present in the client's books
+    by_pool: Mapping[str, Decimal] = field(default_factory=dict)
+    # The roll-forward inputs, if the month captured them. None means "not
+    # entered", which is different from zero and is reported as such.
+    beginning_inventory: Decimal | None = None
+    ending_inventory: Decimal | None = None
+    purchases: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class AnnualRollup:
+    tax_year: int
+    months_expected: int
+    months_present: int
+    missing_periods: tuple[Any, ...]
+    unapproved_periods: tuple[Any, ...]
+    unposted_periods: tuple[Any, ...]
+    total_expenses: Decimal
+    capitalized: Decimal
+    disallowed: Decimal
+    by_pool: dict[str, Decimal]
+    complete: bool
+
+
+def roll_up_year(
+    months: Sequence[MonthlyResult], tax_year: int, expected_period_ends: Sequence[Any],
+) -> AnnualRollup:
+    """Combine the year's monthly allocations into the figure that reaches the return.
+
+    The arithmetic is trivial; the CONTROL is the point. An annual total that
+    silently omits a month, or quietly includes one nobody approved, produces a
+    wrong number on a filed return and looks entirely reasonable doing it. So
+    the roll-up reports what it is made of — which periods are missing, which
+    were never approved, and which were never confirmed in the client's books —
+    and only calls itself complete when all three lists are empty.
+
+    Superseded runs are excluded outright: they are prior versions, and adding
+    them would double count.
+    """
+    live = [m for m in months if m.status != "superseded"]
+    present = {m.period_end for m in live}
+
+    missing = tuple(p for p in expected_period_ends if p not in present)
+    unapproved = tuple(m.period_end for m in live if m.status != "approved")
+    unposted = tuple(m.period_end for m in live if not m.posted)
+
+    by_pool: dict[str, Decimal] = {}
+    for m in live:
+        for pool, amount in m.by_pool.items():
+            by_pool[pool] = by_pool.get(pool, ZERO) + amount
+
+    return AnnualRollup(
+        tax_year=tax_year,
+        months_expected=len(expected_period_ends),
+        months_present=len(live),
+        missing_periods=missing,
+        unapproved_periods=unapproved,
+        unposted_periods=unposted,
+        total_expenses=sum((m.total_expenses for m in live), ZERO),
+        capitalized=sum((m.capitalized for m in live), ZERO),
+        disallowed=sum((m.disallowed for m in live), ZERO),
+        by_pool=by_pool,
+        complete=not (missing or unapproved or unposted),
+    )
+
+
+@dataclass(frozen=True)
+class InventoryBreak:
+    """A month whose opening inventory doesn't pick up where the last one left off."""
+    period_end: Any
+    prior_period_end: Any
+    prior_ending: Decimal
+    beginning: Decimal
+
+    @property
+    def difference(self) -> Decimal:
+        return self.beginning - self.prior_ending
+
+
+def check_inventory_continuity(months: Sequence[MonthlyResult]) -> tuple[InventoryBreak, ...]:
+    """Each month must open where the previous one closed.
+
+    The annual COGS figure is beginning + capitalized + purchases − ending, taking
+    beginning from the FIRST month and ending from the LAST. That arithmetic is
+    only true if the months form an unbroken chain. If March closed at 410,000 and
+    April opened at 380,000, the missing 30,000 never appears in any total — the
+    annual number is simply wrong, and nothing else in the workpaper says so.
+
+    Only ADJACENT months are compared, and only when both sides were captured.
+    A month that never recorded inventory breaks the chain rather than being read
+    as zero — not entered is not the same as nil, and reaching past it to an
+    earlier month would report a break whose real cause is the gap. The gap
+    itself is reported separately.
+    """
+    ordered = sorted(
+        (m for m in months if m.status != "superseded"), key=lambda m: m.period_end,
+    )
+    breaks: list[InventoryBreak] = []
+    prior = None
+    for m in ordered:
+        if (
+            prior is not None
+            and prior.ending_inventory is not None
+            and m.beginning_inventory is not None
+            and m.beginning_inventory != prior.ending_inventory
+        ):
+            breaks.append(InventoryBreak(
+                period_end=m.period_end,
+                prior_period_end=prior.period_end,
+                prior_ending=prior.ending_inventory,
+                beginning=m.beginning_inventory,
+            ))
+        prior = m
+    return tuple(breaks)
+
+
+@dataclass(frozen=True)
+class Form1125A:
+    """Form 1125-A, Cost of Goods Sold.
+
+    Line 4 (additional §263A costs) is deliberately absent: §280E denies §263A
+    to a cannabis business, which is the reason §471(c) is being used at all.
+    Presenting a line for it would invite an entry that contradicts the method.
+    """
+    line_1_beginning_inventory: Decimal
+    line_2_purchases: Decimal
+    line_3_cost_of_labor: Decimal
+    line_5_other_costs: Decimal
+    line_6_total: Decimal
+    line_7_ending_inventory: Decimal
+    line_8_cogs: Decimal
+
+
+def build_form_1125a(
+    *,
+    beginning_inventory: Decimal,
+    purchases: Decimal,
+    labor_capitalized: Decimal,
+    other_capitalized: Decimal,
+    ending_inventory: Decimal,
+) -> Form1125A:
+    """Lay the year's capitalized cost onto Form 1125-A.
+
+    The split between line 3 (cost of labor) and line 5 (other costs) can't be
+    derived from the account map — a direct-production pool holds nutrients as
+    well as wages — so the caller supplies it from an explicit pool-to-line
+    assignment. Anything not assigned to labor lands in other costs, which is
+    the neutral answer rather than a guess.
+
+    Line 6 is the sum of 1, 2, 3 and 5; line 8 is 6 less 7. Both are computed
+    here rather than passed in, so the form can't be internally inconsistent.
+    """
+    total = beginning_inventory + purchases + labor_capitalized + other_capitalized
+    return Form1125A(
+        line_1_beginning_inventory=beginning_inventory,
+        line_2_purchases=purchases,
+        line_3_cost_of_labor=labor_capitalized,
+        line_5_other_costs=other_capitalized,
+        line_6_total=total,
+        line_7_ending_inventory=ending_inventory,
+        line_8_cogs=total - ending_inventory,
     )

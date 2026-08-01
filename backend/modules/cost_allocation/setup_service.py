@@ -81,7 +81,7 @@ async def seed_default_pools(db: AsyncSession, tenant_id: uuid.UUID) -> list[All
             id=uuid.uuid4(), tenant_id=tenant_id, name=t.name, treatment=t.treatment,
             driver=t.driver, blend_payroll_wt=t.blend_payroll_wt,
             blend_occupancy_wt=t.blend_occupancy_wt, sort_order=t.sort_order,
-            notes=t.notes, active=True,
+            notes=t.notes, active=True, form_1125a_line=t.form_1125a_line,
         )
         db.add(pool)
         created.append(pool)
@@ -96,6 +96,9 @@ def serialize_pool(p: AllocPool) -> dict:
         "blend_payroll_wt": str(p.blend_payroll_wt) if p.blend_payroll_wt is not None else None,
         "blend_occupancy_wt": str(p.blend_occupancy_wt) if p.blend_occupancy_wt is not None else None,
         "fixed_pct": str(p.fixed_pct) if p.fixed_pct is not None else None,
+        # NULL reads as 'other' everywhere, so the pools screen shows the same
+        # answer the year-end roll-up will use rather than an empty cell.
+        "form_1125a_line": p.form_1125a_line or "other",
         "sort_order": p.sort_order, "active": p.active, "notes": p.notes,
     }
 

@@ -707,6 +707,214 @@ def test_gross_receipts_aggregate_across_entities():
     assert evaluate_eligibility(sparse, threshold, has_afs=False).eligible is False
 
 
+# ── Year end: the annual figure, and what it's made of ────────────────────────
+
+def test_annual_rollup_reports_what_it_is_made_of():
+    """The arithmetic is trivial; the CONTROL is the point.
+
+    An annual total that silently omits a month, or quietly includes one nobody
+    approved or posted, produces a wrong number on a filed return and looks
+    entirely reasonable doing it. So the roll-up has to report its own
+    composition, and only claim completeness when nothing is outstanding.
+    """
+    from datetime import date
+
+    from modules.cost_allocation.engine import MonthlyResult, roll_up_year
+
+    expected = [date(2026, m, 1) for m in range(1, 13)]
+
+    def month(m: int, cap: str, status="approved", posted=True):
+        return MonthlyResult(
+            period_end=date(2026, m, 1),
+            total_expenses=D("100000.00"), capitalized=D(cap),
+            disallowed=D("100000.00") - D(cap),
+            status=status, posted=posted,
+            by_pool={"Facility overhead": D(cap)},
+        )
+
+    # A clean year.
+    full = [month(m, "60000.00") for m in range(1, 13)]
+    clean = roll_up_year(full, 2026, expected)
+    assert clean.complete is True
+    assert clean.months_present == 12 and clean.missing_periods == ()
+    assert clean.capitalized == D("720000.00")
+    assert clean.total_expenses == D("1200000.00")
+    assert clean.capitalized + clean.disallowed == clean.total_expenses
+    assert clean.by_pool["Facility overhead"] == D("720000.00")
+
+    # A gap, an unapproved month and an unposted one — each surfaced, and any
+    # one of them is enough to withhold "complete".
+    messy = [month(m, "60000.00") for m in range(1, 11)]
+    messy.append(month(11, "60000.00", status="draft"))
+    messy.append(month(12, "60000.00", posted=False))
+    del messy[4]   # May never ran
+
+    r = roll_up_year(messy, 2026, expected)
+    assert r.complete is False
+    assert r.missing_periods == (date(2026, 5, 1),)
+    assert r.unapproved_periods == (date(2026, 11, 1),)
+    assert r.unposted_periods == (date(2026, 12, 1),)
+    # The total still foots to the months that ARE there — it just isn't final.
+    assert r.months_present == 11 and r.capitalized == D("660000.00")
+
+    # Superseded runs are prior versions; including them would double count.
+    with_old = [*full, month(3, "999999.00", status="superseded")]
+    assert roll_up_year(with_old, 2026, expected).capitalized == D("720000.00")
+
+
+def test_form_1125a_is_internally_consistent():
+    """Lines 6 and 8 are computed, never passed in, so the form cannot foot to
+    something other than its own components.
+
+    Line 4 (additional §263A costs) is deliberately absent — §280E denies §263A
+    to a cannabis business, which is the reason §471(c) is in play at all.
+    """
+    from modules.cost_allocation.engine import build_form_1125a
+
+    f = build_form_1125a(
+        beginning_inventory=D("120000.00"),
+        purchases=D("15000.00"),
+        labor_capitalized=D("300000.00"),
+        other_capitalized=D("420000.00"),
+        ending_inventory=D("138000.00"),
+    )
+    assert f.line_6_total == D("855000.00")
+    assert (
+        f.line_6_total
+        == f.line_1_beginning_inventory + f.line_2_purchases
+        + f.line_3_cost_of_labor + f.line_5_other_costs
+    )
+    assert f.line_8_cogs == f.line_6_total - f.line_7_ending_inventory
+    assert f.line_8_cogs == D("717000.00")
+
+    # Line 8 must equal the roll-forward COGS on the same inputs — the form and
+    # the engine are two views of one calculation, not two calculations.
+    rolled = roll_forward_cogs(
+        beginning_inventory=D("120000.00"),
+        capitalized=D("300000.00") + D("420000.00"),
+        purchases=D("15000.00"),
+        ending_inventory=D("138000.00"),
+    )
+    assert rolled.cogs == f.line_8_cogs
+
+    # An unassigned split puts everything in other costs rather than guessing
+    # at labor — and the total is unaffected either way.
+    neutral = build_form_1125a(
+        beginning_inventory=D("120000.00"), purchases=D("15000.00"),
+        labor_capitalized=D("0.00"), other_capitalized=D("720000.00"),
+        ending_inventory=D("138000.00"),
+    )
+    assert neutral.line_8_cogs == f.line_8_cogs
+
+
+def test_fiscal_year_maps_months_to_the_right_return():
+    """A June year end puts September 2024 on the 2025 return, not the 2024 one.
+
+    Filing a month under the wrong tax year attaches it to a return that may
+    already be signed, and leaves a hole in the one still open. Both errors are
+    invisible in the monthly workpaper.
+    """
+    from datetime import date
+
+    from modules.cost_allocation.engine import (
+        expected_period_ends,
+        fiscal_year_bounds,
+        tax_year_for,
+    )
+
+    # Calendar year — the ordinary case.
+    start, end = fiscal_year_bounds(2026, "12-31")
+    assert (start, end) == (date(2026, 1, 1), date(2026, 12, 31))
+    assert fiscal_year_bounds(2026, None) == (start, end)
+    assert fiscal_year_bounds(2026, "garbage") == (start, end)
+    periods = expected_period_ends(2026, "12-31")
+    assert len(periods) == 12
+    assert periods[0] == date(2026, 1, 31) and periods[-1] == date(2026, 12, 31)
+    assert periods[1] == date(2026, 2, 28)          # not a leap year
+    assert expected_period_ends(2024, "12-31")[1] == date(2024, 2, 29)   # leap
+
+    # June year end — the start is in the PRIOR calendar year.
+    start, end = fiscal_year_bounds(2025, "06-30")
+    assert (start, end) == (date(2024, 7, 1), date(2025, 6, 30))
+    periods = expected_period_ends(2025, "06-30")
+    assert len(periods) == 12
+    assert periods[0] == date(2024, 7, 31) and periods[-1] == date(2025, 6, 30)
+    assert all(start <= p <= end for p in periods), periods
+    assert len(set(periods)) == 12                  # no month counted twice
+
+    # Every month lands in exactly the year that expects it.
+    for fye in ("12-31", "06-30", "09-30"):
+        for tax_year in (2024, 2025):
+            for p in expected_period_ends(tax_year, fye):
+                assert tax_year_for(p, fye) == tax_year, (fye, tax_year, p)
+
+    assert tax_year_for(date(2024, 9, 30), "06-30") == 2025
+    assert tax_year_for(date(2024, 3, 31), "06-30") == 2024
+    assert tax_year_for(date(2024, 9, 30), "12-31") == 2024
+
+
+def test_inventory_chain_must_not_break_across_months():
+    """Each month opens where the last one closed, or the annual COGS is wrong.
+
+    Annual COGS takes beginning from the first month and ending from the last.
+    If April opens 30,000 below where March closed, that 30,000 appears in no
+    total at all — and nothing else in the workpaper mentions it.
+    """
+    from datetime import date
+
+    from modules.cost_allocation.engine import MonthlyResult, check_inventory_continuity
+
+    def month(m: int, beg, end, status="approved"):
+        return MonthlyResult(
+            period_end=date(2026, m, 28),
+            total_expenses=D("100000.00"), capitalized=D("60000.00"),
+            disallowed=D("40000.00"), status=status, posted=True,
+            beginning_inventory=None if beg is None else D(beg),
+            ending_inventory=None if end is None else D(end),
+        )
+
+    unbroken = [
+        month(1, "100000.00", "160000.00"),
+        month(2, "160000.00", "205000.00"),
+        month(3, "205000.00", "240000.00"),
+    ]
+    assert check_inventory_continuity(unbroken) == ()
+
+    # Out of order in, in order out — the chain is period order, not input order.
+    assert check_inventory_continuity(list(reversed(unbroken))) == ()
+
+    broken = [
+        month(1, "100000.00", "160000.00"),
+        month(2, "130000.00", "205000.00"),   # opens 30,000 light
+        month(3, "205000.00", "240000.00"),
+    ]
+    breaks = check_inventory_continuity(broken)
+    assert len(breaks) == 1, breaks
+    assert breaks[0].period_end == date(2026, 2, 28)
+    assert breaks[0].prior_period_end == date(2026, 1, 28)
+    assert breaks[0].prior_ending == D("160000.00")
+    assert breaks[0].beginning == D("130000.00")
+    assert breaks[0].difference == D("-30000.00")
+
+    # A month that captured nothing breaks the chain rather than reading as zero:
+    # comparing March against January would report a break whose real cause is
+    # February's gap.
+    gapped = [
+        month(1, "100000.00", "160000.00"),
+        month(2, None, None),
+        month(3, "205000.00", "240000.00"),
+    ]
+    assert check_inventory_continuity(gapped) == ()
+
+    # A superseded rerun is a prior version, not a link in the chain.
+    with_superseded = [
+        month(1, "100000.00", "160000.00"),
+        month(2, "999999.99", "888888.88", status="superseded"),
+        month(2, "160000.00", "205000.00"),
+    ]
+    assert check_inventory_continuity(with_superseded) == ()
+
+
 if __name__ == "__main__":
     test_factors_are_fractions_in_range()
     test_every_line_splits_to_gross_and_total_is_preserved()
@@ -725,4 +933,8 @@ if __name__ == "__main__":
     test_department_drives_the_suggested_function_conservatively()
     test_hand_reviewed_transactions_override_the_driver()
     test_gross_receipts_aggregate_across_entities()
+    test_annual_rollup_reports_what_it_is_made_of()
+    test_form_1125a_is_internally_consistent()
+    test_fiscal_year_maps_months_to_the_right_return()
+    test_inventory_chain_must_not_break_across_months()
     print("ALLOCATION_ENGINE_OK")

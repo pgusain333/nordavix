@@ -35,6 +35,8 @@ class TemplatePool:
     blend_occupancy_wt: Decimal | None = None
     sort_order: int = 0
     notes: str | None = None
+    # Form 1125-A line at year end: 'labor' (line 3) or 'other' (line 5).
+    form_1125a_line: str = "other"
 
 
 DEFAULT_POOLS: tuple[TemplatePool, ...] = (
@@ -49,6 +51,10 @@ DEFAULT_POOLS: tuple[TemplatePool, ...] = (
     TemplatePool(
         "Indirect labor", "allocated", driver="payroll", sort_order=30,
         notes="Supervision, payroll taxes and benefits — apportioned by production wages.",
+        # The one template pool that is unambiguously cost of labor. Direct
+        # production holds wages too, but also nutrients and packaging, so it
+        # stays on other costs until a preparer says otherwise.
+        form_1125a_line="labor",
     ),
     TemplatePool(
         "Shared operations", "allocated", driver="blended",

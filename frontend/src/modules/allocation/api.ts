@@ -21,10 +21,15 @@ export interface Pool {
   blend_payroll_wt: string | null
   blend_occupancy_wt: string | null
   fixed_pct: string | null
+  /** Where this pool's capitalized cost lands on Form 1125-A at year end. */
+  form_1125a_line: Form1125aLine
   sort_order: number
   active: boolean
   notes: string | null
 }
+
+/** 'labor' is line 3, 'other' is line 5. Stated per pool, never inferred. */
+export type Form1125aLine = "labor" | "other"
 
 export interface AccountRow {
   qbo_account_id: string
@@ -180,6 +185,7 @@ export interface PoolInput {
   blend_payroll_wt?: number | null
   blend_occupancy_wt?: number | null
   fixed_pct?: number | null
+  form_1125a_line?: Form1125aLine
   sort_order?: number
   notes?: string | null
 }
@@ -628,6 +634,103 @@ async function listInventoryAccounts(): Promise<QboAccount[]> {
   return data
 }
 
+// ── Year end ──────────────────────────────────────────────────────────────────
+
+export interface InventoryBreak {
+  period_end: string
+  prior_period_end: string
+  prior_ending: string
+  beginning: string
+  difference: string
+}
+
+export interface AnnualChecklist {
+  months_expected: number
+  months_present: number
+  missing_periods: string[]
+  unapproved_periods: string[]
+  unposted_periods: string[]
+  inventory_breaks: InventoryBreak[]
+  periods_missing_inventory: string[]
+  eligibility_concluded: boolean
+  eligible: boolean | null
+}
+
+export interface AnnualMonth {
+  period_end: string
+  status: AllocRun["status"]
+  posted: boolean
+  total_expenses: string | null
+  capitalized: string | null
+  disallowed: string | null
+  beginning_inventory: string | null
+  ending_inventory: string | null
+  purchases: string | null
+}
+
+export interface AnnualAccount {
+  qbo_account_id: string
+  account_number: string | null
+  account_name: string | null
+  pool_name: string
+  treatment: Treatment
+  gross: string
+  capitalized: string
+  disallowed: string
+}
+
+export interface AnnualRollup {
+  tax_year: number
+  fiscal_year_end: string | null
+  year_start: string
+  year_end: string
+  expected_periods: string[]
+  complete: boolean
+  checklist: AnnualChecklist
+  totals: { total_expenses: string | null; capitalized: string | null; disallowed: string | null }
+  by_pool: { pool_name: string; capitalized: string; form_1125a_line: Form1125aLine }[]
+  by_account: AnnualAccount[]
+  months: AnnualMonth[]
+  /** Null until both beginning and ending inventory have been captured. */
+  roll_forward: {
+    beginning_inventory: string
+    capitalized: string
+    purchases: string
+    ending_inventory: string
+    cogs: string
+  } | null
+  form_1125a: {
+    line_1_beginning_inventory: string
+    line_2_purchases: string
+    line_3_cost_of_labor: string
+    line_5_other_costs: string
+    line_6_total: string
+    line_7_ending_inventory: string
+    line_8_cogs: string
+    based_on_complete_year: boolean
+  }
+}
+
+async function listTaxYears(): Promise<{ fiscal_year_end: string | null; years: number[] }> {
+  const { data } = await apiClient.get(`${BASE}/annual/years`)
+  return data
+}
+
+async function getAnnual(taxYear: number): Promise<AnnualRollup> {
+  const { data } = await apiClient.get<AnnualRollup>(`${BASE}/annual`, {
+    params: { tax_year: taxYear }, timeout: 60_000,
+  })
+  return data
+}
+
+/** The year-end workpaper: checklist, monthly roll, account detail, 1125-A. */
+async function downloadAnnualWorkpaperCsv(taxYear: number): Promise<void> {
+  await downloadFile(
+    `${BASE}/annual/workpaper.csv?tax_year=${taxYear}`,
+    `471c-annual-workpaper-${taxYear}.csv`,
+  )
+}
+
 export const allocationApi = {
   getEligibility, suggestReceipts, recordEligibility,
   checkPosting, getProceduresMemo, downloadProceduresMemo,
@@ -640,6 +743,7 @@ export const allocationApi = {
   listSpaces, createSpace, updateSpace, retireSpace,
   listEmployees, createEmployee, updateEmployee, retireEmployee,
   getReadiness, listRuns, getRun, createRun, approveRun,
+  listTaxYears, getAnnual, downloadAnnualWorkpaperCsv,
 }
 
 // ── Display helpers ───────────────────────────────────────────────────────────

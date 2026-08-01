@@ -138,6 +138,11 @@ class AllocPool(TenantBase):
     blend_occupancy_wt: Mapped[Decimal | None] = mapped_column(Numeric(7, 4))
     fixed_pct:          Mapped[Decimal | None] = mapped_column(Numeric(7, 4))
 
+    # Which Form 1125-A line this pool's capitalized cost lands on at year end:
+    # 'labor' (line 3) or 'other' (line 5). NULL reads as other costs — the
+    # neutral answer, since the split can't be inferred from the driver.
+    form_1125a_line: Mapped[str | None] = mapped_column(String(10))
+
     sort_order: Mapped[int]  = mapped_column(Integer, nullable=False, default=0)
     active:     Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     notes:      Mapped[str | None] = mapped_column(Text)

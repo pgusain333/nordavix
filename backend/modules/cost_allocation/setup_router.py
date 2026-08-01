@@ -137,6 +137,8 @@ class PoolBody(BaseModel):
     blend_payroll_wt: float | None = None
     blend_occupancy_wt: float | None = None
     fixed_pct: float | None = None
+    # Form 1125-A line at year end: 'labor' (line 3) or 'other' (line 5).
+    form_1125a_line: str = "other"
     sort_order: int = 0
     notes: str | None = None
 
@@ -149,6 +151,11 @@ def _validate_pool(b: PoolBody) -> None:
     """
     if b.treatment not in ("direct", "allocated", "excluded"):
         raise HTTPException(status_code=422, detail="treatment must be direct, allocated or excluded.")
+    if b.form_1125a_line not in ("labor", "other"):
+        raise HTTPException(
+            status_code=422,
+            detail="form_1125a_line must be labor (Form 1125-A line 3) or other (line 5).",
+        )
     if b.treatment == "allocated":
         if b.driver not in ("payroll", "occupancy", "blended", "fixed"):
             raise HTTPException(
@@ -212,7 +219,8 @@ async def create_pool(
         treatment=body.treatment, driver=body.driver,
         blend_payroll_wt=_d(body.blend_payroll_wt),
         blend_occupancy_wt=_d(body.blend_occupancy_wt),
-        fixed_pct=_d(body.fixed_pct), sort_order=body.sort_order, notes=body.notes,
+        fixed_pct=_d(body.fixed_pct), form_1125a_line=body.form_1125a_line,
+        sort_order=body.sort_order, notes=body.notes,
     )
     db.add(pool)
     await db.commit()
@@ -239,6 +247,7 @@ async def update_pool(
     pool.blend_payroll_wt = _d(body.blend_payroll_wt)
     pool.blend_occupancy_wt = _d(body.blend_occupancy_wt)
     pool.fixed_pct = _d(body.fixed_pct)
+    pool.form_1125a_line = body.form_1125a_line
     pool.sort_order = body.sort_order
     pool.notes = body.notes
     await db.commit()
