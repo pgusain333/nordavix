@@ -14,9 +14,10 @@
  *     done in integer cents to avoid drift.
  */
 import { useMemo, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Search, X } from "lucide-react"
 import { Input, Select } from "@/core/ui"
-import { money, type RunLine, type Treatment } from "../api"
+import { allocationApi, money, type Driver, type Pool, type RunLine, type Treatment } from "../api"
 
 type SortKey = "account" | "pool" | "gross" | "capitalized" | "disallowed" | "rate"
 
@@ -25,6 +26,32 @@ const TREATMENT_LABEL: Record<Treatment, string> = {
 }
 const TREATMENT_TONE: Record<Treatment, string> = {
   direct: "var(--positive)", allocated: "var(--info)", excluded: "var(--text-muted)",
+}
+const DRIVER_LABEL: Record<Driver, string> = {
+  payroll: "Payroll", occupancy: "Occupancy", blended: "Blended", fixed: "Fixed",
+}
+
+/**
+ * Why a line's rate is what it is.
+ *
+ * The question this exists to answer: "the payroll factor is 73.37%, so why is
+ * this account allocated at 46.88%?" — because the account sits in a BLENDED
+ * pool, and a blend of the payroll and occupancy factors is not the payroll
+ * factor. Showing the rate without the driver made that unanswerable from the
+ * workpaper, which is the one document that has to explain itself.
+ */
+function rateBasis(line: RunLine, pool: Pool | undefined): string | null {
+  if (line.treatment !== "allocated" || !line.driver) return null
+  if (line.driver === "payroll")   return "= payroll factor"
+  if (line.driver === "occupancy") return "= occupancy factor"
+  if (line.driver === "fixed")     return "fixed rate"
+  if (line.driver === "blended") {
+    const wp = pool?.blend_payroll_wt, wo = pool?.blend_occupancy_wt
+    return wp && wo
+      ? `${Number(wp)}% payroll + ${Number(wo)}% occupancy`
+      : "payroll and occupancy, weighted"
+  }
+  return null
 }
 
 /** Sum decimal strings in integer cents — no float drift. */
@@ -46,6 +73,19 @@ export function WorkpaperTable({ lines }: { lines: RunLine[] }) {
     () => Array.from(new Set(lines.map((l) => l.pool_name))).sort(),
     [lines],
   )
+
+  // Pool config, only so a blended line can state its weights. Cached and
+  // shared with the setup screens; the table still works without it.
+  const { data: poolConfig } = useQuery({
+    queryKey: ["allocation", "pools"],
+    queryFn:  allocationApi.listPools,
+    staleTime: 60_000,
+  })
+  const poolByName = useMemo(() => {
+    const m = new Map<string, Pool>()
+    for (const p of poolConfig ?? []) m.set(p.name, p)
+    return m
+  }, [poolConfig])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -109,7 +149,7 @@ export function WorkpaperTable({ lines }: { lines: RunLine[] }) {
   }
   function clearFilters() { setSearch(""); setPool(""); setTreatment("") }
 
-  const COLS = "minmax(0,2.2fr) 1fr 0.8fr 1fr 1fr 1fr"
+  const COLS = "minmax(0,2.2fr) 1fr 0.8fr 0.9fr 1.15fr 1fr 1fr"
 
   const SortHead = ({ k, label, right }: { k: SortKey; label: string; right?: boolean }) => (
     <button onClick={() => toggleSort(k)}
@@ -121,35 +161,49 @@ export function WorkpaperTable({ lines }: { lines: RunLine[] }) {
     </button>
   )
 
-  const Row = ({ l }: { l: RunLine }) => (
-    <div className="grid gap-3 items-center px-4 py-2 text-[13px]"
-      style={{ gridTemplateColumns: COLS, borderTop: "1px solid var(--border)" }}>
-      <div className="min-w-0">
-        <span className="text-theme truncate block">
-          {l.account_name || l.qbo_account_id}
-          {l.account_number && (
-            <span className="ml-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
-              {l.account_number}
+  const Row = ({ l }: { l: RunLine }) => {
+    const basis = rateBasis(l, poolByName.get(l.pool_name))
+    return (
+      <div className="grid gap-3 items-center px-4 py-2 text-[13px]"
+        style={{ gridTemplateColumns: COLS, borderTop: "1px solid var(--border)" }}>
+        <div className="min-w-0">
+          <span className="text-theme truncate block">
+            {l.account_name || l.qbo_account_id}
+            {l.account_number && (
+              <span className="ml-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                {l.account_number}
+              </span>
+            )}
+          </span>
+        </div>
+        <span className="truncate text-[12px]" style={{ color: "var(--text-2)" }}>{l.pool_name}</span>
+        <span className="text-[11px] font-medium" style={{ color: TREATMENT_TONE[l.treatment] }}>
+          {TREATMENT_LABEL[l.treatment]}
+        </span>
+        {/* Driver — without it, a blended rate looks like a wrong payroll rate. */}
+        <span className="text-[11.5px] truncate" style={{ color: "var(--text-muted)" }}>
+          {l.driver ? DRIVER_LABEL[l.driver] : "—"}
+        </span>
+        <span className="text-right tabular-nums leading-tight">
+          <span style={{ color: "var(--text-2)" }}>
+            {l.treatment === "allocated" ? `${(Number(l.driver_pct) * 100).toFixed(2)}%` : "—"}
+          </span>
+          {basis && (
+            <span className="block text-[10px] font-normal" style={{ color: "var(--text-muted)" }}>
+              {basis}
             </span>
           )}
         </span>
+        <span className="text-right tabular-nums" style={{ color: "var(--text-2)" }}>
+          {money(l.gross_amount)}
+        </span>
+        <span className="text-right tabular-nums font-medium"
+          style={{ color: Number(l.capitalized_amount) !== 0 ? "var(--green)" : "var(--text-muted)" }}>
+          {money(l.capitalized_amount)}
+        </span>
       </div>
-      <span className="truncate text-[12px]" style={{ color: "var(--text-2)" }}>{l.pool_name}</span>
-      <span className="text-[11px] font-medium" style={{ color: TREATMENT_TONE[l.treatment] }}>
-        {TREATMENT_LABEL[l.treatment]}
-      </span>
-      <span className="text-right tabular-nums" style={{ color: "var(--text-2)" }}>
-        {l.treatment === "allocated" ? `${(Number(l.driver_pct) * 100).toFixed(2)}%` : "—"}
-      </span>
-      <span className="text-right tabular-nums" style={{ color: "var(--text-2)" }}>
-        {money(l.gross_amount)}
-      </span>
-      <span className="text-right tabular-nums font-medium"
-        style={{ color: Number(l.capitalized_amount) !== 0 ? "var(--green)" : "var(--text-muted)" }}>
-        {money(l.capitalized_amount)}
-      </span>
-    </div>
-  )
+    )
+  }
 
   return (
     <div className="space-y-2.5">
@@ -201,7 +255,8 @@ export function WorkpaperTable({ lines }: { lines: RunLine[] }) {
           <SortHead k="account" label="Account" />
           <SortHead k="pool" label="Pool" />
           <span style={{ color: "var(--text-muted)" }}>Treatment</span>
-          <span className="text-right"><SortHead k="rate" label="Rate" right /></span>
+          <span style={{ color: "var(--text-muted)" }}>Driver</span>
+          <span className="text-right"><SortHead k="rate" label="Rate applied" right /></span>
           <span className="text-right"><SortHead k="gross" label="Gross" right /></span>
           <span className="text-right"><SortHead k="capitalized" label="Capitalized" right /></span>
         </div>
@@ -231,7 +286,7 @@ export function WorkpaperTable({ lines }: { lines: RunLine[] }) {
                       ({rows.length})
                     </span>
                   </span>
-                  <span /><span /><span />
+                  <span /><span /><span /><span />
                   <span className="text-right text-[12px] tabular-nums" style={{ color: "var(--text-2)" }}>
                     {money(fromCents(gGross))}
                   </span>
@@ -254,7 +309,7 @@ export function WorkpaperTable({ lines }: { lines: RunLine[] }) {
             <span className="text-theme">
               {isFiltered ? "Filtered total" : "Total"}
             </span>
-            <span /><span /><span />
+            <span /><span /><span /><span />
             <span className="text-right tabular-nums text-theme">{money(fromCents(totals.gross))}</span>
             <span className="text-right tabular-nums" style={{ color: "var(--green)" }}>
               {money(fromCents(totals.cap))}

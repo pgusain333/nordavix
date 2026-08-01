@@ -22,15 +22,17 @@ interface Props {
   children: (ctx: { periodEnd: string; periodStart: string }) => ReactNode
   /** Set for screens where the period genuinely doesn't apply (settings). */
   hidePeriod?: boolean
+  /** Screens with a real table — Accounts — get the extra width to lay it out. */
+  wide?: boolean
 }
 
-export function SetupShell({ title, subtitle, children, hidePeriod }: Props) {
+export function SetupShell({ title, subtitle, children, hidePeriod, wide }: Props) {
   const [periodEnd, setPeriodEnd] = useAllocationPeriod()
   const periodStart = `${periodEnd.slice(0, 7)}-01`
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-[1180px] mx-auto px-5 py-6">
+      <div className={`${wide ? "max-w-[1560px]" : "max-w-[1180px]"} mx-auto px-5 py-6`}>
 
         <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
           <div>
@@ -46,12 +48,16 @@ export function SetupShell({ title, subtitle, children, hidePeriod }: Props) {
         </div>
 
         {/* On a narrow screen the rail comes FIRST: a blocker you scroll past is
-            a blocker you don't see. On desktop it sits alongside and sticks. */}
-        <div className="flex flex-col lg:flex-row gap-4 items-start">
+            a blocker you don't see. On desktop it sits alongside and sticks.
+            Table screens hold off until xl — below that the rail's 300px costs
+            the table more than the side-by-side is worth. */}
+        <div className={`flex flex-col gap-4 items-start ${wide ? "xl:flex-row" : "lg:flex-row"}`}>
           <div className="flex-1 min-w-0 w-full">
             {children({ periodEnd, periodStart })}
           </div>
-          <aside className="w-full lg:w-[300px] shrink-0 order-first lg:order-none lg:sticky lg:top-6">
+          <aside className={wide
+            ? "w-full xl:w-[300px] shrink-0 order-first xl:order-none xl:sticky xl:top-6"
+            : "w-full lg:w-[300px] shrink-0 order-first lg:order-none lg:sticky lg:top-6"}>
             <ReadinessRail periodEnd={periodEnd} />
           </aside>
         </div>

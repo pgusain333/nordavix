@@ -19,6 +19,7 @@ import { ReactNode, useEffect, useState } from "react"
 import { Menu, Search, X } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
 import { AllocationNav } from "./AllocationNav"
+import { AllocationTopBar } from "./AllocationTopBar"
 import { ClerkApiWirer } from "@/core/auth/ClerkProvider"
 import { CommandPalette, CMDK_EVENT } from "@/core/ui/CommandPalette"
 import { NotificationsPanel } from "@/modules/notifications/NotificationsPanel"
@@ -118,6 +119,10 @@ export function AllocationLayout({ children }: Props) {
             </button>
           </div>
         </div>
+
+        {/* Desktop top bar — same component the close app mounts, so the two
+            products read as one platform (hidden lg:flex lives inside it). */}
+        <AllocationTopBar />
 
         <main className="flex flex-1 flex-col overflow-hidden min-w-0">
           {children}

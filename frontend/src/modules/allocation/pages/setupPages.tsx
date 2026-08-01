@@ -46,6 +46,7 @@ export function AccountsPage() {
     <SetupShell
       title="Accounts"
       subtitle="Which pool each expense account belongs to"
+      wide
     >
       {({ periodStart, periodEnd }) => (
         <AccountsPanel periodStart={periodStart} periodEnd={periodEnd} />

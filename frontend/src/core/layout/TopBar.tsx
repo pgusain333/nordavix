@@ -7,8 +7,12 @@
  * Mounted in ThreePaneLayout. The mobile layout keeps its own top bar
  * (search + bell) and the nav drawer keeps the account block, so these
  * controls never double-render on mobile.
+ *
+ * Nordavix Allocate mounts the SAME bar with different props (its own route
+ * titles, no close chip, no Command Center). Every prop defaults to the close
+ * app's behaviour, so this stays one bar rather than two that drift apart.
  */
-import { useEffect, useMemo, useState } from "react"
+import { ReactNode, useEffect, useMemo, useState } from "react"
 import { UserButton, useOrganization, useUser } from "@clerk/clerk-react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
@@ -47,24 +51,51 @@ const SUB_TITLES: [string, string][] = [
   ["/app/schedules/loans",        "Loans"],
 ]
 
-export function TopBar() {
+interface TopBarProps {
+  /** Route → page title, longest path first. Defaults to the close app's. */
+  titles?: [string, string][]
+  subTitles?: [string, string][]
+  /** Browser-tab suffix, so six open tabs are tellable apart. */
+  appName?: string
+  helpPath?: string
+  /** Open help in a new tab — used where the guide lives in the other product. */
+  helpNewTab?: boolean
+  rolePath?: string
+  showCommandCenter?: boolean
+  /** The close-progress chip. Off in products that aren't the close. */
+  showCloseChip?: boolean
+  /** A product-specific chip rendered in the chip slot instead. */
+  chip?: ReactNode
+}
+
+export function TopBar({
+  titles = PAGE_TITLES,
+  subTitles = SUB_TITLES,
+  appName = "Nordavix",
+  helpPath = "/app/help",
+  helpNewTab = false,
+  rolePath = "/app/team",
+  showCommandCenter = true,
+  showCloseChip = true,
+  chip,
+}: TopBarProps = {}) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { organization } = useOrganization()
   const { user } = useUser()
 
-  const section = PAGE_TITLES.find(([p]) => pathname === p || pathname.startsWith(p + "/"))
+  const section = titles.find(([p]) => pathname === p || pathname.startsWith(p + "/"))
   const pageTitle = section?.[1] ?? ""
   const sectionPath = section?.[0] ?? ""
-  const subTitle = SUB_TITLES.find(([p]) => pathname === p || pathname.startsWith(p + "/"))?.[1] ?? ""
+  const subTitle = subTitles.find(([p]) => pathname === p || pathname.startsWith(p + "/"))?.[1] ?? ""
 
   // Browser-tab title follows the page — "Reconciliations · Nordavix" — so a
   // CPA with six tabs open can tell them apart. Marketing pages set their own
   // title via the SEO/Helmet component; this covers the app shell.
   useEffect(() => {
     const t = subTitle || pageTitle
-    document.title = t ? `${t} · Nordavix` : "Nordavix"
-  }, [pageTitle, subTitle])
+    document.title = t ? `${t} · ${appName}` : appName
+  }, [pageTitle, subTitle, appName])
 
   // Close-progress chip — the close is the product's heartbeat, so the bar
   // shows where it stands: the OLDEST non-closed month (sequential close
@@ -76,6 +107,7 @@ export function TopBar() {
     queryFn:  reconsApi.listPeriodTracker,
     staleTime: 60_000,
     retry: 0,            // books not seeded yet → just hide the chip
+    enabled: showCloseChip,   // never fetched in products that don't show it
   })
   const closeChip = useMemo(() => {
     const ps = trackerData?.periods ?? []
@@ -157,8 +189,9 @@ export function TopBar() {
             <span className="text-sm font-medium truncate" style={{ color: "var(--text)" }}>{subTitle}</span>
           </>
         )}
+        {chip}
         {/* Close-progress chip (xl+ so the breadcrumb never crowds). */}
-        {closeChip && (
+        {showCloseChip && closeChip && (
           <button
             onClick={() => navigate("/app/reconciliations")}
             title="Close progress — open Reconciliations"
@@ -188,17 +221,21 @@ export function TopBar() {
 
       {/* Right — command center · help · bell · divider · user */}
       <div className="flex-1 flex items-center justify-end gap-2">
+        {showCommandCenter && (
+          <button
+            onClick={() => navigate("/app/command-center")}
+            onMouseEnter={() => void import("@/modules/firm/pages/CommandCenterPage")}
+            className="flex items-center justify-center h-9 w-9 rounded-md transition-colors hover:bg-[var(--surface-2)]"
+            title="Command Center — all companies"
+            aria-label="Command Center"
+          >
+            <LayoutGrid size={17} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+          </button>
+        )}
         <button
-          onClick={() => navigate("/app/command-center")}
-          onMouseEnter={() => void import("@/modules/firm/pages/CommandCenterPage")}
-          className="flex items-center justify-center h-9 w-9 rounded-md transition-colors hover:bg-[var(--surface-2)]"
-          title="Command Center — all companies"
-          aria-label="Command Center"
-        >
-          <LayoutGrid size={17} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-        </button>
-        <button
-          onClick={() => navigate("/app/help")}
+          onClick={() => (helpNewTab
+            ? window.open(helpPath, "_blank", "noopener")
+            : navigate(helpPath))}
           className="flex items-center justify-center h-9 w-9 rounded-md transition-colors hover:bg-[var(--surface-2)]"
           title="Help & guide"
           aria-label="Help"
@@ -216,7 +253,7 @@ export function TopBar() {
             </p>
             {roleMeta && (
               <button
-                onClick={() => navigate("/app/team")}
+                onClick={() => navigate(rolePath)}
                 className="mt-0.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide transition-opacity hover:opacity-80"
                 style={{ background: roleMeta.bg, color: roleMeta.fg }}
                 title="Open the Team page"

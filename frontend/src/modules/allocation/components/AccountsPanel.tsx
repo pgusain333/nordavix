@@ -17,7 +17,9 @@
  */
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertCircle, CheckCheck, ListTree, Receipt, Search, X } from "lucide-react"
+import {
+  AlertCircle, CheckCheck, ChevronDown, ChevronUp, ListTree, Receipt, Search, X,
+} from "lucide-react"
 import { TransactionDrawer } from "./TransactionDrawer"
 import { Button, Input, Select, Spinner } from "@/core/ui"
 import { allocationApi, money, type AccountRow, type Pool, type Treatment } from "../api"
@@ -48,6 +50,16 @@ function driverFraction(pool: Pool): number {
   if (pool.driver === "fixed" && pool.fixed_pct) return Number(pool.fixed_pct) / 100
   return 0
 }
+
+/** One column template, used by the header and every row — the only way the
+ *  two can't drift. Numeric and action columns are fixed width; only the two
+ *  text columns flex. */
+const COLS =
+  "grid-cols-[minmax(190px,2.3fr)_70px_110px_minmax(200px,1.6fr)_84px_108px]"
+
+/** Below this the columns would crush the account names, so the table scrolls
+ *  sideways instead. Truncating "Nutrients and soil" to "Nutri…" isn't a table. */
+const TABLE_MIN_W = "min-w-[860px]"
 
 export function AccountsPanel({ periodStart, periodEnd }: Props) {
   const [busy, setBusy] = useState(false)
@@ -261,15 +273,20 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
 
       {error && <p className="text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
 
-      <div className="rounded-xl overflow-hidden"
+      <div className="rounded-xl overflow-x-auto"
         style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <div className="grid grid-cols-[minmax(0,2fr)_1fr_minmax(0,1.5fr)_auto] gap-3 px-4 py-2.5 text-[11px] sticky top-0 z-10"
+        <div className={TABLE_MIN_W}>
+        {/* Fixed-width columns for everything that isn't prose, so headings and
+            cells line up down the page instead of drifting with content. */}
+        <div className={`grid gap-3 px-4 py-2.5 text-[11px] font-medium sticky top-0 z-10 ${COLS}`}
           style={{ color: "var(--text-muted)", background: "var(--surface-2)",
                    borderBottom: "1px solid var(--border)" }}>
           <span>Account</span>
+          <span>No.</span>
           <span className="text-right">This month</span>
           <span>Pool</span>
-          <span className="text-right">Becomes</span>
+          <span className="text-center">Becomes</span>
+          <span className="text-center">Ledger</span>
         </div>
 
         {filtered.length === 0 ? (
@@ -287,16 +304,11 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
             <div key={a.qbo_account_id}
               style={{ borderTop: i === 0 ? undefined : "1px solid var(--border)" }}>
             <div
-              className="grid grid-cols-[minmax(0,2fr)_1fr_minmax(0,1.5fr)_auto] gap-3 items-center px-4 py-2.5 transition-opacity"
+              className={`grid gap-3 items-center px-4 py-2.5 transition-opacity ${COLS}`}
               style={{ opacity: savingId === a.qbo_account_id ? 0.55 : 1 }}>
               <div className="min-w-0">
                 <div className="text-[13px] text-theme truncate">
                   {a.account_name || a.qbo_account_id}
-                  {a.account_number && (
-                    <span className="ml-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
-                      {a.account_number}
-                    </span>
-                  )}
                 </div>
                 {!a.pool_id && a.reason && (
                   <div className="text-[10.5px] mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
@@ -305,6 +317,13 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
                 )}
               </div>
 
+              {/* Account number gets its own column so the numbers form a
+                  readable line instead of trailing each name at a ragged edge. */}
+              <span className="text-[11.5px] tabular-nums truncate"
+                style={{ color: "var(--text-muted)" }}>
+                {a.account_number || "—"}
+              </span>
+
               <span className="text-right text-[13px] tabular-nums"
                 style={{ color: Number(a.period_amount) ? "var(--text-2)" : "var(--text-muted)" }}>
                 {Number(a.period_amount) ? money(a.period_amount) : "—"}
@@ -312,6 +331,7 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
 
               <div className="flex items-center gap-1.5 min-w-0">
                 <Select
+                  className="w-full min-w-0"
                   value={a.pool_id ?? ""}
                   disabled={savingId === a.qbo_account_id || busy}
                   onChange={(e) => {
@@ -336,27 +356,39 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
                 )}
               </div>
 
-              <span className="justify-self-end flex items-center gap-1.5">
-                {/* Only an ALLOCATED account has an estimate worth improving on:
-                    direct is already 100% and excluded is already 0%. */}
-                {pool?.treatment === "allocated" && (
-                  <button
-                    onClick={() => setOpenTxns(
-                      openTxns === a.qbo_account_id ? null : a.qbo_account_id,
-                    )}
-                    title="Review the GL entries and allocate line by line"
-                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-medium transition-colors"
-                    style={openTxns === a.qbo_account_id
-                      ? { background: "var(--green)", color: "#fff" }
-                      : { background: "var(--surface-2)", color: "var(--text-2)" }}>
-                    <Receipt size={11} strokeWidth={2} /> GL
-                  </button>
-                )}
+              <span className="justify-self-center">
                 {outcome ? (
                   <span className="rounded-full px-2 py-0.5 text-[10.5px] font-medium whitespace-nowrap"
                     style={{ background: outcome.bg, color: outcome.tone }}>
                     {outcome.label}
                   </span>
+                ) : (
+                  <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>—</span>
+                )}
+              </span>
+
+              {/* Ledger — its own column, so the button sits in a straight line
+                  down the table rather than wherever the badge left room. Only
+                  an ALLOCATED account has an estimate worth improving on:
+                  direct is already 100% and excluded is already 0%. */}
+              <span className="justify-self-center">
+                {pool?.treatment === "allocated" ? (
+                  <button
+                    onClick={() => setOpenTxns(
+                      openTxns === a.qbo_account_id ? null : a.qbo_account_id,
+                    )}
+                    aria-expanded={openTxns === a.qbo_account_id}
+                    title="Review the GL entries and allocate line by line"
+                    className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-colors whitespace-nowrap"
+                    style={openTxns === a.qbo_account_id
+                      ? { background: "var(--green)", color: "#fff", border: "1px solid var(--green)" }
+                      : { background: "var(--surface)", color: "var(--text-2)", border: "1px solid var(--border)" }}>
+                    <Receipt size={11} strokeWidth={2} />
+                    {openTxns === a.qbo_account_id ? "Close" : "GL entries"}
+                    {openTxns === a.qbo_account_id
+                      ? <ChevronUp size={11} strokeWidth={2.2} />
+                      : <ChevronDown size={11} strokeWidth={2.2} />}
+                  </button>
                 ) : (
                   <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>—</span>
                 )}
@@ -378,6 +410,7 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
           </div>
           )
         })}
+        </div>
       </div>
     </div>
   )

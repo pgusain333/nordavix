@@ -7,13 +7,15 @@
  * looks like Nordavix — but `html.workspace-allocation` swaps the brand accent
  * to amber, which is the at-a-glance cue for which product you're in.
  */
+import { useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
 import {
-  Building2, CalendarCheck2, Gauge, Layers, ListTree, PlayCircle,
-  Receipt, Scale, Settings, Users, X, type LucideIcon,
+  Building2, CalendarCheck2, Gauge, Layers, LifeBuoy, ListTree, MessageSquare,
+  PlayCircle, Receipt, Scale, Settings, Users, X, type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/core/ui/utils"
 import { ProductSwitcher } from "@/core/layout/ProductSwitcher"
+import { FeedbackDialog } from "@/core/ui/FeedbackDialog"
 
 interface NavItem {
   label: string
@@ -67,6 +69,7 @@ interface Props {
 
 export function AllocationNav({ onClose }: Props) {
   const navigate = useNavigate()
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   return (
     <nav
@@ -154,6 +157,51 @@ export function AllocationNav({ onClose }: Props) {
           </div>
         ))}
       </div>
+
+      {/* Help + Feedback — the same utility pair the close nav carries, so
+          staff don't have to learn where they went in this product. */}
+      <div className="px-3 pt-2 pb-1 space-y-1.5" style={{ borderTop: "1px solid var(--nav-border)" }}>
+        <a
+          href="/app/help"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Step-by-step guide — every workflow, every screen"
+          className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors"
+          style={{ color: "var(--nav-text)" }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--nav-hover)" }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent" }}
+        >
+          <LifeBuoy size={16} strokeWidth={1.8} className="shrink-0" />
+          <span className="flex-1 text-left">Help</span>
+        </a>
+        <button
+          type="button"
+          onClick={() => setFeedbackOpen(true)}
+          title="Share a bug, idea, or comment with the Nordavix team"
+          className="w-full inline-flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-all"
+          style={{
+            color: "var(--nav-text)",
+            background: "transparent",
+            border: "1px dashed rgba(255,255,255,0.35)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--nav-hover)"
+            e.currentTarget.style.color = "var(--nav-text-act)"
+            e.currentTarget.style.borderColor = "rgba(255,255,255,0.7)"
+            e.currentTarget.style.borderStyle = "solid"
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent"
+            e.currentTarget.style.color = "var(--nav-text)"
+            e.currentTarget.style.borderColor = "rgba(255,255,255,0.35)"
+            e.currentTarget.style.borderStyle = "dashed"
+          }}
+        >
+          <MessageSquare size={16} strokeWidth={1.8} className="shrink-0" />
+          <span className="flex-1 text-left">Send feedback</span>
+        </button>
+      </div>
+      <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
 
       {/* Product footer — states what this surface is, and what it isn't. */}
       <div className="px-4 py-3" style={{ borderTop: "1px solid var(--nav-border)" }}>

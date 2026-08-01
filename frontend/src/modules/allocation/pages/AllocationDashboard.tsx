@@ -88,6 +88,11 @@ export function AllocationDashboard() {
           </div>
         </div>
 
+        {/* Setup progress leads. The five steps ARE the product's shape, so the
+            page opens by showing where this client is in it; the detail of
+            what's blocking sits directly underneath rather than above. */}
+        {readiness && <SetupProgress readiness={readiness} />}
+
         {loadingReadiness ? (
           <div className="rounded-xl px-4 py-5 flex items-center gap-2 text-xs"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
@@ -101,8 +106,6 @@ export function AllocationDashboard() {
         ) : (
           <NextAction readiness={readiness} periodEnd={periodEnd} hasRun={!!current && !current.blocked_reason} />
         )}
-
-        {readiness && <SetupProgress readiness={readiness} />}
 
         {/* This month's conclusion */}
         {current && !current.blocked_reason && (
