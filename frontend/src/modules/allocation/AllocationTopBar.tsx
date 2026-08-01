@@ -41,8 +41,13 @@ function ReadinessChip() {
     staleTime: 15_000,
     retry: 0,          // not set up yet → just hide the chip
   })
-  if (!data) return null
+  // Defensive on SHAPE, not just presence. This renders in the top bar, which
+  // sits outside the route boundary — a 200 carrying an unexpected body (a
+  // partial deploy, a proxy returning an HTML error page) would otherwise throw
+  // here and blank the entire product. A status chip is never worth that.
+  if (!data || !Array.isArray(data.blockers)) return null
 
+  const blockerCount = data.blockers.length
   const label = frequency === "annual"
     ? `FY ${periodEnd.slice(0, 4)}`
     : periodEnd.slice(0, 7)
@@ -54,14 +59,14 @@ function ReadinessChip() {
       onClick={() => navigate(data.ready ? "/allocation/runs" : "/allocation/eligibility")}
       title={data.ready
         ? "Ready to run — open Run allocation"
-        : `${data.blockers.length} blocker${data.blockers.length === 1 ? "" : "s"} — open setup`}
+        : `${blockerCount} blocker${blockerCount === 1 ? "" : "s"} — open setup`}
       className="hidden xl:inline-flex items-center gap-1.5 ml-2 shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-transform hover:-translate-y-px"
       style={{ background: bg, color: fg, border: "1px solid var(--border)" }}
     >
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: fg }} />
       §471(c) · {label}&nbsp;
       <span className="tabular-nums opacity-80">
-        {data.ready ? "ready" : `${data.blockers.length} to fix`}
+        {data.ready ? "ready" : `${blockerCount} to fix`}
       </span>
     </button>
   )

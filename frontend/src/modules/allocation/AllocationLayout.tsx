@@ -18,8 +18,24 @@
 import { ReactNode, useEffect, useState } from "react"
 import { Menu, Search, X } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
+import { ErrorBoundary } from "@/core/ui/ErrorBoundary"
 import { AllocationNav } from "./AllocationNav"
 import { AllocationTopBar } from "./AllocationTopBar"
+
+/** If the rail itself faults, you still need a way out of the product. */
+function NavFallback() {
+  return (
+    <nav className="w-[248px] shrink-0 h-screen flex flex-col justify-between p-4"
+      style={{ background: "var(--nav-bg)", borderRight: "1px solid var(--nav-border)" }}>
+      <a href="/allocation" className="text-lg font-semibold tracking-tight"
+        style={{ color: "#FFFFFF" }}>nordavix<span style={{ color: "var(--green-light)" }}>.</span></a>
+      <p className="text-[11px] leading-snug" style={{ color: "var(--nav-text)" }}>
+        The menu didn&rsquo;t load. Reload the page, or go to{" "}
+        <a href="/allocation" className="underline">the dashboard</a>.
+      </p>
+    </nav>
+  )
+}
 import { ClerkApiWirer } from "@/core/auth/ClerkProvider"
 import { CommandPalette, CMDK_EVENT } from "@/core/ui/CommandPalette"
 import { NotificationsPanel } from "@/modules/notifications/NotificationsPanel"
@@ -60,9 +76,12 @@ export function AllocationLayout({ children }: Props) {
       <NotificationsPanel />
       <NotificationToaster />
 
-      {/* Desktop rail */}
+      {/* Desktop rail. Boundaried too, but with a visible fallback — losing the
+          nav silently would leave no way to move between screens. */}
       <div className="hidden lg:flex">
-        <AllocationNav />
+        <ErrorBoundary label="Allocate nav" fallback={<NavFallback />}>
+          <AllocationNav />
+        </ErrorBoundary>
       </div>
 
       {/* Mobile drawer */}
@@ -121,8 +140,15 @@ export function AllocationLayout({ children }: Props) {
         </div>
 
         {/* Desktop top bar — same component the close app mounts, so the two
-            products read as one platform (hidden lg:flex lives inside it). */}
-        <AllocationTopBar />
+            products read as one platform (hidden lg:flex lives inside it).
+
+            Boundaried with a NULL fallback: the chrome is not the work. A fault
+            in a breadcrumb or a status chip should cost you that chrome, not
+            the product — and this one is outside the route boundary, so without
+            this it blanks everything. Verified by breaking it deliberately. */}
+        <ErrorBoundary label="Allocate top bar" fallback={null}>
+          <AllocationTopBar />
+        </ErrorBoundary>
 
         <main className="flex flex-1 flex-col overflow-hidden min-w-0">
           {children}

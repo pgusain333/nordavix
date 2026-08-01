@@ -17,6 +17,7 @@ import {
 import { cn } from "@/core/ui/utils"
 import { ProductSwitcher } from "@/core/layout/ProductSwitcher"
 import { FeedbackDialog } from "@/core/ui/FeedbackDialog"
+import { prefetchAllocationRoute } from "./AllocationRoutes"
 
 interface NavItem {
   label: string
@@ -137,6 +138,10 @@ export function AllocationNav({ onClose }: Props) {
                   to={item.path}
                   end={item.end}
                   onClick={() => onClose?.()}
+                  // Warm the screen's chunk while the pointer is on its way, so
+                  // a split route lands as fast as an inlined one.
+                  onMouseEnter={() => prefetchAllocationRoute(item.path)}
+                  onFocus={() => prefetchAllocationRoute(item.path)}
                   className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors"
                   style={({ isActive }) =>
                     isActive

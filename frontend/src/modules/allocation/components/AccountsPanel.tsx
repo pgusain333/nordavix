@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import { TransactionDrawer } from "./TransactionDrawer"
 import { Button, Input, Select, Spinner } from "@/core/ui"
+import { SkeletonBlock, SkeletonTable } from "@/core/ui/Skeleton"
 import { allocationApi, money, type AccountRow, type Pool, type Treatment } from "../api"
 
 interface Props {
@@ -170,13 +171,27 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
   }
 
   if (isLoading) {
+    // The slowest screen in the product — it waits on a live QuickBooks pull.
+    // A skeleton in the shape of the table it's about to become reads as
+    // loading; a centred spinner on a blank card reads as stuck.
     return (
-      <div className="rounded-xl px-4 py-12 flex flex-col items-center gap-2"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <Spinner className="h-5 w-5" />
-        <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-          Reading the chart of accounts from QuickBooks…
-        </span>
+      <div className="space-y-3 ndvx-fade-in">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="rounded-lg px-3.5 py-3"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <SkeletonBlock width="60%" height={11} />
+              <div className="mt-1.5"><SkeletonBlock width="75%" height={18} /></div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
+          <Spinner className="h-3 w-3" /> Reading the chart of accounts from QuickBooks…
+        </p>
+        <div className="rounded-xl py-2"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <SkeletonTable rows={8} columns={["26%", "10%", "14%", "24%", "10%", "12%"]} />
+        </div>
       </div>
     )
   }

@@ -8,12 +8,13 @@
  * app shell.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useNavigate, type NavigateFunction } from "react-router-dom"
+import { useLocation, useNavigate, type NavigateFunction } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Search, LayoutDashboard, CheckSquare, Plug, ClipboardList, BarChart3,
   ArrowLeftRight, Scale, Lightbulb, BookOpen, Users, Settings, LifeBuoy,
-  Building2, Rocket, type LucideIcon,
+  Building2, Rocket, CalendarCheck2, FileDown, Gauge, Layers, ListTree,
+  PlayCircle, Receipt, type LucideIcon,
 } from "lucide-react"
 
 export const CMDK_EVENT = "nordavix:open-command-palette"
@@ -53,6 +54,36 @@ const COMMANDS: Command[] = [
   { id: "act-company",    group: "Actions", label: "Switch / add company",    icon: Building2, keywords: "workspace org", run: (n) => n("/app/companies") },
 ]
 
+/**
+ * Nordavix Allocate has its own destinations.
+ *
+ * The palette is mounted in both shells and the top bar advertises ⌘K in both,
+ * so offering only close-app routes meant pressing it inside Allocate and
+ * landing in Reconciliations — out of the product entirely. Which set is shown
+ * follows the path, because that's what the user is looking at.
+ */
+const ALLOCATION_COMMANDS: Command[] = [
+  { id: "alloc-dashboard",  group: "Go to", label: "Dashboard",        icon: Gauge,          run: (n) => n("/allocation") },
+  { id: "alloc-eligibility", group: "Go to", label: "Eligibility",     icon: Scale, keywords: "448c threshold small business taxpayer gross receipts", run: (n) => n("/allocation/eligibility") },
+  { id: "alloc-pools",      group: "Go to", label: "Cost pools",       icon: Layers, keywords: "driver treatment direct excluded", run: (n) => n("/allocation/pools") },
+  { id: "alloc-accounts",   group: "Go to", label: "Accounts",         icon: ListTree, keywords: "map chart of accounts cogs 280e", run: (n) => n("/allocation/accounts") },
+  { id: "alloc-spaces",     group: "Go to", label: "Spaces",           icon: Building2, keywords: "square footage occupancy floor plan", run: (n) => n("/allocation/spaces") },
+  { id: "alloc-employees",  group: "Go to", label: "Employees",        icon: Users, keywords: "payroll classification split production", run: (n) => n("/allocation/employees") },
+  { id: "alloc-payroll",    group: "Go to", label: "Payroll register", icon: Receipt, keywords: "import wages adp gusto", run: (n) => n("/allocation/payroll") },
+  { id: "alloc-runs",       group: "Go to", label: "Run allocation",   icon: PlayCircle, keywords: "workpaper journal entry", run: (n) => n("/allocation/runs") },
+  { id: "alloc-yearend",    group: "Go to", label: "Year end",         icon: CalendarCheck2, keywords: "roll-up 1125-a cogs", run: (n) => n("/allocation/year-end") },
+  { id: "alloc-export",     group: "Go to", label: "Export",           icon: FileDown, keywords: "excel pdf workbook report deliverable", run: (n) => n("/allocation/export") },
+  { id: "alloc-team",       group: "Go to", label: "Team",             icon: Users,          run: (n) => n("/allocation/team") },
+  { id: "alloc-settings",   group: "Go to", label: "Settings",         icon: Settings, keywords: "method election frequency 1125-a line 9", run: (n) => n("/allocation/settings") },
+  // ── Actions ──
+  { id: "alloc-act-run",     group: "Actions", label: "Run this period's allocation", hint: "Pull QuickBooks and compute", icon: PlayCircle, keywords: "471c compute", run: (n) => n("/allocation/runs") },
+  { id: "alloc-act-payroll", group: "Actions", label: "Import a payroll register", hint: "The payroll factor needs wages", icon: Receipt, keywords: "csv xlsx upload", run: (n) => n("/allocation/payroll") },
+  { id: "alloc-act-export",  group: "Actions", label: "Export the client report",  hint: "PDF deliverable and Excel workbook", icon: FileDown, keywords: "pdf excel deliverable", run: (n) => n("/allocation/export") },
+  { id: "alloc-act-1125a",   group: "Actions", label: "See the Form 1125-A lines", hint: "Year-end roll-up and declarations", icon: CalendarCheck2, keywords: "cogs return", run: (n) => n("/allocation/year-end") },
+  // The one seam back — named so it's findable rather than a trap.
+  { id: "alloc-act-close",   group: "Actions", label: "Switch to month-end close", icon: LayoutDashboard, keywords: "product switch recons flux", run: (n) => n("/app") },
+]
+
 function score(cmd: Command, q: string): number {
   if (!q) return 1
   const needle = q.toLowerCase()
@@ -73,7 +104,11 @@ export function CommandPalette() {
   const [q, setQ] = useState("")
   const [active, setActive] = useState(0)
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const inputRef = useRef<HTMLInputElement>(null)
+  // Which product's destinations to offer. Follows the path rather than a
+  // remembered preference: what you're looking at is what you mean.
+  const commands = pathname.startsWith("/allocation") ? ALLOCATION_COMMANDS : COMMANDS
 
   // ⌘K / Ctrl-K toggles; the window event opens (used by LeftNav + mobile bar).
   useEffect(() => {
@@ -102,12 +137,12 @@ export function CommandPalette() {
   }, [open])
 
   const results = useMemo(
-    () => COMMANDS
+    () => commands
       .map((c) => ({ c, s: score(c, q) }))
       .filter((x) => x.s > 0)
       .sort((a, b) => b.s - a.s)
       .map((x) => x.c),
-    [q],
+    [q, commands],
   )
 
   useEffect(() => { if (active >= results.length) setActive(0) }, [results.length, active])

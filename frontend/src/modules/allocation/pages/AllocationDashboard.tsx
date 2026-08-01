@@ -19,7 +19,7 @@ import {
   AlertTriangle, ArrowRight, CalendarCheck2, CalendarDays, CheckCircle2, Circle,
   FileDown, Play, Receipt, Scale, XCircle,
 } from "lucide-react"
-import { Spinner } from "@/core/ui"
+import { SkeletonBlock, SkeletonTable } from "@/core/ui/Skeleton"
 import { allocationApi, factorPct, money, type Readiness } from "../api"
 import { MonthPicker, useAllocationWindow } from "../components/MonthPicker"
 import { routeForFix } from "../components/ReadinessRail"
@@ -95,9 +95,13 @@ export function AllocationDashboard() {
         {readiness && <SetupProgress readiness={readiness} />}
 
         {loadingReadiness ? (
-          <div className="rounded-xl px-4 py-5 flex items-center gap-2 text-xs"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-            <Spinner className="h-4 w-4" /> Checking this client…
+          // Shaped like the card it becomes, so the page doesn't jump when the
+          // answer lands.
+          <div className="rounded-xl px-4 py-4"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <SkeletonBlock width="42%" height={15} />
+            <div className="mt-2"><SkeletonBlock width="66%" height={11} /></div>
+            <div className="mt-3.5"><SkeletonBlock width={150} height={30} radius={8} /></div>
           </div>
         ) : !readiness ? (
           <div className="rounded-xl px-4 py-5"
@@ -301,7 +305,10 @@ function RecentRuns({ runs, loading }: {
     <div>
       <h2 className="text-[13px] font-semibold text-theme mb-2">Recent runs</h2>
       {loading ? (
-        <div className="flex justify-center py-8"><Spinner className="h-5 w-5" /></div>
+        <div className="rounded-xl py-2"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <SkeletonTable rows={4} columns={["30%", "26%", "22%", "22%"]} />
+        </div>
       ) : runs.length === 0 ? (
         <div className="rounded-xl px-6 py-10 text-center"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
