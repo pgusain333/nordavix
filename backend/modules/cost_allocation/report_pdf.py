@@ -346,6 +346,46 @@ def build_client_report(buffer: BinaryIO, *, data: dict[str, Any]) -> None:
         "Line 4 (additional 263A costs) is not presented: 280E denies 263A to this "
         "taxpayer, which is the reason 471(c) is used.",
         st["oblique"]))
+    story.append(Spacer(1, 14))
+
+    # Line 9 — the declarations. Presented because the arithmetic half of the
+    # form is only half the form, and 9e is where the method can contradict
+    # itself on the face of the return.
+    _VAL = {
+        "cost": "Cost",
+        "lower_of_cost_or_market": "Lower of cost or market",
+        "other": f"Other - {f.get('line_9a_other') or 'see explanation'}",
+    }
+    story.append(Paragraph("Line 9 - declarations", st["eyebrow"]))
+    story.append(_kv_table([
+        ("9a  Method of valuing closing inventory", _VAL.get(f["line_9a_valuation"], "Cost")),
+        ("9b  Writedown of subnormal goods", "Yes" if f["line_9b_writedown"] else "No"),
+        ("9c  LIFO adopted this year (Form 970)", "Yes" if f["line_9c_lifo"] else "No"),
+        ("9d  Closing inventory under LIFO",
+         f'{f["line_9d_lifo_pct"]}%' if f["line_9d_lifo_pct"] else "Not applicable"),
+        ("9e  Do the section 263A rules apply?", "Yes" if f["line_9e_sec263a"] else "No"),
+        ("9f  Change in quantities, cost or valuations?",
+         "Yes" if f["line_9f_method_change"] else "No"),
+    ]))
+    if f["line_9f_method_change"]:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(
+            f"<b>Line 9f explanation.</b> {f.get('line_9f_note') or 'Not stated.'} "
+            + ("Form 3115 recorded as filed." if f["form_3115_filed"]
+               else "<b>No Form 3115 is recorded as filed.</b>")
+            + (f" Section 481(a) adjustment: "
+               f"{_fmt_money(Decimal(f['sec481a_adjustment']))}."
+               if f.get("sec481a_adjustment") else ""),
+            st["body"]))
+    if not f["line_9e_sec263a"]:
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            "Line 9e is answered No because section 280E denies section 263A to this "
+            "taxpayer. That is the position the whole allocation rests on.",
+            st["oblique"]))
+    for note in f.get("exceptions", []):
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(f"<b>Exception.</b> {note}", st["body"]))
     story.append(PageBreak())
 
     # ── Basis ────────────────────────────────────────────────────────────────

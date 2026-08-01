@@ -99,6 +99,35 @@ class AllocSettings(TenantBase):
     allocation_frequency: Mapped[str] = mapped_column(
         String(10), nullable=False, default="monthly", server_default="monthly"
     )
+
+    # ── Form 1125-A line 9 — the declarations half of the form (migration 074).
+    # 9a: cost | lower_of_cost_or_market | other
+    inv_valuation_method: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="cost", server_default="cost"
+    )
+    inv_valuation_other: Mapped[str | None] = mapped_column(Text)
+    inv_writedown_subnormal: Mapped[bool] = mapped_column(  # 9b
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    lifo_adopted: Mapped[bool] = mapped_column(              # 9c — Form 970
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    lifo_closing_pct: Mapped[Decimal | None] = mapped_column(Numeric(7, 4))   # 9d
+    # 9e — FALSE for a §280E taxpayer. §280E denies §263A, which is the whole
+    # reason §471(c) is in use; answering yes contradicts the method.
+    sec263a_applies: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # 9f — a change in determining quantities, cost or valuations. TRUE in the
+    # first year §471(c) is adopted, which is a change in method of accounting.
+    method_change_this_year: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    method_change_note: Mapped[str | None] = mapped_column(Text)
+    form_3115_filed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    sec481a_adjustment: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     # Override the statutory §448(c) gross-receipts threshold (indexed annually).
     # NULL = use the platform default for the run's tax year.
     gross_receipts_threshold: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
@@ -526,6 +555,16 @@ class AllocEligibility(TenantBase):
 
     tested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Maker-checker, like a run (migration 074). A preparer performs the test;
+    # a reviewer signs it off, and never their own work. A conclusion of NOT
+    # ELIGIBLE stops runs whether or not it has been approved yet — a negative
+    # finding is a stop the moment anyone reaches it.
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="draft", server_default="draft"
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

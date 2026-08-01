@@ -69,6 +69,18 @@ class SettingsBody(BaseModel):
     gross_receipts_threshold: float | None = None
     notes: str | None = None
 
+    # Form 1125-A line 9 — the declarations half of the form.
+    inv_valuation_method: str | None = None   # 9a
+    inv_valuation_other: str | None = None
+    inv_writedown_subnormal: bool | None = None   # 9b
+    lifo_adopted: bool | None = None              # 9c
+    lifo_closing_pct: float | None = None         # 9d
+    sec263a_applies: bool | None = None           # 9e
+    method_change_this_year: bool | None = None   # 9f
+    method_change_note: str | None = None
+    form_3115_filed: bool | None = None
+    sec481a_adjustment: float | None = None
+
 
 def _serialize_settings(cfg) -> dict:
     return {
@@ -84,6 +96,21 @@ def _serialize_settings(cfg) -> dict:
         ),
         "election_attested_at": cfg.election_attested_at.isoformat() if cfg.election_attested_at else None,
         "notes": cfg.notes,
+        # Form 1125-A line 9
+        "inv_valuation_method": cfg.inv_valuation_method or "cost",
+        "inv_valuation_other": cfg.inv_valuation_other,
+        "inv_writedown_subnormal": bool(cfg.inv_writedown_subnormal),
+        "lifo_adopted": bool(cfg.lifo_adopted),
+        "lifo_closing_pct": (
+            str(cfg.lifo_closing_pct) if cfg.lifo_closing_pct is not None else None
+        ),
+        "sec263a_applies": bool(cfg.sec263a_applies),
+        "method_change_this_year": bool(cfg.method_change_this_year),
+        "method_change_note": cfg.method_change_note,
+        "form_3115_filed": bool(cfg.form_3115_filed),
+        "sec481a_adjustment": (
+            str(cfg.sec481a_adjustment) if cfg.sec481a_adjustment is not None else None
+        ),
     }
 
 
@@ -113,16 +140,32 @@ async def update_settings(
             status_code=422, detail="allocation_frequency must be 'monthly' or 'annual'.",
         )
 
+    if body.inv_valuation_method is not None and body.inv_valuation_method not in (
+        "cost", "lower_of_cost_or_market", "other"
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="inv_valuation_method must be cost, lower_of_cost_or_market or other.",
+        )
+
     cfg = await get_or_create_settings(db, tenant_id)
     for field in (
         "method", "has_afs", "inventory_account_id", "inventory_account_name",
         "fiscal_year_end", "allocation_frequency", "notes",
+        # Form 1125-A line 9
+        "inv_valuation_method", "inv_valuation_other", "inv_writedown_subnormal",
+        "lifo_adopted", "sec263a_applies", "method_change_this_year",
+        "method_change_note", "form_3115_filed",
     ):
         value = getattr(body, field)
         if value is not None:
             setattr(cfg, field, value)
     if body.gross_receipts_threshold is not None:
         cfg.gross_receipts_threshold = _d(body.gross_receipts_threshold)
+    if body.lifo_closing_pct is not None:
+        cfg.lifo_closing_pct = _d(body.lifo_closing_pct)
+    if body.sec481a_adjustment is not None:
+        cfg.sec481a_adjustment = _d(body.sec481a_adjustment)
 
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
@@ -1057,6 +1100,30 @@ class EligibilityBody(BaseModel):
     aggregation_note: str | None = None
 
 
+def _serialize_eligibility(row) -> dict:
+    from modules.cost_allocation.engine import threshold_for_year
+
+    default_threshold, confirmed = threshold_for_year(row.tax_year)
+    return {
+        "tested": True,
+        "tax_year": row.tax_year,
+        "threshold": str(row.threshold),
+        "default_threshold": str(default_threshold),
+        "threshold_confirmed": confirmed,
+        "entities": row.entities,
+        "three_year_avg": str(row.three_year_avg),
+        "eligible": row.eligible,
+        "has_afs": row.has_afs,
+        "method_available": row.method_available,
+        "reason": row.reason,
+        "aggregation_note": row.aggregation_note,
+        "status": row.status,
+        "tested_by": str(row.tested_by) if row.tested_by else None,
+        "tested_at": row.tested_at.isoformat() if row.tested_at else None,
+        "approved_at": row.approved_at.isoformat() if row.approved_at else None,
+    }
+
+
 @router.get("/eligibility")
 async def get_eligibility(
     tenant_id: CurrentTenantId,
@@ -1072,28 +1139,19 @@ async def get_eligibility(
         select(AllocEligibility).where(AllocEligibility.tax_year == tax_year)
     )).scalars().first()
 
-    default_threshold, confirmed = threshold_for_year(tax_year)
     if row is None:
+        default_threshold, confirmed = threshold_for_year(tax_year)
         return {
             "tested": False, "tax_year": tax_year,
             "default_threshold": str(default_threshold),
             "threshold_confirmed": confirmed,
-            "entities": [], "eligible": None,
+            "entities": [], "eligible": None, "status": None,
         }
     return {
-        "tested": True,
-        "tax_year": row.tax_year,
-        "threshold": str(row.threshold),
-        "default_threshold": str(default_threshold),
-        "threshold_confirmed": confirmed,
-        "entities": row.entities,
-        "three_year_avg": str(row.three_year_avg),
-        "eligible": row.eligible,
-        "has_afs": row.has_afs,
-        "method_available": row.method_available,
-        "reason": row.reason,
-        "aggregation_note": row.aggregation_note,
-        "tested_at": row.tested_at.isoformat() if row.tested_at else None,
+        **_serialize_eligibility(row),
+        # Who tested it, so the UI can tell a reviewer they can't approve their
+        # own work BEFORE they click rather than after a 403.
+        "can_self_approve": False,
     }
 
 
@@ -1131,13 +1189,19 @@ async def suggest_receipts(
 async def record_eligibility(
     body: EligibilityBody,
     tenant_id: CurrentTenantId,
-    user: User = Depends(require_role("reviewer")),
+    user: User = Depends(require_role("preparer")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Conclude on the §448(c) test and freeze the basis.
+    """Record the §448(c) conclusion and freeze the basis. Needs approving after.
 
-    Reviewer+ because this decides whether the client may use §471(c) at all —
-    it's the gate the whole method stands on, not a configuration detail.
+    Maker-checker, like a run. The preparer gathers the receipts, identifies the
+    affiliates and performs the aggregation — so the preparer records it, and it
+    lands as a DRAFT. A reviewer then signs it off, and never their own work.
+    Requiring a reviewer to type it in put the person doing the work outside
+    their own task.
+
+    Re-recording an approved conclusion returns it to draft: the basis changed,
+    so the sign-off no longer covers what's on file.
 
     Receipts AGGREGATE across commonly controlled entities (§448(c)(2) →
     §52(a)/(b), §414(m)/(o)), which is why the request takes a list of entities
@@ -1191,6 +1255,11 @@ async def record_eligibility(
     row.aggregation_note = body.aggregation_note
     row.tested_by = user.id
     row.tested_at = datetime.now(UTC)
+    # Any re-record reopens it — the basis moved, so an earlier sign-off no
+    # longer describes what's on file.
+    row.status = "draft"
+    row.approved_by = None
+    row.approved_at = None
 
     # Keep the elected method consistent with what the test says is available.
     cfg = await get_or_create_settings(db, tenant_id)
@@ -1219,8 +1288,60 @@ async def record_eligibility(
         "eligible": row.eligible,
         "method_available": row.method_available,
         "reason": row.reason,
+        "status": row.status,
         "entity_count": len({r["entity"] for r in rows}),
     }
+
+
+@router.post("/eligibility/{tax_year}/approve")
+async def approve_eligibility(
+    tax_year: int,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("reviewer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Sign off the §448(c) conclusion. Reviewer+, and never your own work.
+
+    This is the gate the whole method stands on, so it gets the same
+    maker-checker treatment as an allocation run: whoever performed the test
+    cannot be the one who approves it.
+    """
+    from models.cost_allocation import AllocEligibility
+
+    row = (await db.execute(
+        select(AllocEligibility).where(AllocEligibility.tax_year == tax_year)
+    )).scalars().first()
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"No §448(c) conclusion on file for {tax_year}.",
+        )
+    if row.status == "approved":
+        return _serialize_eligibility(row)
+    if row.tested_by is not None and row.tested_by == user.id:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "The §448(c) test must be approved by someone other than the person "
+                "who performed it."
+            ),
+        )
+
+    row.status = "approved"
+    row.approved_by = user.id
+    row.approved_at = datetime.now(UTC)
+
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="allocation.eligibility_approved",
+        entity_type="alloc_eligibility", entity_id=row.id,
+        metadata={"summary": (
+            f"Approved the §448(c) conclusion for {row.tax_year}: "
+            f"{'eligible' if row.eligible else 'NOT eligible'}"
+        )},
+    )
+    await db.commit()
+    await db.refresh(row)
+    return _serialize_eligibility(row)
 
 
 @router.get("/inventory-accounts")

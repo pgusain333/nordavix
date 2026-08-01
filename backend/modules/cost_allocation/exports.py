@@ -326,6 +326,39 @@ def build_workbook(data: dict[str, Any]) -> bytes:
         c.font = Font(name="Calibri", size=10, bold=bold, color=INK)
         r += 1
 
+    # Line 9 — the declarations half of the form, which is where the method can
+    # quietly contradict itself on the face of the return.
+    r += 1
+    ws.cell(row=r, column=1, value="FORM 1125-A LINE 9 - DECLARATIONS").font = Font(
+        name="Calibri", size=10, bold=True, color=INK)
+    r += 1
+    _VAL = {
+        "cost": "Cost",
+        "lower_of_cost_or_market": "Lower of cost or market",
+        "other": f"Other - {f.get('line_9a_other') or 'see explanation'}",
+    }
+    for label, value in (
+        ("9a  Method of valuing closing inventory", _VAL.get(f["line_9a_valuation"], "Cost")),
+        ("9b  Writedown of subnormal goods", "Yes" if f["line_9b_writedown"] else "No"),
+        ("9c  LIFO adopted this year (Form 970)", "Yes" if f["line_9c_lifo"] else "No"),
+        ("9d  Closing inventory under LIFO",
+         f'{f["line_9d_lifo_pct"]}%' if f["line_9d_lifo_pct"] else "n/a"),
+        ("9e  Do the section 263A rules apply?", "Yes" if f["line_9e_sec263a"] else "No"),
+        ("9f  Change in quantities, cost or valuations?",
+         "Yes" if f["line_9f_method_change"] else "No"),
+        ("      Explanation", f.get("line_9f_note") or ""),
+        ("      Form 3115 filed", "Yes" if f["form_3115_filed"] else "No"),
+        ("      Section 481(a) adjustment", f.get("sec481a_adjustment") or ""),
+    ):
+        ws.cell(row=r, column=1, value=label).font = Font(name="Calibri", size=10, color=MUTED)
+        ws.cell(row=r, column=2, value=value).font = Font(name="Calibri", size=10, color=INK)
+        r += 1
+
+    for note in f.get("exceptions", []):
+        r += 1
+        c = ws.cell(row=r, column=1, value=f"EXCEPTION: {note}")
+        c.font = Font(name="Calibri", size=9, bold=True, color="FFC0392B")
+
     # ── Periods ──────────────────────────────────────────────────────────────
     ws = sheet("Periods")
     r = title_row(ws, "Period roll", "Every period in the year, as concluded")

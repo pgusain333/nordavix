@@ -12,7 +12,7 @@
  */
 import { useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import {
   AlertTriangle, ArrowRight, CalendarCheck2, CheckCircle2, Download,
   FileSpreadsheet, XCircle,
@@ -360,11 +360,47 @@ function Form1125A({ data }: { data: AnnualRollup }) {
       <Line label="6 · Total" value={money(f.line_6_total)} strong top />
       <Line label="7 · Inventory at end of year" value={money(f.line_7_ending_inventory)} />
       <Line label="8 · Cost of goods sold" value={money(f.line_8_cogs)} strong top />
+      {/* Line 9 — the declarations. Lines 1-8 are arithmetic; this half is
+          where the form can quietly contradict the method it's reporting. */}
+      <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--text-muted)" }}>Line 9 — declarations</span>
+          <Link to="/allocation/settings"
+            className="text-[11px] font-medium inline-flex items-center gap-1"
+            style={{ color: "var(--green)" }}>
+            Edit <ArrowRight size={10} strokeWidth={2.2} />
+          </Link>
+        </div>
+        <Dec label="9a  Valuing closing inventory" value={VALUATION[f.line_9a_valuation] ?? "Cost"} />
+        <Dec label="9b  Writedown of subnormal goods" value={f.line_9b_writedown ? "Yes" : "No"} />
+        <Dec label="9c  LIFO adopted (Form 970)" value={f.line_9c_lifo ? "Yes" : "No"} />
+        {f.line_9c_lifo && (
+          <Dec label="9d  Closing inventory under LIFO"
+            value={f.line_9d_lifo_pct ? `${f.line_9d_lifo_pct}%` : "Not stated"} />
+        )}
+        <Dec label="9e  Do the §263A rules apply?" value={f.line_9e_sec263a ? "Yes" : "No"}
+          tone={f.line_9e_sec263a ? "var(--danger)" : undefined} />
+        <Dec label="9f  Change in quantities, cost or valuations?"
+          value={f.line_9f_method_change ? "Yes" : "No"} />
+        {f.line_9f_method_change && (
+          <Dec label="      Form 3115 filed" value={f.form_3115_filed ? "Yes" : "No"}
+            tone={f.form_3115_filed ? undefined : "var(--warn)"} />
+        )}
+      </div>
+
       <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
         <p className="text-[10.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
           Line 4 (additional §263A costs) is not presented: §280E denies §263A to this
           taxpayer, which is the reason §471(c) is being used.
         </p>
+        {f.exceptions.map((x) => (
+          <p key={x} className="text-[11px] mt-2 flex items-start gap-1.5"
+            style={{ color: "var(--danger)" }}>
+            <AlertTriangle size={12} strokeWidth={2} className="mt-[2px] shrink-0" />
+            {x}
+          </p>
+        ))}
         {!f.based_on_complete_year && (
           <p className="text-[11px] mt-2 flex items-start gap-1.5" style={{ color: "var(--warn)" }}>
             <AlertTriangle size={12} strokeWidth={2} className="mt-[2px] shrink-0" />
@@ -372,6 +408,23 @@ function Form1125A({ data }: { data: AnnualRollup }) {
           </p>
         )}
       </div>
+    </div>
+  )
+}
+
+const VALUATION: Record<string, string> = {
+  cost: "Cost",
+  lower_of_cost_or_market: "Lower of cost or market",
+  other: "Other",
+}
+
+function Dec({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 py-[3px]">
+      <span className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>{label}</span>
+      <span className="text-[11.5px] font-medium" style={{ color: tone ?? "var(--text-2)" }}>
+        {value}
+      </span>
     </div>
   )
 }

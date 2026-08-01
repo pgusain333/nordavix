@@ -20,7 +20,7 @@ import { useMemo, useState } from "react"
 import { useOrganization } from "@clerk/clerk-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
-  AlertTriangle, CheckCircle2, Download, Plus, Scale, Trash2, XCircle,
+  AlertTriangle, CheckCircle2, Download, Plus, Scale, ShieldCheck, Trash2, XCircle,
 } from "lucide-react"
 import { Button, Input, Spinner } from "@/core/ui"
 import { allocationApi, money, type EligibilityEntityRow } from "../api"
@@ -132,10 +132,24 @@ export function EligibilityPanel({ periodEnd }: { periodEnd: string }) {
     },
     onError: (e: unknown) => {
       const ex = e as { response?: { data?: { detail?: string }; status?: number }; message?: string }
+      setError(ex.response?.data?.detail ?? ex.message ?? "Couldn't record the test.")
+    },
+  })
+
+  const approve = useMutation({
+    mutationFn: () => allocationApi.approveEligibility(taxYear),
+    onSuccess: () => {
+      setError(null)
+      qc.invalidateQueries({ queryKey: ["allocation", "eligibility"] })
+      qc.invalidateQueries({ queryKey: ["allocation", "readiness"] })
+    },
+    onError: (e: unknown) => {
+      const ex = e as { response?: { data?: { detail?: string }; status?: number }; message?: string }
       setError(
         ex.response?.status === 403
-          ? "Concluding on eligibility needs a reviewer — it decides whether the client may use §471(c) at all."
-          : ex.response?.data?.detail ?? ex.message ?? "Couldn't record the test.",
+          ? (ex.response?.data?.detail
+             ?? "This needs a reviewer other than the person who performed the test.")
+          : ex.response?.data?.detail ?? ex.message ?? "Couldn't approve the conclusion.",
       )
     },
   })
@@ -191,6 +205,35 @@ export function EligibilityPanel({ periodEnd }: { periodEnd: string }) {
             </p>
             {existing.reason && (
               <p className="text-[11px] mt-1" style={{ color: "var(--danger)" }}>{existing.reason}</p>
+            )}
+
+            {/* Maker-checker. A preparer performs the test; a reviewer signs it
+                off, and never their own work. Shown as an open task rather than
+                a silent state — until it's signed, the gate the whole method
+                stands on is one person's unreviewed conclusion. */}
+            {existing.status === "approved" ? (
+              <p className="text-[11px] mt-1.5 inline-flex items-center gap-1"
+                style={{ color: "var(--positive)" }}>
+                <CheckCircle2 size={11} strokeWidth={2.4} />
+                Approved{existing.approved_at && ` ${
+                  new Date(existing.approved_at).toLocaleDateString("en-US",
+                    { month: "short", day: "numeric", year: "numeric" })
+                }`}
+              </p>
+            ) : (
+              <div className="mt-2 flex items-center gap-2.5 flex-wrap">
+                <span className="rounded-full px-2 py-0.5 text-[10.5px] font-medium"
+                  style={{ background: "var(--warn-subtle)", color: "var(--warn)" }}>
+                  Awaiting review
+                </span>
+                <Button onClick={() => approve.mutate()} loading={approve.isPending}
+                  icon={<ShieldCheck size={13} strokeWidth={1.9} />}>
+                  Approve the conclusion
+                </Button>
+                <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+                  Reviewer only, and not the person who performed the test
+                </span>
+              </div>
             )}
           </div>
         </div>
@@ -349,6 +392,11 @@ export function EligibilityPanel({ periodEnd }: { periodEnd: string }) {
           Recording freezes the basis — which entities were included, each year&rsquo;s
           receipts, the threshold used and who concluded. A year later the question is
           what you tested and on what basis.
+        </p>
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+          It lands as a <strong>draft</strong>: a reviewer other than you signs it off
+          afterwards. Re-recording an approved conclusion reopens it, because the basis
+          moved and the old sign-off no longer describes what&rsquo;s on file.
         </p>
       </div>
     </div>

@@ -102,6 +102,19 @@ export interface AllocSettings {
   gross_receipts_threshold: string | null
   election_attested_at: string | null
   notes: string | null
+
+  /** Form 1125-A line 9 — the declarations half of the form. */
+  inv_valuation_method: "cost" | "lower_of_cost_or_market" | "other"
+  inv_valuation_other: string | null
+  inv_writedown_subnormal: boolean
+  lifo_adopted: boolean
+  lifo_closing_pct: string | null
+  /** False for a §280E taxpayer — the whole reason §471(c) is in use. */
+  sec263a_applies: boolean
+  method_change_this_year: boolean
+  method_change_note: string | null
+  form_3115_filed: boolean
+  sec481a_adjustment: string | null
 }
 
 export interface ReadinessItem {
@@ -515,7 +528,11 @@ export interface Eligibility {
   method_available?: string | null
   reason?: string | null
   aggregation_note?: string | null
+  /** Maker-checker: a preparer records it, a reviewer signs it off. */
+  status?: "draft" | "approved" | null
+  tested_by?: string | null
   tested_at?: string | null
+  approved_at?: string | null
 }
 
 /** The §448(c) conclusion on file for a tax year, if one has been reached. */
@@ -544,6 +561,12 @@ async function recordEligibility(body: {
   entities: { entity: string; year: number; amount: number; source: string }[]
 }): Promise<Eligibility> {
   const { data } = await apiClient.post<Eligibility>(`${BASE}/eligibility`, body)
+  return data
+}
+
+/** Reviewer sign-off on the §448(c) conclusion. Never your own work. */
+async function approveEligibility(taxYear: number): Promise<Eligibility> {
+  const { data } = await apiClient.post<Eligibility>(`${BASE}/eligibility/${taxYear}/approve`)
   return data
 }
 
@@ -725,6 +748,19 @@ export interface AnnualRollup {
     line_7_ending_inventory: string
     line_8_cogs: string
     based_on_complete_year: boolean
+    /** Line 9 — the declarations half of the form. */
+    line_9a_valuation: "cost" | "lower_of_cost_or_market" | "other"
+    line_9a_other: string | null
+    line_9b_writedown: boolean
+    line_9c_lifo: boolean
+    line_9d_lifo_pct: string | null
+    line_9e_sec263a: boolean
+    line_9f_method_change: boolean
+    line_9f_note: string | null
+    form_3115_filed: boolean
+    sec481a_adjustment: string | null
+    /** Line 9 answers that contradict the position the allocation takes. */
+    exceptions: string[]
   }
 }
 
@@ -771,7 +807,7 @@ async function downloadAnnualWorkpaperCsv(taxYear: number): Promise<void> {
 }
 
 export const allocationApi = {
-  getEligibility, suggestReceipts, recordEligibility,
+  getEligibility, suggestReceipts, recordEligibility, approveEligibility,
   checkPosting, getProceduresMemo, downloadProceduresMemo,
   previewPayroll, importPayroll, getPayrollStatus, clearPayroll,
   listAccountTransactions, setTransactionAllocation, clearTransactionAllocation,

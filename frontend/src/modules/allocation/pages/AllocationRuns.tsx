@@ -13,7 +13,8 @@ import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import {
-  AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, Play,
+  AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, ChevronRight,
+  Play, RotateCcw,
 } from "lucide-react"
 import { Button, Input, Spinner } from "@/core/ui"
 import { allocationApi, factorPct, money, type AllocRun } from "../api"
@@ -154,6 +155,9 @@ export function AllocationRuns() {
     setPeriodEnd(pe)
     setSelectedId(null)   // show the new month's run, not the last viewed one
     setError(null)
+    // The run panel is at the top; jumping there is what makes "Re-run" from a
+    // history row read as one action rather than two.
+    document.querySelector("main .overflow-y-auto")?.scrollTo({ top: 0, behavior: "smooth" })
   }
 
   const Kpi = ({ label, value, tone }: { label: string; value: string; tone?: string }) => (
@@ -358,12 +362,31 @@ export function AllocationRuns() {
                       <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                         {r.blocked_reason ? "blocked" : r.has_journal_entry ? "JE ready" : "no JE"}
                       </span>
-                      <span className="rounded-full px-2 py-0.5 text-[10.5px] font-medium justify-self-end"
-                        style={{
-                          background: (STATUS_TONE[r.status] ?? STATUS_TONE.draft).bg,
-                          color: (STATUS_TONE[r.status] ?? STATUS_TONE.draft).fg,
-                        }}>
-                        {r.status.replace("_", " ")}
+                      <span className="flex items-center gap-2 justify-self-end">
+                        <span className="rounded-full px-2 py-0.5 text-[10.5px] font-medium"
+                          style={{
+                            background: (STATUS_TONE[r.status] ?? STATUS_TONE.draft).bg,
+                            color: (STATUS_TONE[r.status] ?? STATUS_TONE.draft).fg,
+                          }}>
+                          {r.status.replace("_", " ")}
+                        </span>
+                        {/* Re-running a closed period is a normal thing to need
+                            — a pool was corrected, a register was reimported —
+                            so it's one click from the row rather than a trip
+                            through the period picker. The previous version is
+                            retired, never deleted. */}
+                        <span role="button" tabIndex={0}
+                          title={`Recompute ${periodLabel(p.period, frequency)} from the current configuration`}
+                          onClick={(ev) => { ev.stopPropagation(); pickMonth(p.period) }}
+                          onKeyDown={(ev) => {
+                            if (ev.key === "Enter" || ev.key === " ") {
+                              ev.preventDefault(); ev.stopPropagation(); pickMonth(p.period)
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer"
+                          style={{ color: "var(--green)" }}>
+                          <RotateCcw size={10} strokeWidth={2.2} /> Re-run
+                        </span>
                       </span>
                     </button>
 

@@ -295,12 +295,25 @@ async def compute_readiness(db: AsyncSession, period_end: date) -> dict:
             "fix": "setup/eligibility",
         })
     elif not tested.eligible:
+        # A negative finding stops runs whether or not it has been signed off:
+        # "we concluded they don't qualify, but nobody countersigned it" is not
+        # a reason to keep allocating.
         blockers.append({
             "code": "not_eligible",
             "message": (
                 f"The {tested.tax_year} §448(c) test concluded this client is NOT a "
                 f"small business taxpayer (three-year average {tested.three_year_avg} "
                 f"against a {tested.threshold} threshold), so §471(c) isn't available."
+            ),
+            "fix": "setup/eligibility",
+        })
+    elif tested.status != "approved":
+        warnings.append({
+            "code": "eligibility_unapproved",
+            "message": (
+                f"The {tested.tax_year} §448(c) conclusion is recorded but not yet "
+                "approved. A reviewer other than the preparer needs to sign it off — "
+                "it's the gate the whole method stands on."
             ),
             "fix": "setup/eligibility",
         })

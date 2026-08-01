@@ -230,8 +230,61 @@ async def build_annual(
             # Stated rather than left to be noticed: the form is only as good as
             # the roll-up behind it.
             "based_on_complete_year": rollup.complete and not breaks and not missing_inventory,
+            # Line 9 — the declarations half of the form. Properties of the
+            # method rather than of a period, so they come from settings.
+            "line_9a_valuation": (cfg.inv_valuation_method if cfg else "cost") or "cost",
+            "line_9a_other": cfg.inv_valuation_other if cfg else None,
+            "line_9b_writedown": bool(cfg.inv_writedown_subnormal) if cfg else False,
+            "line_9c_lifo": bool(cfg.lifo_adopted) if cfg else False,
+            "line_9d_lifo_pct": (
+                str(cfg.lifo_closing_pct)
+                if cfg and cfg.lifo_closing_pct is not None else None
+            ),
+            "line_9e_sec263a": bool(cfg.sec263a_applies) if cfg else False,
+            "line_9f_method_change": bool(cfg.method_change_this_year) if cfg else False,
+            "line_9f_note": cfg.method_change_note if cfg else None,
+            "form_3115_filed": bool(cfg.form_3115_filed) if cfg else False,
+            "sec481a_adjustment": (
+                str(cfg.sec481a_adjustment)
+                if cfg and cfg.sec481a_adjustment is not None else None
+            ),
+            # The two answers that can contradict the method on the face of the
+            # return. Surfaced as exceptions rather than left to be spotted.
+            "exceptions": _line9_exceptions(cfg),
         },
     }
+
+
+def _line9_exceptions(cfg) -> list[str]:
+    """Line 9 answers that contradict the position the rest of the file takes.
+
+    These aren't validation errors — a preparer may have a reason. They're the
+    two places where the declarations half of Form 1125-A can quietly say the
+    opposite of what the allocation says, and nobody would notice until it was
+    filed.
+    """
+    if cfg is None:
+        return []
+    out: list[str] = []
+    if cfg.sec263a_applies:
+        out.append(
+            "Line 9e says the §263A rules apply. §280E denies §263A to this "
+            "taxpayer, which is the reason §471(c) is being used — answering yes "
+            "contradicts the method this workpaper supports."
+        )
+    if cfg.method_change_this_year and not cfg.form_3115_filed:
+        out.append(
+            "Line 9f reports a change in determining quantities, cost or "
+            "valuations, but no Form 3115 is recorded as filed. Adopting §471(c) "
+            "is a change in method of accounting; it needs Form 3115 and a "
+            "§481(a) adjustment."
+        )
+    if cfg.lifo_adopted and cfg.inv_valuation_method == "lower_of_cost_or_market":
+        out.append(
+            "Line 9c reports LIFO while line 9a reports lower of cost or market. "
+            "LIFO inventory cannot be valued at market."
+        )
+    return out
 
 
 def available_tax_years(
