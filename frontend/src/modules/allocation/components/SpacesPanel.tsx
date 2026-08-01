@@ -30,6 +30,20 @@ import {
 
 const EMPTY: SpaceInput = { name: "", function: "cultivation", square_feet: 0, production_pct: null }
 
+/**
+ * Column templates, declared once and shared by each table's header and rows.
+ *
+ * The header is a SEPARATE grid container from every row, so `auto` and bare
+ * `fr` tracks size against different content in each — an empty header cell
+ * collapses to nothing while the row beneath it holds two buttons, and the
+ * whole line walks out of step. Every track here is either a fixed width or an
+ * `fr` with a floor, so both grids resolve identically whatever they contain.
+ */
+const ROSTER_COLS =
+  "grid-cols-[minmax(150px,1.8fr)_minmax(130px,1fr)_100px_110px_84px]"
+const CATALOG_COLS =
+  "grid-cols-[26px_minmax(150px,1.6fr)_minmax(130px,1fr)_90px_90px]"
+
 interface Draft {
   checked: boolean
   sqft: string
@@ -213,19 +227,24 @@ export function SpacesPanel({ periodEnd }: { periodEnd: string }) {
             </p>
           </div>
 
-          <div className="grid grid-cols-[auto_minmax(0,1.6fr)_minmax(0,1fr)_90px_90px] gap-3 px-4 py-2 text-[11px]"
-            style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+          {/* The header lives INSIDE the scroller. Outside it, the scrollbar
+              takes width from the rows but not from the header, and the two
+              grids resolve six pixels apart — visible as a drift that grows
+              across the row. Sticky keeps the headings in view as well. */}
+          <div className="max-h-[420px] overflow-y-auto">
+          <div className={`grid ${CATALOG_COLS} gap-3 px-4 py-2 text-[11px] font-medium sticky top-0 z-10`}
+            style={{ color: "var(--text-muted)", background: "var(--surface)",
+                     borderBottom: "1px solid var(--border)" }}>
             <span /><span>Room</span><span>Function</span>
             <span className="text-right">Sq ft</span><span className="text-right">Prod %</span>
           </div>
 
-          <div className="max-h-[420px] overflow-y-auto">
             {SPACE_CATALOG.map((c, i) => {
               const d = draftFor(c.name)
               const exists = alreadyAdded.has(c.name.trim().toLowerCase())
               return (
                 <div key={c.name}
-                  className="grid grid-cols-[auto_minmax(0,1.6fr)_minmax(0,1fr)_90px_90px] gap-3 items-center px-4 py-2"
+                  className={`grid ${CATALOG_COLS} gap-3 items-center px-4 py-2`}
                   style={{
                     borderTop: i === 0 ? undefined : "1px solid var(--border)",
                     opacity: exists ? 0.45 : 1,
@@ -250,8 +269,10 @@ export function SpacesPanel({ periodEnd }: { periodEnd: string }) {
                     ))}
                   </Select>
                   <Input type="number" min="0" value={d.sqft} placeholder="0" disabled={exists}
+                    className="text-right"
                     onChange={(e) => setDraft(c.name, { sqft: e.target.value, checked: true })} />
                   <Input type="number" min="0" max="100" value={d.pct} disabled={exists}
+                    className="text-right"
                     onChange={(e) => setDraft(c.name, { pct: e.target.value })} />
                 </div>
               )
@@ -336,7 +357,7 @@ export function SpacesPanel({ periodEnd }: { periodEnd: string }) {
       ) : (
         <div className="rounded-xl overflow-hidden"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div className="grid grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_100px_100px_auto] gap-3 px-4 py-2.5 text-[11px]"
+          <div className={`grid ${ROSTER_COLS} gap-3 px-4 py-2.5 text-[11px] font-medium`}
             style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
             <span>Space</span><span>Function</span>
             <span className="text-right">Sq ft</span>
@@ -344,7 +365,7 @@ export function SpacesPanel({ periodEnd }: { periodEnd: string }) {
           </div>
           {live.map((s, i) => (
             <div key={s.id}
-              className="grid grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_100px_100px_auto] gap-3 items-center px-4 py-2"
+              className={`grid ${ROSTER_COLS} gap-3 items-center px-4 py-2`}
               style={{ borderTop: i === 0 ? undefined : "1px solid var(--border)" }}>
               <div className="min-w-0">
                 <div className="text-[13px] text-theme truncate">{s.name}</div>
@@ -355,13 +376,18 @@ export function SpacesPanel({ periodEnd }: { periodEnd: string }) {
                   <option key={f} value={f}>{f[0].toUpperCase() + f.slice(1)}</option>
                 ))}
               </Select>
+              {/* Right-aligned to match the heading above them — a right-aligned
+                  "Sq ft" over a left-aligned number is the misalignment you see
+                  before you notice the column widths. */}
               <Input type="number" min="0" defaultValue={Number(s.square_feet)}
+                className="text-right"
                 onBlur={(e) => {
                   const v = Number(e.target.value)
                   if (v !== Number(s.square_feet)) patch.mutate({ s, sqft: v })
                 }} />
               <Input type="number" min="0" max="100"
                 defaultValue={Number(s.effective_production_pct)}
+                className="text-right"
                 onBlur={(e) => {
                   const v = Number(e.target.value)
                   if (v !== Number(s.effective_production_pct)) patch.mutate({ s, pct: v })
