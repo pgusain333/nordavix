@@ -588,6 +588,65 @@ def test_department_drives_the_suggested_function_conservatively():
     assert suggest_employee_function(None, None)[:2] == ("shared", 0)
 
 
+# ── Transaction-level overrides beat the driver estimate ──────────────────────
+
+def test_hand_reviewed_transactions_override_the_driver():
+    """A driver is an estimate for a whole account; a reviewed transaction is
+    evidence about a specific one. Explicit must win, and only the UNREVIEWED
+    remainder should fall back to the driver.
+
+    Gated because the failure is silent in the worst way: get the remainder
+    wrong and the account still looks plausible, but the capitalized figure —
+    and therefore the tax position — is off.
+    """
+    from modules.cost_allocation.engine import TxnOverride, capitalize_with_overrides
+
+    # $10,000 account, driver says 60%. Two transactions reviewed by hand.
+    overrides = [
+        TxnOverride("t1", D("3000.00"), D("100")),   # all production
+        TxnOverride("t2", D("1000.00"), D("0")),     # all retail
+    ]
+    # 3000 + 0 + (10000 − 4000) × 0.60 = 3000 + 3600 = 6600
+    assert capitalize_with_overrides(D("10000.00"), D("0.60"), overrides) == D("6600.00")
+
+    # No overrides → pure driver, unchanged behaviour.
+    assert capitalize_with_overrides(D("10000.00"), D("0.60"), []) == D("6000.00")
+
+    # Every transaction reviewed → the driver is irrelevant.
+    full = [TxnOverride("t1", D("6000.00"), D("100")), TxnOverride("t2", D("4000.00"), D("25"))]
+    assert capitalize_with_overrides(D("10000.00"), D("0.99"), full) == D("7000.00")
+
+    # A partial split on one transaction.
+    assert capitalize_with_overrides(
+        D("1000.00"), D("0"), [TxnOverride("t1", D("1000.00"), D("42.5"))],
+    ) == D("425.00")
+
+    # End to end: the reviewed account leaves the pool's rounding pass, and the
+    # rest of the pool still sums penny-exact to pool × rate.
+    pools = [PoolSpec("Facility", "allocated", driver="fixed", fixed_pct=D("60"))]
+    expenses = [
+        ExpenseRow("6010", D("10000.00"), "6010", "Rent"),
+        ExpenseRow("6020", D("3333.33"),  "6020", "Utilities"),
+        ExpenseRow("6030", D("3333.33"),  "6030", "Security"),
+    ]
+    mapping = dict.fromkeys(("6010", "6020", "6030"), "Facility")
+    result = allocate_period(
+        expenses, mapping, pools, build_factors(pools), {"6010": overrides},
+    )
+
+    by_id = {ln.qbo_account_id: ln for ln in result.lines}
+    assert by_id["6010"].capitalized == D("6600.00")
+
+    plain_gross = D("3333.33") + D("3333.33")
+    plain_cap = by_id["6020"].capitalized + by_id["6030"].capitalized
+    assert plain_cap == (plain_gross * D("0.60")).quantize(CENT), plain_cap
+
+    # And the whole-run identity still holds.
+    for ln in result.lines:
+        assert ln.gross == ln.capitalized + ln.disallowed, ln
+    assert result.capitalized_total + result.disallowed_total == result.total_expenses
+
+
 if __name__ == "__main__":
     test_factors_are_fractions_in_range()
     test_every_line_splits_to_gross_and_total_is_preserved()
@@ -604,4 +663,5 @@ if __name__ == "__main__":
     test_payroll_columns_detected_across_providers()
     test_repeated_employees_aggregate_into_one_row()
     test_department_drives_the_suggested_function_conservatively()
+    test_hand_reviewed_transactions_override_the_driver()
     print("ALLOCATION_ENGINE_OK")

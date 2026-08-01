@@ -18,7 +18,7 @@ import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowRight, CheckCircle2, Percent, Plus, Trash2, Upload, Users } from "lucide-react"
 import { Button, Input, Select, Spinner } from "@/core/ui"
-import { allocationApi, type Employee, type EmployeeInput } from "../api"
+import { allocationApi, factorPct, money, type Employee, type EmployeeInput } from "../api"
 import { isEffective } from "./MonthPicker"
 
 const FUNCTIONS = [
@@ -48,6 +48,15 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
     queryKey: ["allocation", "employees"],
     queryFn:  allocationApi.listEmployees,
     staleTime: 30_000,
+  })
+
+  // The overall payroll allocation percentage, computed by the SAME server code
+  // path the run uses — so the number shown here is the number that will be
+  // applied, not a second estimate of it.
+  const { data: payroll } = useQuery({
+    queryKey: ["allocation", "payroll-status", periodEnd],
+    queryFn:  () => allocationApi.getPayrollStatus(periodEnd),
+    staleTime: 10_000,
   })
 
   // Active AND in force for the period on screen — the same rule the run
@@ -171,6 +180,32 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
           </Button>
         </div>
       </div>
+
+      {/* The number all of this feeds. Shown here because classification is
+          where it's decided, and a preparer shouldn't have to leave the screen
+          to see the consequence of what they just changed. */}
+      {payroll?.imported ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-px rounded-xl overflow-hidden"
+          style={{ background: "var(--border)", border: "1px solid var(--border)" }}>
+          {[
+            { label: "Total labor cost", value: money(payroll.total_labor) },
+            { label: "Counts as production", value: money(payroll.production_labor), tone: "var(--green)" },
+            { label: "Payroll allocation %", value: factorPct(payroll.payroll_factor), tone: "var(--green)" },
+            { label: "People in the factor", value: String(payroll.people) },
+          ].map((k) => (
+            <div key={k.label} className="px-3.5 py-2.5" style={{ background: "var(--surface)" }}>
+              <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{k.label}</div>
+              <div className="text-[15px] font-semibold tabular-nums mt-0.5"
+                style={{ color: k.tone ?? "var(--text)" }}>{k.value}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+          No payroll imported for this period yet, so there is no allocation
+          percentage to show — classification alone doesn&rsquo;t produce one.
+        </p>
+      )}
 
       <p className="text-[11px] flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
         <Percent size={12} strokeWidth={2} className="mt-[2px] shrink-0" />

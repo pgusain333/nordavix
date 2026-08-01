@@ -22,6 +22,7 @@ from models.cost_allocation import (
     AllocRunLine,
     AllocSettings,
     AllocSpace,
+    AllocTxnOverride,
 )
 from models.evidence_request import EvidenceRequest
 from models.feedback import Feedback
@@ -67,6 +68,7 @@ __all__ = [
     "AllocRunLine",
     "AllocSettings",
     "AllocSpace",
+    "AllocTxnOverride",
     "AssistantMessage",
     "AssistantThread",
     "KpiTarget",

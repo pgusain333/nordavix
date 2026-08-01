@@ -374,18 +374,74 @@ async function importPayroll(body: {
   return data
 }
 
+export interface AccountTxn {
+  qbo_txn_id: string
+  txn_type: string | null
+  txn_number: string | null
+  txn_date: string | null
+  amount: string
+  memo: string | null
+  entity_name: string | null
+  /** Null when this entry hasn't been reviewed — it falls to the pool driver. */
+  production_pct: string | null
+  note: string | null
+}
+
+export interface AccountTxns {
+  qbo_account_id: string
+  transactions: AccountTxn[]
+  gross: string
+  reviewed_count: number
+  reviewed_amount: string
+  reviewed_capitalized: string
+  unreviewed_amount: string
+}
+
+async function listAccountTransactions(
+  qboAccountId: string, periodStart: string, periodEnd: string,
+): Promise<AccountTxns> {
+  const { data } = await apiClient.get<AccountTxns>(
+    `${BASE}/accounts/${qboAccountId}/transactions`,
+    { params: { period_start: periodStart, period_end: periodEnd }, timeout: 60_000 },
+  )
+  return data
+}
+
+async function setTransactionAllocation(
+  qboAccountId: string, txnId: string, periodEnd: string,
+  body: {
+    production_pct: number
+    amount: number
+    txn_date?: string | null
+    txn_type?: string | null
+    txn_number?: string | null
+    memo?: string | null
+    entity_name?: string | null
+    note?: string | null
+  },
+): Promise<void> {
+  await apiClient.put(
+    `${BASE}/accounts/${qboAccountId}/transactions/${txnId}`, body,
+    { params: { period_end: periodEnd } },
+  )
+}
+
+async function clearTransactionAllocation(
+  qboAccountId: string, txnId: string, periodEnd: string,
+): Promise<void> {
+  await apiClient.delete(
+    `${BASE}/accounts/${qboAccountId}/transactions/${txnId}`,
+    { params: { period_end: periodEnd } },
+  )
+}
+
 export interface PayrollStatusRow {
-  employee_id: string
   name: string
-  department: string | null
-  job_title: string | null
   function: string | null
   production_pct: string
-  gross_wages: string
-  employer_taxes: string
-  benefits: string
   labor_cost: string
-  source: string
+  /** What this person contributes to the factor's numerator. */
+  production_labor: string
 }
 
 export interface PayrollStatus {
@@ -480,6 +536,7 @@ async function listInventoryAccounts(): Promise<QboAccount[]> {
 
 export const allocationApi = {
   previewPayroll, importPayroll, getPayrollStatus, clearPayroll,
+  listAccountTransactions, setTransactionAllocation, clearTransactionAllocation,
   getJournalEntry, downloadJournalEntryCsv, downloadWorkpaperCsv, listInventoryAccounts,
   getSettings, updateSettings,
   listPools, createPool, updatePool, deactivatePool, seedDefaultPools,

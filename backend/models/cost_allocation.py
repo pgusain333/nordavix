@@ -412,3 +412,49 @@ class AllocRunLine(TenantBase):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class AllocTxnOverride(TenantBase):
+    """One GL transaction a preparer allocated by hand.
+
+    The pool driver is an estimate for a whole account. Where somebody has
+    actually read the ledger, the specific answer is stronger evidence — and
+    §471(c) is a books-and-records method, so stronger evidence is the point.
+
+    Transaction details are SNAPSHOTTED rather than re-fetched: the workpaper
+    must still read correctly if the transaction is later edited in QuickBooks,
+    and the override list has to render without a QBO round-trip.
+
+    Scoped to a period, because the same recurring cost can be production one
+    month and not the next.
+
+    Migration: 068_alloc_txn_override.py.
+    """
+
+    __tablename__ = "alloc_txn_override"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    qbo_account_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    qbo_txn_id:     Mapped[str] = mapped_column(String(64), nullable=False)
+    period_end:     Mapped[date] = mapped_column(Date, nullable=False, index=True)
+
+    # 0-100, entered by a human. This is the judgement being recorded.
+    production_pct: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False)
+
+    amount:      Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    txn_date:    Mapped[date | None] = mapped_column(Date)
+    txn_type:    Mapped[str | None] = mapped_column(String(60))
+    txn_number:  Mapped[str | None] = mapped_column(String(60))
+    memo:        Mapped[str | None] = mapped_column(String(300))
+    entity_name: Mapped[str | None] = mapped_column(String(200))
+    # Why this split — the sentence that answers an examiner.
+    note:        Mapped[str | None] = mapped_column(String(300))
+
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

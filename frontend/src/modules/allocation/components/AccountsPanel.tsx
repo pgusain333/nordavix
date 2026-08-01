@@ -17,7 +17,8 @@
  */
 import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertCircle, CheckCheck, ListTree, Search, X } from "lucide-react"
+import { AlertCircle, CheckCheck, ListTree, Receipt, Search, X } from "lucide-react"
+import { TransactionDrawer } from "./TransactionDrawer"
 import { Button, Input, Select, Spinner } from "@/core/ui"
 import { allocationApi, money, type AccountRow, type Pool, type Treatment } from "../api"
 
@@ -39,12 +40,23 @@ const CONFIDENCE_STYLE: Record<string, { bg: string; fg: string; label: string }
   low:    { bg: "var(--warn-subtle)",  fg: "var(--warn)",  label: "check" },
 }
 
+/** A pool's driver rate as a fraction 0–1, for display only.
+ *  Blended and factor-driven pools can't be resolved client-side (the factors
+ *  live server-side), so those show 0 until the run computes them — the drawer
+ *  labels it as the fallback rather than implying precision it doesn't have. */
+function driverFraction(pool: Pool): number {
+  if (pool.driver === "fixed" && pool.fixed_pct) return Number(pool.fixed_pct) / 100
+  return 0
+}
+
 export function AccountsPanel({ periodStart, periodEnd }: Props) {
   const [busy, setBusy] = useState(false)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [only, setOnly] = useState<"all" | "unmapped" | "mapped">("all")
+  // Which account's ledger is open for line-by-line review.
+  const [openTxns, setOpenTxns] = useState<string | null>(null)
   const qc = useQueryClient()
 
   const { data, isLoading, isError } = useQuery({
@@ -273,11 +285,10 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
           const outcome = pool ? OUTCOME[pool.treatment] : null
           return (
             <div key={a.qbo_account_id}
+              style={{ borderTop: i === 0 ? undefined : "1px solid var(--border)" }}>
+            <div
               className="grid grid-cols-[minmax(0,2fr)_1fr_minmax(0,1.5fr)_auto] gap-3 items-center px-4 py-2.5 transition-opacity"
-              style={{
-                borderTop: i === 0 ? undefined : "1px solid var(--border)",
-                opacity: savingId === a.qbo_account_id ? 0.55 : 1,
-              }}>
+              style={{ opacity: savingId === a.qbo_account_id ? 0.55 : 1 }}>
               <div className="min-w-0">
                 <div className="text-[13px] text-theme truncate">
                   {a.account_name || a.qbo_account_id}
@@ -325,7 +336,22 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
                 )}
               </div>
 
-              <span className="justify-self-end">
+              <span className="justify-self-end flex items-center gap-1.5">
+                {/* Only an ALLOCATED account has an estimate worth improving on:
+                    direct is already 100% and excluded is already 0%. */}
+                {pool?.treatment === "allocated" && (
+                  <button
+                    onClick={() => setOpenTxns(
+                      openTxns === a.qbo_account_id ? null : a.qbo_account_id,
+                    )}
+                    title="Review the GL entries and allocate line by line"
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-medium transition-colors"
+                    style={openTxns === a.qbo_account_id
+                      ? { background: "var(--green)", color: "#fff" }
+                      : { background: "var(--surface-2)", color: "var(--text-2)" }}>
+                    <Receipt size={11} strokeWidth={2} /> GL
+                  </button>
+                )}
                 {outcome ? (
                   <span className="rounded-full px-2 py-0.5 text-[10.5px] font-medium whitespace-nowrap"
                     style={{ background: outcome.bg, color: outcome.tone }}>
@@ -336,6 +362,20 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
                 )}
               </span>
             </div>
+
+            {openTxns === a.qbo_account_id && pool && (
+              <div className="px-3 pb-3" style={{ background: "var(--surface-2)" }}>
+                <TransactionDrawer
+                  qboAccountId={a.qbo_account_id}
+                  accountName={a.account_name || a.qbo_account_id}
+                  driverPct={driverFraction(pool)}
+                  periodStart={periodStart}
+                  periodEnd={periodEnd}
+                  onClose={() => setOpenTxns(null)}
+                />
+              </div>
+            )}
+          </div>
           )
         })}
       </div>

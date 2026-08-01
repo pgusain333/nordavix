@@ -578,60 +578,68 @@ async def get_payroll(
     does — production-weighted labor cost over total labor cost — so the number
     that drives capitalization is visible where it's created.
     """
+    # Computed through the SAME loaders the run uses, so the factor on this
+    # screen is provably the factor that will be applied. Previously this
+    # endpoint counted every payroll row against every employee row, while the
+    # run filtered both to those active and effective for the period — so a
+    # retired employee dragged the displayed factor down without affecting the
+    # real one. Two different truths for the same number.
+    from modules.cost_allocation.engine import compute_payroll_factor
+    from modules.cost_allocation.service import load_config, load_payroll
+
     period_start = period_end.replace(day=1)
-    entries = (await db.execute(
-        select(AllocPayrollEntry).where(
+    _pools, _map, _spaces, employees = await load_config(db, period_end)
+    rows = await load_payroll(db, employees, period_start, period_end)
+
+    empty = {
+        "imported": False, "people": 0,
+        "total_labor": "0.00", "production_labor": "0.00",
+        "payroll_factor": None, "imported_at": None, "rows": [],
+    }
+    if not rows:
+        return empty
+
+    try:
+        factor, basis = compute_payroll_factor(rows)
+    except Exception:
+        # Zero wages: imported, but nothing to weight. Report it rather than 500.
+        return {**empty, "imported": True, "people": len(rows)}
+
+    total = Decimal(basis["total_wages"])
+    production = Decimal(basis["production_wages"])
+
+    # When the register was last touched, for the "last updated" line.
+    stamps = (await db.execute(
+        select(AllocPayrollEntry.updated_at).where(
             AllocPayrollEntry.period_start >= period_start,
             AllocPayrollEntry.period_end <= period_end,
         )
     )).scalars().all()
+    latest = max((s for s in stamps if s), default=None)
 
-    if not entries:
-        return {
-            "imported": False, "people": 0,
-            "total_labor": "0.00", "production_labor": "0.00",
-            "payroll_factor": None, "imported_at": None, "rows": [],
-        }
+    detail = sorted(
+        (
+            {
+                "name": r.employee,
+                "function": r.function,
+                "production_pct": str(r.production_pct if r.production_pct is not None else 0),
+                "labor_cost": f"{r.wages:.2f}",
+                # What this person actually contributes to the numerator.
+                "production_labor": f"{r.wages * (r.production_pct or Decimal(0)) / Decimal(100):.2f}",
+            }
+            for r in rows
+        ),
+        key=lambda d: Decimal(d["labor_cost"]), reverse=True,
+    )
 
-    employees = {
-        e.id: e for e in (await db.execute(select(AllocEmployee))).scalars().all()
-    }
-
-    total = Decimal("0.00")
-    production = Decimal("0.00")
-    rows: list[dict] = []
-    for entry in entries:
-        emp = employees.get(entry.employee_id)
-        cost = (entry.gross_wages or Decimal(0)) + (entry.employer_taxes or Decimal(0)) \
-            + (entry.benefits or Decimal(0))
-        pct = (emp.production_pct if emp else Decimal(0)) or Decimal(0)
-        total += cost
-        production += cost * pct / Decimal(100)
-        rows.append({
-            "employee_id": str(entry.employee_id),
-            "name": emp.name if emp else "(removed)",
-            "department": emp.department if emp else None,
-            "job_title": emp.job_title if emp else None,
-            "function": emp.function if emp else None,
-            "production_pct": str(pct),
-            "gross_wages": str(entry.gross_wages or 0),
-            "employer_taxes": str(entry.employer_taxes or 0),
-            "benefits": str(entry.benefits or 0),
-            "labor_cost": str(cost),
-            "source": entry.source,
-        })
-    rows.sort(key=lambda r: Decimal(r["labor_cost"]), reverse=True)
-
-    factor = (production / total) if total > 0 else None
-    latest = max((e.updated_at or e.created_at) for e in entries)
     return {
         "imported": True,
-        "people": len(entries),
+        "people": len(rows),
         "total_labor": f"{total:.2f}",
         "production_labor": f"{production:.2f}",
-        "payroll_factor": f"{factor:.6f}" if factor is not None else None,
+        "payroll_factor": f"{factor:.6f}",
         "imported_at": latest.isoformat() if latest else None,
-        "rows": rows,
+        "rows": detail,
     }
 
 
@@ -852,6 +860,159 @@ async def import_payroll(
 
 
 # ── Readiness ─────────────────────────────────────────────────────────────────
+
+class TxnOverrideBody(BaseModel):
+    production_pct: float
+    amount: float
+    txn_date: date | None = None
+    txn_type: str | None = None
+    txn_number: str | None = None
+    memo: str | None = None
+    entity_name: str | None = None
+    note: str | None = None
+
+
+@router.get("/accounts/{qbo_account_id}/transactions")
+async def list_account_transactions(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The GL entries behind one account, with any hand-set allocations.
+
+    The pool driver is an estimate applied to the whole account. This is where a
+    preparer can do better: read the actual ledger and say which specific
+    charges were production. §471(c) is a books-and-records method, so specific
+    evidence beats a defensible estimate every time.
+
+    Returns the resulting effective rate so the consequence of the review is
+    visible while it's being done, not discovered in the run.
+    """
+    from core.qbo_gl import pull_gl_transactions
+    from models.cost_allocation import AllocTxnOverride
+
+    conn = (await db.execute(select(QboConnection))).scalars().first()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="QuickBooks isn't connected for this client.")
+
+    txns = await pull_gl_transactions(conn, db, qbo_account_id, period_start, period_end)
+
+    overrides = {
+        o.qbo_txn_id: o for o in (await db.execute(
+            select(AllocTxnOverride).where(
+                AllocTxnOverride.qbo_account_id == qbo_account_id,
+                AllocTxnOverride.period_end == period_end,
+            )
+        )).scalars().all()
+    }
+
+    rows: list[dict] = []
+    gross = Decimal("0.00")
+    reviewed_amount = Decimal("0.00")
+    reviewed_capitalized = Decimal("0.00")
+    for t in txns:
+        amount = Decimal(str(t.get("amount") or 0))
+        gross += amount
+        o = overrides.get(str(t.get("qbo_txn_id") or ""))
+        if o is not None:
+            reviewed_amount += o.amount
+            reviewed_capitalized += o.amount * o.production_pct / Decimal(100)
+        rows.append({
+            "qbo_txn_id": str(t.get("qbo_txn_id") or ""),
+            "txn_type":   t.get("txn_type"),
+            "txn_number": t.get("txn_number"),
+            "txn_date":   t["txn_date"].isoformat() if t.get("txn_date") else None,
+            "amount":     str(amount),
+            "memo":       t.get("memo"),
+            "entity_name": t.get("entity_name"),
+            "production_pct": str(o.production_pct) if o else None,
+            "note": o.note if o else None,
+        })
+
+    return {
+        "qbo_account_id": qbo_account_id,
+        "transactions": rows,
+        "gross": f"{gross:.2f}",
+        "reviewed_count": len(overrides),
+        "reviewed_amount": f"{reviewed_amount:.2f}",
+        "reviewed_capitalized": f"{reviewed_capitalized:.2f}",
+        # What's left for the pool driver to estimate.
+        "unreviewed_amount": f"{gross - reviewed_amount:.2f}",
+    }
+
+
+@router.put("/accounts/{qbo_account_id}/transactions/{qbo_txn_id}")
+async def set_transaction_allocation(
+    qbo_account_id: str,
+    qbo_txn_id: str,
+    body: TxnOverrideBody,
+    tenant_id: CurrentTenantId,
+    period_end: date = Query(...),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Record the production share of one transaction, for this period."""
+    from models.cost_allocation import AllocTxnOverride
+
+    if not (0 <= body.production_pct <= 100):
+        raise HTTPException(status_code=422, detail="Production % must be between 0 and 100.")
+
+    row = (await db.execute(
+        select(AllocTxnOverride).where(
+            AllocTxnOverride.qbo_txn_id == qbo_txn_id,
+            AllocTxnOverride.period_end == period_end,
+        )
+    )).scalars().first()
+
+    if row is None:
+        row = AllocTxnOverride(
+            id=uuid.uuid4(), tenant_id=tenant_id, qbo_account_id=qbo_account_id,
+            qbo_txn_id=qbo_txn_id, period_end=period_end, created_by=user.id,
+            production_pct=_d(body.production_pct), amount=_d(body.amount),
+        )
+        db.add(row)
+    row.production_pct = _d(body.production_pct)
+    row.amount = _d(body.amount)
+    # Snapshot the transaction so the workpaper still reads correctly if it's
+    # later edited in QuickBooks.
+    row.txn_date = body.txn_date
+    row.txn_type = body.txn_type
+    row.txn_number = body.txn_number
+    row.memo = (body.memo or None)
+    row.entity_name = (body.entity_name or None)
+    row.note = (body.note or None)
+
+    await db.commit()
+    return {"qbo_txn_id": qbo_txn_id, "production_pct": str(row.production_pct)}
+
+
+@router.delete("/accounts/{qbo_account_id}/transactions/{qbo_txn_id}")
+async def clear_transaction_allocation(
+    qbo_account_id: str,
+    qbo_txn_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: date = Query(...),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Drop a hand-set allocation so the transaction falls back to the driver."""
+    from sqlalchemy import delete as sa_delete
+
+    from models.cost_allocation import AllocTxnOverride
+
+    await db.execute(
+        sa_delete(AllocTxnOverride).where(
+            AllocTxnOverride.tenant_id == tenant_id,
+            AllocTxnOverride.qbo_txn_id == qbo_txn_id,
+            AllocTxnOverride.period_end == period_end,
+        )
+    )
+    await db.commit()
+    return {"cleared": True, "qbo_txn_id": qbo_txn_id}
+
 
 @router.get("/inventory-accounts")
 async def list_inventory_accounts(

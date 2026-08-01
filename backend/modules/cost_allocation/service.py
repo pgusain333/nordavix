@@ -41,6 +41,7 @@ from models.cost_allocation import (
     AllocRunLine,
     AllocSettings,
     AllocSpace,
+    AllocTxnOverride,
 )
 from models.proposed_entry import ProposedEntry
 from models.qbo_connection import QboConnection
@@ -52,9 +53,11 @@ from modules.cost_allocation.engine import (
     PayrollRow,
     PoolSpec,
     SpaceRow,
+    TxnOverride,
     allocate_period,
     build_factors,
     build_reclass_entry,
+    capitalize_with_overrides,  # noqa: F401  (re-exported for tests)
     is_effective,
     roll_forward_cogs,
 )
@@ -126,6 +129,27 @@ async def load_payroll(
             production_pct=emp.production_pct,
         ))
     return rows
+
+
+async def load_txn_overrides(
+    db: AsyncSession, period_end: date,
+) -> dict[str, list[TxnOverride]]:
+    """Hand-reviewed transactions for the period, grouped by account.
+
+    Scoped to the period on purpose: the same recurring cost can be production
+    one month and not the next, so a review belongs to the month it was made
+    for and never silently carries forward.
+    """
+    rows = (await db.execute(
+        select(AllocTxnOverride).where(AllocTxnOverride.period_end == period_end)
+    )).scalars().all()
+
+    out: dict[str, list[TxnOverride]] = {}
+    for r in rows:
+        out.setdefault(r.qbo_account_id, []).append(TxnOverride(
+            qbo_txn_id=r.qbo_txn_id, amount=r.amount, production_pct=r.production_pct,
+        ))
+    return out
 
 
 def to_pool_specs(pools) -> list[PoolSpec]:
@@ -327,7 +351,10 @@ async def run_allocation(
             spaces=to_space_rows(spaces),
             payroll=await load_payroll(db, employees, period_start, period_end),
         )
-        result = allocate_period(expenses, account_pool, to_pool_specs(pools), factors)
+        overrides = await load_txn_overrides(db, period_end)
+        result = allocate_period(
+            expenses, account_pool, to_pool_specs(pools), factors, overrides,
+        )
     except AllocationInputError as exc:
         logger.info("allocation blocked for tenant %s period %s: %s", tenant_id, period_end, exc)
         return _blocked(str(exc))

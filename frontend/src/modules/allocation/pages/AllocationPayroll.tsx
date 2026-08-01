@@ -109,27 +109,32 @@ export function AllocationPayroll() {
               ))}
             </div>
 
-            <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_1fr_auto] gap-3 px-4 py-2 text-[11px]"
+            <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_1fr_90px_1fr] gap-3 px-4 py-2 text-[11px]"
               style={{ color: "var(--text-muted)", borderTop: "1px solid var(--border)",
                        borderBottom: "1px solid var(--border)" }}>
-              <span>Employee</span><span>Department</span>
+              <span>Employee</span><span>Function</span>
               <span className="text-right">Labor cost</span>
-              <span className="text-right">Production</span>
+              <span className="text-right">Prod %</span>
+              <span className="text-right">Counts toward COGS</span>
             </div>
             {status.rows.map((r, i) => (
-              <div key={r.employee_id}
-                className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_1fr_auto] gap-3 items-center px-4 py-2 text-[13px]"
+              <div key={`${r.name}-${i}`}
+                className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_1fr_90px_1fr] gap-3 items-center px-4 py-2 text-[13px]"
                 style={{ borderTop: i === 0 ? undefined : "1px solid var(--border)" }}>
                 <span className="truncate text-theme">{r.name}</span>
-                <span className="truncate text-[11.5px]" style={{ color: "var(--text-2)" }}>
-                  {r.department ?? r.job_title ?? "—"}
+                <span className="truncate text-[11.5px] capitalize" style={{ color: "var(--text-2)" }}>
+                  {r.function ?? "—"}
                 </span>
                 <span className="text-right tabular-nums" style={{ color: "var(--text-2)" }}>
                   {money(r.labor_cost)}
                 </span>
-                <span className="text-right tabular-nums text-[12px] justify-self-end"
+                <span className="text-right tabular-nums text-[12px]"
                   style={{ color: Number(r.production_pct) > 0 ? "var(--green)" : "var(--text-muted)" }}>
                   {Number(r.production_pct).toFixed(0)}%
+                </span>
+                <span className="text-right tabular-nums"
+                  style={{ color: Number(r.production_labor) > 0 ? "var(--green)" : "var(--text-muted)" }}>
+                  {money(r.production_labor)}
                 </span>
               </div>
             ))}

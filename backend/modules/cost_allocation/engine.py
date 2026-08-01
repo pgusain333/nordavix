@@ -110,6 +110,20 @@ class ExpenseRow:
 
 
 @dataclass(frozen=True)
+class TxnOverride:
+    """A single GL transaction the preparer has allocated by hand.
+
+    A driver is an estimate applied to a whole account. When someone has
+    actually LOOKED at the transactions — this repair was to the flower room,
+    that one was to the retail counter — the specific answer is better evidence
+    than the estimate, and §471(c) rewards specific evidence.
+    """
+    qbo_txn_id: str
+    amount: Decimal
+    production_pct: Decimal   # 0–100, entered by a human
+
+
+@dataclass(frozen=True)
 class Factors:
     """The computed drivers, as fractions 0–1, plus their audit trail.
 
@@ -369,13 +383,46 @@ def _largest_remainder(
     return floors
 
 
+def capitalize_with_overrides(
+    gross: Decimal, driver_pct: Decimal, overrides: Sequence[TxnOverride],
+) -> Decimal:
+    """An account's capitalized amount when some transactions were done by hand.
+
+    Explicit beats estimate: each reviewed transaction capitalizes at the rate
+    the preparer gave it, and only the UNREVIEWED remainder falls back to the
+    pool's driver.
+
+        capitalized = Σ(txn × its own %)  +  (gross − Σ txn) × driver
+
+    The remainder is deliberately `gross − Σ overrides` rather than a separate
+    figure: it keeps the account whole, so reviewing more transactions shifts
+    amounts between the two terms without ever changing the total being split.
+    """
+    reviewed_amount = sum((o.amount for o in overrides), ZERO)
+    reviewed_capitalized = sum(
+        (o.amount * o.production_pct / HUNDRED for o in overrides), ZERO,
+    )
+    remainder = gross - reviewed_amount
+    return (reviewed_capitalized + remainder * driver_pct).quantize(
+        CENT, rounding=ROUND_HALF_UP,
+    )
+
+
 def allocate_period(
     expenses: Sequence[ExpenseRow],
     account_pool: Mapping[str, str],
     pools: Sequence[PoolSpec],
     factors: Factors,
+    txn_overrides: Mapping[str, Sequence[TxnOverride]] | None = None,
 ) -> AllocationResult:
-    """Split every expense line into capitalized vs §280E-disallowed."""
+    """Split every expense line into capitalized vs §280E-disallowed.
+
+    `txn_overrides` maps a QBO account id to the transactions in it that were
+    allocated by hand. An account with any override is computed exactly and
+    steps OUT of its pool's largest-remainder distribution — its amount is no
+    longer an apportionment of the pool, so rounding it with the pool would be
+    meaningless. The rest of the pool still sums penny-exact.
+    """
     pool_by_name = {p.name: p for p in pools}
 
     unmapped = sorted({e.qbo_account_id for e in expenses if e.qbo_account_id not in account_pool})
@@ -415,11 +462,23 @@ def allocate_period(
         elif pool.treatment == "excluded":
             pass  # stays ZERO
         else:
-            parts = _largest_remainder([expenses[i].amount for i in idxs], pct)
-            # strict= — _largest_remainder returns exactly one part per line;
-            # a length mismatch would silently drop an allocation.
-            for i, part in zip(idxs, parts, strict=True):
-                capitalized[i] = part
+            # Accounts with hand-reviewed transactions are computed exactly and
+            # step OUT of the pool's rounding pass — their amount is evidence,
+            # not an apportionment of the pool.
+            overrides = txn_overrides or {}
+            reviewed = {i for i in idxs if overrides.get(expenses[i].qbo_account_id)}
+            for i in reviewed:
+                capitalized[i] = capitalize_with_overrides(
+                    expenses[i].amount, pct, overrides[expenses[i].qbo_account_id],
+                )
+
+            plain = [i for i in idxs if i not in reviewed]
+            if plain:
+                parts = _largest_remainder([expenses[i].amount for i in plain], pct)
+                # strict= — _largest_remainder returns exactly one part per line;
+                # a length mismatch would silently drop an allocation.
+                for i, part in zip(plain, parts, strict=True):
+                    capitalized[i] = part
 
     lines: list[AllocLine] = []
     direct_total = allocated_total = ZERO
