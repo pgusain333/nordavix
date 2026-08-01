@@ -12,7 +12,7 @@
  * bookmarks, in the readiness checklist and in older screenshots, and a dead
  * link is a support ticket.
  */
-import { Navigate, Route, Routes, useSearchParams } from "react-router-dom"
+import { Navigate, Route, Routes, useLocation, useSearchParams } from "react-router-dom"
 import { AllocationDashboard } from "./pages/AllocationDashboard"
 import { AllocationExports } from "./pages/AllocationExports"
 import { AllocationPayroll } from "./pages/AllocationPayroll"
@@ -33,7 +33,12 @@ function SetupRedirect() {
 }
 
 export function AllocationRoutes() {
+  // Keyed on the path so every screen change replays the entrance. Without the
+  // key React reuses the subtree and the animation only ever runs once, on the
+  // first render — which is why a keyed wrapper beats a class on each page.
+  const { pathname } = useLocation()
   return (
+    <div key={pathname} className="ndvx-rise flex flex-1 flex-col overflow-hidden min-w-0">
     <Routes>
       <Route index element={<AllocationDashboard />} />
 
@@ -56,5 +61,6 @@ export function AllocationRoutes() {
       <Route path="setup" element={<SetupRedirect />} />
       <Route path="*" element={<Navigate to="/allocation" replace />} />
     </Routes>
+    </div>
   )
 }

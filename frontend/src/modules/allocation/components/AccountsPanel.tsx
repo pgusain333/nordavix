@@ -396,7 +396,7 @@ export function AccountsPanel({ periodStart, periodEnd }: Props) {
             </div>
 
             {openTxns === a.qbo_account_id && pool && (
-              <div className="px-3 pb-3" style={{ background: "var(--surface-2)" }}>
+              <div className="ndvx-expand px-3 pb-3" style={{ background: "var(--surface-2)" }}>
                 <TransactionDrawer
                   qboAccountId={a.qbo_account_id}
                   accountName={a.account_name || a.qbo_account_id}

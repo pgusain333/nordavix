@@ -9,16 +9,28 @@
  * reason is stated with a route to fix it. "This client has no square footage
  * on file" is a task, not a failure.
  */
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import { AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, Play } from "lucide-react"
+import {
+  AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, Play,
+} from "lucide-react"
 import { Button, Input, Spinner } from "@/core/ui"
 import { allocationApi, factorPct, money, type AllocRun } from "../api"
 import { WorkpaperTable } from "../components/WorkpaperTable"
 import { JournalEntryPanel } from "../components/JournalEntryPanel"
 import { MonthPicker, useAllocationWindow } from "../components/MonthPicker"
 import { routeForFix } from "../components/ReadinessRail"
+
+/** "2026-02-28" → "Feb 2026", or "Tax year 2026" for an annual client. Split,
+ *  never Date-parsed — a UTC parse shifts the month behind UTC. */
+function periodLabel(iso: string, frequency: "monthly" | "annual"): string {
+  if (frequency === "annual") return `Tax year ${iso.slice(0, 4)}`
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  const [y, m] = iso.split("-")
+  return `${MONTHS[Number(m) - 1] ?? m} ${y}`
+}
 
 const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
   draft:       { bg: "var(--surface-2)",   fg: "var(--text-2)" },
@@ -34,6 +46,7 @@ export function AllocationRuns() {
   const { periodStart, periodEnd, setPeriodEnd, frequency, fiscalYearEnd } =
     useAllocationWindow()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [beginning, setBeginning] = useState("")
   const [ending, setEnding] = useState("")
   const [purchases, setPurchases] = useState("")
@@ -54,6 +67,44 @@ export function AllocationRuns() {
   const activeId = selectedId
     ?? runs.find((r) => r.period_end === periodEnd && r.status !== "superseded")?.id
     ?? null
+
+  /**
+   * History is a list of PERIODS, not a list of runs.
+   *
+   * Re-running a period retires the previous run rather than deleting it, so
+   * every version that was ever issued stays queryable — which is right, but
+   * listing them as peer rows made a month that was simply re-run three times
+   * look like three problems. Grouped, the live run is the row and the retired
+   * ones are versions underneath it, numbered and dated.
+   */
+  const periods = useMemo(() => {
+    const byPeriod = new Map<string, AllocRun[]>()
+    for (const r of runs) {
+      const arr = byPeriod.get(r.period_end)
+      if (arr) arr.push(r); else byPeriod.set(r.period_end, [r])
+    }
+    return Array.from(byPeriod.entries())
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .map(([period, all]) => {
+        // Oldest first, so version 1 is the first one ever issued.
+        const ordered = [...all].sort((a, b) =>
+          (a.created_at ?? "") < (b.created_at ?? "") ? -1 : 1)
+        const versioned = ordered.map((r, i) => ({ run: r, version: i + 1 }))
+        const live = versioned.find((v) => v.run.status !== "superseded")
+        return {
+          period,
+          live: live ?? versioned[versioned.length - 1],
+          replaced: versioned.filter((v) => v.run.status === "superseded").reverse(),
+          total: versioned.length,
+        }
+      })
+  }, [runs])
+
+  // Re-running silently retires an approved run and the replacement starts as a
+  // draft. That throws away a sign-off, so it's stated before the button, not
+  // discovered afterwards in the status column.
+  const livePeriodRun = periods.find((p) => p.period === periodEnd)?.live?.run
+  const willSupersedeApproved = livePeriodRun?.status === "approved"
 
   const { data: detail } = useQuery({
     queryKey: ["allocation", "run", activeId],
@@ -91,6 +142,12 @@ export function AllocationRuns() {
       const ex = e as { response?: { data?: { detail?: string } }; message?: string }
       setError(ex.response?.data?.detail ?? ex.message ?? "Could not approve.")
     },
+  })
+
+  const toggleExpanded = (period: string) => setExpanded((prev) => {
+    const next = new Set(prev)
+    if (next.has(period)) next.delete(period); else next.add(period)
+    return next
   })
 
   const pickMonth = (pe: string) => {
@@ -180,9 +237,29 @@ export function AllocationRuns() {
                 Inventory figures are optional — supply beginning and ending together to
                 get COGS on the run. The allocation itself computes either way.
               </p>
+
+              {/* A re-run retires the current version. Saying so beforehand is
+                  the difference between a deliberate revision and quietly
+                  throwing away someone's sign-off. */}
+              {willSupersedeApproved && (
+                <div className="ndvx-expand flex items-start gap-2.5 rounded-lg px-3 py-2.5"
+                  style={{ background: "var(--warn-subtle)" }}>
+                  <AlertTriangle size={14} strokeWidth={2} className="mt-0.5 shrink-0"
+                    style={{ color: "var(--warn)" }} />
+                  <p className="text-[11.5px]" style={{ color: "var(--text)" }}>
+                    {periodLabel(periodEnd, frequency)} is already <b>approved</b>.
+                    Running it again keeps the approved version in the history but
+                    replaces it — the new one starts as a draft and needs approving
+                    again, and any journal entry already exported will no longer match.
+                  </p>
+                </div>
+              )}
+
               <Button onClick={() => { setError(null); run.mutate() }} loading={run.isPending}
                 icon={<Play size={14} strokeWidth={1.9} />}>
-                {run.isPending ? "Pulling from QuickBooks…" : "Run allocation"}
+                {run.isPending ? "Pulling from QuickBooks…"
+                  : willSupersedeApproved ? `Re-run ${periodLabel(periodEnd, frequency)}`
+                  : "Run allocation"}
               </Button>
             </>
           )}
@@ -258,33 +335,79 @@ export function AllocationRuns() {
           ) : (
             <div className="rounded-xl overflow-hidden"
               style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              {runs.map((r: AllocRun, i) => (
-                <button key={r.id} onClick={() => setSelectedId(r.id)}
-                  className="w-full grid grid-cols-[minmax(0,1.4fr)_1fr_1fr_auto] gap-3 items-center px-4 py-2.5 text-left"
-                  style={{
-                    borderTop: i === 0 ? undefined : "1px solid var(--border)",
-                    background: r.id === activeId ? "var(--surface-2)" : undefined,
-                  }}>
-                  <span className="text-[13px] text-theme">
-                    {new Date(r.period_end + "T00:00:00").toLocaleDateString("en-US", {
-                      month: "short", year: "numeric",
-                    })}
-                  </span>
-                  <span className="text-[12px] tabular-nums text-right" style={{ color: "var(--text-2)" }}>
-                    {money(r.capitalized_total)}
-                  </span>
-                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    {r.blocked_reason ? "blocked" : r.has_journal_entry ? "JE ready" : "no JE"}
-                  </span>
-                  <span className="rounded-full px-2 py-0.5 text-[10.5px] font-medium justify-self-end"
-                    style={{
-                      background: (STATUS_TONE[r.status] ?? STATUS_TONE.draft).bg,
-                      color: (STATUS_TONE[r.status] ?? STATUS_TONE.draft).fg,
-                    }}>
-                    {r.status.replace("_", " ")}
-                  </span>
-                </button>
-              ))}
+              {periods.map((p, i) => {
+                const r = p.live.run
+                const open = expanded.has(p.period)
+                return (
+                  <div key={p.period}
+                    style={{ borderTop: i === 0 ? undefined : "1px solid var(--border)" }}>
+                    <button onClick={() => setSelectedId(r.id)}
+                      className="w-full grid grid-cols-[minmax(0,1.4fr)_1fr_1fr_auto] gap-3 items-center px-4 py-2.5 text-left transition-colors"
+                      style={{ background: r.id === activeId ? "var(--surface-2)" : undefined }}>
+                      <span className="text-[13px] text-theme">
+                        {periodLabel(p.period, frequency)}
+                        {p.total > 1 && (
+                          <span className="ml-1.5 text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+                            v{p.live.version}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-[12px] tabular-nums text-right" style={{ color: "var(--text-2)" }}>
+                        {money(r.capitalized_total)}
+                      </span>
+                      <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                        {r.blocked_reason ? "blocked" : r.has_journal_entry ? "JE ready" : "no JE"}
+                      </span>
+                      <span className="rounded-full px-2 py-0.5 text-[10.5px] font-medium justify-self-end"
+                        style={{
+                          background: (STATUS_TONE[r.status] ?? STATUS_TONE.draft).bg,
+                          color: (STATUS_TONE[r.status] ?? STATUS_TONE.draft).fg,
+                        }}>
+                        {r.status.replace("_", " ")}
+                      </span>
+                    </button>
+
+                    {/* Retired versions, folded away. They're history, not a
+                        row of equal standing — a month re-run three times isn't
+                        three problems. */}
+                    {p.replaced.length > 0 && (
+                      <>
+                        <button onClick={() => toggleExpanded(p.period)}
+                          className="w-full flex items-center gap-1.5 px-4 pb-2 -mt-0.5 text-[10.5px] transition-opacity hover:opacity-75"
+                          style={{ color: "var(--text-muted)" }}>
+                          {open
+                            ? <ChevronDown size={11} strokeWidth={2.2} />
+                            : <ChevronRight size={11} strokeWidth={2.2} />}
+                          {p.replaced.length} earlier version{p.replaced.length === 1 ? "" : "s"} — replaced by a re-run
+                        </button>
+                        {open && (
+                          <div className="ndvx-expand pb-1.5" style={{ background: "var(--surface-2)" }}>
+                            {p.replaced.map((v) => (
+                              <button key={v.run.id} onClick={() => setSelectedId(v.run.id)}
+                                className="w-full grid grid-cols-[minmax(0,1.4fr)_1fr_1fr_auto] gap-3 items-center pl-9 pr-4 py-1.5 text-left transition-colors"
+                                style={{ background: v.run.id === activeId ? "var(--surface)" : undefined }}>
+                                <span className="text-[11.5px]" style={{ color: "var(--text-2)" }}>
+                                  v{v.version}
+                                  <span className="ml-2 text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+                                    {v.run.created_at ? v.run.created_at.slice(0, 10) : ""}
+                                  </span>
+                                </span>
+                                <span className="text-[11.5px] tabular-nums text-right"
+                                  style={{ color: "var(--text-muted)" }}>
+                                  {money(v.run.capitalized_total)}
+                                </span>
+                                <span />
+                                <span className="text-[10.5px] justify-self-end"
+                                  style={{ color: "var(--text-muted)" }}>replaced</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>

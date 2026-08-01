@@ -448,6 +448,31 @@
 @keyframes ndvx-fade-in { from { opacity: 0; } to { opacity: 1; } }
 .ndvx-fade-in { animation: ndvx-fade-in 0.28s ease-out both; }
 
+/* Switching between options — a screen, a period, a tab, a revealed field.
+   Content that swaps in place reads as a REPLACEMENT rather than a redraw when
+   it eases up a few pixels as it arrives. Without it, changing the month makes
+   a page of figures blink to a different page of figures, which is the exact
+   moment a preparer needs to register that something changed.
+
+   Deliberately short (0.2s) and small (4px): this fires on every navigation, and
+   an animation you can consciously watch is one you resent by the tenth time.
+   `both` holds the opening frame so there's no flash at the final position. The
+   global prefers-reduced-motion rule above collapses all of it. */
+@keyframes ndvx-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ndvx-rise { animation: ndvx-rise 0.2s cubic-bezier(0.32, 0.72, 0, 1) both; }
+
+/* Same easing for a block that opens in place (a disclosure, a revealed field).
+   Height isn't animated — measuring to animate height is a layout-thrash trade
+   this doesn't need; the fade plus a 6px settle carries it. */
+@keyframes ndvx-expand {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ndvx-expand { animation: ndvx-expand 0.18s cubic-bezier(0.32, 0.72, 0, 1) both; }
+
 /* Compact app density — the authenticated shell (ThreePaneLayout) adds
    `app-dense` to <html> while mounted, shrinking the ROOT font size a notch.
    Every rem-based size (Tailwind text-*, p-*, m-*, gap-*, w-*, h-*, …) scales

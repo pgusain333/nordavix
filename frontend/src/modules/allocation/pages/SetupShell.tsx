@@ -55,7 +55,9 @@ export function SetupShell({ title, subtitle, children, hidePeriod, wide }: Prop
             Table screens hold off until xl — below that the rail's 300px costs
             the table more than the side-by-side is worth. */}
         <div className={`flex flex-col gap-4 items-start ${wide ? "xl:flex-row" : "lg:flex-row"}`}>
-          <div className="flex-1 min-w-0 w-full">
+          {/* Keyed on the period so switching month eases the panel rather than
+              swapping one page of figures for another with no visual event. */}
+          <div key={periodEnd} className="ndvx-rise flex-1 min-w-0 w-full">
             {children({ periodEnd, periodStart })}
           </div>
           <aside className={wide

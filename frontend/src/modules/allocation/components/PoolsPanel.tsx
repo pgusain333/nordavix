@@ -165,7 +165,7 @@ export function PoolsPanel() {
             </label>
 
             {form.treatment === "allocated" && (
-              <label className="block">
+              <label className="block ndvx-expand">
                 <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Driver</span>
                 <Select value={form.driver ?? "occupancy"}
                   onChange={(e) => setForm({ ...form, driver: e.target.value as Driver })}>
@@ -177,7 +177,7 @@ export function PoolsPanel() {
             )}
 
             {form.treatment === "allocated" && form.driver === "fixed" && (
-              <label className="block">
+              <label className="block ndvx-expand">
                 <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Rate %</span>
                 <Input type="number" min="0" max="100" value={form.fixed_pct ?? ""}
                   onChange={(e) => setForm({ ...form, fixed_pct: e.target.value === "" ? null : Number(e.target.value) })} />
@@ -186,7 +186,7 @@ export function PoolsPanel() {
 
             {form.treatment === "allocated" && form.driver === "blended" && (
               <>
-                <label className="block">
+                <label className="block ndvx-expand">
                   <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Payroll weight %</span>
                   <Input type="number" min="0" max="100" value={form.blend_payroll_wt ?? ""}
                     onChange={(e) => {
@@ -194,7 +194,7 @@ export function PoolsPanel() {
                       setForm({ ...form, blend_payroll_wt: wp, blend_occupancy_wt: 100 - wp })
                     }} />
                 </label>
-                <label className="block">
+                <label className="block ndvx-expand">
                   <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Occupancy weight %</span>
                   <Input type="number" value={form.blend_occupancy_wt ?? ""} readOnly />
                 </label>
@@ -203,7 +203,7 @@ export function PoolsPanel() {
 
             {/* Excluded pools never reach the form — nothing is capitalized. */}
             {form.treatment !== "excluded" && (
-              <label className="block sm:col-span-2">
+              <label className="block sm:col-span-2 ndvx-expand">
                 <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>
                   Form 1125-A line
                 </span>

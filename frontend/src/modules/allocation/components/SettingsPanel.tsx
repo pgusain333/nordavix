@@ -116,7 +116,7 @@ export function SettingsPanel() {
             </label>
           </div>
           {effFreq === "annual" && (
-            <p className="text-[11px] mt-2 leading-relaxed" style={{ color: "var(--text-2)" }}>
+            <p className="ndvx-expand text-[11px] mt-2 leading-relaxed" style={{ color: "var(--text-2)" }}>
               Runs, readiness and the year-end roll-up will all work on the fiscal year.
               The payroll register still needs to cover the whole year for the payroll
               factor to be right.
@@ -125,7 +125,7 @@ export function SettingsPanel() {
         </div>
 
         {conflict && (
-          <div className="flex items-start gap-2 rounded-lg px-3 py-2.5"
+          <div className="ndvx-expand flex items-start gap-2 rounded-lg px-3 py-2.5"
             style={{ background: "var(--warn-subtle)" }}>
             <AlertTriangle size={14} strokeWidth={2} style={{ color: "var(--warn)" }} className="mt-0.5 shrink-0" />
             <p className="text-[11.5px]" style={{ color: "var(--text)" }}>
