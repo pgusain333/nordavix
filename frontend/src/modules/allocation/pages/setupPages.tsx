@@ -71,7 +71,8 @@ export function EmployeesPage() {
   return (
     <SetupShell
       title="Employees"
-      subtitle="Who works on inventory, and how much of their time — the payroll driver"
+      subtitle="Who works on inventory, how much of their time, and why"
+      wide
     >
       {({ periodEnd }) => (
         <EmployeesPanel periodEnd={periodEnd}

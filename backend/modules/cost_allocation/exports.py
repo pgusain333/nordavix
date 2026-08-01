@@ -111,6 +111,7 @@ async def assemble(
         "employees": [{
             "name": e.name, "department": e.department, "job_title": e.job_title,
             "function": e.function, "production_pct": _s(e.production_pct),
+            "split_basis": e.split_basis,
             "effective_from": e.effective_from.isoformat(),
         } for e in employees],
         "eligibility": None if elig is None else {
@@ -404,12 +405,21 @@ def build_workbook(data: dict[str, Any]) -> bytes:
     r += 2
     ws.cell(row=r, column=1, value="EMPLOYEES").font = Font(name="Calibri", size=10, bold=True, color=INK)
     r += 1
-    r = header(ws, r, ["Employee", "Department", "Job title", "Function", "Production %", "Effective from"],
-               [26, 20, 22, 16, 14, 14])
+    # The basis column is the point of this sheet on examination: a 100% or 0%
+    # classification follows from the job, but a split is an estimate, and the
+    # reason recorded for it is the only thing standing behind the number.
+    r = header(ws, r, [
+        "Employee", "Department", "Job title", "Function", "Production %",
+        "Basis for the split", "Effective from",
+    ], [26, 20, 22, 16, 14, 52, 14])
     for e in data["employees"]:
+        pct = Decimal(e["production_pct"] or "0")
+        is_split = Decimal(0) < pct < Decimal(100)
         r = put(ws, r, [
             e["name"], e["department"] or "", e["job_title"] or "", e["function"],
-            _num(e["production_pct"]), e["effective_from"],
+            _num(e["production_pct"]),
+            (e["split_basis"] or "NOT STATED") if is_split else "",
+            e["effective_from"],
         ], fmts={5: "0.00"})
 
     # ── Eligibility ──────────────────────────────────────────────────────────

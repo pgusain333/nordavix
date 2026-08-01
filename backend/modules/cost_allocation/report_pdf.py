@@ -386,12 +386,30 @@ def build_client_report(buffer: BinaryIO, *, data: dict[str, Any]) -> None:
         f"{_fmt_qty(total_sqft)} square feet. Production areas carry inventoriable "
         "cost; shared areas apply a stated production percentage rather than an "
         "assumed one.", st["body"]))
+    splits = [
+        e for e in data["employees"]
+        if Decimal(0) < Decimal(e["production_pct"] or "0") < Decimal(100)
+    ]
+    unsupported = [e for e in splits if not (e["split_basis"] or "").strip()]
     story.append(Paragraph(
         f"<b>Payroll driver.</b> {len(data['employees'])} classified employee"
-        f"{'' if len(data['employees']) == 1 else 's'}. Staff who work on both "
-        "inventory and non-inventory activity carry an explicit percentage.",
+        f"{'' if len(data['employees']) == 1 else 's'}, of which {len(splits)} "
+        f"carr{'ies' if len(splits) == 1 else 'y'} a part-production split. "
+        "A full classification follows from the job; a split is an estimate, so "
+        "the basis for each one is recorded against the person."
+        + (f" {len(unsupported)} split{'' if len(unsupported) == 1 else 's'} "
+           "currently ha" + ("s" if len(unsupported) == 1 else "ve")
+           + " no stated basis." if unsupported else ""),
         st["body"]))
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 10))
+
+    if splits:
+        story.append(_data_table(
+            ["Employee", "Production %", "Basis for the split"],
+            [[e["name"], _pct(Decimal(e["production_pct"]) / 100, 0),
+              (e["split_basis"] or "Not stated")] for e in splits],
+            [1.6 * inch, 1.0 * inch, 3.96 * inch], right_from=1))
+        story.append(Spacer(1, 14))
 
     if data["runs"]:
         story.append(Paragraph("Drivers applied, by period", st["eyebrow"]))

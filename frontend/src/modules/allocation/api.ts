@@ -81,6 +81,9 @@ export interface Employee {
   job_title: string | null
   function: string
   production_pct: string
+  /** Why a PARTIAL percentage is what it is. Null for 100% / 0% — those follow
+   *  from the job and have nothing to justify. */
+  split_basis: string | null
   default_production_pct: string
   effective_from: string
   effective_to: string | null
@@ -277,6 +280,7 @@ export interface EmployeeInput {
   name: string
   function: string
   production_pct: number
+  split_basis?: string | null
   external_id?: string | null
   department?: string | null
   job_title?: string | null

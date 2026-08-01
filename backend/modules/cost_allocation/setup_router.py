@@ -470,9 +470,16 @@ class EmployeeBody(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     function: str
     production_pct: float = 0
+    # Why a partial percentage is what it is. Only meaningful for a split.
+    split_basis: str | None = None
     external_id: str | None = None
     qbo_employee_id: str | None = None
     effective_from: date | None = None
+
+
+def _basis(v: str | None) -> str | None:
+    """Blank is not a basis — store NULL so readiness can tell them apart."""
+    return (v or "").strip() or None
 
 
 @router.get("/employees")
@@ -498,6 +505,7 @@ async def create_employee(
         id=uuid.uuid4(), tenant_id=tenant_id, name=body.name.strip(),
         external_id=body.external_id, qbo_employee_id=body.qbo_employee_id,
         function=body.function, production_pct=_d(body.production_pct),
+        split_basis=_basis(body.split_basis),
         effective_from=body.effective_from or MAP_EPOCH, active=True,
     )
     db.add(emp)
@@ -524,6 +532,11 @@ async def update_employee(
     emp.name = body.name.strip()
     emp.function = body.function
     emp.production_pct = _d(body.production_pct)
+    # A percentage that's no longer a split has nothing left to justify, so the
+    # stale basis is cleared rather than left describing a decision that changed.
+    emp.split_basis = (
+        _basis(body.split_basis) if 0 < body.production_pct < 100 else None
+    )
     emp.external_id = body.external_id
     await db.commit()
     await db.refresh(emp)

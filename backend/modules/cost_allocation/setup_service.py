@@ -14,6 +14,7 @@ registries honest means a re-run of an old period reproduces it.
 import logging
 import uuid
 from datetime import date, timedelta
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -182,6 +183,7 @@ def serialize_employee(e: AllocEmployee) -> dict:
         "qbo_employee_id": e.qbo_employee_id, "function": e.function,
         "department": e.department, "job_title": e.job_title,
         "production_pct": str(e.production_pct),
+        "split_basis": e.split_basis,
         "default_production_pct": str(100 if e.function in PRODUCTION_EMPLOYEE_FUNCTIONS else 0),
         "effective_from": e.effective_from.isoformat(),
         "effective_to": e.effective_to.isoformat() if e.effective_to else None,
@@ -311,6 +313,28 @@ async def compute_readiness(db: AsyncSession, period_end: date) -> dict:
                 "requires conforming to it — the books-and-records method doesn't apply."
             ),
             "fix": "setup/settings",
+        })
+
+    # A split percentage with no stated basis. 100% and 0% follow from the job;
+    # anything between is an estimate that moves the payroll factor, and an
+    # estimate nobody wrote a reason for is the weakest thing in the file. A
+    # warning rather than a blocker — unsupported is weak, not impossible.
+    unsupported = [
+        e.name for e in employees
+        if 0 < Decimal(str(e.production_pct)) < 100 and not (e.split_basis or "").strip()
+    ]
+    if unsupported:
+        shown = ", ".join(unsupported[:3])
+        more = f" and {len(unsupported) - 3} more" if len(unsupported) > 3 else ""
+        warnings.append({
+            "code": "split_without_basis",
+            "message": (
+                f"{len(unsupported)} split employee "
+                f"{'percentage has' if len(unsupported) == 1 else 'percentages have'} "
+                f"no stated basis ({shown}{more}). A part-production percentage is an "
+                "estimate; on examination it's only as good as the reason recorded for it."
+            ),
+            "fix": "setup/employees",
         })
 
     # Stale drivers: the most common weakness in an examined allocation.

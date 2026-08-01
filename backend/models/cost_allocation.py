@@ -266,6 +266,10 @@ class AllocEmployee(TenantBase):
     # cultivation | processing | packaging | retail | admin | management | shared
     function: Mapped[str] = mapped_column(String(24), nullable=False)
     production_pct: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False, default=0)
+    # Why a PARTIAL percentage is what it is. 100% and 0% follow from the job;
+    # anything between is an estimate, and an estimate with no stated basis is
+    # the weakest input in the allocation. See migration 073.
+    split_basis: Mapped[str | None] = mapped_column(Text)
 
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
     effective_to:   Mapped[date | None] = mapped_column(Date)

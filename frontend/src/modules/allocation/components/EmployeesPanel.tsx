@@ -30,6 +30,14 @@ const PRODUCTION = new Set(["cultivation", "processing", "packaging"])
 
 const EMPTY: EmployeeInput = { name: "", function: "cultivation", production_pct: 100 }
 
+/** One template, shared by the header and every row, so the two can't drift. */
+const ROSTER_COLS =
+  "grid-cols-[minmax(150px,1.2fr)_minmax(120px,1fr)_minmax(130px,0.9fr)_104px_minmax(200px,1.5fr)_auto]"
+
+/** A split is 0 < pct < 100 — the only case that's an estimate rather than a
+ *  classification, and so the only case that needs a reason. */
+const isSplit = (pct: number) => pct > 0 && pct < 100
+
 interface Props {
   periodEnd: string
   /** Jump to the Payroll tab — where the roster actually comes from. */
@@ -80,11 +88,9 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
       (e) => e.function === "shared" && Number(e.production_pct) === 0,
     ).length
     const production = live.filter((e) => Number(e.production_pct) > 0).length
-    const split = live.filter((e) => {
-      const pct = Number(e.production_pct)
-      return pct > 0 && pct < 100
-    }).length
-    return { unclassified, production, split }
+    const splits = live.filter((e) => isSplit(Number(e.production_pct)))
+    const unsupported = splits.filter((e) => !(e.split_basis ?? "").trim()).length
+    return { unclassified, production, split: splits.length, unsupported }
   }, [live])
 
   const invalidate = () => {
@@ -113,11 +119,14 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
    *  in whichever direction the label happened to fall. Changing the function
    *  offers a default; the percentage is the preparer's to state. */
   const reclassify = useMutation({
-    mutationFn: (v: { e: Employee; fn?: string; pct?: number }) =>
+    mutationFn: (v: { e: Employee; fn?: string; pct?: number; basis?: string | null }) =>
       allocationApi.updateEmployee(v.e.id, {
         name: v.e.name,
         function: v.fn ?? v.e.function,
         production_pct: v.pct ?? Number(v.e.production_pct),
+        // Carried on every inline edit — omitting it would blank the basis the
+        // moment someone nudged the percentage.
+        split_basis: v.basis !== undefined ? v.basis : v.e.split_basis,
         external_id: v.e.external_id,
         department: v.e.department,
         job_title: v.e.job_title,
@@ -132,7 +141,8 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
     setEditing(e.id)
     setForm({
       name: e.name, function: e.function,
-      production_pct: Number(e.production_pct), external_id: e.external_id,
+      production_pct: Number(e.production_pct), split_basis: e.split_basis,
+      external_id: e.external_id,
       department: e.department, job_title: e.job_title,
     })
     setError(null); setShowForm(true)
@@ -162,6 +172,9 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>
           {live.length} on the roster · {stats.production} count as production
           {stats.split > 0 && <span> · {stats.split} split</span>}
+          {stats.unsupported > 0 && (
+            <span style={{ color: "var(--warn)" }}> · {stats.unsupported} without a basis</span>
+          )}
           {stats.unclassified > 0 && (
             <span style={{ color: "var(--warn)" }}> · {stats.unclassified} unclassified</span>
           )}
@@ -263,6 +276,20 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
                 placeholder="Matches the payroll register"
                 onChange={(e) => setForm({ ...form, external_id: e.target.value || null })} />
             </label>
+            {isSplit(form.production_pct) && (
+              <label className="block sm:col-span-2 ndvx-expand">
+                <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>
+                  Basis for the split
+                </span>
+                <Input value={form.split_basis ?? ""}
+                  placeholder="e.g. 3 days in cultivation, 2 on retail ordering — per the January time study"
+                  onChange={(e) => setForm({ ...form, split_basis: e.target.value || null })} />
+                <span className="text-[10.5px] mt-1 block" style={{ color: "var(--text-muted)" }}>
+                  A part-production percentage is an estimate. On examination it&rsquo;s
+                  only as good as the reason recorded for it.
+                </span>
+              </label>
+            )}
           </div>
           <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
             Split anyone who works across functions — a working owner at 60% production
@@ -303,21 +330,27 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
           )}
         </div>
       ) : (
-        <div className="rounded-xl overflow-hidden"
+        <div className="rounded-xl overflow-x-auto"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1.1fr)_110px_auto] gap-3 px-4 py-2.5 text-[11px]"
+          {/* Below this the basis field has no room to be typed in, so the table
+              scrolls sideways rather than squeezing it to a sliver. */}
+          <div className="min-w-[900px]">
+          <div className={`grid ${ROSTER_COLS} gap-3 px-4 py-2.5 text-[11px]`}
             style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
             <span>Employee</span>
             <span>Per the register</span>
             <span>Function</span>
             <span className="text-right">Production %</span>
+            <span>Basis for the split</span>
             <span />
           </div>
           {sorted.map((e, i) => {
             const unclassified = e.function === "shared" && Number(e.production_pct) === 0
+            const split = isSplit(Number(e.production_pct))
+            const needsBasis = split && !(e.split_basis ?? "").trim()
             return (
               <div key={e.id}
-                className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1.1fr)_110px_auto] gap-3 items-center px-4 py-2 transition-colors"
+                className={`grid ${ROSTER_COLS} gap-3 items-center px-4 py-2 transition-colors`}
                 style={{
                   borderTop: i === 0 ? undefined : "1px solid var(--border)",
                   background: unclassified ? "var(--warn-subtle)" : undefined,
@@ -360,10 +393,36 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
                     onBlur={(ev) => {
                       const v = Number(ev.target.value)
                       if (v !== Number(e.production_pct) && v >= 0 && v <= 100) {
-                        reclassify.mutate({ e, pct: v })
+                        // Moving off a split retires the reason with it — a
+                        // basis describing a decision that changed is worse
+                        // than none.
+                        reclassify.mutate({ e, pct: v, basis: isSplit(v) ? e.split_basis : null })
                       }
                     }} />
                 </div>
+
+                {/* Only a split needs justifying. 100% and 0% follow from the
+                    job, so the cell stays a quiet dash rather than inviting a
+                    sentence nobody needs to write. */}
+                {split ? (
+                  <Input
+                    key={`${e.id}-${e.split_basis ?? ""}`}
+                    defaultValue={e.split_basis ?? ""}
+                    disabled={busyId === e.id}
+                    placeholder="Why this split? e.g. 3 days grow / 2 days retail per the Jan time study"
+                    aria-label={`Basis for ${e.name}'s split`}
+                    className="text-[11.5px]"
+                    style={needsBasis
+                      ? { borderColor: "var(--warn)", background: "var(--warn-subtle)" }
+                      : undefined}
+                    onBlur={(ev) => {
+                      const v = ev.target.value.trim()
+                      if (v !== (e.split_basis ?? "")) reclassify.mutate({ e, basis: v || null })
+                    }} />
+                ) : (
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>—</span>
+                )}
+
                 <div className="flex items-center gap-1 justify-self-end">
                   <button onClick={() => startEdit(e)}
                     className="text-[12px] font-medium px-2 py-1 rounded-md"
@@ -376,6 +435,7 @@ export function EmployeesPanel({ periodEnd, onGoToPayroll }: Props) {
               </div>
             )
           })}
+          </div>
         </div>
       )}
     </div>
