@@ -143,6 +143,11 @@ export interface AllocRun {
   prepared_at: string | null
   approved_at: string | null
   has_journal_entry: boolean
+  /** Book conformity. `posting_checked_at` is separate from `posted_at` so
+   *  "not checked" can never be shown as "not posted". */
+  posted_at: string | null
+  posted_doc_number: string | null
+  posting_checked_at: string | null
   created_at: string | null
   lines?: RunLine[]
 }
@@ -468,6 +473,43 @@ async function clearPayroll(periodEnd: string): Promise<void> {
 
 // ── Journal entry + exports ───────────────────────────────────────────────────
 
+export interface PostingCheck {
+  checked: boolean
+  posted: boolean
+  doc_number: string | null
+  reason: string | null
+  posted_at: string | null
+  posted_doc_number: string | null
+  posting_checked_at: string | null
+}
+
+/** Confirm the reclass entry actually reached the client's books. */
+async function checkPosting(runId: string): Promise<PostingCheck> {
+  const { data } = await apiClient.post<PostingCheck>(
+    `${BASE}/runs/${runId}/posting-check`, null, { timeout: 60_000 },
+  )
+  return data
+}
+
+export interface ProceduresMemo {
+  client_name: string
+  as_of: string
+  method: string
+  markdown: string
+  pool_count: number
+  space_count: number
+  employee_count: number
+}
+
+async function getProceduresMemo(): Promise<ProceduresMemo> {
+  const { data } = await apiClient.get<ProceduresMemo>(`${BASE}/accounting-procedures`)
+  return data
+}
+
+async function downloadProceduresMemo(): Promise<void> {
+  await downloadFile(`${BASE}/accounting-procedures.md`, "471c-accounting-procedures.md")
+}
+
 export interface JeLine {
   account_name: string
   account_qbo_id?: string | null
@@ -497,12 +539,12 @@ async function getJournalEntry(runId: string): Promise<JournalEntry> {
   return data
 }
 
-/** Download a CSV the server generated. Honors the server's filename. */
-async function downloadCsv(path: string, fallbackName: string): Promise<void> {
+/** Download a server-generated file. Honors the server's filename. */
+async function downloadFile(path: string, fallbackName: string, mime = "text/csv;charset=utf-8"): Promise<void> {
   const resp = await apiClient.get(path, { responseType: "blob", timeout: 60_000 })
   const cd = (resp.headers as Record<string, string>)["content-disposition"] ?? ""
   const name = cd.match(/filename="([^"]+)"/)?.[1] ?? fallbackName
-  const url = URL.createObjectURL(new Blob([resp.data], { type: "text/csv;charset=utf-8" }))
+  const url = URL.createObjectURL(new Blob([resp.data], { type: mime }))
   const a = document.createElement("a")
   a.href = url
   a.download = name
@@ -514,12 +556,12 @@ async function downloadCsv(path: string, fallbackName: string): Promise<void> {
 
 /** QuickBooks Online "Import journal entries" CSV for the run's reclass entry. */
 async function downloadJournalEntryCsv(runId: string, periodEnd: string): Promise<void> {
-  await downloadCsv(`${BASE}/runs/${runId}/journal-entry.csv`, `471c-journal-entry-${periodEnd}.csv`)
+  await downloadFile(`${BASE}/runs/${runId}/journal-entry.csv`, `471c-journal-entry-${periodEnd}.csv`)
 }
 
 /** The per-account allocation detail — the workpaper body. */
 async function downloadWorkpaperCsv(runId: string, periodEnd: string): Promise<void> {
-  await downloadCsv(`${BASE}/runs/${runId}/workpaper.csv`, `471c-workpaper-${periodEnd}.csv`)
+  await downloadFile(`${BASE}/runs/${runId}/workpaper.csv`, `471c-workpaper-${periodEnd}.csv`)
 }
 
 export interface QboAccount {
@@ -535,6 +577,7 @@ async function listInventoryAccounts(): Promise<QboAccount[]> {
 }
 
 export const allocationApi = {
+  checkPosting, getProceduresMemo, downloadProceduresMemo,
   previewPayroll, importPayroll, getPayrollStatus, clearPayroll,
   listAccountTransactions, setTransactionAllocation, clearTransactionAllocation,
   getJournalEntry, downloadJournalEntryCsv, downloadWorkpaperCsv, listInventoryAccounts,

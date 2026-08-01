@@ -15,10 +15,12 @@
  * layout is the one already proven against QBO.
  */
 import { useState } from "react"
-import { useQuery } from "@tanstack/react-query"
-import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  AlertTriangle, BookCheck, CheckCircle2, Download, FileSpreadsheet,
+} from "lucide-react"
 import { Button, Spinner } from "@/core/ui"
-import { allocationApi, money } from "../api"
+import { allocationApi, money, type PostingCheck } from "../api"
 
 interface Props {
   runId: string
@@ -28,6 +30,25 @@ interface Props {
 export function JournalEntryPanel({ runId, periodEnd }: Props) {
   const [busy, setBusy] = useState<"je" | "wp" | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [check, setCheck] = useState<PostingCheck | null>(null)
+  const qc = useQueryClient()
+
+  // §471(c) is a books-and-records method: an entry that was exported but never
+  // posted leaves the ledger showing ordinary expense while the allocation
+  // claims COGS. Verifying it is what makes the position real rather than
+  // merely computed.
+  const verify = useMutation({
+    mutationFn: () => allocationApi.checkPosting(runId),
+    onSuccess: (r) => {
+      setCheck(r); setError(null)
+      qc.invalidateQueries({ queryKey: ["allocation", "run"] })
+      qc.invalidateQueries({ queryKey: ["allocation", "runs"] })
+    },
+    onError: (e: unknown) => {
+      const ex = e as { response?: { data?: { detail?: string } }; message?: string }
+      setError(ex.response?.data?.detail ?? ex.message ?? "Couldn't check the books.")
+    },
+  })
 
   const { data: je, isLoading } = useQuery({
     queryKey: ["allocation", "journal-entry", runId],
@@ -131,6 +152,37 @@ Reclasses production cost into COGS
             </span>
             <span className="text-right tabular-nums text-theme">{money(je.total_debits)}</span>
             <span className="text-right tabular-nums text-theme">{money(je.total_credits)}</span>
+          </div>
+
+          {/* Book conformity — the step that makes the method defensible. */}
+          <div className="px-4 py-3 flex items-start justify-between gap-3 flex-wrap"
+            style={{ borderTop: "1px solid var(--border)" }}>
+            <div className="flex items-start gap-2 min-w-0">
+              <BookCheck size={15} strokeWidth={2} className="mt-0.5 shrink-0"
+                style={{ color: check?.posted ? "var(--positive)" : "var(--text-muted)" }} />
+              <div className="min-w-0">
+                <p className="text-[12.5px] font-medium text-theme">
+                  {check?.posted
+                    ? `Posted in QuickBooks${check.doc_number ? ` — ${check.doc_number}` : ""}`
+                    : check?.checked
+                      ? "Not found in QuickBooks yet"
+                      : "Books not verified"}
+                </p>
+                <p className="text-[11px] mt-0.5 max-w-lg leading-relaxed"
+                  style={{ color: "var(--text-muted)" }}>
+                  {check?.reason
+                    ?? (check?.posted
+                      ? "The ledger agrees with the allocation."
+                      : "§471(c) is a books-and-records method — the entry has to reach "
+                        + "the client's ledger for the position to hold. Import the CSV "
+                        + "into QuickBooks, then verify.")}
+                </p>
+              </div>
+            </div>
+            <Button variant="outline" onClick={() => verify.mutate()} loading={verify.isPending}
+              icon={<BookCheck size={14} strokeWidth={1.8} />}>
+              Verify books
+            </Button>
           </div>
 
           {je.cogs_accounts.length > 0 && (

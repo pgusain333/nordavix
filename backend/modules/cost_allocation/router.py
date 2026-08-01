@@ -279,6 +279,93 @@ async def export_workpaper_csv(
     )
 
 
+@router.post("/runs/{run_id}/posting-check")
+async def posting_check(
+    run_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Confirm the reclass entry actually reached the client's books.
+
+    This is what makes the §471(c) position real rather than merely computed:
+    the method is defined by what the books do, so an entry that was exported
+    and never posted leaves the ledger contradicting the return.
+    """
+    from modules.cost_allocation.conformity import check_posting
+
+    run = await _load_run(db, run_id)
+    result = await check_posting(db, run)
+
+    if result.get("posted"):
+        await write_audit_event(
+            db, tenant_id=tenant_id, user_id=user.id,
+            action="allocation.posting_confirmed", entity_type="alloc_run", entity_id=run.id,
+            metadata={"summary": (
+                f"Confirmed the §471(c) entry for {run.period_end.isoformat()} is posted "
+                f"in QuickBooks ({result.get('doc_number')})"
+            )},
+        )
+    await db.commit()
+    await db.refresh(run)
+    return {
+        **result,
+        "posted_at": run.posted_at.isoformat() if run.posted_at else None,
+        "posted_doc_number": run.posted_doc_number,
+        "posting_checked_at": run.posting_checked_at.isoformat() if run.posting_checked_at else None,
+    }
+
+
+@router.get("/accounting-procedures")
+async def accounting_procedures(
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The client's written accounting procedures, generated from live config.
+
+    §471(c)(1)(B)(ii) conditions the method on the taxpayer's own accounting
+    procedures, so the policy has to exist as a document — not merely as the
+    configuration rows that happen to be in place.
+    """
+    from modules.cost_allocation.conformity import build_procedures_memo
+
+    name = await _client_name(db, tenant_id)
+    return await build_procedures_memo(db, client_name=name, as_of=date.today())
+
+
+@router.get("/accounting-procedures.md")
+async def accounting_procedures_download(
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The same memo as a file for the permanent audit file."""
+    from modules.cost_allocation.conformity import build_procedures_memo
+
+    name = await _client_name(db, tenant_id)
+    memo = await build_procedures_memo(db, client_name=name, as_of=date.today())
+    slug = "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-") or "client"
+    filename = f"471c-accounting-procedures-{slug}-{date.today().isoformat()}.md"
+    return Response(
+        content=memo["markdown"].encode("utf-8-sig"),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+async def _client_name(db: AsyncSession, tenant_id: uuid.UUID) -> str:
+    """The company this memo is for. Falls back rather than failing — a missing
+    name shouldn't stop the document being produced."""
+    from models.tenant import Tenant
+
+    row = (await db.execute(
+        select(Tenant.name).where(Tenant.id == tenant_id)
+        .execution_options(skip_tenant_filter=True)
+    )).scalars().first()
+    return row or "the taxpayer"
+
+
 @router.post("/runs/{run_id}/approve")
 async def approve_run(
     run_id: uuid.UUID,

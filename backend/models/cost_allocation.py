@@ -365,6 +365,16 @@ class AllocRun(TenantBase):
     # The reclass JE this run emitted into the Adjustments queue
     # (proposed_entries.source='allocation', source_ref=<run id>).
     proposed_entry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
+    # ── Book conformity ─────────────────────────────────────────────────
+    # §471(c) is a BOOKS-and-records method: if the entry never posts, the
+    # ledger shows ordinary expense while the return claims COGS, and the
+    # position fails on its own terms. `posting_checked_at` is deliberately
+    # separate from `posted_at` so "we haven't looked" can never be displayed
+    # as "it's fine".
+    posted_at:          Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    posted_doc_number:  Mapped[str | None] = mapped_column(String(60))
+    posting_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source_pulled_at:  Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(

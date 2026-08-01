@@ -490,6 +490,13 @@ def serialize_run(run: AllocRun, lines: list[AllocRunLine] | None = None) -> dic
         "approved_by": str(run.approved_by) if run.approved_by else None,
         "approved_at": run.approved_at.isoformat() if run.approved_at else None,
         "has_journal_entry": run.proposed_entry_id is not None,
+        # Book conformity. `posting_checked_at` is reported separately from
+        # `posted_at` so the UI can distinguish "not posted" from "not checked".
+        "posted_at": run.posted_at.isoformat() if run.posted_at else None,
+        "posted_doc_number": run.posted_doc_number,
+        "posting_checked_at": (
+            run.posting_checked_at.isoformat() if run.posting_checked_at else None
+        ),
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
     if lines is not None:

@@ -13,7 +13,7 @@
  */
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, CheckCircle2, Save } from "lucide-react"
+import { AlertTriangle, CheckCircle2, FileText, Save } from "lucide-react"
 import { Button, Select, Spinner } from "@/core/ui"
 import { allocationApi } from "../api"
 
@@ -21,6 +21,7 @@ export function SettingsPanel() {
   const [method, setMethod] = useState<"books_records" | "afs" | "">("")
   const [hasAfs, setHasAfs] = useState<boolean | null>(null)
   const [saved, setSaved] = useState(false)
+  const [memoBusy, setMemoBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const qc = useQueryClient()
 
@@ -108,6 +109,29 @@ export function SettingsPanel() {
             COGS account is what makes the reclass self-documenting on the face of the
             trial balance.
           </p>
+        </div>
+
+        {/* The document the statute actually references. Generated from live
+            configuration so the policy and the computation can't drift apart. */}
+        <div className="pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+          <h3 className="text-sm font-semibold text-theme">Written accounting procedures</h3>
+          <p className="text-[11px] mt-0.5 mb-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            §471(c)(1)(B)(ii) conditions the method on the taxpayer&rsquo;s own accounting
+            procedures, so the policy has to exist as a signed document — not just as
+            configuration. This one is generated from the pools, spaces and
+            classifications actually in force, so it can&rsquo;t drift from what the
+            engine does.
+          </p>
+          <Button variant="outline" loading={memoBusy}
+            onClick={async () => {
+              setMemoBusy(true)
+              try { await allocationApi.downloadProceduresMemo() }
+              catch { setError("Couldn't generate the memo.") }
+              finally { setMemoBusy(false) }
+            }}
+            icon={<FileText size={14} strokeWidth={1.8} />}>
+            Download procedures memo
+          </Button>
         </div>
 
         {error && <p className="text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
