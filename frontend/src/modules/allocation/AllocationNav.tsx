@@ -9,8 +9,8 @@
  */
 import { NavLink, useNavigate } from "react-router-dom"
 import {
-  Building2, CalendarCheck2, ListChecks, Receipt, Settings, SlidersHorizontal, X,
-  type LucideIcon,
+  Building2, CalendarCheck2, Gauge, Layers, ListTree, PlayCircle,
+  Receipt, Scale, Settings, Users, X, type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/core/ui/utils"
 import { ProductSwitcher } from "@/core/layout/ProductSwitcher"
@@ -19,21 +19,45 @@ interface NavItem {
   label: string
   path:  string
   icon:  LucideIcon
-  /** Exact match only — the roster lives at the index path. */
+  /** Exact match only — the dashboard lives at the index path. */
   end?:  boolean
 }
 
-const NAV: NavItem[] = [
-  { label: "Clients",  path: "/allocation",          icon: Building2,         end: true },
-  { label: "Runs",     path: "/allocation/runs",     icon: ListChecks },
-  // Its own entry, not a Setup tab: setup happens once, the register is
-  // imported every month.
-  { label: "Payroll",  path: "/allocation/payroll",  icon: Receipt },
-  // The twelve monthly runs become one figure on a return — a different job
-  // from running a month, so it gets its own place rather than a tab.
-  { label: "Year end", path: "/allocation/year-end", icon: CalendarCheck2 },
-  { label: "Setup",    path: "/allocation/setup",    icon: SlidersHorizontal },
-  { label: "Settings", path: "/allocation/setup?tab=settings", icon: Settings },
+interface NavSection {
+  /** Null for the lead item, which needs no heading above it. */
+  heading: string | null
+  items: NavItem[]
+}
+
+/**
+ * Ordered the way the work happens, not the way the screens were built.
+ *
+ * Set up once → run every month → close the year. The setup steps are in
+ * dependency order too: eligibility decides whether any of it is usable, pools
+ * decide what accounts can point at, and the two registries only matter if a
+ * pool actually consumes them.
+ */
+const SECTIONS: NavSection[] = [
+  { heading: null, items: [
+    { label: "Dashboard", path: "/allocation", icon: Gauge, end: true },
+  ] },
+  { heading: "Set up", items: [
+    { label: "Eligibility", path: "/allocation/eligibility", icon: Scale },
+    { label: "Cost pools",  path: "/allocation/pools",       icon: Layers },
+    { label: "Accounts",    path: "/allocation/accounts",    icon: ListTree },
+    { label: "Spaces",      path: "/allocation/spaces",      icon: Building2 },
+    { label: "Employees",   path: "/allocation/employees",   icon: Users },
+    { label: "Settings",    path: "/allocation/settings",    icon: Settings },
+  ] },
+  { heading: "Every month", items: [
+    { label: "Payroll register", path: "/allocation/payroll", icon: Receipt },
+    { label: "Run allocation",   path: "/allocation/runs",    icon: PlayCircle },
+  ] },
+  { heading: "Year end", items: [
+    // The written procedures memo isn't here: it's generated from this config
+    // and downloaded from Settings, so it lives where the config does.
+    { label: "Roll-up & 1125-A", path: "/allocation/year-end", icon: CalendarCheck2 },
+  ] },
 ]
 
 interface Props {
@@ -85,37 +109,50 @@ export function AllocationNav({ onClose }: Props) {
       {/* Product switcher — the only seam back to the close app. */}
       <ProductSwitcher current="allocation" onNavigate={onClose} />
 
-      {/* Sections */}
-      <div className="flex-1 px-3 pb-4 pt-1 space-y-0.5">
-        {NAV.map((item) => {
-          const Icon = item.icon
-          return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.end}
-              onClick={() => onClose?.()}
-              className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors"
-              style={({ isActive }) =>
-                isActive
-                  ? { background: "var(--nav-active)", color: "var(--nav-text-act)" }
-                  : { color: "var(--nav-text)" }
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <Icon
-                    size={16}
-                    strokeWidth={1.8}
-                    className="shrink-0"
-                    style={{ color: isActive ? "var(--nav-text-act)" : "var(--nav-text)" }}
-                  />
-                  <span className="truncate">{item.label}</span>
-                </>
-              )}
-            </NavLink>
-          )
-        })}
+      {/* Sections — headings carry the sequence, so the rail reads as a
+          workflow rather than a pile of screens. */}
+      <div className="flex-1 px-3 pb-4 pt-1">
+        {SECTIONS.map((section, si) => (
+          <div key={section.heading ?? "lead"} className={si === 0 ? "space-y-0.5" : "mt-4 space-y-0.5"}>
+            {section.heading && (
+              <p
+                className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider"
+                style={{ color: "var(--nav-text)", opacity: 0.55 }}
+              >
+                {section.heading}
+              </p>
+            )}
+            {section.items.map((item) => {
+              const Icon = item.icon
+              return (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  end={item.end}
+                  onClick={() => onClose?.()}
+                  className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors"
+                  style={({ isActive }) =>
+                    isActive
+                      ? { background: "var(--nav-active)", color: "var(--nav-text-act)" }
+                      : { color: "var(--nav-text)" }
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <Icon
+                        size={16}
+                        strokeWidth={1.8}
+                        className="shrink-0"
+                        style={{ color: isActive ? "var(--nav-text-act)" : "var(--nav-text)" }}
+                      />
+                      <span className="truncate">{item.label}</span>
+                    </>
+                  )}
+                </NavLink>
+              )
+            })}
+          </div>
+        ))}
       </div>
 
       {/* Product footer — states what this surface is, and what it isn't. */}

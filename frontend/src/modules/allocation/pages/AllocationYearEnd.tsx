@@ -388,7 +388,7 @@ function ByPool({ data }: { data: AnnualRollup }) {
       <div className="px-4 py-3 flex items-center justify-between gap-3"
         style={{ borderBottom: "1px solid var(--border)" }}>
         <h2 className="text-[13px] font-semibold text-theme">Capitalized cost by pool</h2>
-        <button onClick={() => navigate("/allocation/setup?tab=pools")}
+        <button onClick={() => navigate("/allocation/pools")}
           className="text-[11.5px] font-medium inline-flex items-center gap-1"
           style={{ color: "var(--green)" }}>
           Change a pool&rsquo;s 1125-A line <ArrowRight size={12} strokeWidth={2} />

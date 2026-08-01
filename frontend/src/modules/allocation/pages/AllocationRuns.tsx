@@ -18,6 +18,7 @@ import { allocationApi, factorPct, money, type AllocRun } from "../api"
 import { WorkpaperTable } from "../components/WorkpaperTable"
 import { JournalEntryPanel } from "../components/JournalEntryPanel"
 import { MonthPicker, monthRange, useAllocationPeriod } from "../components/MonthPicker"
+import { routeForFix } from "../components/ReadinessRail"
 
 const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
   draft:       { bg: "var(--surface-2)",   fg: "var(--text-2)" },
@@ -129,16 +130,23 @@ export function AllocationRuns() {
               <AlertTriangle size={16} strokeWidth={2} style={{ color: "var(--warn)" }} className="mt-0.5 shrink-0" />
               <div className="min-w-0">
                 <p className="text-sm font-medium text-theme">This client isn&rsquo;t ready to run</p>
-                <ul className="mt-1.5 space-y-1">
+                {/* Each blocker routes to the screen that resolves it — a
+                    generic "go to setup" makes you hunt for which one. */}
+                <ul className="mt-1.5 space-y-1.5">
                   {readiness.blockers.map((b) => (
-                    <li key={b.code} className="text-xs" style={{ color: "var(--text-2)" }}>{b.message}</li>
+                    <li key={b.code}>
+                      <Link to={routeForFix(b.fix)}
+                        className="text-xs hover:opacity-75 transition-opacity"
+                        style={{ color: "var(--text-2)" }}>
+                        {b.message}
+                        <span className="inline-flex items-center gap-0.5 ml-1 font-medium whitespace-nowrap"
+                          style={{ color: "var(--green)" }}>
+                          Fix <ArrowRight size={10} strokeWidth={2.2} />
+                        </span>
+                      </Link>
+                    </li>
                   ))}
                 </ul>
-                <Link to="/allocation/setup"
-                  className="inline-flex items-center gap-1 text-xs font-medium mt-2"
-                  style={{ color: "var(--green)" }}>
-                  Go to Setup <ArrowRight size={12} strokeWidth={2} />
-                </Link>
               </div>
             </div>
           ) : (
