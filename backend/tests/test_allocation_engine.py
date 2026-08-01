@@ -647,6 +647,66 @@ def test_hand_reviewed_transactions_override_the_driver():
     assert result.capitalized_total + result.disallowed_total == result.total_expenses
 
 
+# ── §448(c) aggregation across commonly controlled entities ───────────────────
+
+def test_gross_receipts_aggregate_across_entities():
+    """The mistake this prevents: testing one entity of a group.
+
+    §448(c)(2) applies §52(a)/(b) and §414(m)/(o), so commonly controlled
+    entities are tested together. Cannabis groups are routinely a cultivation
+    LLC plus a retail LLC plus a management company — each comfortably under the
+    threshold, the group over it. Get this wrong and the client is running a
+    method they don't qualify for, which invalidates every allocation built on
+    it.
+    """
+    from modules.cost_allocation.engine import (
+        aggregate_gross_receipts,
+        threshold_for_year,
+    )
+
+    rows = [
+        {"entity": "Cultivation LLC", "year": 2023, "amount": D("16000000")},
+        {"entity": "Cultivation LLC", "year": 2024, "amount": D("17000000")},
+        {"entity": "Cultivation LLC", "year": 2025, "amount": D("18000000")},
+        {"entity": "Retail LLC",      "year": 2023, "amount": D("15000000")},
+        {"entity": "Retail LLC",      "year": 2024, "amount": D("16000000")},
+        {"entity": "Retail LLC",      "year": 2025, "amount": D("17000000")},
+    ]
+    years = aggregate_gross_receipts(rows, tax_year=2026)
+    assert years == [D("31000000"), D("33000000"), D("35000000")], years
+
+    threshold, confirmed = threshold_for_year(2025)
+    assert threshold == D("31000000") and confirmed is True
+
+    # Either entity alone passes comfortably — a 16M average against a 31M
+    # threshold isn't remotely close…
+    alone = evaluate_eligibility(
+        [r["amount"] for r in rows if r["entity"] == "Retail LLC"], threshold, has_afs=False,
+    )
+    assert alone.eligible is True
+    assert alone.gross_receipts_3yr_avg == D("16000000.00")
+
+    # …and the group does not, at a 33M average. That's the whole point: the
+    # answer flips purely on whether the entities were combined.
+    combined = evaluate_eligibility(years, threshold, has_afs=False)
+    assert combined.eligible is False
+    assert combined.gross_receipts_3yr_avg == D("33000000.00")
+    assert "threshold" in (combined.reason or "")
+
+    # An unknown year falls back to the latest figure and says so, rather than
+    # presenting an invented indexed amount as settled.
+    future, confirmed_future = threshold_for_year(2031)
+    assert future == D("31000000") and confirmed_future is False
+
+    # A year with no data is OMITTED, never treated as zero — a zero would drag
+    # the average down and manufacture eligibility.
+    sparse = aggregate_gross_receipts(
+        [{"entity": "A", "year": 2025, "amount": D("40000000")}], tax_year=2026,
+    )
+    assert sparse == [D("40000000")]
+    assert evaluate_eligibility(sparse, threshold, has_afs=False).eligible is False
+
+
 if __name__ == "__main__":
     test_factors_are_fractions_in_range()
     test_every_line_splits_to_gross_and_total_is_preserved()
@@ -664,4 +724,5 @@ if __name__ == "__main__":
     test_repeated_employees_aggregate_into_one_row()
     test_department_drives_the_suggested_function_conservatively()
     test_hand_reviewed_transactions_override_the_driver()
+    test_gross_receipts_aggregate_across_entities()
     print("ALLOCATION_ENGINE_OK")

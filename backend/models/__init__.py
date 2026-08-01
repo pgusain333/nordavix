@@ -15,6 +15,7 @@ from models.closed_period import ClosedPeriod
 from models.comment import Comment
 from models.cost_allocation import (
     AllocAccountMap,
+    AllocEligibility,
     AllocEmployee,
     AllocPayrollEntry,
     AllocPool,
@@ -61,6 +62,7 @@ __all__ = [
     "AccountReviewStatus",
     "AIUsage",
     "AllocAccountMap",
+    "AllocEligibility",
     "AllocEmployee",
     "AllocPayrollEntry",
     "AllocPool",

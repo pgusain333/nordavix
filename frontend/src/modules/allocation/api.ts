@@ -473,6 +473,58 @@ async function clearPayroll(periodEnd: string): Promise<void> {
 
 // ── Journal entry + exports ───────────────────────────────────────────────────
 
+export interface EligibilityEntityRow {
+  entity: string
+  year: number
+  amount: string | number
+  source?: string
+}
+
+export interface Eligibility {
+  tested: boolean
+  tax_year: number
+  threshold?: string
+  default_threshold: string
+  threshold_confirmed: boolean
+  entities: EligibilityEntityRow[]
+  three_year_avg?: string
+  eligible: boolean | null
+  has_afs?: boolean
+  method_available?: string | null
+  reason?: string | null
+  aggregation_note?: string | null
+  tested_at?: string | null
+}
+
+/** The §448(c) conclusion on file for a tax year, if one has been reached. */
+async function getEligibility(taxYear: number): Promise<Eligibility> {
+  const { data } = await apiClient.get<Eligibility>(`${BASE}/eligibility`, {
+    params: { tax_year: taxYear },
+  })
+  return data
+}
+
+/** This client's own receipts from QBO — affiliates are entered by hand. */
+async function suggestReceipts(
+  taxYear: number,
+): Promise<{ tax_year: number; years: { year: number; amount: string | null; source: string }[] }> {
+  const { data } = await apiClient.get(`${BASE}/eligibility/suggest-receipts`, {
+    params: { tax_year: taxYear }, timeout: 120_000,
+  })
+  return data
+}
+
+async function recordEligibility(body: {
+  tax_year: number
+  has_afs: boolean
+  threshold: number | null
+  aggregation_note: string | null
+  entities: { entity: string; year: number; amount: number; source: string }[]
+}): Promise<Eligibility> {
+  const { data } = await apiClient.post<Eligibility>(`${BASE}/eligibility`, body)
+  return data
+}
+
 export interface PostingCheck {
   checked: boolean
   posted: boolean
@@ -577,6 +629,7 @@ async function listInventoryAccounts(): Promise<QboAccount[]> {
 }
 
 export const allocationApi = {
+  getEligibility, suggestReceipts, recordEligibility,
   checkPosting, getProceduresMemo, downloadProceduresMemo,
   previewPayroll, importPayroll, getPayrollStatus, clearPayroll,
   listAccountTransactions, setTransactionAllocation, clearTransactionAllocation,

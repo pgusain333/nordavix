@@ -20,6 +20,7 @@ configuration so the document and the computation can never drift apart.
 """
 import logging
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -273,3 +274,52 @@ async def build_procedures_memo(
         "space_count": len(spaces),
         "employee_count": len(employees),
     }
+
+
+# ── §448(c) small business taxpayer test ──────────────────────────────────────
+
+async def fetch_annual_gross_receipts(
+    conn: QboConnection, db: AsyncSession, year: int,
+) -> Decimal | None:
+    """Total income for a calendar year, from the QBO P&L.
+
+    Best effort: returns None rather than zero when the pull fails, because a
+    zero would drag the three-year average down and manufacture eligibility.
+    A missing year has to stay visibly missing.
+    """
+    from core.qbo_tb import fetch_profit_and_loss
+    from modules.flux.service import parse_qbo_pl_amounts
+
+    try:
+        report = await fetch_profit_and_loss(
+            conn, date(year, 12, 31), period_start=date(year, 1, 1),
+        )
+    except Exception:
+        logger.warning("gross receipts pull failed for %s", year, exc_info=True)
+        return None
+
+    # The P&L summary carries the income total; fall back to summing the
+    # income-type account rows when the summary row isn't present.
+    total = Decimal("0")
+    try:
+        rows = report.get("Rows", {}).get("Row", []) or []
+        for row in rows:
+            group = str(row.get("group") or "")
+            if group in {"Income", "TotalIncome"}:
+                summary = row.get("Summary", {}).get("ColData", []) or []
+                for cell in summary:
+                    text = str(cell.get("value") or "").replace(",", "").replace("$", "")
+                    if text and text.replace("-", "").replace(".", "").isdigit():
+                        total = Decimal(text)
+                        break
+                if total:
+                    break
+    except Exception:
+        logger.warning("gross receipts parse failed for %s", year, exc_info=True)
+
+    if total:
+        return total
+
+    # Nothing recognisable — say so rather than reporting zero income.
+    amounts = parse_qbo_pl_amounts(report)
+    return sum(amounts.values(), Decimal("0")) or None

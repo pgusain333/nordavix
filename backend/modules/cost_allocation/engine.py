@@ -648,6 +648,58 @@ def roll_forward_cogs(
 
 # ── Eligibility ───────────────────────────────────────────────────────────────
 
+# The §448(c) threshold is indexed annually. These are the figures we believe to
+# be correct, but the value that matters is the one for the client's tax year and
+# it MUST be confirmed each year against the current revenue procedure — an
+# out-of-date threshold silently changes who qualifies. `alloc_settings`
+# carries a per-client override for exactly that reason, and the UI states which
+# figure was used rather than hiding it.
+GROSS_RECEIPTS_THRESHOLDS: dict[int, Decimal] = {
+    2022: Decimal("27000000"),
+    2023: Decimal("29000000"),
+    2024: Decimal("30000000"),
+    2025: Decimal("31000000"),
+}
+
+
+def threshold_for_year(tax_year: int) -> tuple[Decimal, bool]:
+    """(threshold, is_confirmed) for a tax year.
+
+    An unknown year falls back to the latest figure we hold and returns
+    is_confirmed=False, so the caller can say so plainly instead of presenting a
+    guess as settled. Never silently invents an indexed amount.
+    """
+    if tax_year in GROSS_RECEIPTS_THRESHOLDS:
+        return GROSS_RECEIPTS_THRESHOLDS[tax_year], True
+    latest = max(GROSS_RECEIPTS_THRESHOLDS)
+    return GROSS_RECEIPTS_THRESHOLDS[latest], False
+
+
+def aggregate_gross_receipts(
+    rows: Sequence[Mapping[str, Any]], tax_year: int,
+) -> list[Decimal]:
+    """Combine per-entity receipts into one figure per prior year.
+
+    §448(c)(2) applies the aggregation rules of §52(a)/(b) and §414(m)/(o), so
+    commonly controlled entities are tested TOGETHER. A cannabis group with a
+    cultivation LLC, a retail LLC and a management company is three entities
+    that each pass alone and can fail combined — testing the client in isolation
+    is the error this exists to prevent.
+
+    `rows` are {entity, year, amount}. Returns the three years preceding
+    `tax_year`, oldest first, with missing years omitted rather than assumed to
+    be zero: a zero would drag the average down and manufacture eligibility.
+    """
+    wanted = [tax_year - 3, tax_year - 2, tax_year - 1]
+    by_year: dict[int, Decimal] = {}
+    for r in rows:
+        year = int(r["year"])
+        if year not in wanted:
+            continue
+        by_year[year] = by_year.get(year, ZERO) + Decimal(str(r["amount"]))
+    return [by_year[y] for y in wanted if y in by_year]
+
+
 def evaluate_eligibility(
     prior_year_gross_receipts: Sequence[Decimal],
     threshold: Decimal,

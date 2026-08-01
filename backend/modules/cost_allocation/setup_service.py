@@ -259,6 +259,37 @@ async def compute_readiness(db: AsyncSession, period_end: date) -> dict:
                 "fix": "setup/payroll",
             })
 
+    # The §448(c) gate. A client over the threshold cannot use §471(c) at all,
+    # so a concluded-ineligible test blocks every run built on it — that is a
+    # harder stop than any configuration gap. Untested is a warning, not a
+    # block: it may simply not have been done yet, and silently refusing to run
+    # would be worse than saying so.
+    from models.cost_allocation import AllocEligibility
+
+    tested = (await db.execute(
+        select(AllocEligibility).order_by(AllocEligibility.tax_year.desc()).limit(1)
+    )).scalars().first()
+    if tested is None:
+        warnings.append({
+            "code": "eligibility_untested",
+            "message": (
+                "The §448(c) small-business-taxpayer test hasn't been performed. "
+                "§471(c) is only available below the threshold, and receipts "
+                "aggregate across commonly controlled entities."
+            ),
+            "fix": "setup/eligibility",
+        })
+    elif not tested.eligible:
+        blockers.append({
+            "code": "not_eligible",
+            "message": (
+                f"The {tested.tax_year} §448(c) test concluded this client is NOT a "
+                f"small business taxpayer (three-year average {tested.three_year_avg} "
+                f"against a {tested.threshold} threshold), so §471(c) isn't available."
+            ),
+            "fix": "setup/eligibility",
+        })
+
     if cfg is not None and cfg.has_afs and cfg.method == "books_records":
         blockers.append({
             "code": "afs_method_conflict",

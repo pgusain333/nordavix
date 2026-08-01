@@ -468,3 +468,52 @@ class AllocTxnOverride(TenantBase):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class AllocEligibility(TenantBase):
+    """The §448(c) small-business-taxpayer test, as performed for a tax year.
+
+    §471(c) is only available below the annually indexed gross-receipts
+    threshold, and the test AGGREGATES commonly controlled entities under
+    §448(c)(2) → §52(a)/(b), §414(m)/(o). A cannabis group with a cultivation
+    LLC, a retail LLC and a management company is three entities that pass
+    alone and can fail together, so testing the client in isolation is the
+    mistake this record exists to prevent.
+
+    Frozen as a snapshot rather than recomputed on read: a year later the
+    question is "what did you test, on what basis, and who signed it", and that
+    must be answerable without re-deriving anything from data that has since
+    moved.
+
+    Migration: 070_alloc_eligibility.py.
+    """
+
+    __tablename__ = "alloc_eligibility"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # The year the method is used FOR; the test looks at the three before it.
+    tax_year:  Mapped[int] = mapped_column(Integer, nullable=False)
+    threshold: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+
+    # [{entity, year, amount, source}] — the entire basis for the conclusion.
+    entities: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+
+    three_year_avg: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    eligible:       Mapped[bool] = mapped_column(Boolean, nullable=False)
+    has_afs:        Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # afs | books_records | None when ineligible
+    method_available: Mapped[str | None] = mapped_column(String(20))
+    reason:           Mapped[str | None] = mapped_column(String(500))
+    # Which entities were combined and why — the judgement, in words.
+    aggregation_note: Mapped[str | None] = mapped_column(String(500))
+
+    tested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

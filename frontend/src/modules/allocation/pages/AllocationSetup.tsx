@@ -12,7 +12,7 @@ import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   AlertTriangle, Building2, CalendarDays, CheckCircle2, Layers, ListTree,
-  Settings as SettingsIcon, Users, XCircle,
+  Scale, Settings as SettingsIcon, Users, XCircle,
 } from "lucide-react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { Spinner } from "@/core/ui"
@@ -22,11 +22,16 @@ import { AccountsPanel } from "../components/AccountsPanel"
 import { SpacesPanel } from "../components/SpacesPanel"
 import { EmployeesPanel } from "../components/EmployeesPanel"
 import { SettingsPanel } from "../components/SettingsPanel"
+import { EligibilityPanel } from "../components/EligibilityPanel"
 import { MonthPicker, monthRange, useAllocationPeriod } from "../components/MonthPicker"
 
-type TabId = "pools" | "accounts" | "spaces" | "employees" | "settings"
+type TabId = "eligibility" | "pools" | "accounts" | "spaces" | "employees" | "settings"
 
+// Eligibility leads: §471(c) is only available below the §448(c) threshold,
+// so configuring pools before knowing the client qualifies is work that may
+// turn out to be unusable.
 const TABS: { id: TabId; label: string; icon: typeof Layers }[] = [
+  { id: "eligibility", label: "Eligibility", icon: Scale },
   { id: "pools",     label: "Pools",     icon: Layers },
   { id: "accounts",  label: "Accounts",  icon: ListTree },
   { id: "spaces",    label: "Spaces",    icon: Building2 },
@@ -36,6 +41,7 @@ const TABS: { id: TabId; label: string; icon: typeof Layers }[] = [
 
 /** Map a readiness item's `fix` hint onto the tab that resolves it. */
 function tabForFix(fix: string): TabId {
+  if (fix.includes("eligibility")) return "eligibility"
   if (fix.includes("pools"))     return "pools"
   if (fix.includes("accounts"))  return "accounts"
   if (fix.includes("spaces"))    return "spaces"
@@ -53,7 +59,7 @@ export function AllocationSetup() {
   const [params, setParams] = useSearchParams()
   const urlTab = params.get("tab") as TabId | null
   const [tab, setTabState] = useState<TabId>(
-    urlTab && TABS.some((t) => t.id === urlTab) ? urlTab : "pools",
+    urlTab && TABS.some((t) => t.id === urlTab) ? urlTab : "eligibility",
   )
   const setTab = (id: TabId) => {
     setTabState(id)
@@ -186,6 +192,7 @@ export function AllocationSetup() {
           })}
         </div>
 
+        {tab === "eligibility" && <EligibilityPanel periodEnd={periodEnd} />}
         {tab === "pools"     && <PoolsPanel />}
         {tab === "accounts"  && <AccountsPanel periodStart={periodStart} periodEnd={periodEnd} />}
         {tab === "spaces"    && <SpacesPanel periodEnd={periodEnd} />}

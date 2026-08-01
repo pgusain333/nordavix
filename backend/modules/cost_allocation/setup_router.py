@@ -16,7 +16,7 @@ since it's the tax position rather than bookkeeping.
 """
 import logging
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -1012,6 +1012,187 @@ async def clear_transaction_allocation(
     )
     await db.commit()
     return {"cleared": True, "qbo_txn_id": qbo_txn_id}
+
+
+class EligibilityEntity(BaseModel):
+    entity: str
+    year: int
+    amount: float
+    source: str = "manual"
+
+
+class EligibilityBody(BaseModel):
+    tax_year: int
+    entities: list[EligibilityEntity]
+    has_afs: bool = False
+    threshold: float | None = None
+    aggregation_note: str | None = None
+
+
+@router.get("/eligibility")
+async def get_eligibility(
+    tenant_id: CurrentTenantId,
+    tax_year: int = Query(...),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The §448(c) conclusion on file for a tax year, if one has been reached."""
+    from models.cost_allocation import AllocEligibility
+    from modules.cost_allocation.engine import threshold_for_year
+
+    row = (await db.execute(
+        select(AllocEligibility).where(AllocEligibility.tax_year == tax_year)
+    )).scalars().first()
+
+    default_threshold, confirmed = threshold_for_year(tax_year)
+    if row is None:
+        return {
+            "tested": False, "tax_year": tax_year,
+            "default_threshold": str(default_threshold),
+            "threshold_confirmed": confirmed,
+            "entities": [], "eligible": None,
+        }
+    return {
+        "tested": True,
+        "tax_year": row.tax_year,
+        "threshold": str(row.threshold),
+        "default_threshold": str(default_threshold),
+        "threshold_confirmed": confirmed,
+        "entities": row.entities,
+        "three_year_avg": str(row.three_year_avg),
+        "eligible": row.eligible,
+        "has_afs": row.has_afs,
+        "method_available": row.method_available,
+        "reason": row.reason,
+        "aggregation_note": row.aggregation_note,
+        "tested_at": row.tested_at.isoformat() if row.tested_at else None,
+    }
+
+
+@router.get("/eligibility/suggest-receipts")
+async def suggest_receipts(
+    tenant_id: CurrentTenantId,
+    tax_year: int = Query(...),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """This client's own gross receipts for the three prior years, from QBO.
+
+    A starting point only — receipts for AFFILIATED entities have to be added by
+    the preparer, because Nordavix can only see the books it's connected to and
+    the §448(c) test is about the whole controlled group.
+    """
+    from modules.cost_allocation.conformity import fetch_annual_gross_receipts
+
+    conn = (await db.execute(select(QboConnection))).scalars().first()
+    if conn is None:
+        raise HTTPException(status_code=409, detail="QuickBooks isn't connected for this client.")
+
+    out: list[dict] = []
+    for year in (tax_year - 3, tax_year - 2, tax_year - 1):
+        amount = await fetch_annual_gross_receipts(conn, db, year)
+        out.append({
+            "year": year,
+            "amount": str(amount) if amount is not None else None,
+            "source": "quickbooks" if amount is not None else "unavailable",
+        })
+    return {"tax_year": tax_year, "years": out}
+
+
+@router.post("/eligibility", status_code=status.HTTP_201_CREATED)
+async def record_eligibility(
+    body: EligibilityBody,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("reviewer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Conclude on the §448(c) test and freeze the basis.
+
+    Reviewer+ because this decides whether the client may use §471(c) at all —
+    it's the gate the whole method stands on, not a configuration detail.
+
+    Receipts AGGREGATE across commonly controlled entities (§448(c)(2) →
+    §52(a)/(b), §414(m)/(o)), which is why the request takes a list of entities
+    rather than one client's numbers.
+    """
+    from models.cost_allocation import AllocEligibility
+    from modules.cost_allocation.engine import (
+        aggregate_gross_receipts,
+        evaluate_eligibility,
+        threshold_for_year,
+    )
+
+    rows = [e.model_dump() for e in body.entities]
+    if not rows:
+        raise HTTPException(
+            status_code=422,
+            detail="Add at least one entity and year of gross receipts to test.",
+        )
+
+    years = aggregate_gross_receipts(rows, body.tax_year)
+    if not years:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"No receipts fall in the three years before {body.tax_year} "
+                f"({body.tax_year - 3}–{body.tax_year - 1})."
+            ),
+        )
+
+    default_threshold, _confirmed = threshold_for_year(body.tax_year)
+    threshold = _d(body.threshold) if body.threshold is not None else default_threshold
+
+    result = evaluate_eligibility(years, threshold, has_afs=body.has_afs)
+
+    row = (await db.execute(
+        select(AllocEligibility).where(AllocEligibility.tax_year == body.tax_year)
+    )).scalars().first()
+    if row is None:
+        row = AllocEligibility(
+            id=uuid.uuid4(), tenant_id=tenant_id, tax_year=body.tax_year,
+        )
+        db.add(row)
+
+    row.threshold = threshold
+    row.entities = rows
+    row.three_year_avg = result.gross_receipts_3yr_avg
+    row.eligible = result.eligible
+    row.has_afs = body.has_afs
+    row.method_available = result.method
+    row.reason = result.reason
+    row.aggregation_note = body.aggregation_note
+    row.tested_by = user.id
+    row.tested_at = datetime.now(UTC)
+
+    # Keep the elected method consistent with what the test says is available.
+    cfg = await get_or_create_settings(db, tenant_id)
+    cfg.has_afs = body.has_afs
+    if result.method:
+        cfg.method = result.method
+
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="allocation.eligibility_tested", entity_type="alloc_eligibility", entity_id=row.id,
+        metadata={"summary": (
+            f"§448(c) test for {body.tax_year}: "
+            f"{'eligible' if result.eligible else 'NOT eligible'} "
+            f"(3-year average {result.gross_receipts_3yr_avg} vs {threshold}, "
+            f"{len({r['entity'] for r in rows})} entities)"
+        )},
+    )
+    await db.commit()
+    await db.refresh(row)
+
+    return {
+        "tested": True,
+        "tax_year": row.tax_year,
+        "threshold": str(row.threshold),
+        "three_year_avg": str(row.three_year_avg),
+        "eligible": row.eligible,
+        "method_available": row.method_available,
+        "reason": row.reason,
+        "entity_count": len({r["entity"] for r in rows}),
+    }
 
 
 @router.get("/inventory-accounts")
