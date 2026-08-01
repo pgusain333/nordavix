@@ -507,6 +507,194 @@ async def retire_space(
     return {"id": str(space_id), "effective_to": space.effective_to.isoformat()}
 
 
+# ── Square-footage source documents ───────────────────────────────────────────
+#
+# What's in the Spaces registry is a transcription. This is what it was
+# transcribed FROM — the floor plan, surveyor's schedule or lease exhibit the
+# client supplied. On examination the question is not what was entered but what
+# it was entered from.
+
+_MAX_SPACE_MAP_BYTES = 25 * 1024 * 1024   # floor plans are often large scans
+_ALLOWED_SPACE_MAP_EXTS = {
+    "pdf", "png", "jpg", "jpeg", "webp", "gif",
+    "xlsx", "xls", "csv", "dwg", "docx",
+}
+
+
+def _serialize_space_map(m) -> dict:
+    return {
+        "id": str(m.id),
+        "file_name": m.file_name,
+        "file_size": m.file_size,
+        "mime_type": m.mime_type,
+        "label": m.label,
+        "as_of": m.as_of.isoformat() if m.as_of else None,
+        "notes": m.notes,
+        "uploaded_at": m.uploaded_at.isoformat() if m.uploaded_at else None,
+    }
+
+
+@router.get("/space-maps")
+async def list_space_maps(
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Every square-footage document on file, newest first.
+
+    Superseded plans are kept: a facility re-measured in June is new evidence
+    from June, not a correction that invalidates the March allocation.
+    """
+    from models.alloc_space_map import AllocSpaceMap
+
+    rows = (await db.execute(
+        select(AllocSpaceMap).order_by(
+            AllocSpaceMap.as_of.desc().nullslast(), AllocSpaceMap.uploaded_at.desc(),
+        )
+    )).scalars().all()
+    return [_serialize_space_map(m) for m in rows]
+
+
+@router.post("/space-maps", status_code=status.HTTP_201_CREATED)
+async def upload_space_map(
+    tenant_id: CurrentTenantId,
+    file: UploadFile = File(...),
+    label: str | None = Query(default=None),
+    as_of: str | None = Query(default=None),
+    notes: str | None = Query(default=None),
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Attach the square-footage document the client supplied."""
+    import io
+
+    from core.storage import r2 as r2_storage
+    from models.alloc_space_map import AllocSpaceMap
+
+    name = file.filename or "space-map"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext not in _ALLOWED_SPACE_MAP_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"File type .{ext} isn't accepted. Use one of: "
+                f"{', '.join(sorted(_ALLOWED_SPACE_MAP_EXTS))}."
+            ),
+        )
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="That file is empty.")
+    if len(raw) > _MAX_SPACE_MAP_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large (max {_MAX_SPACE_MAP_BYTES // (1024 * 1024)} MB).",
+        )
+
+    parsed_as_of = None
+    if as_of:
+        try:
+            parsed_as_of = date.fromisoformat(as_of)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="as_of must be YYYY-MM-DD.") from None
+
+    mime = file.content_type or "application/octet-stream"
+    safe_name = name.replace("/", "_").replace("\\", "_")
+    key = r2_storage.tenant_key(tenant_id, "alloc-space-map", f"{uuid.uuid4()}_{safe_name}")
+    r2_storage.upload_file(key, io.BytesIO(raw), content_type=mime)
+
+    row = AllocSpaceMap(
+        id=uuid.uuid4(), tenant_id=tenant_id,
+        file_name=safe_name, file_size=len(raw), mime_type=mime, r2_key=key,
+        label=(label or "").strip() or None,
+        as_of=parsed_as_of,
+        notes=(notes or "").strip() or None,
+        uploaded_by=user.id,
+    )
+    db.add(row)
+
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="allocation.space_map_uploaded", entity_type="alloc_space_map", entity_id=row.id,
+        metadata={"summary": (
+            f"Attached square-footage source document '{safe_name}'"
+            + (f" as at {parsed_as_of.isoformat()}" if parsed_as_of else "")
+        )},
+    )
+    await db.commit()
+    await db.refresh(row)
+    return _serialize_space_map(row)
+
+
+@router.get("/space-maps/{map_id}/download")
+async def download_space_map(
+    map_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """A short-lived signed URL for the document.
+
+    Anything not on the shared inline-safe allowlist is served as an ATTACHMENT.
+    A floor plan uploaded as SVG or HTML would otherwise run as script from the
+    storage origin.
+    """
+    from core.storage import r2 as r2_storage
+    from models.alloc_space_map import AllocSpaceMap
+
+    row = (await db.execute(
+        select(AllocSpaceMap).where(AllocSpaceMap.id == map_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    ext = row.file_name.rsplit(".", 1)[-1].lower() if "." in row.file_name else ""
+    safe_ctype = r2_storage.INLINE_SAFE_TYPES.get(ext)
+    if safe_ctype:
+        disposition, content_type = "inline", safe_ctype
+    else:
+        disposition, content_type = "attachment", row.mime_type
+
+    url = r2_storage.generate_presigned_download_url(
+        row.r2_key, disposition=disposition,
+        filename=row.file_name, content_type=content_type,
+    )
+    return {"url": url, "file_name": row.file_name, "inline": disposition == "inline"}
+
+
+@router.delete("/space-maps/{map_id}")
+async def delete_space_map(
+    map_id: uuid.UUID,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Remove a document. Deletes the stored file too — an orphan in R2 that no
+    row points at is a copy of a client's premises nobody can find or audit."""
+    from core.storage import r2 as r2_storage
+    from models.alloc_space_map import AllocSpaceMap
+
+    row = (await db.execute(
+        select(AllocSpaceMap).where(AllocSpaceMap.id == map_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    key, name = row.r2_key, row.file_name
+    await db.delete(row)
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="allocation.space_map_deleted", entity_type="alloc_space_map", entity_id=map_id,
+        metadata={"summary": f"Removed square-footage source document '{name}'"},
+    )
+    await db.commit()
+    try:
+        r2_storage.delete_file(key)
+    except Exception:   # noqa: BLE001 — the row is gone; a stale object is not worth a 500
+        logger.warning("Could not delete space map object %s from R2", key)
+    return {"id": str(map_id), "deleted": True}
+
+
 # ── Employees ─────────────────────────────────────────────────────────────────
 
 class EmployeeBody(BaseModel):

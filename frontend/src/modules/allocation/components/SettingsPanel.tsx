@@ -12,9 +12,16 @@
  * an account id produces an entry that posts to the wrong place.
  */
 import { useState } from "react"
+import { useOrganization, useUser } from "@clerk/clerk-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, CheckCircle2, FileText, Save } from "lucide-react"
+import { Link } from "react-router-dom"
+import {
+  AlertTriangle, Bell, Building2, CheckCircle2, ExternalLink, FileText, Save,
+  Users as UsersIcon,
+} from "lucide-react"
 import { Button, Input, Select, Spinner } from "@/core/ui"
+import { ThemeToggle } from "@/core/theme/ThemeToggle"
+import { workspaceApi } from "@/modules/workspace/api"
 import { allocationApi, type AllocationFrequency, type AllocSettings } from "../api"
 
 export function SettingsPanel() {
@@ -286,6 +293,13 @@ export function SettingsPanel() {
           ))}
         </div>
 
+        {/* Platform basics — the same things the close app's Settings carries,
+            because it's one login and one company. Anything genuinely shared
+            (company profile, notification preferences) is EDITED in one place
+            and linked to, rather than given a second form here that could
+            disagree with the first. */}
+        <PlatformBasics />
+
         {/* The document the statute actually references. Generated from live
             configuration so the policy and the computation can't drift apart. */}
         <div className="pt-3" style={{ borderTop: "1px solid var(--border)" }}>
@@ -323,6 +337,113 @@ export function SettingsPanel() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * PlatformBasics — the settings that belong to the platform rather than to
+ * §471(c): who you are, who else is here, and how the app looks.
+ *
+ * Deliberately NOT a second copy of the close app's Company form. One login and
+ * one Clerk organization means one company record, and a second form that could
+ * disagree with the first is a bug waiting to be filed. What's shared is shown
+ * here and edited where it lives; what's local (theme) is edited here.
+ */
+function PlatformBasics() {
+  const { organization } = useOrganization()
+  const { user } = useUser()
+
+  const { data: me } = useQuery({
+    queryKey: ["workspace-me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 10 * 60_000,
+    enabled:  !!organization,
+    retry: 0,
+  })
+  const { data: members = [] } = useQuery({
+    queryKey: ["workspace-members"],
+    queryFn:  workspaceApi.listMembers,
+    staleTime: 60_000,
+    enabled:  !!organization,
+    retry: 0,
+  })
+
+  const ROLE_LABEL: Record<string, string> = {
+    admin: "Admin", reviewer: "Reviewer", preparer: "Preparer",
+  }
+
+  return (
+    <div className="pt-3 space-y-4" style={{ borderTop: "1px solid var(--border)" }}>
+      <div>
+        <h3 className="text-sm font-semibold text-theme">Workspace</h3>
+        <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+          Shared with the month-end close app — one login, one company, one team
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Row label="Company" value={organization?.name ?? "No company selected"} />
+        <Row label="Signed in as"
+          value={user?.fullName ?? user?.primaryEmailAddress?.emailAddress ?? "—"} />
+        <Row label="Your role" value={me ? (ROLE_LABEL[me.role] ?? me.role) : "—"}
+          hint={me?.role === "preparer"
+            ? "You can prepare and record; a reviewer signs off"
+            : me?.role === "reviewer" ? "You can approve work you didn't prepare"
+            : undefined} />
+        {/* "0 members" while the query is disabled would be a lie — no company
+            selected means unknown, not empty. */}
+        <Row label="Team"
+          value={organization ? `${members.length} member${members.length === 1 ? "" : "s"}` : "—"} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Link to="/allocation/team"
+          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium"
+          style={{ color: "var(--text-2)", border: "1px solid var(--border)" }}>
+          <UsersIcon size={13} strokeWidth={1.9} /> Manage team and invites
+        </Link>
+        <a href="/app/settings?tab=company" target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium"
+          style={{ color: "var(--text-2)", border: "1px solid var(--border)" }}>
+          <Building2 size={13} strokeWidth={1.9} /> Company profile
+          <ExternalLink size={11} strokeWidth={2} />
+        </a>
+        <a href="/app/settings?tab=notifications" target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium"
+          style={{ color: "var(--text-2)", border: "1px solid var(--border)" }}>
+          <Bell size={13} strokeWidth={1.9} /> Notifications
+          <ExternalLink size={11} strokeWidth={2} />
+        </a>
+      </div>
+
+      {/* Appearance is genuinely local — it's a device preference, not a
+          company record, so it's set here rather than linked away. */}
+      <div className="flex items-center justify-between rounded-lg px-3 py-2.5"
+        style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+        <div className="min-w-0">
+          <p className="text-[12.5px] font-medium text-theme">Appearance</p>
+          <p className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+            Light or dark, for this device
+          </p>
+        </div>
+        <ThemeToggle />
+      </div>
+    </div>
+  )
+}
+
+function Row({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-lg px-3 py-2.5"
+      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+      <div className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>{label}</div>
+      <div className="text-[13px] font-medium text-theme truncate mt-0.5">{value}</div>
+      {hint && (
+        <div className="text-[10.5px] mt-0.5 leading-snug" style={{ color: "var(--text-muted)" }}>
+          {hint}
+        </div>
+      )}
     </div>
   )
 }

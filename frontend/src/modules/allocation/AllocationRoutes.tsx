@@ -13,6 +13,7 @@
  * link is a support ticket.
  */
 import { Navigate, Route, Routes, useLocation, useSearchParams } from "react-router-dom"
+import { TeamPage } from "@/modules/workspace/pages/TeamPage"
 import { AllocationDashboard } from "./pages/AllocationDashboard"
 import { AllocationExports } from "./pages/AllocationExports"
 import { AllocationPayroll } from "./pages/AllocationPayroll"
@@ -49,6 +50,10 @@ export function AllocationRoutes() {
       <Route path="spaces"      element={<SpacesPage />} />
       <Route path="employees"   element={<EmployeesPage />} />
       <Route path="settings"    element={<SettingsPage />} />
+      {/* The SAME component the close app mounts. One Clerk organization means
+          one team — a second roster that could disagree with the first would be
+          a bug, not a feature. */}
+      <Route path="team"        element={<TeamPage />} />
 
       {/* Every month */}
       <Route path="payroll" element={<AllocationPayroll />} />

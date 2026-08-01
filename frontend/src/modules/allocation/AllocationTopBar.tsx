@@ -23,6 +23,7 @@ const ALLOCATION_TITLES: [string, string][] = [
   ["/allocation/spaces",      "Spaces"],
   ["/allocation/employees",   "Employees"],
   ["/allocation/settings",    "Settings"],
+  ["/allocation/team",        "Team"],
   ["/allocation/payroll",     "Payroll register"],
   ["/allocation/runs",        "Run allocation"],
   ["/allocation/year-end",    "Year end"],
@@ -74,6 +75,7 @@ export function AllocationTopBar() {
       appName="Nordavix Allocate"
       helpPath="/app/help"
       helpNewTab
+      rolePath="/allocation/team"
       showCommandCenter={false}
       showCloseChip={false}
       chip={<ReadinessChip />}

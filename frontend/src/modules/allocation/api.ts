@@ -287,6 +287,48 @@ async function retireSpace(id: string): Promise<void> {
   await apiClient.delete(`${BASE}/spaces/${id}`)
 }
 
+/** The document the square footage was transcribed FROM. */
+export interface SpaceMap {
+  id: string
+  file_name: string
+  file_size: number
+  mime_type: string
+  label: string | null
+  /** The date the plan speaks to — a re-measured facility is new evidence. */
+  as_of: string | null
+  notes: string | null
+  uploaded_at: string | null
+}
+
+async function listSpaceMaps(): Promise<SpaceMap[]> {
+  const { data } = await apiClient.get<SpaceMap[]>(`${BASE}/space-maps`)
+  return data
+}
+
+async function uploadSpaceMap(
+  file: File, meta: { label?: string; as_of?: string; notes?: string },
+): Promise<SpaceMap> {
+  const form = new FormData()
+  form.append("file", file)
+  const { data } = await apiClient.post<SpaceMap>(`${BASE}/space-maps`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+    params: meta,
+    timeout: 120_000,   // floor plans are often large scans
+  })
+  return data
+}
+
+/** Opens in a new tab. The server decides inline vs attachment — a plan
+ *  uploaded as SVG must never render from the storage origin. */
+async function openSpaceMap(id: string): Promise<void> {
+  const { data } = await apiClient.get<{ url: string }>(`${BASE}/space-maps/${id}/download`)
+  window.open(data.url, "_blank", "noopener")
+}
+
+async function deleteSpaceMap(id: string): Promise<void> {
+  await apiClient.delete(`${BASE}/space-maps/${id}`)
+}
+
 // ── Employees ─────────────────────────────────────────────────────────────────
 
 export interface EmployeeInput {
@@ -816,6 +858,7 @@ export const allocationApi = {
   listPools, createPool, updatePool, deactivatePool, seedDefaultPools,
   listAccounts, mapAccount,
   listSpaces, createSpace, updateSpace, retireSpace,
+  listSpaceMaps, uploadSpaceMap, openSpaceMap, deleteSpaceMap,
   listEmployees, createEmployee, updateEmployee, retireEmployee,
   getReadiness, listRuns, getRun, createRun, approveRun,
   listTaxYears, getAnnual, downloadAnnualWorkpaperCsv,

@@ -4,6 +4,7 @@ from models.account import Account
 from models.account_review_status import AccountReviewStatus
 from models.advisory import KpiTarget, TrackedRecommendation
 from models.ai_usage import AIUsage
+from models.alloc_space_map import AllocSpaceMap
 from models.assistant_conversation import AssistantMessage, AssistantThread
 from models.audit_log import AuditLog
 from models.autopilot import AutopilotConfig, AutopilotRun
@@ -70,6 +71,7 @@ __all__ = [
     "AllocRunLine",
     "AllocSettings",
     "AllocSpace",
+    "AllocSpaceMap",
     "AllocTxnOverride",
     "AssistantMessage",
     "AssistantThread",

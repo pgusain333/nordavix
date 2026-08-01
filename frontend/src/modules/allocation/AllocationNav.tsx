@@ -11,7 +11,8 @@ import { useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
 import {
   Building2, CalendarCheck2, FileDown, Gauge, Layers, LifeBuoy, ListTree,
-  MessageSquare, PlayCircle, Receipt, Scale, Settings, Users, X, type LucideIcon,
+  MessageSquare, PlayCircle, Receipt, Scale, Settings, UserPlus, Users, X,
+  type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/core/ui/utils"
 import { ProductSwitcher } from "@/core/layout/ProductSwitcher"
@@ -50,6 +51,8 @@ const SECTIONS: NavSection[] = [
     { label: "Spaces",      path: "/allocation/spaces",      icon: Building2 },
     { label: "Employees",   path: "/allocation/employees",   icon: Users },
     { label: "Settings",    path: "/allocation/settings",    icon: Settings },
+    // One Clerk organization, one team — the same roster the close app shows.
+    { label: "Team",        path: "/allocation/team",        icon: UserPlus },
   ] },
   { heading: "Every month", items: [
     { label: "Payroll register", path: "/allocation/payroll", icon: Receipt },

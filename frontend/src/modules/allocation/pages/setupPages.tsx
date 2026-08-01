@@ -16,6 +16,7 @@ import { EligibilityPanel } from "../components/EligibilityPanel"
 import { EmployeesPanel } from "../components/EmployeesPanel"
 import { PoolsPanel } from "../components/PoolsPanel"
 import { SettingsPanel } from "../components/SettingsPanel"
+import { SpaceMapPanel } from "../components/SpaceMapPanel"
 import { SpacesPanel } from "../components/SpacesPanel"
 import { SetupShell } from "./SetupShell"
 
@@ -61,7 +62,14 @@ export function SpacesPage() {
       title="Spaces"
       subtitle="Square footage by function — the occupancy driver"
     >
-      {({ periodEnd }) => <SpacesPanel periodEnd={periodEnd} />}
+      {({ periodEnd }) => (
+        <div className="space-y-4">
+          <SpacesPanel periodEnd={periodEnd} />
+          {/* The evidence sits under the figures it supports, not on a
+              separate screen someone has to know exists. */}
+          <SpaceMapPanel />
+        </div>
+      )}
     </SetupShell>
   )
 }
