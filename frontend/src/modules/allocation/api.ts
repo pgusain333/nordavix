@@ -31,6 +31,13 @@ export interface Pool {
 /** 'labor' is line 3, 'other' is line 5. Stated per pool, never inferred. */
 export type Form1125aLine = "labor" | "other"
 
+/**
+ * How often a client's §471(c) allocation is performed. Not cosmetic: an annual
+ * client's run covers the whole fiscal year, so its expense and payroll windows
+ * are the year — and a complete year is ONE period, not twelve.
+ */
+export type AllocationFrequency = "monthly" | "annual"
+
 export interface AccountRow {
   qbo_account_id: string
   account_number: string | null
@@ -87,6 +94,8 @@ export interface AllocSettings {
   inventory_account_id: string | null
   inventory_account_name: string | null
   fiscal_year_end: string | null
+  /** How often the allocation is actually performed — changes the run window. */
+  allocation_frequency: AllocationFrequency
   gross_receipts_threshold: string | null
   election_attested_at: string | null
   notes: string | null
@@ -110,6 +119,9 @@ export interface Readiness {
     total_square_feet: string
   }
   requires: { occupancy: boolean; payroll: boolean }
+  /** The engine's own answer, so the UI's period window can't disagree with it. */
+  frequency: AllocationFrequency
+  fiscal_year_end: string | null
 }
 
 export interface RunLine {
@@ -682,6 +694,7 @@ export interface AnnualAccount {
 export interface AnnualRollup {
   tax_year: number
   fiscal_year_end: string | null
+  frequency: AllocationFrequency
   year_start: string
   year_end: string
   expected_periods: string[]
@@ -711,9 +724,31 @@ export interface AnnualRollup {
   }
 }
 
-async function listTaxYears(): Promise<{ fiscal_year_end: string | null; years: number[] }> {
+async function listTaxYears(): Promise<{
+  fiscal_year_end: string | null
+  frequency: AllocationFrequency
+  years: number[]
+}> {
   const { data } = await apiClient.get(`${BASE}/annual/years`)
   return data
+}
+
+/** The working file — every sheet a reviewer or examiner would ask for. */
+async function downloadWorkbookXlsx(taxYear: number): Promise<void> {
+  await downloadFile(
+    `${BASE}/export/workbook.xlsx?tax_year=${taxYear}`,
+    `471c-workbook-${taxYear}.xlsx`,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  )
+}
+
+/** The client deliverable. An incomplete year comes back watermarked DRAFT. */
+async function downloadClientReportPdf(taxYear: number): Promise<void> {
+  await downloadFile(
+    `${BASE}/export/report.pdf?tax_year=${taxYear}`,
+    `471c-report-${taxYear}.pdf`,
+    "application/pdf",
+  )
 }
 
 async function getAnnual(taxYear: number): Promise<AnnualRollup> {
@@ -744,6 +779,7 @@ export const allocationApi = {
   listEmployees, createEmployee, updateEmployee, retireEmployee,
   getReadiness, listRuns, getRun, createRun, approveRun,
   listTaxYears, getAnnual, downloadAnnualWorkpaperCsv,
+  downloadWorkbookXlsx, downloadClientReportPdf,
 }
 
 // ── Display helpers ───────────────────────────────────────────────────────────

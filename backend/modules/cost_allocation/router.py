@@ -377,12 +377,14 @@ async def annual_years(
     """Tax years this client has runs in, newest first."""
     from models.cost_allocation import AllocSettings
     from modules.cost_allocation.annual import available_tax_years
+    from modules.cost_allocation.engine import normalize_frequency
 
     cfg = (await db.execute(select(AllocSettings))).scalars().first()
     fye = cfg.fiscal_year_end if cfg else None
     period_ends = list((await db.execute(select(AllocRun.period_end))).scalars().all())
     return {
         "fiscal_year_end": fye,
+        "frequency": normalize_frequency(cfg.allocation_frequency if cfg else None),
         "years": available_tax_years(period_ends, date.today(), fye),
     }
 
@@ -529,6 +531,75 @@ async def annual_workpaper_csv(
     return Response(
         content=buf.getvalue().encode("utf-8-sig"),
         media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── Export engine ─────────────────────────────────────────────────────────────
+
+def _slug(name: str) -> str:
+    return "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-") or "client"
+
+
+@router.get("/export/workbook.xlsx")
+async def export_workbook(
+    tenant_id: CurrentTenantId,
+    tax_year: int,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The working file — cover, summary, periods, accounts, pools, drivers and
+    the §448(c) test, as one structured workbook.
+
+    Money is written as numbers with a format, never as pre-formatted text: a
+    figure stored as a string is a figure the client cannot foot.
+    """
+    from modules.cost_allocation.exports import assemble, build_workbook
+
+    if not 2000 <= tax_year <= 2100:
+        raise HTTPException(status_code=422, detail="tax_year is out of range.")
+    name = await _client_name(db, tenant_id)
+    data = await assemble(db, tenant_id=tenant_id, tax_year=tax_year, client_name=name)
+    content = build_workbook(data)
+
+    filename = f"471c-workbook-{_slug(name)}-{tax_year}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/export/report.pdf")
+async def export_report(
+    tenant_id: CurrentTenantId,
+    tax_year: int,
+    user: User = Depends(require_role("preparer")),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The client deliverable — method, eligibility, completeness, the numbers
+    and the basis behind them.
+
+    An incomplete year is watermarked DRAFT and says so on the cover, because a
+    report that reads as final on figures nobody finished is worse than no
+    report at all.
+    """
+    from modules.cost_allocation.exports import assemble
+    from modules.cost_allocation.report_pdf import build_client_report
+
+    if not 2000 <= tax_year <= 2100:
+        raise HTTPException(status_code=422, detail="tax_year is out of range.")
+    name = await _client_name(db, tenant_id)
+    data = await assemble(db, tenant_id=tenant_id, tax_year=tax_year, client_name=name)
+
+    buf = io.BytesIO()
+    build_client_report(buf, data=data)
+
+    status_tag = "" if data["annual"]["complete"] else "-draft"
+    filename = f"471c-report-{_slug(name)}-{tax_year}{status_tag}.pdf"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

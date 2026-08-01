@@ -37,6 +37,7 @@ from modules.cost_allocation.engine import (
     check_inventory_continuity,
     expected_period_ends,
     fiscal_year_bounds,
+    normalize_frequency,
     roll_forward_cogs,
     roll_up_year,
     tax_year_for,
@@ -59,8 +60,11 @@ async def build_annual(
     """
     cfg = (await db.execute(select(AllocSettings))).scalars().first()
     fye = cfg.fiscal_year_end if cfg else None
+    # An annual client performs ONE allocation for the year. Expecting twelve
+    # would report a complete year as eleven periods missing.
+    frequency = normalize_frequency(cfg.allocation_frequency if cfg else None)
     year_start, year_end = fiscal_year_bounds(tax_year, fye)
-    periods = expected_period_ends(tax_year, fye)
+    periods = expected_period_ends(tax_year, fye, frequency)
 
     runs = list((await db.execute(
         select(AllocRun)
@@ -160,6 +164,7 @@ async def build_annual(
     return {
         "tax_year": tax_year,
         "fiscal_year_end": fye,
+        "frequency": frequency,
         "year_start": year_start.isoformat(),
         "year_end": year_end.isoformat(),
         "expected_periods": [p.isoformat() for p in periods],

@@ -789,13 +789,50 @@ def tax_year_for(period_end: date, fiscal_year_end: str | None) -> int:
     return candidate
 
 
-def expected_period_ends(tax_year: int, fiscal_year_end: str | None) -> tuple[date, ...]:
-    """The twelve month-end dates a complete tax year should contain.
+# How often a client's allocation is actually performed. Most cannabis clients
+# run monthly alongside the close, but a smaller book is often done once, after
+# year end, straight onto the return. Both are legitimate under §471(c) — what
+# is NOT legitimate is a workpaper that claims twelve periods when one was done,
+# or an annual figure that reports eleven months missing when none are.
+FREQUENCIES = frozenset({"monthly", "annual"})
 
-    The roll-up compares the runs it found against this list, so a month nobody
-    ever ran shows up as missing instead of silently reducing the annual total.
+
+def normalize_frequency(frequency: str | None) -> str:
+    """Unknown or absent reads as monthly — the majority case and the safer one:
+    a monthly client shown as annual would hide eleven missing periods."""
+    return frequency if frequency in FREQUENCIES else "monthly"
+
+
+def period_bounds(
+    period_end: date, *, frequency: str | None = "monthly",
+    fiscal_year_end: str | None = None,
+) -> tuple[date, date]:
+    """The (start, end) an allocation for this period actually covers.
+
+    A monthly client's March run covers March. An ANNUAL client's run covers the
+    whole fiscal year, so deriving the start as "the first of period_end's month"
+    would pull one month of expense and one month of wages into a figure
+    presented as the year — understating COGS by roughly eleven twelfths while
+    looking entirely normal.
+    """
+    if normalize_frequency(frequency) == "annual":
+        return fiscal_year_bounds(tax_year_for(period_end, fiscal_year_end), fiscal_year_end)
+    return period_end.replace(day=1), period_end
+
+
+def expected_period_ends(
+    tax_year: int, fiscal_year_end: str | None, frequency: str | None = "monthly",
+) -> tuple[date, ...]:
+    """The period-end dates a complete tax year should contain.
+
+    Twelve for a monthly client; ONE — the year end — for an annual client. The
+    roll-up compares the runs it found against this list, so a period nobody ran
+    shows up as missing instead of silently reducing the annual total.
     """
     start, end = fiscal_year_bounds(tax_year, fiscal_year_end)
+    if normalize_frequency(frequency) == "annual":
+        return (end,)
+
     out: list[date] = []
     year, month = start.year, start.month
     for _ in range(12):

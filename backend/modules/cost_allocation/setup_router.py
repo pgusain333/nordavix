@@ -65,6 +65,7 @@ class SettingsBody(BaseModel):
     inventory_account_id: str | None = None
     inventory_account_name: str | None = None
     fiscal_year_end: str | None = None        # "MM-DD"
+    allocation_frequency: str | None = None   # monthly | annual
     gross_receipts_threshold: float | None = None
     notes: str | None = None
 
@@ -77,6 +78,7 @@ def _serialize_settings(cfg) -> dict:
         "inventory_account_id": cfg.inventory_account_id,
         "inventory_account_name": cfg.inventory_account_name,
         "fiscal_year_end": cfg.fiscal_year_end,
+        "allocation_frequency": cfg.allocation_frequency or "monthly",
         "gross_receipts_threshold": (
             str(cfg.gross_receipts_threshold) if cfg.gross_receipts_threshold is not None else None
         ),
@@ -106,11 +108,15 @@ async def update_settings(
     """Reviewer+ — the method election is the tax position, not bookkeeping."""
     if body.method is not None and body.method not in ("books_records", "afs"):
         raise HTTPException(status_code=422, detail="method must be 'books_records' or 'afs'.")
+    if body.allocation_frequency is not None and body.allocation_frequency not in ("monthly", "annual"):
+        raise HTTPException(
+            status_code=422, detail="allocation_frequency must be 'monthly' or 'annual'.",
+        )
 
     cfg = await get_or_create_settings(db, tenant_id)
     for field in (
         "method", "has_afs", "inventory_account_id", "inventory_account_name",
-        "fiscal_year_end", "notes",
+        "fiscal_year_end", "allocation_frequency", "notes",
     ):
         value = getattr(body, field)
         if value is not None:

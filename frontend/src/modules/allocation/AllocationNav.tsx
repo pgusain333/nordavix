@@ -10,8 +10,8 @@
 import { useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
 import {
-  Building2, CalendarCheck2, Gauge, Layers, LifeBuoy, ListTree, MessageSquare,
-  PlayCircle, Receipt, Scale, Settings, Users, X, type LucideIcon,
+  Building2, CalendarCheck2, FileDown, Gauge, Layers, LifeBuoy, ListTree,
+  MessageSquare, PlayCircle, Receipt, Scale, Settings, Users, X, type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/core/ui/utils"
 import { ProductSwitcher } from "@/core/layout/ProductSwitcher"
@@ -59,6 +59,7 @@ const SECTIONS: NavSection[] = [
     // The written procedures memo isn't here: it's generated from this config
     // and downloaded from Settings, so it lives where the config does.
     { label: "Roll-up & 1125-A", path: "/allocation/year-end", icon: CalendarCheck2 },
+    { label: "Export",           path: "/allocation/export",   icon: FileDown },
   ] },
 ]
 

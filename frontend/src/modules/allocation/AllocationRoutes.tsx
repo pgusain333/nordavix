@@ -14,6 +14,7 @@
  */
 import { Navigate, Route, Routes, useSearchParams } from "react-router-dom"
 import { AllocationDashboard } from "./pages/AllocationDashboard"
+import { AllocationExports } from "./pages/AllocationExports"
 import { AllocationPayroll } from "./pages/AllocationPayroll"
 import { AllocationRuns } from "./pages/AllocationRuns"
 import { AllocationYearEnd } from "./pages/AllocationYearEnd"
@@ -50,6 +51,7 @@ export function AllocationRoutes() {
 
       {/* Year end */}
       <Route path="year-end" element={<AllocationYearEnd />} />
+      <Route path="export"   element={<AllocationExports />} />
 
       <Route path="setup" element={<SetupRedirect />} />
       <Route path="*" element={<Navigate to="/allocation" replace />} />

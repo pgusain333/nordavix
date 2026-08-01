@@ -9,7 +9,7 @@
  * reason is stated with a route to fix it. "This client has no square footage
  * on file" is a task, not a failure.
  */
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, Play } from "lucide-react"
@@ -17,7 +17,7 @@ import { Button, Input, Spinner } from "@/core/ui"
 import { allocationApi, factorPct, money, type AllocRun } from "../api"
 import { WorkpaperTable } from "../components/WorkpaperTable"
 import { JournalEntryPanel } from "../components/JournalEntryPanel"
-import { MonthPicker, monthRange, useAllocationPeriod } from "../components/MonthPicker"
+import { MonthPicker, useAllocationWindow } from "../components/MonthPicker"
 import { routeForFix } from "../components/ReadinessRail"
 
 const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
@@ -28,16 +28,17 @@ const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
 }
 
 export function AllocationRuns() {
-  // Declared before the queries whose closures read them.
-  const [periodEnd, setPeriodEnd] = useAllocationPeriod()
+  // Declared before the queries whose closures read them. An annual client's
+  // run covers the fiscal YEAR — this window is normalised for that, so the
+  // period the screen shows is the period the run is addressed to.
+  const { periodStart, periodEnd, setPeriodEnd, frequency, fiscalYearEnd } =
+    useAllocationWindow()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [beginning, setBeginning] = useState("")
   const [ending, setEnding] = useState("")
   const [purchases, setPurchases] = useState("")
   const [error, setError] = useState<string | null>(null)
   const qc = useQueryClient()
-
-  const { periodStart } = useMemo(() => monthRange(periodEnd), [periodEnd])
 
   const { data: runs = [], isLoading } = useQuery({
     queryKey: ["allocation", "runs"],
@@ -118,7 +119,8 @@ export function AllocationRuns() {
           </div>
           <div className="flex items-center gap-2">
             <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-            <MonthPicker value={periodEnd} onChange={pickMonth} />
+            <MonthPicker value={periodEnd} onChange={pickMonth}
+              frequency={frequency} fiscalYearEnd={fiscalYearEnd} />
           </div>
         </div>
 

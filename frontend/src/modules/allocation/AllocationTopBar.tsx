@@ -14,7 +14,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { TopBar } from "@/core/layout/TopBar"
 import { allocationApi } from "./api"
-import { useAllocationPeriod } from "./components/MonthPicker"
+import { useAllocationWindow } from "./components/MonthPicker"
 
 const ALLOCATION_TITLES: [string, string][] = [
   ["/allocation/eligibility", "Eligibility"],
@@ -32,7 +32,8 @@ const ALLOCATION_TITLES: [string, string][] = [
 /** Ready / blocked for the period on screen — the one thing that gates everything. */
 function ReadinessChip() {
   const navigate = useNavigate()
-  const [periodEnd] = useAllocationPeriod()
+  // The normalised window, so the chip names the period the run will use.
+  const { periodEnd, frequency } = useAllocationWindow()
   const { data } = useQuery({
     queryKey: ["allocation", "readiness", periodEnd],
     queryFn:  () => allocationApi.getReadiness(periodEnd),
@@ -41,7 +42,9 @@ function ReadinessChip() {
   })
   if (!data) return null
 
-  const label = periodEnd.slice(0, 7)
+  const label = frequency === "annual"
+    ? `FY ${periodEnd.slice(0, 4)}`
+    : periodEnd.slice(0, 7)
   const fg = data.ready ? "var(--positive)" : "var(--warn)"
   const bg = data.ready ? "var(--positive-subtle)" : "var(--warn-subtle)"
 

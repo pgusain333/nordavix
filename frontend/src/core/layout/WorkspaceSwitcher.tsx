@@ -11,7 +11,7 @@
  * after switch already carry the new org_id.
  */
 import { useEffect, useRef, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { useOrganization, useOrganizationList, useSession } from "@clerk/clerk-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Building2, Check, ChevronDown, LayoutGrid, Plus } from "lucide-react"
@@ -28,7 +28,13 @@ interface Props {
 
 export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const { organization } = useOrganization()
+
+  // Switching COMPANY shouldn't switch PRODUCT. Landing a §471(c) preparer on
+  // the month-end close dashboard because they changed client is a different
+  // app than the one they were using a second ago.
+  const productHome = pathname.startsWith("/allocation") ? "/allocation" : "/app"
   const { session } = useSession()
   const { userMemberships, setActive, isLoaded } = useOrganizationList({
     userMemberships: { infinite: true },
@@ -76,7 +82,7 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
       if (session) {
         try { await session.getToken({ skipCache: true }) } catch { /* harmless */ }
       }
-      navigate("/app")
+      navigate(productHome)
       onAfterSwitch?.()
     } finally {
       setSwitching(null)
@@ -94,7 +100,7 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
           {/* Company name → dashboard */}
           <button
             type="button"
-            onClick={() => { navigate("/app"); onAfterSwitch?.() }}
+            onClick={() => { navigate(productHome); onAfterSwitch?.() }}
             className="inline-flex items-center gap-1.5 min-w-0 rounded-md px-1.5 py-1 transition-colors hover:bg-[var(--surface-2)]"
             title={`${organization?.name ?? "Workspace"} — go to dashboard`}
           >

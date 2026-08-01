@@ -853,6 +853,76 @@ def test_fiscal_year_maps_months_to_the_right_return():
     assert tax_year_for(date(2024, 9, 30), "12-31") == 2024
 
 
+def test_annual_frequency_covers_the_year_not_the_month():
+    """Some clients allocate once, after year end, rather than every month.
+
+    The distinction is arithmetic, not labelling. An annual client's run covers
+    the whole fiscal year, so deriving its window as "the month of period_end"
+    would pull one month of expense and one month of wages into a figure
+    presented as the year — understating COGS by roughly eleven twelfths while
+    looking entirely ordinary on screen.
+    """
+    from datetime import date
+
+    from modules.cost_allocation.engine import (
+        expected_period_ends,
+        normalize_frequency,
+        period_bounds,
+    )
+
+    # Monthly is the default, and anything unrecognised reads as monthly — the
+    # safer direction, since a monthly client mislabelled annual would hide
+    # eleven genuinely missing periods.
+    for junk in (None, "", "yearly", "quarterly"):
+        assert normalize_frequency(junk) == "monthly", junk
+    assert normalize_frequency("annual") == "annual"
+
+    # Monthly: the window is the month.
+    assert period_bounds(date(2026, 3, 31), frequency="monthly", fiscal_year_end="12-31") == (
+        date(2026, 3, 1), date(2026, 3, 31),
+    )
+    # Annual, calendar year: the window is the whole year, whatever month the
+    # period_end happens to name.
+    assert period_bounds(date(2026, 12, 31), frequency="annual", fiscal_year_end="12-31") == (
+        date(2026, 1, 1), date(2026, 12, 31),
+    )
+    assert period_bounds(date(2026, 3, 31), frequency="annual", fiscal_year_end="12-31") == (
+        date(2026, 1, 1), date(2026, 12, 31),
+    )
+    # Annual, June year end: the window STARTS in the prior calendar year.
+    assert period_bounds(date(2025, 6, 30), frequency="annual", fiscal_year_end="06-30") == (
+        date(2024, 7, 1), date(2025, 6, 30),
+    )
+    assert period_bounds(date(2024, 9, 30), frequency="annual", fiscal_year_end="06-30") == (
+        date(2024, 7, 1), date(2025, 6, 30),
+    )
+
+    # A complete year is twelve periods monthly and ONE annually.
+    assert len(expected_period_ends(2026, "12-31", "monthly")) == 12
+    assert expected_period_ends(2026, "12-31", "annual") == (date(2026, 12, 31),)
+    assert expected_period_ends(2025, "06-30", "annual") == (date(2025, 6, 30),)
+    # Omitted argument keeps the monthly behaviour every existing caller expects.
+    assert expected_period_ends(2026, "12-31") == expected_period_ends(2026, "12-31", "monthly")
+
+    # The roll-up must call an annual client's single approved run COMPLETE.
+    from modules.cost_allocation.engine import MonthlyResult, roll_up_year
+
+    one = [MonthlyResult(
+        period_end=date(2026, 12, 31), total_expenses=D("1200000.00"),
+        capitalized=D("720000.00"), disallowed=D("480000.00"),
+        status="approved", posted=True, by_pool={"Facility overhead": D("720000.00")},
+    )]
+    rollup = roll_up_year(one, 2026, expected_period_ends(2026, "12-31", "annual"))
+    assert rollup.complete is True
+    assert rollup.months_expected == 1 and rollup.missing_periods == ()
+    assert rollup.capitalized == D("720000.00")
+
+    # The same run judged on a monthly calendar is eleven periods short — which
+    # is exactly the wrong answer this setting exists to prevent.
+    wrong = roll_up_year(one, 2026, expected_period_ends(2026, "12-31", "monthly"))
+    assert wrong.complete is False and len(wrong.missing_periods) == 11
+
+
 def test_inventory_chain_must_not_break_across_months():
     """Each month opens where the last one closed, or the annual COGS is wrong.
 
@@ -936,5 +1006,6 @@ if __name__ == "__main__":
     test_annual_rollup_reports_what_it_is_made_of()
     test_form_1125a_is_internally_consistent()
     test_fiscal_year_maps_months_to_the_right_return()
+    test_annual_frequency_covers_the_year_not_the_month()
     test_inventory_chain_must_not_break_across_months()
     print("ALLOCATION_ENGINE_OK")

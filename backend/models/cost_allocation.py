@@ -92,6 +92,13 @@ class AllocSettings(TenantBase):
 
     # "MM-DD" — most cannabis clients are calendar-year, but not all.
     fiscal_year_end: Mapped[str | None] = mapped_column(String(5))
+    # monthly | annual — how often the allocation is actually performed. Changes
+    # the arithmetic, not just the labels: an annual run's expense and payroll
+    # windows are the fiscal YEAR, and the year-end roll-up expects one period
+    # rather than twelve. See migration 072.
+    allocation_frequency: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="monthly", server_default="monthly"
+    )
     # Override the statutory §448(c) gross-receipts threshold (indexed annually).
     # NULL = use the platform default for the run's tax year.
     gross_receipts_threshold: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))

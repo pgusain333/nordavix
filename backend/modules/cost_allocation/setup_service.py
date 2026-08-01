@@ -29,6 +29,8 @@ from models.cost_allocation import (
 from modules.cost_allocation.engine import (
     PRODUCTION_EMPLOYEE_FUNCTIONS,
     PRODUCTION_SPACE_FUNCTIONS,
+    normalize_frequency,
+    period_bounds,
 )
 from modules.cost_allocation.templates import DEFAULT_POOLS
 
@@ -241,11 +243,19 @@ async def compute_readiness(db: AsyncSession, period_end: date) -> dict:
             "fix": "setup/employees",
         })
     elif needs_payroll:
-        # Classifications alone aren't enough — the factor needs this month's
+        # Classifications alone aren't enough — the factor needs the period's
         # WAGES. Checking it here keeps readiness honest: it used to report
         # "ready to run" and then the run itself blocked on missing payroll,
         # which is a confusing way to find out.
-        period_start = period_end.replace(day=1)
+        #
+        # The window follows the client's frequency. An ANNUAL client's period
+        # is the fiscal year, so looking only at period_end's month would report
+        # "no payroll" for a client whose register is fully imported.
+        period_start, _ = period_bounds(
+            period_end,
+            frequency=cfg.allocation_frequency if cfg else "monthly",
+            fiscal_year_end=cfg.fiscal_year_end if cfg else None,
+        )
         has_wages = (await db.execute(
             select(AllocPayrollEntry.id).where(
                 AllocPayrollEntry.period_start >= period_start,
@@ -334,4 +344,8 @@ async def compute_readiness(db: AsyncSession, period_end: date) -> dict:
             "total_square_feet": str(total_sqft),
         },
         "requires": {"occupancy": needs_occupancy, "payroll": needs_payroll},
+        # The UI derives its period picker and its run window from this, so it
+        # can't disagree with what the engine will actually do.
+        "frequency": normalize_frequency(cfg.allocation_frequency if cfg else None),
+        "fiscal_year_end": cfg.fiscal_year_end if cfg else None,
     }

@@ -15,11 +15,12 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, CheckCircle2, FileText, Save } from "lucide-react"
 import { Button, Select, Spinner } from "@/core/ui"
-import { allocationApi } from "../api"
+import { allocationApi, type AllocationFrequency } from "../api"
 
 export function SettingsPanel() {
   const [method, setMethod] = useState<"books_records" | "afs" | "">("")
   const [hasAfs, setHasAfs] = useState<boolean | null>(null)
+  const [frequency, setFrequency] = useState<AllocationFrequency | "">("")
   const [saved, setSaved] = useState(false)
   const [memoBusy, setMemoBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -32,11 +33,13 @@ export function SettingsPanel() {
 
   const effMethod = method || cfg?.method || "books_records"
   const effHasAfs = hasAfs ?? cfg?.has_afs ?? false
+  const effFreq = frequency || cfg?.allocation_frequency || "monthly"
 
   const save = useMutation({
     mutationFn: () => allocationApi.updateSettings({
       method: effMethod as "books_records" | "afs",
       has_afs: effHasAfs,
+      allocation_frequency: effFreq,
     }),
     onSuccess: () => {
       setSaved(true); setError(null)
@@ -87,6 +90,38 @@ export function SettingsPanel() {
               <option value="yes">Client has an AFS</option>
             </Select>
           </label>
+        </div>
+
+        {/* Not cosmetic: this decides the window every run covers, and how many
+            periods a complete year is expected to contain. */}
+        <div className="pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+          <h3 className="text-sm font-semibold text-theme">How often the allocation is performed</h3>
+          <p className="text-[11px] mt-0.5 mb-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            Most clients allocate monthly, alongside the close. A smaller book is often
+            done once, after year end, straight onto the return. Both are legitimate —
+            but the choice changes the arithmetic, not just the wording: an annual run
+            covers the whole fiscal year, so its expense and payroll windows are the
+            year, and a complete year is one period rather than twelve.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>
+                Frequency
+              </span>
+              <Select value={effFreq}
+                onChange={(e) => setFrequency(e.target.value as AllocationFrequency)}>
+                <option value="monthly">Monthly — with the close</option>
+                <option value="annual">Annually — once, after year end</option>
+              </Select>
+            </label>
+          </div>
+          {effFreq === "annual" && (
+            <p className="text-[11px] mt-2 leading-relaxed" style={{ color: "var(--text-2)" }}>
+              Runs, readiness and the year-end roll-up will all work on the fiscal year.
+              The payroll register still needs to cover the whole year for the payroll
+              factor to be right.
+            </p>
+          )}
         </div>
 
         {conflict && (

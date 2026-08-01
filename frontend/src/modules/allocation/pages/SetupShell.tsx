@@ -12,7 +12,7 @@
  */
 import { ReactNode } from "react"
 import { CalendarDays } from "lucide-react"
-import { MonthPicker, useAllocationPeriod } from "../components/MonthPicker"
+import { MonthPicker, useAllocationWindow } from "../components/MonthPicker"
 import { ReadinessRail } from "../components/ReadinessRail"
 
 interface Props {
@@ -27,8 +27,10 @@ interface Props {
 }
 
 export function SetupShell({ title, subtitle, children, hidePeriod, wide }: Props) {
-  const [periodEnd, setPeriodEnd] = useAllocationPeriod()
-  const periodStart = `${periodEnd.slice(0, 7)}-01`
+  // The window the engine will actually use — the fiscal year for an annual
+  // client, not the month a stored period happens to name.
+  const { periodStart, periodEnd, setPeriodEnd, frequency, fiscalYearEnd } =
+    useAllocationWindow()
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -42,7 +44,8 @@ export function SetupShell({ title, subtitle, children, hidePeriod, wide }: Prop
           {!hidePeriod && (
             <div className="flex items-center gap-2">
               <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-              <MonthPicker value={periodEnd} onChange={setPeriodEnd} />
+              <MonthPicker value={periodEnd} onChange={setPeriodEnd}
+                frequency={frequency} fiscalYearEnd={fiscalYearEnd} />
             </div>
           )}
         </div>

@@ -17,6 +17,7 @@
  * entered by the preparer. That's stated plainly rather than implied.
  */
 import { useMemo, useState } from "react"
+import { useOrganization } from "@clerk/clerk-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle, CheckCircle2, Download, Plus, Scale, Trash2, XCircle,
@@ -35,6 +36,12 @@ export function EligibilityPanel({ periodEnd }: { periodEnd: string }) {
   // The method is used FOR the year the period falls in; the test looks back
   // three years from there.
   const taxYear = new Date(periodEnd + "T00:00:00").getFullYear()
+
+  // The connected company, by name. A frozen §448(c) conclusion is read a year
+  // later by someone who wasn't here; "This client" doesn't tell them which
+  // entity was tested, which is precisely the question aggregation raises.
+  const { organization } = useOrganization()
+  const selfName = organization?.name?.trim() || "This client"
 
   const [rows, setRows] = useState<Row[] | null>(null)
   const [hasAfs, setHasAfs] = useState<boolean | null>(null)
@@ -57,7 +64,7 @@ export function EligibilityPanel({ periodEnd }: { periodEnd: string }) {
       ? (existing.entities as EligibilityEntityRow[]).map((e) => ({
           entity: e.entity, year: e.year, amount: String(e.amount), source: e.source ?? "manual",
         }))
-      : years.map((y) => ({ entity: "This client", year: y, amount: "", source: "manual" }))
+      : years.map((y) => ({ entity: selfName, year: y, amount: "", source: "manual" }))
   )
 
   const entityNames = useMemo(
@@ -88,9 +95,11 @@ export function EligibilityPanel({ periodEnd }: { periodEnd: string }) {
   const suggest = useMutation({
     mutationFn: () => allocationApi.suggestReceipts(taxYear),
     onSuccess: (res) => {
-      // Only fills THIS client's rows — affiliates aren't ours to read.
+      // Only fills THIS client's rows — affiliates aren't ours to read. Matches
+      // on the connected company's name, and still on the old "This client"
+      // label so a conclusion recorded before this change keeps working.
       const next = working.map((r) => {
-        if (r.entity !== "This client") return r
+        if (r.entity !== selfName && r.entity !== "This client") return r
         const hit = res.years.find((y) => y.year === r.year)
         return hit?.amount ? { ...r, amount: hit.amount, source: hit.source } : r
       })

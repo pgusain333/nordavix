@@ -21,7 +21,7 @@ import {
 } from "lucide-react"
 import { Spinner } from "@/core/ui"
 import { allocationApi, factorPct, money, type Readiness } from "../api"
-import { MonthPicker, useAllocationPeriod } from "../components/MonthPicker"
+import { MonthPicker, useAllocationWindow } from "../components/MonthPicker"
 import { routeForFix } from "../components/ReadinessRail"
 
 /** "2026-03-31" → "March 2026". Split, never Date-parsed — a UTC parse shifts
@@ -41,7 +41,7 @@ function shortMonth(iso: string): string {
 }
 
 export function AllocationDashboard() {
-  const [periodEnd, setPeriodEnd] = useAllocationPeriod()
+  const { periodEnd, setPeriodEnd, frequency, fiscalYearEnd } = useAllocationWindow()
   // Which client this is. Every figure on the page belongs to one company, and
   // running the wrong client's allocation is an easy mistake to make when the
   // screen never says whose numbers these are.
@@ -84,7 +84,8 @@ export function AllocationDashboard() {
           </div>
           <div className="flex items-center gap-2">
             <CalendarDays size={14} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-            <MonthPicker value={periodEnd} onChange={setPeriodEnd} />
+            <MonthPicker value={periodEnd} onChange={setPeriodEnd}
+              frequency={frequency} fiscalYearEnd={fiscalYearEnd} />
           </div>
         </div>
 
