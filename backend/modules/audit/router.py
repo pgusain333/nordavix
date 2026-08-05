@@ -3,11 +3,12 @@ Audit log API.
 
   GET /api/audit            most-recent first; optional ?entity_type / ?entity_id filters
   GET /api/audit/export     full structured .xlsx audit trail (date + time + user per event)
+  GET /api/audit/integrity  verify the tamper-evident hash chain (SOC 2 evidence)
 """
 import asyncio
 import logging
 import uuid
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, Query
@@ -15,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import asc, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit.chain import verify_chain
 from core.auth.clerk_users import _format_display_name, get_clerk_user
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
@@ -159,3 +161,56 @@ async def export_audit_trail(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{fname}"', "Cache-Control": "no-store"},
     )
+
+
+@router.get("/integrity")
+async def verify_audit_integrity(
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    limit: int = Query(default=25_000, le=200_000),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Verify the audit log hasn't been altered.
+
+    Every row hashes its own content chained to the row before it, so an edited
+    row fails its own hash and a deleted one breaks the link from the next. This
+    walks the tenant's chain oldest-first and reports what is still provable.
+
+    The point of the endpoint is that the check is REPRODUCIBLE by someone other
+    than us — a customer's auditor can call it, and `head` is the value to record
+    externally if they want evidence the log hasn't been rewritten since.
+
+    Rows written before chaining existed are reported as `unchained`, never as
+    broken: calling historic records tampered would be a false accusation.
+    """
+    rows = (await db.execute(
+        select(AuditLog).order_by(asc(AuditLog.created_at), asc(AuditLog.id)).limit(limit)
+    )).scalars().all()
+
+    result = verify_chain([{
+        "id": r.id,
+        "tenant_id": r.tenant_id,
+        "user_id": r.user_id,
+        "action": r.action,
+        "entity_type": r.entity_type,
+        "entity_id": r.entity_id,
+        "event_data": r.event_data,
+        "created_at": r.created_at,
+        "prev_hash": r.prev_hash,
+        "row_hash": r.row_hash,
+    } for r in rows])
+
+    if not result["intact"]:
+        # A break is a security event in its own right. Log it loudly — this is
+        # the one finding nobody should have to go looking for.
+        logger.error(
+            "AUDIT CHAIN BROKEN for tenant %s: %s break(s), first at row %s",
+            tenant_id, len(result["breaks"]), result["breaks"][0].get("row_id"),
+        )
+
+    return {
+        **result,
+        "checked_at": datetime.now(UTC).isoformat(),
+        "checked_by": str(user.id),
+        "truncated": len(rows) >= limit,
+    }

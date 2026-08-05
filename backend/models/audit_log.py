@@ -38,3 +38,11 @@ class AuditLog(TenantBase):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
+
+    # Tamper-evidence (migration 076). Each row hashes its own content chained to
+    # the row before it, PER TENANT — RLS means one tenant can never read
+    # another's rows, so a global chain would be unverifiable by a customer's own
+    # auditor. Nullable because rows written before chaining exist and are
+    # reported as unchained, never as broken. See core/audit/chain.py.
+    prev_hash: Mapped[str | None] = mapped_column(String(64))
+    row_hash:  Mapped[str | None] = mapped_column(String(64))
