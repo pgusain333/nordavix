@@ -22,11 +22,18 @@ import { RelatedPanel } from "@/modules/graph/RelatedPanel"
 import { patchAdjustments } from "../optimistic"
 
 const SOURCE_META: Record<string, { label: string; hint: string }> = {
-  bank:  { label: "Bank reconciliation", hint: "Fees, interest, and other bank-only items" },
-  recon: { label: "Reconciliations",     hint: "Corrections from account reconciliation review" },
-  flux:  { label: "Flux analysis",       hint: "Adjustments surfaced by variance analysis" },
+  bank:       { label: "Bank reconciliation", hint: "Fees, interest, and other bank-only items" },
+  recon:      { label: "Reconciliations",     hint: "Corrections from account reconciliation review" },
+  flux:       { label: "Flux analysis",       hint: "Adjustments surfaced by variance analysis" },
+  allocation: { label: "Cost allocation",     hint: "§471(c) reclass of capitalized cost into COGS" },
+  assistant:  { label: "Assistant",           hint: "Entries drafted in conversation with the AI" },
 }
-const SOURCE_ORDER = ["bank", "recon", "flux"] as const
+/** Preferred ORDER, not an allowlist — see `renderOrder`. */
+const SOURCE_ORDER = ["bank", "recon", "flux", "allocation", "assistant"] as const
+
+/** A producer this page hasn't been told about. A plainly-labelled group beats
+ *  a row nobody can see. */
+const FALLBACK_META = { label: "Other", hint: "Proposed from another Nordavix module" }
 
 const STATUS_TABS: { key: AdjustmentStatus | "all"; label: string }[] = [
   { key: "open",      label: "Open" },
@@ -90,6 +97,25 @@ export function AdjustmentsPage() {
     for (const e of visible) (g[e.source] ??= []).push(e)
     return g
   }, [visible])
+
+  /**
+   * Every source actually PRESENT, preferred ones first.
+   *
+   * The list used to iterate a hardcoded array, so an entry from any module
+   * this page hadn't been told about was counted in the tab totals and then
+   * drawn by nothing — "Open 3" above an empty screen. Two producers were
+   * already invisible that way: cost allocation and the assistant. Deriving
+   * the order from the data means the next producer shows up by default
+   * instead of disappearing.
+   */
+  const renderOrder = useMemo(() => {
+    const known: string[] = SOURCE_ORDER.filter((s) => (grouped[s]?.length ?? 0) > 0)
+    const extra = Object.keys(grouped)
+      .filter((s) => !(SOURCE_ORDER as readonly string[]).includes(s))
+      .filter((s) => (grouped[s]?.length ?? 0) > 0)
+      .sort()
+    return [...known, ...extra]
+  }, [grouped])
 
   const openVisible = visible.filter((e) => e.status === "open")
 
@@ -354,10 +380,10 @@ export function AdjustmentsPage() {
             </p>
           </div>
         ) : (
-          SOURCE_ORDER.map((src) => {
+          renderOrder.map((src) => {
             const group = grouped[src] ?? []
             if (group.length === 0) return null
-            const meta = SOURCE_META[src]
+            const meta = SOURCE_META[src] ?? FALLBACK_META
             return (
               <div key={src} className="space-y-2.5">
                 <div className="flex items-baseline gap-2">
