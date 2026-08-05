@@ -71,6 +71,12 @@ function ClientRequestsPanelInner({ qboAccountId, periodEnd, accountLabel, readO
     // A pending request shows as "awaiting client" in the Workpapers binder too —
     // refresh its requests count for this period (no-op if Workpapers isn't open).
     void qc.invalidateQueries({ queryKey: ["workpapers", "evidence-summary", periodEnd] })
+    // …and the binder's evidence LIST, which renders those pending requests as
+    // rows. The summary alone only moves the count; without this a request
+    // created from Workpapers wouldn't appear until something else refetched.
+    // Separate key: ["workpapers","evidence"] does not prefix-match
+    // ["workpapers","evidence-summary",…] — the second element differs.
+    void qc.invalidateQueries({ queryKey: ["workpapers", "evidence"] })
   }
 
   const createMut = useMutation({

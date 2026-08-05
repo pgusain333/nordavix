@@ -23,6 +23,7 @@ import {
   Lock, Paperclip, Scale, Search, ShieldCheck, Trash2, UploadCloud,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { ClientRequestsPanel } from "@/modules/pbc/ClientRequestsPanel"
 import { PageHeader } from "@/core/ui/PageHeader"
 import { SkeletonBlock } from "@/core/ui/Skeleton"
 import { MOTION, EASE } from "@/core/motion"
@@ -174,6 +175,15 @@ export function WorkpapersPage() {
     title: a.account_name, subtitle: a.group_label,
     state: acctState(a.review_status), deepLink: "/app/reconciliations", uploadable: true,
   })), [accounts])
+
+  /** "1010 Operating cash" — the label the client sees on the request email.
+   *  Matches how the reconciliation drawer builds it, so the same account
+   *  reads identically whichever screen the request was raised from. */
+  const accountLabelFor = useCallback((qboId: string): string | undefined => {
+    const a = accounts.find((x) => x.qbo_id === qboId)
+    if (!a) return undefined
+    return `${a.account_number ?? ""} ${a.account_name ?? ""}`.trim() || undefined
+  }, [accounts])
 
   const q = acctQuery.trim().toLowerCase()
   const filteredAccts = useMemo(() => !q ? acctRows : acctRows.filter((r) =>
@@ -540,6 +550,27 @@ export function WorkpapersPage() {
                     </div>
                   ) : (
                     <>
+                      {/* Request a document straight from the client, from the
+                          binder — the screen where you actually notice something
+                          is missing. Same panel and same magic-link flow the
+                          reconciliation drawer uses, so a request raised here is
+                          the same object, visible in both places.
+
+                          ACCOUNT ROWS ONLY: an EvidenceRequest hangs off
+                          qbo_account_id, which is non-nullable. Schedules, flux
+                          and the general section have no account to key on, so
+                          they'd need a schema change rather than a button. */}
+                      {selected.refType === "account" && selected.refId && (
+                        <div className="mt-4">
+                          <ClientRequestsPanel
+                            qboAccountId={selected.refId}
+                            periodEnd={activePeriod}
+                            accountLabel={accountLabelFor(selected.refId) ?? selected.title}
+                            readOnly={isClosed}
+                          />
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-2 mt-4 mb-1.5">
                         <span className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                           Evidence{(evidence?.length ?? 0) > 0 ? ` · ${evidence!.length}` : ""}
