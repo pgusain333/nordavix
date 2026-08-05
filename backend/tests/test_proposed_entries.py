@@ -345,6 +345,42 @@ def test_match_entry_to_qbo_placeholder_matches_on_amount():
     assert match_entry_to_qbo(entry, jes) == "JE-3"
 
 
+# ── Product boundary: the close queue is the CLOSE's queue ───────────────────
+
+def test_close_queue_excludes_other_products_entries():
+    """Nordavix Allocate is a SEPARATE product that happens to share this table.
+
+    A proposed entry is the same shape wherever it comes from, so §471(c)
+    reclass entries live in `proposed_entry` too. They must never surface in
+    the month-end close's Adjustments queue — and the damage wasn't cosmetic:
+    /adjustments/save sweeps every entry in the period, so one open allocation
+    entry silently blocked the close batch from locking, and the QBO CSV would
+    have carried a §471(c) entry into a close deliverable.
+
+    An EXCLUSION, not an allowlist: a new close-app producer must appear by
+    default (that omission is what made GL-accuracy and assistant entries
+    invisible), while another product's entries can never leak in.
+    """
+    from sqlalchemy import select
+
+    from models.proposed_entry import ProposedEntry
+    from modules.adjustments.service import NON_CLOSE_SOURCES, close_only
+
+    assert "allocation" in NON_CLOSE_SOURCES
+
+    sql = str(
+        close_only(select(ProposedEntry))
+        .compile(compile_kwargs={"literal_binds": True})
+    ).upper()
+    assert "NOT IN" in sql, sql
+    assert "ALLOCATION" in sql, sql
+
+    # Close-app producers are NOT excluded — the filter must not become an
+    # allowlist by accident.
+    for close_source in ("bank", "recon", "flux", "gl_accuracy", "assistant"):
+        assert close_source not in NON_CLOSE_SOURCES, close_source
+
+
 if __name__ == "__main__":
     test_normalize_lines_drops_empty_and_coerces()
     test_lines_balanced()
@@ -362,4 +398,5 @@ if __name__ == "__main__":
     test_match_entry_to_qbo_found()
     test_match_entry_to_qbo_not_found_wrong_account()
     test_match_entry_to_qbo_placeholder_matches_on_amount()
+    test_close_queue_excludes_other_products_entries()
     print("PROPOSED_ENTRIES_OK")

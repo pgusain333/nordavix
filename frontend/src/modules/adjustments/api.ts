@@ -12,14 +12,17 @@ import { apiClient } from "@/core/api/client"
 /**
  * Where a proposed entry came from.
  *
- * Known producers are listed for autocomplete, but the union stays OPEN
- * (`string & {}`): the server decides this value. A closed union here is what
- * let the Adjustments list quietly drop entries from modules the UI hadn't
+ * Known CLOSE-APP producers are listed for autocomplete, but the union stays
+ * OPEN (`string & {}`): the server decides this value. A closed union here is
+ * what let the Adjustments list quietly drop entries from modules the UI hadn't
  * been told about — counted in the tab totals, rendered by nothing. Anything
  * unrecognised now lands in a labelled "Other" group instead.
+ *
+ * Entries from OTHER products (Nordavix Allocate's §471(c) reclass) never
+ * reach this client: the close endpoints exclude them server-side.
  */
 export type AdjustmentSource =
-  | "bank" | "recon" | "flux" | "allocation" | "assistant"
+  | "bank" | "recon" | "flux" | "gl_accuracy" | "assistant"
   // eslint-disable-next-line @typescript-eslint/ban-types
   | (string & {})
 export type AdjustmentStatus = "open" | "accepted" | "posted" | "dismissed"

@@ -25,11 +25,16 @@ const SOURCE_META: Record<string, { label: string; hint: string }> = {
   bank:       { label: "Bank reconciliation", hint: "Fees, interest, and other bank-only items" },
   recon:      { label: "Reconciliations",     hint: "Corrections from account reconciliation review" },
   flux:       { label: "Flux analysis",       hint: "Adjustments surfaced by variance analysis" },
-  allocation: { label: "Cost allocation",     hint: "§471(c) reclass of capitalized cost into COGS" },
+  gl_accuracy: { label: "GL accuracy",        hint: "Corrections raised by the misclassification watchdog" },
   assistant:  { label: "Assistant",           hint: "Entries drafted in conversation with the AI" },
 }
-/** Preferred ORDER, not an allowlist — see `renderOrder`. */
-const SOURCE_ORDER = ["bank", "recon", "flux", "allocation", "assistant"] as const
+/** Preferred ORDER, not an allowlist — see `renderOrder`.
+ *
+ *  §471(c) allocation entries are NOT here and must not be: Nordavix Allocate
+ *  is a separate product with its own review, approval and export. The server
+ *  excludes them from this queue entirely (see NON_CLOSE_SOURCES); this list
+ *  simply has no reason to name them. */
+const SOURCE_ORDER = ["bank", "recon", "flux", "gl_accuracy", "assistant"] as const
 
 /** A producer this page hasn't been told about. A plainly-labelled group beats
  *  a row nobody can see. */

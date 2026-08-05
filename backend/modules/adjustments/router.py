@@ -37,6 +37,7 @@ from modules.adjustments.service import (
     VALID_SOURCES,
     VALID_STATUSES,
     build_qbo_je_csv,
+    close_only,
     lines_balanced,
     match_entry_to_qbo,
     normalize_lines,
@@ -76,9 +77,11 @@ async def _load(db: AsyncSession, entry_id: str) -> ProposedEntry:
         raise HTTPException(status_code=400, detail="Invalid entry id.")
     # Tenant auto-filter on the SELECT scopes this to the caller's workspace.
     row = (await db.execute(
-        select(ProposedEntry).where(ProposedEntry.id == eid)
+        close_only(select(ProposedEntry).where(ProposedEntry.id == eid))
     )).scalar_one_or_none()
     if row is None:
+        # Also the answer for another product's entry (e.g. a §471(c) reclass):
+        # it is not this queue's to accept, dismiss, edit or post.
         raise HTTPException(status_code=404, detail="Proposed entry not found.")
     return row
 
@@ -98,7 +101,7 @@ async def list_proposals(
     """List proposed entries for the workspace, newest first. The inline cards
     pass source + source_ref; the queue passes just period_end."""
     pe = _parse_period(period_end)
-    stmt = select(ProposedEntry)
+    stmt = close_only(select(ProposedEntry))
     if pe is not None:
         stmt = stmt.where(ProposedEntry.period_end == pe)
     if source in VALID_SOURCES:
@@ -413,7 +416,7 @@ async def save_batch(
         raise HTTPException(status_code=423, detail="Books are closed for this period.")
 
     rows = (await db.execute(
-        select(ProposedEntry).where(ProposedEntry.period_end == pe)
+        close_only(select(ProposedEntry).where(ProposedEntry.period_end == pe))
     )).scalars().all()
     active = [r for r in rows if r.status != "dismissed"]
     if not active:
@@ -464,7 +467,7 @@ async def export_csv(
     if pe is None:
         raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
     rows = (await db.execute(
-        select(ProposedEntry)
+        close_only(select(ProposedEntry))
         .where(
             ProposedEntry.period_end == pe,
             ProposedEntry.saved_at.isnot(None),
@@ -628,7 +631,7 @@ async def check_posted(
         raise HTTPException(status_code=423, detail="Books are closed for this period.")
 
     saved = (await db.execute(
-        select(ProposedEntry)
+        close_only(select(ProposedEntry))
         .where(ProposedEntry.period_end == pe, ProposedEntry.saved_at.isnot(None))
         .order_by(ProposedEntry.created_at.asc())
     )).scalars().all()

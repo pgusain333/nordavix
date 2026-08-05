@@ -43,6 +43,29 @@ VALID_SOURCES = {"bank", "recon", "flux", "gl_accuracy", "allocation"}
 VALID_STATUSES = {"open", "accepted", "posted", "dismissed"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
 
+# Sources belonging to a DIFFERENT Nordavix product. They share this table
+# because a proposed entry is the same shape wherever it comes from, but they
+# are not part of the month-end close and must never appear in its queue.
+#
+# `allocation` is the §471(c) reclass entry from Nordavix Allocate, which has
+# its own review, approval and export inside that product. Leaking it here was
+# not merely cosmetic: /adjustments/save sweeps every entry in the period, so a
+# single open allocation entry silently blocked the close batch from locking,
+# and the QBO CSV would have carried a §471(c) entry into a close deliverable.
+NON_CLOSE_SOURCES = {"allocation"}
+
+
+def close_only(stmt):
+    """Restrict a ProposedEntry query to the month-end close's own entries.
+
+    An EXCLUSION rather than an allowlist, deliberately: a new close-app
+    producer should appear automatically, while another product's entries can
+    never leak in. An allowlist would trade this bug for its opposite.
+    """
+    from models.proposed_entry import ProposedEntry
+
+    return stmt.where(ProposedEntry.source.notin_(NON_CLOSE_SOURCES))
+
 # Keyword → suggested offset account for deterministic bank entries.
 _FEE_KEYWORDS = ("fee", "service charge", "service chg", "charge", "nsf", "overdraft", "maintenance")
 _INTEREST_KEYWORDS = ("interest", "int earned", "int credit")
