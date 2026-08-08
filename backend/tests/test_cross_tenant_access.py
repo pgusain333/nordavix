@@ -209,7 +209,6 @@ def test_cross_tenant_endpoints_run_on_the_system_engine():
     import inspect
 
     from core.db.session import get_system_db
-
     from modules.workspace.router import get_command_center
 
     # Handlers that read ACROSS companies by design.
