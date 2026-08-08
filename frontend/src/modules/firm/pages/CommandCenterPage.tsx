@@ -36,10 +36,8 @@ import {
   Plug,
   Plus,
   RefreshCw,
-  ShieldAlert,
   Sparkles,
   TrendingUp,
-  UserCheck,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import { PageHeader } from "@/core/ui/PageHeader"
@@ -48,26 +46,10 @@ import { firmApi, type CommandCenterCompany } from "@/modules/firm/api"
 // ── Sorting: most actionable first ──────────────────────────────────────────
 
 function urgencyScore(c: CommandCenterCompany): number {
-  // Anything blocked on THIS person outranks everything else — a partner's
-  // approval is the scarce resource, and a client waiting on them is stalled
-  // no matter how the progress bar looks. High-severity findings come next:
-  // books that are wrong beat books that are merely unfinished.
-  const mine = c.awaiting_you?.total ?? 0
-  if (mine > 0) return 9000 + Math.min(mine, 999)
-  if ((c.risk?.high ?? 0) > 0) return 8000 + Math.min(c.risk.high, 999)
   if (!c.books_set || !c.qbo_connected) return 1000
   if (!c.focus) return 0                                  // fully caught up
   if (c.focus.status === "complete") return 4000          // ready to close NOW
   return 3000 + Math.min(c.focus.days_since_period_end, 365)
-}
-
-/** How loudly this row should announce itself. Drives one accent stripe
- *  rather than a sentence — the chips already carry the detail, what they
- *  can't do is rank. */
-function attentionTone(c: CommandCenterCompany): string | null {
-  if ((c.awaiting_you?.total ?? 0) > 0) return "#c79a52"   // blocked on you
-  if ((c.risk?.high ?? 0) > 0) return "#c0392b"            // books are wrong
-  return null
 }
 
 // ── Small atoms ──────────────────────────────────────────────────────────────
@@ -154,13 +136,6 @@ export function CommandCenterPage() {
     const list = data?.companies ?? []
     return {
       total:    list.length,
-      // The partner's number: companies with something blocked on them, or
-      // books showing high-severity findings. Everything else is "on track" —
-      // a status grid where all twenty rows look equally important tells a
-      // partner nothing.
-      needsYou: list.filter((c) => (c.awaiting_you?.total ?? 0) > 0
-                                   || (c.risk?.high ?? 0) > 0).length,
-      waitingItems: list.reduce((n, c) => n + (c.awaiting_you?.total ?? 0), 0),
       ready:    list.filter((c) => c.focus?.status === "complete").length,
       behind:   list.filter((c) => c.focus && c.focus.status !== "complete"
                                    && c.focus.days_since_period_end >= 7).length,
@@ -206,37 +181,6 @@ export function CommandCenterPage() {
       />
 
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-6xl w-full mx-auto space-y-5">
-
-        {/* Triage band — the one line a partner should be able to act on.
-            A grid of twenty equally-weighted rows says nothing about where
-            attention belongs; this says it in a sentence, and the list below
-            is already sorted so the named companies are at the top. */}
-        {!isLoading && !isError && kpis.total > 0 && (
-          <div className="rounded-xl px-4 py-3.5 flex items-start gap-3"
-            style={{
-              background: kpis.needsYou ? "#fdf6ec" : "var(--surface)",
-              border: `1px solid ${kpis.needsYou ? "#e7c99a" : "var(--border)"}`,
-            }}>
-            {kpis.needsYou
-              ? <UserCheck size={17} strokeWidth={2} style={{ color: "#a5711d" }} className="mt-0.5 shrink-0" />
-              : <CheckCircle2 size={17} strokeWidth={2} style={{ color: "var(--green)" }} className="mt-0.5 shrink-0" />}
-            <div className="min-w-0">
-              <p className="text-[14px] font-bold" style={{ color: "var(--text)" }}>
-                {kpis.needsYou
-                  ? `${kpis.needsYou} ${kpis.needsYou === 1 ? "client needs" : "clients need"} your attention`
-                  : "Nothing is waiting on you"}
-              </p>
-              <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                {kpis.waitingItems > 0 && (
-                  <>{kpis.waitingItems} item{kpis.waitingItems === 1 ? "" : "s"} awaiting your approval · </>
-                )}
-                {kpis.total - kpis.needsYou} on track
-                {kpis.ready > 0 && <> · {kpis.ready} ready to close</>}
-                {kpis.behind > 0 && <> · {kpis.behind} running late</>}
-              </p>
-            </div>
-          </div>
-        )}
 
         {/* KPI strip */}
         {!isLoading && !isError && (
@@ -289,24 +233,20 @@ export function CommandCenterPage() {
               const needsSetup = !c.books_set || !c.qbo_connected
               const isCurrent = c.clerk_org_id === organization?.id
               const tone = f ? daysTone(f.days_since_period_end) : null
-              const accent = attentionTone(c)
               return (
                 <motion.div
                   key={c.tenant_id}
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.18, delay: Math.min(i * 0.04, 0.3) }}
-                  className="rounded-xl pl-4 sm:pl-5 pr-4 sm:pr-5 py-2.5 flex items-center gap-4 flex-wrap transition-colors"
+                  className="rounded-xl px-4 sm:px-5 py-2.5 grid items-center gap-4 transition-colors grid-cols-1 sm:grid-cols-[minmax(0,1.1fr)_230px_minmax(0,1.4fr)_104px]"
                   style={{
                     background: "var(--surface)",
                     border: "1px solid var(--border)",
-                    // One stripe instead of a sentence: it ranks the row without
-                    // repeating what the chips already say, and costs no height.
-                    borderLeft: accent ? `3px solid ${accent}` : "1px solid var(--border)",
                   }}
                 >
                   {/* Identity */}
-                  <div className="min-w-[180px] flex-1">
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-[15px] font-bold truncate" style={{ color: "var(--text)" }}>
                         {displayName(c)}
@@ -326,7 +266,7 @@ export function CommandCenterPage() {
                   </div>
 
                   {/* Focus month + progress */}
-                  <div className="w-full sm:w-[230px]">
+                  <div className="min-w-0">
                     {needsSetup ? (
                       <Chip
                         icon={<Plug size={10} strokeWidth={2.2} />}
@@ -358,21 +298,10 @@ export function CommandCenterPage() {
                   </div>
 
                   {/* Signal chips */}
-                  <div className="flex items-center gap-1.5 flex-wrap min-w-[150px]">
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                     {f?.status === "complete" && (
                       <Chip icon={<CheckCircle2 size={10} strokeWidth={2.2} />}
                         label="Ready to close" fg="var(--green)" bg="var(--green-subtle)" />
-                    )}
-                    {(c.awaiting_you?.total ?? 0) > 0 && (
-                      <Chip icon={<UserCheck size={10} strokeWidth={2.2} />}
-                        title="Prepared by someone else and waiting on your approval"
-                        label={`${c.awaiting_you.total} waiting on you`}
-                        fg="#7a4b12" bg="#fdf0dc" />
-                    )}
-                    {(c.risk?.high ?? 0) > 0 && (
-                      <Chip icon={<ShieldAlert size={10} strokeWidth={2.2} />}
-                        title="Open high-severity findings from the GL accuracy watchdog"
-                        label={`${c.risk.high} high risk`} fg="#9b3d37" bg="#f7eeec" />
                     )}
                     {(f?.flagged ?? 0) > 0 && (
                       <Chip icon={<Flag size={10} strokeWidth={2.2} />}
