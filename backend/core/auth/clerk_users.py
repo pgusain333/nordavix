@@ -189,3 +189,80 @@ async def get_clerk_org_name(clerk_org_id: str) -> str | None:
     except Exception:
         logger.exception("Clerk org fetch failed for %s", clerk_org_id)
         return None
+
+
+# ── Organization membership for a USER ────────────────────────────────────────
+#
+# Clerk is the source of truth for who belongs to which company. Nordavix used
+# to infer that from local `User` rows instead, which broke in both directions:
+#
+#   • A User row is created lazily, on a member's first request IN that tenant.
+#     So an invited teammate had no row until they'd already opened the company
+#     — and the firm view, which lists companies you can access, showed them
+#     nothing. To find a company you had to have already been in it.
+#
+#   • Nothing removes the row when someone is removed in CLERK. A person taken
+#     off the organization there kept working access here.
+#
+# Resolving from Clerk fixes both at once, needs no webhooks, and can't drift.
+_user_orgs_cache: dict[str, tuple[list[str], float]] = {}
+# Short: this gates access, so a revocation must take effect quickly. Long
+# enough that a page of API calls doesn't hit Clerk for every request.
+_USER_ORGS_TTL = 60.0
+
+
+async def list_user_org_ids(clerk_user_id: str, *, force: bool = False) -> list[str] | None:
+    """Clerk organization ids this user belongs to.
+
+    Returns None — never an empty list — when Clerk can't be reached. The
+    distinction matters: callers must be able to FAIL CLOSED on an error rather
+    than read it as "belongs to nothing", and must never quietly fall back to
+    local rows, which is the exact behaviour this replaces.
+    """
+    if not clerk_user_id:
+        return []
+
+    now = time.time()
+    if not force:
+        cached = _user_orgs_cache.get(clerk_user_id)
+        if cached and now - cached[1] < _USER_ORGS_TTL:
+            return list(cached[0])
+
+    org_ids: list[str] = []
+    offset = 0
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            while True:
+                resp = await client.get(
+                    f"https://api.clerk.com/v1/users/{clerk_user_id}/organization_memberships",
+                    params={"limit": 100, "offset": offset},
+                    headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+                )
+                if resp.status_code != 200:
+                    logger.warning(
+                        "Clerk org memberships for user %s returned %s",
+                        clerk_user_id, resp.status_code,
+                    )
+                    return None
+                body = resp.json()
+                rows = (body.get("data") if isinstance(body, dict) else body) or []
+                for m in rows:
+                    org = m.get("organization") or {}
+                    oid = org.get("id") or m.get("organization_id")
+                    if oid:
+                        org_ids.append(str(oid))
+                if len(rows) < 100:
+                    break
+                offset += 100
+    except Exception:
+        logger.exception("Clerk org-membership fetch failed for user %s", clerk_user_id)
+        return None
+
+    _user_orgs_cache[clerk_user_id] = (org_ids, now)
+    return org_ids
+
+
+def invalidate_user_orgs(clerk_user_id: str) -> None:
+    """Drop the cached membership list — call after granting or revoking access
+    so the change is visible immediately rather than up to a TTL later."""
+    _user_orgs_cache.pop(clerk_user_id, None)

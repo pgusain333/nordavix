@@ -1,3 +1,5 @@
+import logging
+
 import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +28,7 @@ from modules.flux.router import router as flux_router
 from modules.gl_accuracy.router import router as gl_accuracy_router
 from modules.graph.router import router as graph_router
 from modules.insights.router import router as insights_router
+from modules.intercompany.router import CrossTenantAccessUnavailable
 from modules.intercompany.router import router as intercompany_router
 from modules.internal.router import router as internal_router
 from modules.memory.router import router as memory_router
@@ -60,6 +63,8 @@ if settings.is_production and not encryption_configured():
         "ENCRYPTION_KEY is required in production — QBO OAuth tokens must be "
         "encrypted at rest. Set the ENCRYPTION_KEY secret and redeploy."
     )
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Nordavix API",
@@ -123,6 +128,28 @@ async def _tenant_ownership_handler(request: Request, exc: TenantOwnershipError)
         {"detail": f"{exc.label} not found.", "code": "not_found"},
         status_code=404,
     )
+
+@app.exception_handler(CrossTenantAccessUnavailable)
+async def _cross_tenant_unavailable_handler(
+    request: Request, exc: CrossTenantAccessUnavailable,  # noqa: ARG001
+) -> JSONResponse:
+    """Clerk couldn't be reached, so which companies this user may access is
+    UNKNOWN. Cross-tenant reads fail closed rather than guessing from stale
+    local rows — that guess is precisely the bug the Clerk-backed resolver
+    replaces. 503 (not 403): the user's access hasn't been denied, it can't be
+    established, and a retry is the right response."""
+    logger.error("Cross-tenant access check unavailable — Clerk unreachable")
+    return JSONResponse(
+        {
+            "detail": (
+                "Couldn't confirm which companies you have access to just now. "
+                "This is temporary — please retry in a moment."
+            ),
+            "code": "access_check_unavailable",
+        },
+        status_code=503,
+    )
+
 
 # ── API routers ───────────────────────────────────────────────────────────────
 

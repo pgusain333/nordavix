@@ -916,17 +916,52 @@ class ConsolidatedTbResponse(BaseModel):
 
 # ── Helpers — cross-tenant access ───────────────────────────────────────────
 
+class CrossTenantAccessUnavailable(Exception):
+    """Clerk couldn't be reached, so membership can't be established.
+
+    Raised rather than returning an empty set so a caller can't mistake
+    "we don't know" for "belongs to nothing" — and, critically, so nothing
+    silently falls back to local User rows, which is the behaviour this
+    replaces.
+    """
+
+
 async def _user_accessible_tenant_ids(db: AsyncSession, user: User) -> set[uuid.UUID]:
     """
-    Every tenant the current user has a User row in (i.e. is a Clerk-org
-    member of). Bypasses the row-level tenant filter intentionally —
-    membership IS the cross-tenant authorization.
+    Every tenant the current user may reach, from CLERK organization membership.
+
+    Clerk is the source of truth for who belongs to which company. This used to
+    read local `User` rows instead, which was wrong in both directions:
+
+      • Those rows are created LAZILY, on a member's first request in a tenant.
+        An invited teammate therefore had no row until they had already opened
+        the company — so the firm view, whose whole job is listing the companies
+        you can reach, showed them nothing. You had to already be inside a
+        company to discover it existed.
+
+      • Nothing removes the row when a person is removed in Clerk, so revoking
+        someone there left their access here intact.
+
+    Fails CLOSED. If Clerk can't be reached we raise rather than guess: an
+    authorization set assembled from a stale local table is exactly the bug
+    being fixed, and a temporarily empty firm view is the safer failure.
     """
+    from core.auth.clerk_users import list_user_org_ids
+
+    org_ids = await list_user_org_ids(user.clerk_user_id)
+    if org_ids is None:
+        raise CrossTenantAccessUnavailable(user.clerk_user_id)
+    if not org_ids:
+        return set()
+
     rows = (await db.execute(
-        select(User.tenant_id).where(User.clerk_user_id == user.clerk_user_id),
+        select(Tenant.id).where(
+            Tenant.clerk_org_id.in_(org_ids),
+            Tenant.deleted_at.is_(None),
+        ),
         execution_options={"skip_tenant_filter": True},
     )).scalars().all()
-    return {r for r in rows}
+    return set(rows)
 
 
 async def _ensure_user_can_access(db: AsyncSession, user: User, target_tenant_id: uuid.UUID) -> None:

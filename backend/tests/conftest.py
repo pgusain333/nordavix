@@ -103,6 +103,7 @@ _INVARIANT_FILES = {
     "test_autopilot_watchdog.py", # stale autopilot-run reclaim (no permanent lock-out)
     "test_allocation_engine.py",  # §471(c) allocation (penny-exact pools, §280E split)
     "test_audit_chain.py",        # audit-log tamper evidence (edit/delete/reorder caught)
+    "test_cross_tenant_access.py",  # firm-view membership from Clerk (fails closed)
 }
 
 
