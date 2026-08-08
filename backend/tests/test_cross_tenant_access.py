@@ -185,10 +185,52 @@ def test_clerk_unreachable_fails_closed_and_never_uses_local_rows():
         _restore_clerk(original)
 
 
+# ── 6. Cross-tenant handlers must run on the SYSTEM engine ───────────────────
+
+def test_cross_tenant_endpoints_run_on_the_system_engine():
+    """RLS is a second wall, and it fails SILENTLY.
+
+    `skip_tenant_filter` lifts the SQLAlchemy filter only. Postgres RLS is
+    enforced independently on the request login: migration 059 gives `tenants` a
+    `tenant_self` policy (own row only) and every tenant table a
+    `tenant_isolation` policy. A cross-tenant handler on the request session
+    therefore returns just the ACTIVE company — no error, no warning, simply
+    fewer rows. That is precisely how the firm view broke at the Tier 2 cutover
+    and why nobody noticed for months.
+
+    So the engine choice is a control, not a detail. Any handler that reads
+    other companies must depend on get_system_db, with app-layer membership as
+    its access check.
+    """
+    import os
+
+    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://x:x@localhost/x")
+    from core.db.session import get_system_db
+    from main import app
+
+    # Paths that read ACROSS companies by design.
+    must_bypass = {"/api/workspace/command-center"}
+
+    seen = set()
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        if path not in must_bypass:
+            continue
+        seen.add(path)
+        deps = [d.call for d in getattr(route, "dependant", None).dependencies]
+        assert get_system_db in deps, (
+            f"{path} reads other companies but doesn't use get_system_db — "
+            "RLS will silently clamp it to the active tenant."
+        )
+
+    assert seen == must_bypass, f"route(s) not found: {must_bypass - seen}"
+
+
 if __name__ == "__main__":
     test_member_sees_company_they_have_never_opened()
     test_removed_in_clerk_loses_access()
     test_no_memberships_means_no_access()
     test_deleted_tenant_is_excluded()
     test_clerk_unreachable_fails_closed_and_never_uses_local_rows()
+    test_cross_tenant_endpoints_run_on_the_system_engine()
     print("CROSS_TENANT_ACCESS_OK")

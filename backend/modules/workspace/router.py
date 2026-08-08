@@ -32,7 +32,7 @@ from core.auth.dependencies import (
 )
 from core.config import settings
 from core.db.base import current_request_readonly
-from core.db.session import get_db
+from core.db.session import get_db, get_system_db
 from core.email.welcome import send_welcome_email
 from models.qbo_connection import QboConnection
 from models.tenant import Tenant
@@ -721,7 +721,19 @@ async def delete_workspace(
 async def get_command_center(
     tenant_id: CurrentTenantId,  # noqa: ARG001 — auth context; data is cross-tenant by membership
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    # SYSTEM engine, like every other cross-tenant handler (see the 15 in
+    # modules/intercompany/router.py). This is the firm view: it reads OTHER
+    # companies by design, and `skip_tenant_filter` only lifts the SQLAlchemy
+    # filter — Postgres RLS is a separate wall. Migration 059 put a `tenant_self`
+    # policy on `tenants` restricting the request login to its OWN row, and the
+    # seven tenant-scoped tables read below each carry `tenant_isolation`. On the
+    # request login this endpoint could therefore only ever return the ACTIVE
+    # company, whatever membership said — which is exactly how it behaved after
+    # the Tier 2 cutover, silently, because nothing errors when RLS filters rows.
+    #
+    # Access control is the app-layer membership check below
+    # (_user_accessible_tenant_ids, resolved from Clerk), not RLS.
+    db: AsyncSession = Depends(get_system_db),
 ) -> dict:
     """
     Firm-level close cockpit: one payload with every company the current
