@@ -104,6 +104,7 @@ _INVARIANT_FILES = {
     "test_allocation_engine.py",  # §471(c) allocation (penny-exact pools, §280E split)
     "test_audit_chain.py",        # audit-log tamper evidence (edit/delete/reorder caught)
     "test_cross_tenant_access.py",  # firm-view membership from Clerk (fails closed)
+    "test_recon_conclusion.py",   # frozen recon working paper (variance derived, hash covers edits)
 }
 
 

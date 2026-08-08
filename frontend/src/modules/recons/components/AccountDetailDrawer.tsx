@@ -52,6 +52,7 @@ import { ExpectationCapture } from "@/modules/memory/ExpectationCapture"
 import { reconsApi } from "@/modules/recons/api"
 import { GlFlagChip } from "@/modules/gl_accuracy/components/GlFlagChip"
 import { RelatedPanel } from "@/modules/graph/RelatedPanel"
+import { ConclusionCard } from "@/modules/recons/components/ConclusionCard"
 
 const TABS = [
   { id: "summary",     label: "Summary",     icon: Sparkles },
@@ -955,6 +956,12 @@ function SummaryTab({ account, periodEnd, readOnly }: { account: OverviewAccount
           </div>
         )}
       </Card>
+
+      {/* How the sign-off was reached, frozen at approval. Everything else on
+          this screen is live — this is the only place showing the numbers as
+          they stood when someone put their name to them, and whether they've
+          moved since. Renders nothing until the account has been approved. */}
+      <ConclusionCard qboAccountId={account.qbo_id} periodEnd={periodEnd} />
 
       {/* Evidence at a glance */}
       <Card title="Supporting evidence" icon={<Paperclip size={13} strokeWidth={1.8} />}>

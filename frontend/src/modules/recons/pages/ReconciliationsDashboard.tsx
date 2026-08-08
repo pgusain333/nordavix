@@ -756,6 +756,12 @@ export function ReconciliationsDashboard() {
       }
       return { prev }
     },
+    // Approving writes a frozen working paper; reopening retires it. Neither
+    // is reflected in the overview payload, so the drawer's conclusion panel
+    // needs its own refetch — this key doesn't sit under "recons-overview".
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["recon-conclusions", v.id, periodEnd] })
+    },
     onError: (err: unknown, _v, ctx) => {
       if (ctx?.prev) qc.setQueryData(["recons-overview", periodEnd], ctx.prev)
       const ex = err as { response?: { data?: { detail?: string } }; message?: string }
@@ -858,6 +864,10 @@ export function ReconciliationsDashboard() {
       return { prev }
     },
     onSuccess: (res, _status, ctx) => {
+      // Same reason as the single-account mutation: the frozen working paper
+      // lives under its own key, outside the overview payload. Invalidate the
+      // batch by prefix so whichever account the drawer opens next is fresh.
+      qc.invalidateQueries({ queryKey: ["recon-conclusions"] })
       setSelected(new Set())
       // Partial success: the backend approves every account that passes its
       // gates and skips the rest (un-reconciled / missing statement / maker-

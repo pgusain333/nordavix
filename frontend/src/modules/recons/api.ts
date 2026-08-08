@@ -758,6 +758,63 @@ async function getPeriodEntries(
   return data
 }
 
+// ── The frozen working paper behind a sign-off ─────────────────────────
+//
+// The dashboard reads GL live from QuickBooks on every render, so what an
+// approval "says" can move after it was signed. These are the numbers as they
+// stood at each sign-off, with where each one came from. Superseded ones are
+// kept: "what did we approve in March, before we reopened it" is the question.
+
+export interface ConclusionItem {
+  label:          string
+  amount:         string | null
+  /** system = pulled or derived · human = typed by a person · ai = model-proposed */
+  origin:         "system" | "human" | "ai"
+  note:           string | null
+  cleared?:       boolean
+  txn_id?:        string | null
+  ai_confidence?: string | null
+  /** Who stood behind a model's suggestion. Null = nobody confirmed it. */
+  accepted_by?:   string | null
+}
+
+export interface ReconConclusion {
+  id:                    string
+  status:                "active" | "superseded"
+  gl_balance:            string | null
+  gl_source:             string | null
+  gl_as_of:              string | null
+  subledger_total:       string | null
+  subledger_origin:      "system" | "human" | "ai"
+  subledger_evidence_id: string | null
+  variance:              string | null
+  reconciled:            boolean
+  items:                 ConclusionItem[]
+  ai_basis:              { commentary?: unknown; accepted_by?: string; accepted_at?: string } | null
+  approved_by:           string | null
+  approved_by_name:      string | null
+  approved_at:           string | null
+  prepared_by_name:      string | null
+  superseded_at:         string | null
+  content_hash:          string | null
+}
+
+export interface ConclusionDrift {
+  gl_changed_by:         string | null
+  subledger_changed_by:  string | null
+  drifted:               boolean
+}
+
+async function listAccountConclusions(
+  qboAccountId: string, periodEnd: string,
+): Promise<{ conclusions: ReconConclusion[]; drift: ConclusionDrift | null }> {
+  const { data } = await apiClient.get<{ conclusions: ReconConclusion[]; drift: ConclusionDrift | null }>(
+    `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/conclusions`,
+    { params: { period_end: periodEnd } },
+  )
+  return data
+}
+
 async function listAccountEvidence(qboAccountId: string, periodEnd: string): Promise<EvidenceFile[]> {
   const { data } = await apiClient.get<{ evidence: EvidenceFile[] }>(
     `/api/reconciliations/account/${encodeURIComponent(qboAccountId)}/evidence`,
@@ -1173,6 +1230,7 @@ export const reconsApi = {
   updateAccountReviewStatus,
   bulkUpdateAccountReviewStatus,
   setSubledgerOverride,
+  listAccountConclusions,
   listAccountEvidence,
   uploadAccountEvidence,
   deleteAccountEvidence,

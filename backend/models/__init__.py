@@ -39,6 +39,7 @@ from models.period_sync import PeriodSync
 from models.prepaid_candidate import PrepaidCandidate
 from models.proposed_entry import ProposedEntry
 from models.qbo_connection import QboConnection
+from models.recon_conclusion import ReconConclusion
 from models.reengagement_enrollment import ReengagementEnrollment
 from models.relationship import Relationship
 from models.schedule import (
@@ -100,6 +101,7 @@ __all__ = [
     "EvidenceRequest",
     "ProposedEntry",
     "QboConnection",
+    "ReconConclusion",
     "ReengagementEnrollment",
     "Relationship",
     "ScheduleAccrual",

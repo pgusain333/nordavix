@@ -37,7 +37,7 @@ from core.config import settings as _settings
 
 logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ai.guard import enforce_ai_limits
@@ -66,6 +66,7 @@ from models.reconciliation import (
 from models.subledger_evidence import SubledgerEvidence
 from models.tenant import Tenant
 from models.workpaper_evidence import WorkpaperEvidence
+from modules.recons import conclusion
 from modules.recons.overview import (
     fetch_subledger_detail,
     fetch_variance_detail,
@@ -632,6 +633,12 @@ async def sync_one_account_from_qbo(
         review.approved_by = None
         review.approved_at = None
         reopened = True
+        # The QBO numbers just moved, which is exactly why the approval can no
+        # longer stand — and exactly why the working paper it rested on is
+        # worth keeping. Retired, not deleted.
+        await _supersede_conclusions(
+            db, tenant_id=tenant_id, qbo_account_ids=[qbo_account_id], period_end=pe,
+        )
 
     await db.commit()
     await db.refresh(snap)
@@ -1045,6 +1052,12 @@ async def update_account_review_status(
     # row in the 'approved' branch.
     approved_subledger: Decimal | None = None
 
+    # Read BEFORE the mutation below: leaving 'approved' by any route — pending,
+    # reviewed, flagged — retires the frozen working paper. Catching it here
+    # rather than in one status branch means a new status can't quietly leave a
+    # stale conclusion marked active.
+    was_approved = row is not None and row.status == "approved"
+
     # Reopen gate: un-approving an approved reconciliation (back to pending or
     # reviewed) is a reviewer/admin action. Preparers can still reset their own
     # not-yet-approved work.
@@ -1165,6 +1178,14 @@ async def update_account_review_status(
         # never drift — for schedule-backed accounts this corrects a stale stored
         # value that would otherwise surface as a phantom variance on approval.
         _apply_approval_freeze(row, approved_subledger)
+        # Freeze the DERIVATION too, not just the figure — both balances with
+        # their sources, the items with their provenance, what the model
+        # contributed. Recorded after the freeze so it holds the value the
+        # sign-off actually carries.
+        await _record_conclusions(
+            db, tenant_id=tenant_id, user=user, period_end=pe,
+            rows=[(qbo_account_id, row)], ov=_approve_ov,
+        )
     elif status_value == "pending":
         # Re-opening for editing always clears the actor stamps.
         row.prepared_by = None
@@ -1198,6 +1219,14 @@ async def update_account_review_status(
                 await _freeze_displayed_subledger(
                     db, tenant_id, qbo_account_id, pe, row, user,
                 )
+
+    if was_approved and status_value != "approved":
+        # Retire the frozen working paper: it no longer describes this account,
+        # but it still describes what was signed off, which is the question an
+        # examiner asks after a reopen.
+        await _supersede_conclusions(
+            db, tenant_id=tenant_id, qbo_account_ids=[qbo_account_id], period_end=pe,
+        )
 
     from core.audit.log import write_audit_event
     await write_audit_event(
@@ -1378,6 +1407,13 @@ async def bulk_update_account_review_status(
     # if prepare hasn't happened yet.
     rows_for_freeze: list[tuple[str, AccountReviewStatus]] = []
     approved_preparer_ids: set[uuid.UUID] = set()
+    # Captured BEFORE the loop rewrites `status` — every account leaving
+    # 'approved' has a frozen working paper to retire.
+    reopened_ids: list[str] = (
+        [] if status_value == "approved"
+        else [qid for qid in approvable_ids
+              if qid in by_id and by_id[qid].status == "approved"]
+    )
     for qid in approvable_ids:
         if qid in by_id:
             r = by_id[qid]
@@ -1436,6 +1472,16 @@ async def bulk_update_account_review_status(
     # safety net the per-row path now shares).
     for qid, r in rows_for_freeze:
         _apply_approval_freeze(r, displayed_subs.get(qid))
+
+    if status_value == "approved":
+        await _record_conclusions(
+            db, tenant_id=tenant_id, user=user, period_end=pe,
+            rows=rows_for_freeze, ov=_bulk_ov,
+        )
+    elif reopened_ids:
+        await _supersede_conclusions(
+            db, tenant_id=tenant_id, qbo_account_ids=reopened_ids, period_end=pe,
+        )
 
     from core.audit.log import write_audit_event
     await write_audit_event(
@@ -1989,6 +2035,224 @@ def _apply_approval_freeze(row, displayed: Decimal | None) -> None:
     row.subledger_source = "Auto-frozen on approval — the reconciled balance shown at sign-off"
     row.subledger_entered_by = None  # system-computed at approval, not a manual override
     row.subledger_entered_at = datetime.now(UTC)
+
+
+# ── The frozen working paper behind an approval ─────────────────────────────
+#
+# `_apply_approval_freeze` above pins the subledger figure. It doesn't record
+# how that figure was ARRIVED at, and the GL side isn't pinned at all — the
+# dashboard reads it live from the snapshot on every render. So an approval is
+# a signature on a view that can move afterwards, and reopening in June shows
+# different numbers than were signed in March with nothing recording the gap.
+#
+# ReconConclusion is that view, frozen: both balances with their sources, the
+# reconciling items with the provenance of each, and what the model contributed
+# versus what a person did. Superseded on reopen, never overwritten.
+
+_SCHEDULE_ITEM_PREFIXES = (
+    "prepaid-", "accrual-", "fa-", "lease-", "loan-",
+)
+
+
+def _item_origin(item: dict[str, Any]) -> str:
+    """Where a reconciling item's figure came from.
+
+    Derived from the data rather than asked for, because nothing writes an
+    `origin` key today: items are QBO transactions, Nordavix schedule lines, or
+    rows a preparer typed (`manual-…`, the only ones a human authored).
+
+    Note this classifies the FIGURE, not who decided it belonged in the
+    reconciliation. On an AI-prepared row the transactions are still facts
+    pulled from QuickBooks — what the model contributed is the selection and
+    the commentary, and that is recorded in `ai_basis` rather than by relabeling
+    every transaction as something the AI produced.
+    """
+    txn_id = str(item.get("txn_id") or "")
+    if txn_id.startswith("manual-"):
+        return conclusion.ORIGIN_HUMAN
+    if txn_id.startswith(_SCHEDULE_ITEM_PREFIXES):
+        return conclusion.ORIGIN_SYSTEM
+    return conclusion.ORIGIN_SYSTEM
+
+
+def _conclusion_items(row: AccountReviewStatus) -> list[dict[str, Any]]:
+    """The reconciling items as approved, each carrying its provenance.
+
+    Keeps `cleared` so the frozen paper distinguishes an item that explained
+    the difference from one left open — the two are not the same conclusion.
+    """
+    out: list[dict[str, Any]] = []
+    for it in (row.reconciling_items or []):
+        if not isinstance(it, dict):
+            continue
+        label = " ".join(
+            str(it.get(k) or "").strip()
+            for k in ("txn_date", "txn_type", "txn_number")
+        ).strip() or (str(it.get("memo") or "").strip() or "item")
+        out.append(conclusion.normalize_item({
+            "label": label,
+            "amount": it.get("amount"),
+            "origin": _item_origin(it),
+            "note": it.get("memo"),
+            # An item left open is not the same conclusion as one that cleared.
+            "cleared": it.get("cleared") is not False,
+            "txn_id": it.get("txn_id"),
+        }))
+    return out
+
+
+def _subledger_origin(row: AccountReviewStatus) -> str:
+    """Who stands behind the subledger figure.
+
+    Order matters: an AI-prepared row also carries `subledger_entered_by` (the
+    agentic run stamps the user it ran as), so checking that first would report
+    a model's figure as one a person entered.
+    """
+    if row.ai_commentary:
+        return conclusion.ORIGIN_AI
+    if row.subledger_entered_by is not None:
+        return conclusion.ORIGIN_HUMAN
+    return conclusion.ORIGIN_SYSTEM
+
+
+async def _supersede_conclusions(
+    db: AsyncSession, *, tenant_id: uuid.UUID, qbo_account_ids: list[str], period_end: date,
+) -> None:
+    """Retire the active conclusions for these accounts — never delete them.
+
+    "What did we approve in March, before it was reopened" is precisely the
+    question an examiner asks, so the answer has to outlive the reopen.
+
+    tenant_id is filtered EXPLICITLY: TenantBase scopes SELECT only, so an
+    UPDATE carries no automatic tenant predicate. RLS would still catch it, but
+    a control you can read in the statement beats one you have to infer.
+    """
+    if not qbo_account_ids:
+        return
+    from models.recon_conclusion import ReconConclusion
+    await db.execute(
+        update(ReconConclusion)
+        .where(
+            ReconConclusion.tenant_id == tenant_id,
+            ReconConclusion.qbo_account_id.in_(qbo_account_ids),
+            ReconConclusion.period_end == period_end,
+            ReconConclusion.status == "active",
+        )
+        .values(status="superseded", superseded_at=datetime.now(UTC))
+    )
+
+
+async def _record_conclusions(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    user,
+    period_end: date,
+    rows: list[tuple[str, AccountReviewStatus]],
+    ov: dict | None,
+) -> None:
+    """Freeze the working paper for every account being approved.
+
+    Called AFTER `_apply_approval_freeze`, so the recorded subledger is the one
+    the sign-off actually holds rather than the value it superseded.
+
+    Best-effort: a reconciliation that has passed its gates must not fail to
+    save because its audit copy couldn't be written. The approval is the
+    control; this is the record of it.
+    """
+    if not rows:
+        return
+    try:
+        from models.recon_conclusion import ReconConclusion
+
+        by_id = {a.get("qbo_id"): a for a in (ov or {}).get("accounts", [])}
+        synced_raw = (ov or {}).get("synced_at")
+        gl_as_of: datetime | None = None
+        if synced_raw:
+            try:
+                gl_as_of = datetime.fromisoformat(str(synced_raw))
+            except ValueError:
+                gl_as_of = None
+
+        # One query for the evidence behind all of them — the document itself,
+        # not the prose description `subledger_source` holds today.
+        ids = [qid for qid, _ in rows]
+        ev_rows = list((await db.execute(
+            select(SubledgerEvidence)
+            .where(
+                SubledgerEvidence.qbo_account_id.in_(ids),
+                SubledgerEvidence.period_end == period_end,
+            )
+            .order_by(SubledgerEvidence.uploaded_at.desc())
+        )).scalars().all())
+        latest_ev: dict[str, uuid.UUID] = {}
+        for e in ev_rows:
+            latest_ev.setdefault(e.qbo_account_id, e.id)
+
+        now = datetime.now(UTC)
+        await _supersede_conclusions(
+            db, tenant_id=tenant_id, qbo_account_ids=ids, period_end=period_end,
+        )
+
+        for qid, row in rows:
+            acct = by_id.get(qid) or {}
+            ai_basis = None
+            if row.ai_commentary:
+                # What the model contributed, and — the part that makes it
+                # evidence rather than output — who stood behind it.
+                ai_basis = {
+                    "prepared_by_model": True,
+                    "commentary": row.ai_commentary,
+                    "accepted_by": str(user.id),
+                    "accepted_at": now.isoformat(),
+                }
+            snapshot = conclusion.build_snapshot(
+                qbo_account_id=qid,
+                period_end=period_end,
+                gl_balance=acct.get("gl_balance"),
+                gl_source=(
+                    f"QuickBooks GL snapshot for {period_end.isoformat()}"
+                    if acct.get("gl_balance") is not None else None
+                ),
+                gl_as_of=gl_as_of,
+                subledger_total=row.subledger_total,
+                subledger_origin=_subledger_origin(row),
+                subledger_evidence_id=latest_ev.get(qid),
+                items=_conclusion_items(row),
+                ai_basis=ai_basis,
+                approved_by=user.id,
+                prepared_by=row.prepared_by,
+            )
+            variance = snapshot["variance"]
+            db.add(ReconConclusion(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                qbo_account_id=qid,
+                period_end=period_end,
+                gl_balance=(
+                    Decimal(snapshot["gl_balance"]) if snapshot["gl_balance"] is not None else None
+                ),
+                gl_source=snapshot["gl_source"],
+                gl_as_of=gl_as_of,
+                subledger_total=(
+                    Decimal(snapshot["subledger_total"])
+                    if snapshot["subledger_total"] is not None else None
+                ),
+                subledger_origin=snapshot["subledger_origin"],
+                subledger_evidence_id=latest_ev.get(qid),
+                variance=Decimal(variance) if variance is not None else None,
+                reconciled=(variance is not None and Decimal(variance) == 0),
+                items=snapshot["items"],
+                ai_basis=ai_basis,
+                approved_by=user.id,
+                approved_at=now,
+                prepared_by=row.prepared_by,
+                status="active",
+                content_hash=conclusion.snapshot_hash(snapshot),
+                created_at=now,
+            ))
+    except Exception:
+        logger.warning("recon conclusion snapshot failed", exc_info=True)
 
 
 # ── Close / re-open period (lock the books) ─────────────────────────────────
@@ -3196,6 +3460,102 @@ def _serialize_workpaper_as_evidence(e: WorkpaperEvidence) -> dict:
         "verification": e.verification,
         "source":      "binder",
     }
+
+
+@router.get("/account/{qbo_account_id}/conclusions")
+async def list_account_conclusions(
+    qbo_account_id: str,
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """How this reconciliation was concluded, as frozen at each sign-off.
+
+    Newest first, superseded ones included: the point of keeping them is that
+    "what did we approve in March, before it was reopened" stays answerable.
+
+    `drift` compares the ACTIVE conclusion against what the account shows now.
+    A reconciliation approved in March and read in June can differ because the
+    source moved underneath — this says so explicitly rather than quietly
+    presenting today's numbers as the ones that were signed.
+    """
+    from datetime import date as _date
+
+    from models.recon_conclusion import ReconConclusion
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
+
+    rows = list((await db.execute(
+        select(ReconConclusion)
+        .where(
+            ReconConclusion.qbo_account_id == qbo_account_id,
+            ReconConclusion.period_end == pe,
+        )
+        .order_by(desc(ReconConclusion.created_at))
+    )).scalars().all())
+    if not rows:
+        return {"conclusions": [], "drift": None}
+
+    # Names, not UUIDs — the reader wants to know who signed it.
+    from models.user import User
+    actor_ids = {r.approved_by for r in rows if r.approved_by} | {
+        r.prepared_by for r in rows if r.prepared_by
+    }
+    names: dict[uuid.UUID, str] = {}
+    if actor_ids:
+        for u in (await db.execute(
+            select(User).where(User.id.in_(list(actor_ids)))
+        )).scalars().all():
+            names[u.id] = u.email or f"User {str(u.id)[:8]}"
+
+    def _s(v) -> str | None:
+        return str(v) if v is not None else None
+
+    out = [{
+        "id": str(r.id),
+        "status": r.status,
+        "gl_balance": _s(r.gl_balance),
+        "gl_source": r.gl_source,
+        "gl_as_of": r.gl_as_of.isoformat() if r.gl_as_of else None,
+        "subledger_total": _s(r.subledger_total),
+        "subledger_origin": r.subledger_origin,
+        "subledger_evidence_id": str(r.subledger_evidence_id) if r.subledger_evidence_id else None,
+        "variance": _s(r.variance),
+        "reconciled": r.reconciled,
+        "items": r.items or [],
+        "ai_basis": r.ai_basis,
+        "approved_by": str(r.approved_by) if r.approved_by else None,
+        "approved_by_name": names.get(r.approved_by) if r.approved_by else None,
+        "approved_at": r.approved_at.isoformat() if r.approved_at else None,
+        "prepared_by_name": names.get(r.prepared_by) if r.prepared_by else None,
+        "superseded_at": r.superseded_at.isoformat() if r.superseded_at else None,
+        "content_hash": r.content_hash,
+    } for r in rows]
+
+    drift = None
+    active = next((r for r in rows if r.status == "active"), None)
+    if active is not None:
+        try:
+            from modules.recons.overview import read_overview_from_snapshots
+            ov = await read_overview_from_snapshots(db, pe)
+            acct = next(
+                (a for a in ov.get("accounts", []) if a.get("qbo_id") == qbo_account_id), None,
+            )
+            if acct is not None:
+                drift = conclusion.drift(
+                    {
+                        "gl_balance": _s(active.gl_balance),
+                        "subledger_total": _s(active.subledger_total),
+                    },
+                    live_gl=acct.get("gl_balance"),
+                    live_subledger=acct.get("subledger_balance"),
+                )
+        except Exception:
+            logger.warning("conclusion drift check failed", exc_info=True)
+
+    return {"conclusions": out, "drift": drift}
 
 
 @router.get("/account/{qbo_account_id}/evidence")
