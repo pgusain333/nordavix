@@ -61,23 +61,12 @@ function urgencyScore(c: CommandCenterCompany): number {
   return 3000 + Math.min(c.focus.days_since_period_end, 365)
 }
 
-/** Why this company is at the top — the sentence a partner reads instead of
- *  decoding a progress bar. Null when nothing needs them. */
-function attentionReason(c: CommandCenterCompany): string | null {
-  const mine = c.awaiting_you?.total ?? 0
-  if (mine > 0) {
-    const parts: string[] = []
-    if (c.awaiting_you.recons) parts.push(`${c.awaiting_you.recons} reconciliation${c.awaiting_you.recons === 1 ? "" : "s"}`)
-    if (c.awaiting_you.adjustments) parts.push(`${c.awaiting_you.adjustments} adjustment${c.awaiting_you.adjustments === 1 ? "" : "s"}`)
-    return `${parts.join(" and ")} waiting on your approval`
-  }
-  if ((c.risk?.high ?? 0) > 0) {
-    return `${c.risk.high} high-severity finding${c.risk.high === 1 ? "" : "s"} in the books`
-  }
-  if (!c.books_set || !c.qbo_connected) return "Not set up yet"
-  if (c.focus && c.focus.days_since_period_end >= 14) {
-    return `Day ${c.focus.days_since_period_end} of the close, ${c.focus.approved}/${c.focus.total} approved`
-  }
+/** How loudly this row should announce itself. Drives one accent stripe
+ *  rather than a sentence — the chips already carry the detail, what they
+ *  can't do is rank. */
+function attentionTone(c: CommandCenterCompany): string | null {
+  if ((c.awaiting_you?.total ?? 0) > 0) return "#c79a52"   // blocked on you
+  if ((c.risk?.high ?? 0) > 0) return "#c0392b"            // books are wrong
   return null
 }
 
@@ -300,15 +289,21 @@ export function CommandCenterPage() {
               const needsSetup = !c.books_set || !c.qbo_connected
               const isCurrent = c.clerk_org_id === organization?.id
               const tone = f ? daysTone(f.days_since_period_end) : null
-              const reason = attentionReason(c)
+              const accent = attentionTone(c)
               return (
                 <motion.div
                   key={c.tenant_id}
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.18, delay: Math.min(i * 0.04, 0.3) }}
-                  className="rounded-xl px-4 sm:px-5 py-4 flex items-center gap-4 flex-wrap transition-colors"
-                  style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                  className="rounded-xl pl-4 sm:pl-5 pr-4 sm:pr-5 py-2.5 flex items-center gap-4 flex-wrap transition-colors"
+                  style={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    // One stripe instead of a sentence: it ranks the row without
+                    // repeating what the chips already say, and costs no height.
+                    borderLeft: accent ? `3px solid ${accent}` : "1px solid var(--border)",
+                  }}
                 >
                   {/* Identity */}
                   <div className="min-w-[180px] flex-1">
@@ -323,19 +318,11 @@ export function CommandCenterPage() {
                         <Chip label="Sample" fg="var(--text-muted)" bg="var(--surface-2)" />
                       )}
                     </div>
-                    {/* WHY this company is where it is in the list. A partner
-                        shouldn't have to decode a progress bar to find out. */}
-                    {reason ? (
-                      <p className="text-[11.5px] mt-0.5 font-medium" style={{ color: "#a5711d" }}>
-                        {reason}
-                      </p>
-                    ) : (
-                      <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                        {c.closed_through
-                          ? `Closed through ${c.closed_through}`
-                          : needsSetup ? "Not set up yet" : "No closed months yet"}
-                      </p>
-                    )}
+                    <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                      {c.closed_through
+                        ? `Closed through ${c.closed_through}`
+                        : needsSetup ? "Not set up yet" : "No closed months yet"}
+                    </p>
                   </div>
 
                   {/* Focus month + progress */}
@@ -348,7 +335,7 @@ export function CommandCenterPage() {
                       />
                     ) : f ? (
                       <>
-                        <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center justify-between mb-1">
                           <span className="text-xs font-semibold" style={{ color: "var(--text)" }}>
                             {f.label}
                           </span>
