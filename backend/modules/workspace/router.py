@@ -750,11 +750,12 @@ async def get_command_center(
     from calendar import monthrange
     from datetime import date as _date
 
-    from sqlalchemy import func
+    from sqlalchemy import func, or_
 
     from models.account import Account
     from models.account_review_status import AccountReviewStatus
     from models.closed_period import ClosedPeriod
+    from models.gl_accuracy_finding import GlAccuracyFinding
     from models.proposed_entry import ProposedEntry
     from models.trial_balance import TrialBalance
     from models.variance import Variance
@@ -881,6 +882,82 @@ async def get_command_center(
         if focus_by_tid.get(tid) == pe:
             adj_by_tid[tid] = n
 
+    # ── What is waiting on THIS person ────────────────────────────────────────
+    #
+    # The question a partner opens this page to answer isn't "how is the close
+    # going" — a manager owns that — it's "what is blocked on me". Approval is
+    # the partner's scarce resource, so the page has to name it per company.
+    #
+    # Role is PER COMPANY (each membership is its own User row), so someone can
+    # be reviewer at one client and preparer at another. Only companies where
+    # they can actually approve contribute a count. No local row means they have
+    # never worked in that company, so nothing is waiting on them there — the
+    # honest answer, and it avoids inventing work.
+    my_role_by_tid: dict[uuid.UUID, str] = {
+        r[0]: r[1] for r in (await db.execute(
+            select(User.tenant_id, User.role).where(
+                User.clerk_user_id == user.clerk_user_id,
+                User.tenant_id.in_(tids),
+            ),
+            execution_options={"skip_tenant_filter": True},
+        )).all()
+    }
+    approver_tids = [t for t, role in my_role_by_tid.items() if role in ("admin", "reviewer")]
+
+    recon_wait: dict[uuid.UUID, int] = {}
+    adj_wait: dict[uuid.UUID, int] = {}
+    if approver_tids:
+        # Reconciliations prepared and sitting at "reviewed" — the state whose
+        # only exit is an approver.
+        for tid, pe, n in (await db.execute(
+            select(
+                AccountReviewStatus.tenant_id, AccountReviewStatus.period_end, func.count(),
+            ).where(
+                AccountReviewStatus.tenant_id.in_(approver_tids),
+                AccountReviewStatus.status == "reviewed",
+            ).group_by(AccountReviewStatus.tenant_id, AccountReviewStatus.period_end),
+            execution_options={"skip_tenant_filter": True},
+        )).all():
+            if focus_by_tid.get(tid) == pe:
+                recon_wait[tid] = n
+
+        # Open adjustments this person did NOT prepare. Maker-checker means an
+        # entry you touched last can't be approved by you, so counting it as
+        # "waiting on you" would be a lie that never clears.
+        for tid, pe, n in (await db.execute(
+            select(ProposedEntry.tenant_id, ProposedEntry.period_end, func.count())
+            .where(
+                ProposedEntry.tenant_id.in_(approver_tids),
+                ProposedEntry.status == "open",
+                or_(
+                    ProposedEntry.status_changed_by.is_(None),
+                    ProposedEntry.status_changed_by != user.id,
+                ),
+            )
+            .group_by(ProposedEntry.tenant_id, ProposedEntry.period_end),
+            execution_options={"skip_tenant_filter": True},
+        )).all():
+            if focus_by_tid.get(tid) == pe:
+                adj_wait[tid] = n
+
+    # ── Risk: what the books look like, not how far the close has got ─────────
+    #
+    # A client at 90% with eleven flagged accounts is in worse shape than one at
+    # 60% that is clean, and a progress bar cannot say so. These are the
+    # misclassification watchdog's open findings — the signal that a client's
+    # bookkeeping is deteriorating rather than merely unfinished.
+    risk_by_tid: dict[uuid.UUID, dict[str, int]] = {}
+    for tid, sev, n in (await db.execute(
+        select(GlAccuracyFinding.tenant_id, GlAccuracyFinding.severity, func.count())
+        .where(GlAccuracyFinding.tenant_id.in_(tids), GlAccuracyFinding.status == "open")
+        .group_by(GlAccuracyFinding.tenant_id, GlAccuracyFinding.severity),
+        execution_options={"skip_tenant_filter": True},
+    )).all():
+        b = risk_by_tid.setdefault(tid, {"open": 0, "high": 0})
+        b["open"] += n
+        if sev == "high":
+            b["high"] += n
+
     companies = []
     for t in tenants:
         focus = focus_by_tid.get(t.id)
@@ -937,6 +1014,14 @@ async def get_command_center(
             "closed_through": closed_through.strftime("%b %Y") if closed_through else None,
             "flux":          flux_payload,
             "open_adjustments": adj_by_tid.get(t.id, 0),
+            # Blocked on the person looking at this page.
+            "awaiting_you": {
+                "recons":      recon_wait.get(t.id, 0),
+                "adjustments": adj_wait.get(t.id, 0),
+                "total":       recon_wait.get(t.id, 0) + adj_wait.get(t.id, 0),
+                "can_approve": my_role_by_tid.get(t.id) in ("admin", "reviewer"),
+            },
+            "risk": risk_by_tid.get(t.id, {"open": 0, "high": 0}),
         })
 
     return {"companies": companies, "generated_at": datetime.now(UTC).isoformat()}

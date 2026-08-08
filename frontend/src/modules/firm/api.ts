@@ -24,6 +24,22 @@ export interface CommandCenterFlux {
   state:    "done" | "in_progress"
 }
 
+/** What is blocked on the person looking at the page. Role is PER company, so
+ *  `can_approve` can differ client to client. */
+export interface CommandCenterAwaitingYou {
+  recons:      number
+  adjustments: number
+  total:       number
+  can_approve: boolean
+}
+
+/** Open findings from the misclassification watchdog — how the books LOOK,
+ *  as distinct from how far the close has got. */
+export interface CommandCenterRisk {
+  open: number
+  high: number
+}
+
 export interface CommandCenterCompany {
   tenant_id:     string
   name:          string
@@ -35,6 +51,8 @@ export interface CommandCenterCompany {
   closed_through: string | null
   flux:          CommandCenterFlux | null
   open_adjustments: number
+  awaiting_you:  CommandCenterAwaitingYou
+  risk:          CommandCenterRisk
 }
 
 export interface CommandCenterResponse {
