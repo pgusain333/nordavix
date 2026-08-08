@@ -195,35 +195,35 @@ def test_cross_tenant_endpoints_run_on_the_system_engine():
     `tenant_self` policy (own row only) and every tenant table a
     `tenant_isolation` policy. A cross-tenant handler on the request session
     therefore returns just the ACTIVE company — no error, no warning, simply
-    fewer rows. That is precisely how the firm view broke at the Tier 2 cutover
-    and why nobody noticed for months.
+    fewer rows. That is exactly how the firm view broke at the Tier 2 cutover,
+    and why it read as a product decision rather than a regression.
 
-    So the engine choice is a control, not a detail. Any handler that reads
+    So the engine choice is a control, not a detail: any handler that reads
     other companies must depend on get_system_db, with app-layer membership as
     its access check.
+
+    Checked by INSPECTING THE SIGNATURE rather than building the app. Importing
+    `main` drags in the Clerk JWKS chain, which needs a real publishable key —
+    fine locally, fatal in CI. Invariant tests have to stay import-light.
     """
-    import os
+    import inspect
 
-    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://x:x@localhost/x")
     from core.db.session import get_system_db
-    from main import app
 
-    # Paths that read ACROSS companies by design.
-    must_bypass = {"/api/workspace/command-center"}
+    from modules.workspace.router import get_command_center
 
-    seen = set()
-    for route in app.routes:
-        path = getattr(route, "path", None)
-        if path not in must_bypass:
-            continue
-        seen.add(path)
-        deps = [d.call for d in getattr(route, "dependant", None).dependencies]
-        assert get_system_db in deps, (
-            f"{path} reads other companies but doesn't use get_system_db — "
-            "RLS will silently clamp it to the active tenant."
+    # Handlers that read ACROSS companies by design.
+    cross_tenant_handlers = [get_command_center]
+
+    for fn in cross_tenant_handlers:
+        param = inspect.signature(fn).parameters.get("db")
+        assert param is not None, f"{fn.__name__} has no db parameter"
+        dep = getattr(param.default, "dependency", None)
+        assert dep is get_system_db, (
+            f"{fn.__name__} reads other companies but depends on "
+            f"{getattr(dep, '__name__', dep)} — RLS will silently clamp it to "
+            "the active tenant."
         )
-
-    assert seen == must_bypass, f"route(s) not found: {must_bypass - seen}"
 
 
 if __name__ == "__main__":
