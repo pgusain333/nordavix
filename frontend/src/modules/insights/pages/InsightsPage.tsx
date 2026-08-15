@@ -934,13 +934,22 @@ function SectionBody({ id, data, onJumpToMonth }: {
 // ── Hero KPIs ────────────────────────────────────────────────────────────────
 
 function HeroKpis({ data }: { data: InsightsOverview }) {
+  // A period with no bank rows has nothing to total. Rendering the sum of an
+  // empty set as "$0" states a balance we do not have — and the change against
+  // it ("-100.0%") compounds the fiction. Show the gap and its cause instead.
+  // Payloads cached before data_status shipped omit it; absent means "assume
+  // the figure is real", which is the old behaviour.
+  const cashMissing = data.data_status?.cash_available === false
   const tiles = [
     {
       label:  "Cash balance",
-      value:  fmtMoney(data.liquidity.cash_balance),
-      change: data.liquidity.cash_change_str,
+      value:  cashMissing ? "—" : fmtMoney(data.liquidity.cash_balance),
+      change: cashMissing ? null : data.liquidity.cash_change_str,
       changeUp: (data.liquidity.cash_change_str ?? "").startsWith("+"),
-      sub:    "Bank + cash accounts",
+      sub:    cashMissing
+        ? (data.data_status?.reason ?? "No balances for this period")
+        : "Bank + cash accounts",
+      muted:  cashMissing,
     },
     {
       label:  "Runway",
@@ -982,7 +991,12 @@ function HeroKpis({ data }: { data: InsightsOverview }) {
             )}
           </div>
           <div className="flex items-baseline gap-2 flex-wrap">
-            <p className="text-2xl font-bold leading-tight" style={{ color: "var(--text)" }}>{t.value}</p>
+            {/* A dash for an absent figure is set in muted type: it should not
+                carry the visual weight of a number that was actually measured. */}
+            <p className="text-2xl font-bold leading-tight"
+              style={{ color: ("muted" in t && t.muted) ? "var(--text-muted)" : "var(--text)" }}>
+              {t.value}
+            </p>
             {t.change && (
               <span className="text-[11px] font-semibold inline-flex items-center gap-0.5"
                 style={{ color: t.changeUp ? "var(--green)" : "#9b3d37" }}>

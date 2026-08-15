@@ -33,6 +33,7 @@ needs a real publishable key — fine locally, fatal in CI.
 pytest isn't installed in every env, so this also runs standalone:
     python tests/test_insights_accuracy.py
 """
+from datetime import date
 from decimal import Decimal
 
 from core.qbo_tb import lookup_balance, parse_trial_balance
@@ -261,6 +262,96 @@ def test_an_unsynced_period_still_caches_normally():
     assert cache_is_fresh({"source_synced_at": None}, None) is True
 
 
+# ── 5. An absent figure is not a zero ────────────────────────────────────────
+
+class _Snap:
+    def __init__(self, account_type, balance="0.00"):
+        self.account_type, self.balance = account_type, Decimal(balance)
+
+
+def test_no_bank_rows_is_reported_as_missing_not_as_zero():
+    """The reported symptom: February showed a confident "$0" cash balance.
+
+    Summing an empty set gives zero, and the screen could not tell that apart
+    from a balance that genuinely is zero. `cash_available` is the distinction.
+    """
+    from modules.insights.service import period_data_status
+
+    pe = date(2026, 2, 28)
+
+    # Nothing saved for the period at all.
+    st = period_data_status([], synced=True, period_end=pe)
+    assert st["cash_available"] is False
+    assert st["snapshot_accounts"] == 0
+
+    # Rows exist, but none of them are bank accounts.
+    st = period_data_status([_Snap("Accounts Receivable", "5000")], synced=True, period_end=pe)
+    assert st["cash_available"] is False
+    assert st["cash_accounts"] == 0
+
+
+def test_a_bank_account_at_zero_is_a_fact_not_a_gap():
+    """The case that must NOT be suppressed. A bank account genuinely sitting
+    at zero is a real balance, and hiding it behind a dash would be its own
+    kind of lie."""
+    from modules.insights.service import period_data_status
+
+    st = period_data_status(
+        [_Snap("Bank", "0.00")], synced=True, period_end=date(2026, 2, 28),
+    )
+    assert st["cash_available"] is True, "$0 must still render as $0 here"
+    assert st["reason"] is None
+
+
+def test_data_status_names_the_cause():
+    """The three ways of having no figure are different problems with
+    different fixes. One generic string would send the user hunting."""
+    from modules.insights.service import period_data_status
+
+    pe = date(2026, 2, 28)
+    never_synced = period_data_status([], synced=False, period_end=pe)
+    didnt_save = period_data_status([], synced=True, period_end=pe)
+    no_banks = period_data_status(
+        [_Snap("Accounts Receivable", "5000")], synced=True, period_end=pe,
+    )
+
+    reasons = [never_synced["reason"], didnt_save["reason"], no_banks["reason"]]
+    assert all(r for r in reasons), "every missing case needs a reason"
+    assert len(set(reasons)) == 3, "the three causes must not share a message"
+    # Each names the month, so the message stands alone in a screenshot.
+    assert all("February 2026" in r for r in reasons)
+    assert "synced" in never_synced["reason"]
+    assert "didn't save" in didnt_save["reason"]
+    assert "bank" in no_banks["reason"].lower()
+
+
+def test_the_status_actually_reaches_the_payload():
+    """The rule is worthless if the UI never receives it — the frontend keys
+    the dash off `data_status`, and treats its absence as "the figure is real"
+    so payloads cached before this shipped keep their old behaviour."""
+    import inspect
+
+    from modules.insights import service
+
+    assert '"data_status":    data_status,' in inspect.getsource(service.compute_overview), (
+        "period_data_status must be published on the payload as data_status"
+    )
+
+
+def test_the_section_view_agrees_with_the_hero_tile():
+    """Two places render the cash balance. If only one of them handles the
+    absent case, the page contradicts itself — which is worse than either
+    answer alone."""
+    import inspect
+
+    from modules.insights import service
+
+    src = inspect.getsource(service.compute_overview)
+    assert 'data_status["cash_available"] else "—"' in src, (
+        "the liquidity KPI row must show a dash when the hero tile does"
+    )
+
+
 def test_compute_stamps_the_payload():
     """The read-side check is worthless if the write side never stamps."""
     import inspect
@@ -290,5 +381,10 @@ if __name__ == "__main__":
     test_a_cache_built_before_a_resync_is_not_fresh()
     test_a_payload_with_no_stamp_is_stale()
     test_an_unsynced_period_still_caches_normally()
+    test_no_bank_rows_is_reported_as_missing_not_as_zero()
+    test_a_bank_account_at_zero_is_a_fact_not_a_gap()
+    test_data_status_names_the_cause()
+    test_the_status_actually_reaches_the_payload()
+    test_the_section_view_agrees_with_the_hero_tile()
     test_compute_stamps_the_payload()
     print("INSIGHTS_ACCURACY_OK")

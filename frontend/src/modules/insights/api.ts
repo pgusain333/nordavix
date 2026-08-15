@@ -203,6 +203,26 @@ export interface Recommendation {
   detail:   string
 }
 
+/**
+ * Whether the period has balances to report at all.
+ *
+ * Summing an empty set gives zero, and a tile cannot tell that apart from a
+ * balance that genuinely is zero — so a month whose snapshot never saved
+ * rendered "$0" as though it were a fact. This says which it is.
+ *
+ * Optional: payloads cached before this shipped won't carry it.
+ */
+export interface DataStatus {
+  /** A PeriodSync row exists — QuickBooks was pulled for this period. */
+  synced:            boolean
+  snapshot_accounts: number
+  cash_accounts:     number
+  /** False = nothing to total, so a cash figure is absence, not a zero balance. */
+  cash_available:    boolean
+  /** Plain-language cause, when something is missing. */
+  reason:            string | null
+}
+
 export interface InsightsOverview {
   period_end:       string
   period_start:     string | null
@@ -210,6 +230,7 @@ export interface InsightsOverview {
   custom_range:     boolean
   custom_pl_error:  string | null
   qbo_connected:    boolean
+  data_status?:     DataStatus
   liquidity:        Liquidity
   cash_forecast:    CashForecast
   balance_sheet:    BalanceSheet

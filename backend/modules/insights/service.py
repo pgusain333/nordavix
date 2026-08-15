@@ -301,6 +301,51 @@ def _sum_by_types_presented(rows: list[GlBalanceSnapshot], types: set[str]) -> D
     return total
 
 
+def period_data_status(rows, *, synced: bool, period_end: date) -> dict:
+    """Does this period have balances to report, and if not, why not?
+
+    `_sum_by_types` over an empty list returns 0, and a screen cannot tell that
+    apart from a balance that genuinely IS zero — which is how a February whose
+    snapshot never saved rendered a confident "$0" for cash.
+
+    The three ways of having nothing are different problems with different
+    fixes, so each gets its own message rather than one generic string:
+    never synced, synced but the balances didn't save, and synced with no bank
+    accounts among them.
+
+    A bank account sitting at zero is NOT one of these. That is a fact, and it
+    must still render as $0.
+
+    Pure, because it is the rule that decides whether the product states a
+    figure or admits it doesn't have one.
+    """
+    period_rows = list(rows or [])
+    cash_rows = [r for r in period_rows if r.account_type in CASH_TYPES]
+    month = period_end.strftime("%B %Y")
+
+    if not synced:
+        reason = f"{month} hasn't been synced from QuickBooks yet."
+    elif not period_rows:
+        reason = (
+            f"The {month} balances didn't save — the trial-balance pull failed. "
+            "Re-sync the period."
+        )
+    elif not cash_rows:
+        reason = f"No bank or cash accounts were found in the {month} balances."
+    else:
+        reason = None
+
+    return {
+        "synced":            synced,
+        "snapshot_accounts": len(period_rows),
+        "cash_accounts":     len(cash_rows),
+        # False = there was nothing to total, so any cash figure is absence.
+        # True with a zero total is a real, reportable zero.
+        "cash_available":    bool(cash_rows),
+        "reason":            reason,
+    }
+
+
 def cache_is_fresh(payload: dict | None, current_synced_at_iso: str | None) -> bool:
     """Does a cached Insights payload still describe the data it was built from?
 
@@ -1039,6 +1084,17 @@ async def compute_overview(
         custom_prior_start = custom_prior_end - timedelta(days=custom_span_days)
         custom_pl_prior, _ = await _fetch_pl_summary(qbo_conn, db, custom_prior_start, custom_prior_end)
 
+    # ── What data actually exists for this period ────────────────────────────
+    # `_sum_by_types` over an empty list returns 0, and a screen cannot tell
+    # that apart from a balance that genuinely IS zero. Cash rendered as "$0"
+    # for a month whose balances never saved reads as a fact rather than a gap.
+    # Count what we have so the UI can say "—, not synced" instead.
+    data_status = period_data_status(
+        snaps_by_pe.get(period_end, []),
+        synced=period_end in sync_by_pe,
+        period_end=period_end,
+    )
+
     # ── Liquidity & cash flow ─────────────────────────────────────────────────
     def cash_at(pe: date) -> Decimal:
         return _sum_by_types(snaps_by_pe.get(pe, []), CASH_TYPES)
@@ -1188,12 +1244,21 @@ async def compute_overview(
         "kpis": [
             {
                 "kpi":     "Cash balance",
-                "value":   _money_str(cash_balance),
+                # Same rule as the hero tile: with no bank rows there is
+                # nothing to total, and "$0" would assert a balance we do not
+                # have. The section view must not disagree with the tile.
+                "value":   (
+                    _money_str(cash_balance) if data_status["cash_available"] else "—"
+                ),
                 "risk":    "neutral",
                 "insight": (
-                    f"Total bank/cash at {period_end.isoformat()}."
-                    + (f" {_change_str(float(cash_balance), float(cash_prior))} vs prior month."
-                       if cash_prior else "")
+                    (
+                        f"Total bank/cash at {period_end.isoformat()}."
+                        + (f" {_change_str(float(cash_balance), float(cash_prior))} vs prior month."
+                           if cash_prior else "")
+                    )
+                    if data_status["cash_available"]
+                    else (data_status["reason"] or "No bank or cash balances for this period.")
                 ),
             },
             {
@@ -2059,6 +2124,9 @@ async def compute_overview(
         "custom_range":   period_start is not None and not is_full_month,
         "is_full_month":  is_full_month,
         "custom_pl_error": custom_pl_error,
+        # Whether the period has balances to report at all — lets the UI show a
+        # reason instead of a confident zero.
+        "data_status":    data_status,
         "liquidity":      liquidity,
         "cash_forecast":  cash_forecast,
         "balance_sheet":  balance_sheet,
