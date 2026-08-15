@@ -867,6 +867,12 @@ function SectionBody({ id, data, onJumpToMonth }: {
     case "receivables":
       return (
         <>
+          <ControlAccountTie
+            label="A/R"
+            balance={data.receivables.ar_balance}
+            agingTotal={data.receivables.ar_aging_total}
+            variance={data.receivables.ar_aging_variance}
+          />
           {data.receivables.aging.length > 0
             ? <AgingBars buckets={data.receivables.aging} />
             : data.receivables.qbo_error ? <InlineHint text={data.receivables.qbo_error} /> : null}
@@ -883,6 +889,12 @@ function SectionBody({ id, data, onJumpToMonth }: {
     case "payables":
       return (
         <>
+          <ControlAccountTie
+            label="A/P"
+            balance={data.payables.ap_balance}
+            agingTotal={data.payables.ap_aging_total}
+            variance={data.payables.ap_aging_variance}
+          />
           {data.payables.aging.length > 0
             ? <AgingBars buckets={data.payables.aging} />
             : data.payables.qbo_error ? <InlineHint text={data.payables.qbo_error} /> : null}
@@ -1510,6 +1522,74 @@ function SectionDivider({ label }: { label: string }) {
     <div className="flex items-center gap-2 pt-1">
       <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>{label}</span>
       <span className="flex-1 h-px" style={{ background: "var(--border)" }} />
+    </div>
+  )
+}
+
+/**
+ * Control account vs its subledger.
+ *
+ * Insights used to REPLACE the ledger balance with the aging total, which put
+ * it at odds with both QuickBooks' Balance Sheet and Nordavix's own Financial
+ * Statements. The ledger is now the balance; this shows the aging beside it and
+ * names the gap. The two differing is normal — journal entries posted to the
+ * control account with no customer or vendor, unapplied credits and payments —
+ * and a preparer wants to see that difference, not have it silently applied.
+ *
+ * Renders nothing when there is no aging to compare against, so an unsynced
+ * period doesn't show a meaningless zero variance.
+ */
+function ControlAccountTie({
+  label, balance, agingTotal, variance,
+}: {
+  label: string
+  balance: number
+  agingTotal?: number | null
+  variance?: number | null
+}) {
+  if (agingTotal == null || variance == null) return null
+  const material = Math.abs(variance) >= 0.01
+  return (
+    <div
+      className="rounded-lg px-3 py-2.5 text-[12px]"
+      style={{
+        background: material ? "rgba(199, 154, 82, 0.08)" : "var(--surface-2)",
+        border: `1px solid ${material ? "rgba(199, 154, 82, 0.30)" : "var(--border)"}`,
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span style={{ color: "var(--text-2)" }}>{label} per the general ledger</span>
+        <span className="font-semibold tabular-nums" style={{ color: "var(--text)" }}>
+          {fmtMoney(balance)}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-3 mt-1">
+        <span style={{ color: "var(--text-muted)" }}>Aging report total</span>
+        <span className="tabular-nums" style={{ color: "var(--text-2)" }}>
+          {fmtMoney(agingTotal)}
+        </span>
+      </div>
+      <div
+        className="flex items-center justify-between gap-3 mt-1.5 pt-1.5"
+        style={{ borderTop: "1px solid var(--border)" }}
+      >
+        <span className="font-semibold" style={{ color: material ? "#8a6326" : "var(--text-muted)" }}>
+          {material ? "Difference to review" : "Subledger agrees"}
+        </span>
+        <span
+          className="font-semibold tabular-nums"
+          style={{ color: material ? "#8a6326" : "#3d7f60" }}
+        >
+          {fmtMoney(variance)}
+        </span>
+      </div>
+      {material && (
+        <p className="text-[11px] leading-snug mt-1.5" style={{ color: "var(--text-muted)" }}>
+          The balance above is the ledger — the same figure as the Balance Sheet.
+          Journal entries posted without a customer or vendor, and unapplied
+          credits, are the usual causes of a gap.
+        </p>
+      )}
     </div>
   )
 }

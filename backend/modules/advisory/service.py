@@ -88,6 +88,27 @@ async def kpi_overview(db: AsyncSession, tenant_id, period_end: date, n: int = 6
         .order_by(desc(InsightsSnapshot.period_end), desc(InsightsSnapshot.computed_at))
     )).scalars().all())
 
+    # Drop any snapshot that no longer describes the period it was computed
+    # from. The Insights read path recomputes a stale month when someone opens
+    # it, but a KPI trend reads these rows directly and would otherwise plot a
+    # month at figures superseded by a later re-sync — a wrong line on a chart
+    # a partner reads, with nothing to say so. A month that has gone stale and
+    # not been re-opened is omitted rather than drawn.
+    from models.period_sync import PeriodSync
+    from modules.insights.service import cache_is_fresh
+
+    sync_by_pe = {
+        ps.period_end: (ps.synced_at.isoformat() if ps.synced_at else None)
+        for ps in (await db.execute(
+            select(PeriodSync).where(PeriodSync.period_end <= period_end)
+        )).scalars().all()
+    }
+    rows = [
+        r for r in rows
+        if r.period_end not in sync_by_pe
+        or cache_is_fresh(dict(r.payload or {}), sync_by_pe[r.period_end])
+    ]
+
     def _is_full_month(r: InsightsSnapshot) -> bool:
         if r.period_start is None:
             return True

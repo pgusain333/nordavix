@@ -105,6 +105,7 @@ _INVARIANT_FILES = {
     "test_audit_chain.py",        # audit-log tamper evidence (edit/delete/reorder caught)
     "test_cross_tenant_access.py",  # firm-view membership from Clerk (fails closed)
     "test_recon_conclusion.py",   # frozen recon working paper (variance derived, hash covers edits)
+    "test_insights_accuracy.py",  # insights figures (TB resolution, ledger-sourced AR/AP, cache staleness)
 }
 
 

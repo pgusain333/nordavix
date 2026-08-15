@@ -15,6 +15,7 @@ Insights API.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,8 +25,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.auth.dependencies import CurrentTenantId
 from core.db.session import get_db
 from models.insights_snapshot import InsightsSnapshot
-from modules.insights.service import compute_overview
+from models.period_sync import PeriodSync
+from modules.insights.service import cache_is_fresh, compute_overview
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -58,13 +61,33 @@ async def get_overview(
         if ps > pe:
             raise HTTPException(status_code=400, detail="period_start must be on or before period_end")
 
-    # Serve the cached snapshot untouched unless an explicit Sync was requested.
+    # Serve the cached snapshot, but only while it still describes the data it
+    # was computed from. The cache used to be served unconditionally and was
+    # never invalidated by anything — so re-syncing a period from QuickBooks,
+    # posting adjusting entries, or fixing a misclassification left Insights
+    # showing the figures from whenever the month was first opened, with
+    # nothing on screen to say so. AR, AP and cash all drifted from
+    # QuickBooks that way, by a different amount in each month.
+    #
+    # Compared against the period's CURRENT sync stamp rather than cleared by
+    # the writers: a cache that heals itself cannot be broken by a future write
+    # path forgetting to call an invalidation hook.
     if not refresh:
         saved = (await db.execute(_snapshot_query(pe, ps))).scalar_one_or_none()
         if saved is not None:
+            current_sync = (await db.execute(
+                select(PeriodSync.synced_at).where(PeriodSync.period_end == pe)
+            )).scalar_one_or_none()
+            current_iso = current_sync.isoformat() if current_sync else None
             payload = dict(saved.payload)
-            payload["saved_at"] = saved.computed_at.isoformat()
-            return payload
+            if cache_is_fresh(payload, current_iso):
+                payload["saved_at"] = saved.computed_at.isoformat()
+                return payload
+            logger.info(
+                "Insights cache stale for %s (computed against %s, period now synced %s)"
+                " — recomputing",
+                pe, payload.get("source_synced_at"), current_iso,
+            )
 
     # Compute (this is the expensive path: snapshot read + live QBO aging) and
     # upsert the cache so the next plain load is instant.

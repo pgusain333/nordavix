@@ -171,6 +171,29 @@ def parse_trial_balance(report: dict) -> TbBalances:
     count = 0
     debit_sum = Decimal("0")
     credit_sum = Decimal("0")
+    # Aliases claimed by more than one account. A bare sub-account name is not
+    # unique — "Chase:Checking" and "Wells Fargo:Checking" both reduce to
+    # "Checking" — and last-writer-wins silently returned one bank's balance
+    # for both, overstating cash. An ambiguous alias is dropped instead, so the
+    # lookup MISSES and the caller records it, rather than returning a
+    # confident wrong number.
+    alias_owner: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    # An account's own rendered name is its identity, never an alias. Without
+    # this, a chart containing both "Petty Cash" and "Chase:Petty Cash" would
+    # mark "Petty Cash" ambiguous — via the sub-account's leaf — and delete the
+    # standalone account's own key, making IT unresolvable.
+    canonical: set[str] = set()
+
+    def claim(alias: str, owner: str, bal: Decimal) -> None:
+        if not alias:
+            return
+        prev = alias_owner.get(alias)
+        if prev is not None and prev != owner:
+            ambiguous.add(alias)
+            return
+        alias_owner[alias] = owner
+        out_name[alias] = bal
 
     def walk(rows: list[dict]) -> None:
         nonlocal count, debit_sum, credit_sum
@@ -191,18 +214,28 @@ def parse_trial_balance(report: dict) -> TbBalances:
                     credit_sum += credit
                     if acct_id:
                         out_id[str(acct_id)] = bal
+                    # The full rendered name is the account's own identity, so
+                    # it is never ambiguous. Everything derived from it is.
+                    owner = name
                     out_name[name] = bal
-                    out_name[" ".join(name.split())] = bal
+                    alias_owner[name] = owner
+                    canonical.add(name)
+                    claim(" ".join(name.split()), owner, bal)
                     if ":" in name:
-                        out_name[name.split(":")[-1].strip()] = bal
+                        claim(name.split(":")[-1].strip(), owner, bal)
                     if " " in name:
                         first_tok = name.split(" ", 1)[0]
                         if first_tok.replace("-", "").replace(".", "").isdigit():
-                            out_name[first_tok] = bal
+                            claim(first_tok, owner, bal)
             if sub:
                 walk(sub)
 
     walk(report.get("Rows", {}).get("Row", []) or [])
+    # Drop every alias two accounts both claimed — a miss the caller can log
+    # beats a wrong balance nobody can see. Canonical names are exempt: they
+    # identify one account each and are the only reliable key we have.
+    for alias in ambiguous - canonical:
+        out_name.pop(alias, None)
     return {
         "by_id": out_id, "by_name": out_name, "rows": count,
         "debit_total": debit_sum, "credit_total": credit_sum,
@@ -226,9 +259,15 @@ def lookup_balance(
     qbo_id: str = "",
     acct_num: str = "",
     name: str = "",
+    full_name: str = "",
 ) -> Decimal | None:
     """
     Resolve a single account's balance using id → number → name variants.
+
+    `full_name` is QBO's FullyQualifiedName ("Chase:Operating") and is tried
+    ahead of the leaf `name`, because that is the form the TrialBalance
+    renders for a sub-account. Matching the leaf first was how two accounts
+    sharing a child name resolved to each other's balance.
 
     Returns None on a clean miss so the caller decides what to do (a 0,
     a warning, etc.) — DO NOT fall back to QBO's CurrentBalance because
@@ -239,9 +278,14 @@ def lookup_balance(
     if acct_num and acct_num in tb["by_name"]:
         return tb["by_name"][acct_num]
     candidates = [
+        # Most specific first: fully-qualified forms cannot collide.
+        f"{acct_num} {full_name}".strip() if (acct_num and full_name) else "",
+        full_name,
         f"{acct_num} {name}".strip() if acct_num else name,
         name,
         f"{name} ({acct_num})".strip() if acct_num else "",
+        # Leaf last, and only survives in by_name when exactly one account
+        # claimed it — parse_trial_balance drops ambiguous aliases.
         name.split(":")[-1].strip() if ":" in name else "",
     ]
     for k in candidates:

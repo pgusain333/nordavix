@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
@@ -26,6 +27,34 @@ from models.qbo_connection import QboConnection
 
 logger = logging.getLogger(__name__)
 
+# Account types whose balance MUST be found in the trial balance. A P&L account
+# absent from the TB genuinely has no activity in the window, so zero is the
+# right answer. A balance-sheet account absent from it is either genuinely flat
+# or a resolution failure — and the two are indistinguishable here, so the miss
+# is recorded rather than assumed away. A silent zero on a bank account is the
+# defect this exists to prevent: cash quietly understated for one month, with
+# nothing on screen and nothing in the logs.
+_BALANCE_SHEET_TYPES = frozenset({
+    "Bank", "Accounts Receivable", "Other Current Asset", "Fixed Asset",
+    "Other Asset", "Accounts Payable", "Credit Card", "Other Current Liability",
+    "Long Term Liability", "Equity",
+})
+
+
+@dataclass
+class SnapshotResult:
+    """Outcome of a capture. `written < 0` means the pull or commit failed and
+    the stored snapshot is STALE, not empty — callers must tell those apart."""
+    written: int = 0
+    # Balance-sheet accounts the trial balance did not resolve, stored as 0.00.
+    bs_misses: list[str] = field(default_factory=list)
+
+    def __int__(self) -> int:          # backwards-compatible with `< 0` checks
+        return self.written
+
+    def __lt__(self, other) -> bool:
+        return self.written < other
+
 
 async def capture_snapshot(
     db: AsyncSession,
@@ -34,16 +63,17 @@ async def capture_snapshot(
     conn: QboConnection | None = None,
     tb_report: dict | None = None,
     bs_accts: list[dict] | None = None,
-) -> int:
+) -> SnapshotResult:
     """
     Pull every active QBO account + its balance at period_end via the
     canonical TB fetcher and upsert to gl_balance_snapshots.
 
-    Returns the number of rows written, or -1 if the QBO TrialBalance pull (or
-    the commit) failed — so the caller can tell a failed refresh (which leaves a
-    STALE snapshot) apart from a legitimately empty one, and surface it instead
-    of continuing silently. Never raises on a QBO error, so it can't block the
-    recons sync.
+    Returns a SnapshotResult: `written` is the row count, or -1 if the QBO
+    TrialBalance pull (or the commit) failed — so the caller can tell a failed
+    refresh (which leaves a STALE snapshot) apart from a legitimately empty one,
+    and surface it instead of continuing silently. `bs_misses` names any
+    balance-sheet account the trial balance did not resolve. Never raises on a
+    QBO error, so it can't block the recons sync.
     """
     from core.qbo_tb import fetch_trial_balance, parse_trial_balance
 
@@ -53,7 +83,7 @@ async def capture_snapshot(
             execution_options={"skip_tenant_filter": True},
         )).scalar_one_or_none()
     if conn is None:
-        return 0
+        return SnapshotResult(written=0)
 
     try:
         # Reuse the caller's already-pulled TrialBalance when provided (the recons
@@ -62,7 +92,7 @@ async def capture_snapshot(
         parsed = parse_trial_balance(report)
     except Exception:
         logger.exception("Snapshot TB pull failed for %s", period_end)
-        return -1
+        return SnapshotResult(written=-1)
 
     # parse_trial_balance returns rows keyed by account name; we also
     # need account_type which only the /query gives us. Pull the
@@ -90,17 +120,27 @@ async def capture_snapshot(
     existing_by_acct: dict[str, GlBalanceSnapshot] = {r.qbo_account_id: r for r in existing}
 
     written = 0
+    bs_misses: list[str] = []
     for qid, acct in all_accts_by_id.items():
         name = str(acct.get("Name") or "").strip()
         acct_num = str(acct.get("AcctNum") or "").strip()
         acct_type = str(acct.get("AccountType") or "").strip()
+        # The fully-qualified name is what the trial balance renders for a
+        # sub-account ("Chase:Operating"); Name alone is just the leaf.
+        full_name = str(acct.get("FullyQualifiedName") or "").strip()
         if not name:
             continue
-        bal = lookup_balance(parsed, qbo_id=qid, acct_num=acct_num, name=name)
+        bal = lookup_balance(
+            parsed, qbo_id=qid, acct_num=acct_num, name=name, full_name=full_name,
+        )
         if bal is None:
-            # P&L accounts often have $0 mid-period — record explicit zero
-            # so the IS builder sees them as line items (with no activity)
-            # rather than missing entirely.
+            # A P&L account absent from the TB genuinely had no activity in the
+            # window, so zero is correct. A BALANCE-SHEET account absent from it
+            # might be flat — or might be a resolution failure — and storing
+            # zero for the second case is how cash goes quietly wrong. Record
+            # it either way so the sync can surface it.
+            if acct_type in _BALANCE_SHEET_TYPES:
+                bs_misses.append(f"{acct_num + ' ' if acct_num else ''}{full_name or name}")
             bal = Decimal("0")
         bal_q = bal.quantize(Decimal("0.01"))
 
@@ -137,8 +177,15 @@ async def capture_snapshot(
         # the next query on the same session hits PendingRollbackError).
         await db.rollback()
         logger.exception("Snapshot commit failed for %s", period_end)
-        return -1
-    return written
+        return SnapshotResult(written=-1)
+    if bs_misses:
+        # ERROR, not warning: every one of these is a balance-sheet figure
+        # stored as zero that may not be zero.
+        logger.error(
+            "TB lookup missed %d balance-sheet account(s) for %s — stored as 0.00: %s",
+            len(bs_misses), period_end, "; ".join(bs_misses[:20]),
+        )
+    return SnapshotResult(written=written, bs_misses=bs_misses)
 
 
 async def _list_pl_accounts(conn: QboConnection, db: AsyncSession) -> list[dict]:
@@ -149,7 +196,9 @@ async def _list_pl_accounts(conn: QboConnection, db: AsyncSession) -> list[dict]
     types = ["Income", "Cost of Goods Sold", "Expense", "Other Income", "Other Expense"]
     quoted = ", ".join(f"'{t}'" for t in types)
     q = (
-        f"SELECT Id, Name, AcctNum, AccountType, CurrentBalance "
+        # See the note in _list_balance_sheet_accounts — the TB renders
+        # sub-accounts fully qualified, so we need that form to match on.
+        f"SELECT Id, Name, FullyQualifiedName, AcctNum, AccountType, CurrentBalance "
         f"FROM Account WHERE AccountType IN ({quoted}) AND Active = true "
         f"MAXRESULTS 500"
     )

@@ -301,6 +301,59 @@ def _sum_by_types_presented(rows: list[GlBalanceSnapshot], types: set[str]) -> D
     return total
 
 
+def cache_is_fresh(payload: dict | None, current_synced_at_iso: str | None) -> bool:
+    """Does a cached Insights payload still describe the data it was built from?
+
+    The payload is cached in `insights_snapshots` and NOTHING used to
+    invalidate it, so re-syncing a period from QuickBooks — or posting
+    adjusting entries and re-syncing — left Insights serving the figures from
+    whenever the month was first opened, indefinitely and silently.
+
+    Rather than clear the cache from every write path (which only works while
+    every future write path remembers), the payload records the sync it was
+    computed against and the read path checks it here. Self-healing beats
+    disciplined.
+
+    A payload with no stamp predates this and is treated as stale, so the first
+    view after deploy recomputes once.
+    """
+    if not payload:
+        return False
+    stamped = payload.get("source_synced_at", _MISSING_STAMP)
+    if stamped is _MISSING_STAMP:
+        return False
+    return stamped == current_synced_at_iso
+
+
+_MISSING_STAMP = object()
+
+
+def control_account_figures(
+    gl_balance: Decimal, aging_total: Decimal | None,
+) -> tuple[float, float | None, float | None]:
+    """(balance, aging_total, variance) for a control account — A/R or A/P.
+
+    THE LEDGER IS THE BALANCE. Insights used to prefer the aging report's total
+    and fall back to the ledger, which put it at odds with both QuickBooks'
+    Balance Sheet and Nordavix's own Financial Statements. The two figures
+    differ for ordinary reasons — journal entries posted to the control account
+    with no customer or vendor, unapplied credits and payments, multi-currency —
+    so the aging is a SUBLEDGER COMPARISON, not a substitute.
+
+    The variance is returned rather than hidden: the gap between a control
+    account and its subledger is exactly what a preparer needs to see, provided
+    it is labelled as a gap instead of silently replacing the balance.
+
+    A pure function because it is the business rule, and rules that can only be
+    checked by reading the code are rules that quietly change.
+    """
+    balance = float(Decimal(gl_balance).quantize(Decimal("0.01")))
+    if aging_total is None:
+        return balance, None, None
+    aging = float(Decimal(aging_total).quantize(Decimal("0.01")))
+    return balance, aging, round(balance - aging, 2)
+
+
 # ── live QBO aging (best-effort; degrades gracefully) ────────────────────────
 
 _BUCKETS = ["current", "1_30", "31_60", "61_90", "over_90"]
@@ -1481,9 +1534,22 @@ async def compute_overview(
     }
 
     # ── AR + receivables ────────────────────────────────────────────────────
+    # THE LEDGER IS THE BALANCE. This used to prefer the A/R Aging Summary
+    # total and fall back to the GL, which made Insights disagree with both
+    # QuickBooks' Balance Sheet and Nordavix's own Financial Statements — the
+    # aging report and the A/R control account routinely differ in real books
+    # (journal entries posted to A/R with no customer, unapplied credits and
+    # payments, multi-currency).
+    #
+    # The aging total is still reported, beside the balance rather than in
+    # place of it, with the difference named. That gap is genuinely useful
+    # information to a preparer — but only when it is labelled as a subledger
+    # variance instead of silently replacing the balance.
     ar_balance_gl = _sum_by_types(snaps_by_pe.get(period_end, []), AR_TYPES)
-    ar_balance_sync = sync_by_pe[period_end].ar_aging_total if period_end in sync_by_pe else None
-    ar_balance = float(ar_balance_sync) if ar_balance_sync is not None else _to_money(ar_balance_gl)
+    ar_aging_sync = sync_by_pe[period_end].ar_aging_total if period_end in sync_by_pe else None
+    ar_balance, ar_aging_total, ar_aging_variance = control_account_figures(
+        ar_balance_gl, ar_aging_sync,
+    )
 
     # DSO = AR ÷ (revenue for the period ÷ days in the period). Uses the exact
     # window length so a custom range or a 28/31-day month is measured correctly.
@@ -1513,6 +1579,11 @@ async def compute_overview(
 
     receivables = {
         "ar_balance":         ar_balance,
+        # Subledger comparison — the aging total and how far it sits from the
+        # control account. Null when the period was never synced.
+        "ar_aging_total":     ar_aging_total,
+        "ar_aging_variance":  ar_aging_variance,
+        "balance_source":     "General ledger (A/R control account)",
         "dso_days":           dso_days,
         "aging":              aging_summary,
         "aging_over_60_pct":  aging_over_60_pct,
@@ -1523,7 +1594,18 @@ async def compute_overview(
                 "kpi":     "AR balance",
                 "value":   _money_str(ar_balance),
                 "risk":    "neutral",
-                "insight": "Total receivables owed at period end.",
+                "insight": (
+                    "Total receivables owed at period end, per the general "
+                    "ledger — the same figure as the Balance Sheet."
+                    + (
+                        f" The A/R aging totals {_money_str(ar_aging_total)}, "
+                        f"a {_money_str(abs(ar_aging_variance))} difference to "
+                        "review."
+                        if ar_aging_variance is not None
+                        and abs(ar_aging_variance) >= 0.01
+                        else ""
+                    )
+                ),
             },
             {
                 "kpi":     "DSO (Days Sales Outstanding)",
@@ -1557,9 +1639,12 @@ async def compute_overview(
     }
 
     # ── AP + payables ───────────────────────────────────────────────────────
+    # Ledger first, aging alongside — same reasoning as A/R above.
     ap_balance_gl = _sum_by_types_presented(snaps_by_pe.get(period_end, []), AP_TYPES)
-    ap_balance_sync = sync_by_pe[period_end].ap_aging_total if period_end in sync_by_pe else None
-    ap_balance = float(ap_balance_sync) if ap_balance_sync is not None else _to_money(ap_balance_gl)
+    ap_aging_sync = sync_by_pe[period_end].ap_aging_total if period_end in sync_by_pe else None
+    ap_balance, ap_aging_total, ap_aging_variance = control_account_figures(
+        ap_balance_gl, ap_aging_sync,
+    )
 
     # DPO = AP ÷ (COGS for the period ÷ days in the period).
     dpo_days: float | None
@@ -1595,6 +1680,9 @@ async def compute_overview(
 
     payables = {
         "ap_balance":           ap_balance,
+        "ap_aging_total":       ap_aging_total,
+        "ap_aging_variance":    ap_aging_variance,
+        "balance_source":       "General ledger (A/P control account)",
         "dpo_days":             dpo_days,
         "aging":                ap_aging_summary,
         "aging_over_60_pct":    ap_aging_over_60_pct,
@@ -1606,7 +1694,18 @@ async def compute_overview(
                 "kpi":     "AP balance",
                 "value":   _money_str(ap_balance),
                 "risk":    "neutral",
-                "insight": "Total payables owed at period end.",
+                "insight": (
+                    "Total payables owed at period end, per the general "
+                    "ledger — the same figure as the Balance Sheet."
+                    + (
+                        f" The A/P aging totals {_money_str(ap_aging_total)}, "
+                        f"a {_money_str(abs(ap_aging_variance))} difference to "
+                        "review."
+                        if ap_aging_variance is not None
+                        and abs(ap_aging_variance) >= 0.01
+                        else ""
+                    )
+                ),
             },
             {
                 "kpi":     "DPO (Days Payable Outstanding)",
@@ -1970,6 +2069,17 @@ async def compute_overview(
         "profitability":  profitability,
         "expenses":       expenses,
         "qbo_connected":  qbo_conn is not None,
+        # STALENESS KEY. The whole payload is cached in `insights_snapshots`,
+        # and nothing used to invalidate it — so a period re-synced from
+        # QuickBooks kept serving the figures computed the first time anyone
+        # opened it. Recording the sync this compute was based on lets the
+        # reader detect that by itself, rather than relying on every future
+        # write path remembering to clear a cache.
+        "source_synced_at": (
+            sync_by_pe[period_end].synced_at.isoformat()
+            if period_end in sync_by_pe and sync_by_pe[period_end].synced_at
+            else None
+        ),
     }
 
     payload["recommendations"] = _build_recommendations(payload)

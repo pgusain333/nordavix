@@ -791,6 +791,27 @@ async def dispatch_tool(
                     "and click Sync, then ask again."
                 ),
             }
+        # Refuse a snapshot that predates the period's current sync. Answering
+        # from figures QuickBooks has since superseded is worse than saying we
+        # don't know — the assistant states its answers as fact, and nothing
+        # here would flag them as out of date.
+        from models.period_sync import PeriodSync
+        from modules.insights.service import cache_is_fresh
+        _sync = (await db.execute(
+            select(PeriodSync.synced_at).where(PeriodSync.period_end == pe)
+        )).scalar_one_or_none()
+        if not cache_is_fresh(dict(snap.payload or {}),
+                              _sync.isoformat() if _sync else None):
+            return {
+                "ok": False,
+                "period_end": pe.isoformat(),
+                "note": (
+                    "The saved insights for this period are older than the last "
+                    "QuickBooks sync, so the figures would be out of date. Open "
+                    "the Insights screen for this period to refresh them, then "
+                    "ask again."
+                ),
+            }
         p = snap.payload or {}
         ms = p.get("management_summary") or {}
         liq = p.get("liquidity") or {}

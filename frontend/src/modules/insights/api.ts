@@ -144,7 +144,18 @@ export interface Breakeven {
 }
 
 export interface Receivables {
+  /** The A/R control account per the general ledger — ties to the Balance
+   *  Sheet and to Financial Statements. */
   ar_balance:        number
+  /** A/R Aging Summary total at the same date. Null when the period was never
+   *  synced. Reported BESIDE the balance, never in place of it: the two differ
+   *  for ordinary reasons (journal entries to A/R with no customer, unapplied
+   *  credits), and substituting one for the other is what put Insights at odds
+   *  with QuickBooks. */
+  ar_aging_total?:    number | null
+  /** ledger − aging. Null when there is no aging to compare against. */
+  ar_aging_variance?: number | null
+  balance_source?:    string
   dso_days:          number | null
   aging:             AgingBucket[]
   aging_over_60_pct: number | null
@@ -155,7 +166,11 @@ export interface Receivables {
 }
 
 export interface Payables {
+  /** The A/P control account per the general ledger. */
   ap_balance:        number
+  ap_aging_total?:    number | null
+  ap_aging_variance?: number | null
+  balance_source?:    string
   dpo_days:          number | null
   aging:             AgingBucket[]
   aging_over_60_pct: number | null

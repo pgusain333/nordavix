@@ -157,15 +157,30 @@ async def sync_overview(
     # period would render STALE. Surface that instead of silently continuing.
     snapshot_error: str | None = None
     try:
-        snap_written = await capture_snapshot(
+        snap_result = await capture_snapshot(
             session, tid, period_end, conn=conn, tb_report=tb_report, bs_accts=accounts_meta,
         )
-        if snap_written < 0:
+        if snap_result.written < 0:
             snapshot_error = (
                 "Couldn't refresh the financial-statement snapshot from QuickBooks — "
                 "Financial Statements for this period may be stale until you re-sync."
             )
             logger.error("GL snapshot not refreshed for %s — financials may be stale", period_end)
+        elif snap_result.bs_misses:
+            # Each of these is a balance-sheet account stored as zero because
+            # the trial balance didn't resolve it. Silently, that reads as "this
+            # account is flat" — which is how cash ends up understated for one
+            # month and nobody can tell. Name them.
+            n = len(snap_result.bs_misses)
+            shown = ", ".join(snap_result.bs_misses[:5])
+            snapshot_error = (
+                f"{n} balance-sheet account{'s' if n != 1 else ''} could not be matched "
+                f"to the QuickBooks trial balance and {'were' if n != 1 else 'was'} "
+                f"recorded as zero: {shown}"
+                + (f" (+{n - 5} more)" if n > 5 else "")
+                + ". Financial Statements and Insights for this period will be understated "
+                "until the account names or numbers line up."
+            )
     except Exception:
         logger.exception("GL snapshot capture failed for %s", period_end)
         snapshot_error = (
@@ -1150,7 +1165,10 @@ async def _list_balance_sheet_accounts(
     types = list(ACCOUNT_TYPE_GROUPS.keys())
     quoted = ", ".join(f"'{t}'" for t in types)
     q = (
-        f"SELECT Id, Name, AcctNum, AccountType, CurrentBalance "
+        # FullyQualifiedName is what the TrialBalance renders for a sub-account
+        # ("Chase:Operating"); Name alone is the leaf, and matching on the leaf
+        # is ambiguous the moment two parents have a child with the same name.
+        f"SELECT Id, Name, FullyQualifiedName, AcctNum, AccountType, CurrentBalance "
         f"FROM Account WHERE AccountType IN ({quoted}) AND Active = true "
         f"MAXRESULTS 500"
     )
