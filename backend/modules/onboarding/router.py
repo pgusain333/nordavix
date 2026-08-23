@@ -1,9 +1,19 @@
 """
-Onboarding status — a read-only checklist that tells the dashboard how far a
-new workspace has gotten through first-run setup. Every step is DERIVED from
-data that already exists (no new tables, no manual ticking): connect QBO, set
-the books-start date, run a sync, complete a reconciliation, run a flux
-analysis, invite a teammate.
+Onboarding status — the blank-canvas checklist. It answers one question: is
+this workspace ready to work in yet?
+
+SETUP ONLY. It used to also list "complete a reconciliation" and "run a flux
+analysis", which are the WORK, not the setup — a reconciliation is a dozen
+steps of judgement, and putting it on a first-run checklist implied a single
+tick would finish it. Those belong in the close itself. What is left is the
+three things that turn an empty workspace into a usable one, plus the one
+optional step that matters before real work starts:
+
+    connect QuickBooks → set the books-start date → run the first sync
+    (+ invite a teammate, so maker/checker is possible)
+
+Every step is DERIVED from data that already exists — no new tables, no manual
+ticking.
 
 GET /api/onboarding/status
   → { steps: [{key,label,description,done,cta,optional}], complete, done, total }
@@ -13,6 +23,8 @@ checklist card at that point.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -20,13 +32,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId
 from core.db.session import get_db
-from models.account_review_status import AccountReviewStatus
 from models.period_sync import PeriodSync
 from models.qbo_connection import QboConnection
 from models.tenant import Tenant
 from models.user import User
-from models.variance import Variance
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -71,34 +82,36 @@ async def onboarding_status(
 
     books_started = bool(t and t.books_start_date)
     synced        = await _exists(db, PeriodSync.id)
-    reconciled    = (await db.execute(
-        select(AccountReviewStatus.id)
-        .where(AccountReviewStatus.status.in_(("reviewed", "approved")))
-        .limit(1)
-    )).first() is not None
-    fluxed        = await _exists(db, Variance.id)
-    # >1 user in this tenant ⇒ at least one teammate joined.
-    user_count    = (await db.execute(select(func.count(User.id)))).scalar() or 0
-    has_team      = user_count > 1
+
+    # Team membership comes from CLERK, not from local User rows. Those rows are
+    # created LAZILY on a member's first request, so counting them meant an
+    # invited teammate who hadn't signed in yet left this step unticked — the
+    # checklist told you to do something you had already done. Clerk knows the
+    # moment the invitation is accepted. Falls back to the local count if Clerk
+    # is unreachable, which is the old behaviour rather than a hard failure.
+    has_team = False
+    if t and t.clerk_org_id:
+        try:
+            from core.auth.clerk_users import list_org_memberships
+            has_team = len(await list_org_memberships(t.clerk_org_id)) > 1
+        except Exception:
+            logger.warning("Clerk membership check failed for %s", t.clerk_org_id, exc_info=True)
+            has_team = False
+    if not has_team:
+        has_team = ((await db.execute(select(func.count(User.id)))).scalar() or 0) > 1
 
     steps = [
         OnboardingStep(key="connect",   label="Connect QuickBooks",
-                       description="Link your QuickBooks Online company so Nordavix can pull your books.",
+                       description="Link the QuickBooks Online company so Nordavix can read its books.",
                        done=qbo_connected, cta="/app/connections"),
-        OnboardingStep(key="books",     label="Set your books start date",
-                       description="Tell Nordavix when your books begin so opening balances roll forward correctly.",
+        OnboardingStep(key="books",     label="Set the books start date",
+                       description="The first period Nordavix should close. Opening balances roll forward from here.",
                        done=books_started, cta="/app/setup/books"),
-        OnboardingStep(key="sync",      label="Run your first sync",
-                       description="Pull the trial balance and snapshot your GL for the period.",
+        OnboardingStep(key="sync",      label="Run the first sync",
+                       description="Pulls the trial balance and account balances. After this the workspace has data to work with.",
                        done=synced, cta="/app/reconciliations"),
-        OnboardingStep(key="reconcile", label="Complete a reconciliation",
-                       description="Tie out a balance-sheet account against its subledger.",
-                       done=reconciled, cta="/app/reconciliations"),
-        OnboardingStep(key="flux",      label="Run a flux analysis",
-                       description="Explain the material movements in your P&L.",
-                       done=fluxed, cta="/app/flux"),
         OnboardingStep(key="team",      label="Invite a teammate",
-                       description="Add a preparer or reviewer so you can split maker/checker duties.",
+                       description="Approvals need a second person — you can't approve your own work.",
                        done=has_team, cta="/app/team", optional=True),
     ]
 
