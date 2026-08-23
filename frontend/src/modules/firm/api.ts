@@ -7,6 +7,12 @@
  */
 import { apiClient } from "@/core/api/client"
 
+/** A named person on the engagement. */
+export interface CommandCenterActor {
+  id:   string
+  name: string
+}
+
 export interface CommandCenterFocus {
   period_end: string
   label:      string
@@ -16,6 +22,11 @@ export interface CommandCenterFocus {
   reviewed:   number
   flagged:    number
   days_since_period_end: number
+  /** Distinct people who marked accounts prepared in this period.
+   *  Optional — payloads from before this shipped omit them. */
+  preparers?: CommandCenterActor[]
+  /** Distinct people who approved accounts in this period. */
+  reviewers?: CommandCenterActor[]
 }
 
 export interface CommandCenterFlux {

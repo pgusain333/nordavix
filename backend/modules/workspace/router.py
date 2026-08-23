@@ -794,11 +794,15 @@ async def get_command_center(
                 logger.exception("Tenant name backfill from Clerk failed")
 
     # Bulk pulls across all companies — review rows, locks, QBO connections.
+    # Actors come back on the SAME query as the statuses — who prepared and who
+    # approved is attribution a partner reads off the row, not a second trip.
     review_rows = list((await db.execute(
         select(
             AccountReviewStatus.tenant_id,
             AccountReviewStatus.period_end,
             AccountReviewStatus.status,
+            AccountReviewStatus.prepared_by,
+            AccountReviewStatus.approved_by,
         ).where(AccountReviewStatus.tenant_id.in_(tids)),
         execution_options={"skip_tenant_filter": True},
     )).all())
@@ -815,8 +819,15 @@ async def get_command_center(
     }
 
     reviews_by_tid: dict[uuid.UUID, dict] = {}
-    for tid, pe, status_ in review_rows:
+    # (tenant, period) → the distinct people who prepared / approved in it.
+    preparers_by: dict[tuple, set] = {}
+    approvers_by: dict[tuple, set] = {}
+    for tid, pe, status_, prepared_by, approved_by in review_rows:
         reviews_by_tid.setdefault(tid, {}).setdefault(pe, []).append(status_)
+        if prepared_by:
+            preparers_by.setdefault((tid, pe), set()).add(prepared_by)
+        if approved_by:
+            approvers_by.setdefault((tid, pe), set()).add(approved_by)
     closed_by_tid: dict[uuid.UUID, set] = {}
     for tid, pe in closed_rows:
         closed_by_tid.setdefault(tid, set()).add(pe)
@@ -881,6 +892,60 @@ async def get_command_center(
         if focus_by_tid.get(tid) == pe:
             adj_by_tid[tid] = n
 
+    # Resolve every actor across every company in ONE pass. Names come from
+    # Clerk (TTL-cached) with the local email as fallback, and the fan-out is
+    # bounded so a firm with many companies can't stampede Clerk.
+    #
+    # skip_tenant_filter is required and safe here: these users belong to the
+    # OTHER companies in the firm view, which is the whole point of the screen,
+    # and the membership check above already decided which companies the caller
+    # may see. Without it the session listener clamps the lookup to the active
+    # tenant and every other company's actors resolve to a bare id.
+    actor_ids: set = set()
+    for (tid, pe), ids in preparers_by.items():
+        if focus_by_tid.get(tid) == pe:
+            actor_ids |= ids
+    for (tid, pe), ids in approvers_by.items():
+        if focus_by_tid.get(tid) == pe:
+            actor_ids |= ids
+
+    names_by_id: dict[uuid.UUID, str] = {}
+    if actor_ids:
+        import asyncio as _asyncio
+
+        from core.auth.clerk_users import _format_display_name, get_clerk_user
+        from models.user import User as _User
+
+        actor_rows = list((await db.execute(
+            select(_User).where(_User.id.in_(list(actor_ids)[:500])),
+            execution_options={"skip_tenant_filter": True},
+        )).scalars().all())
+        _sem = _asyncio.Semaphore(8)
+
+        async def _resolve(u):
+            label = u.email or f"User {str(u.id)[:8]}"
+            if u.clerk_user_id:
+                async with _sem:
+                    try:
+                        ck = await get_clerk_user(u.clerk_user_id)
+                        if ck:
+                            label = _format_display_name(ck) or label
+                    except Exception:
+                        logger.debug("clerk lookup failed for %s", u.clerk_user_id, exc_info=True)
+            return u.id, label
+
+        for uid, label in await _asyncio.gather(*(_resolve(u) for u in actor_rows)):
+            names_by_id[uid] = label
+
+    def _people(bucket: dict, tid, pe) -> list[dict]:
+        """Distinct actors as {id, name}, alphabetical so the column is stable
+        between refreshes rather than reordering on set iteration."""
+        out = [
+            {"id": str(u), "name": names_by_id.get(u) or f"User {str(u)[:8]}"}
+            for u in bucket.get((tid, pe), set())
+        ]
+        return sorted(out, key=lambda p: p["name"].lower())
+
     companies = []
     for t in tenants:
         focus = focus_by_tid.get(t.id)
@@ -909,6 +974,11 @@ async def get_command_center(
                 "reviewed":   reviewed,
                 "flagged":    flagged,
                 "days_since_period_end": max(0, (today - focus).days),
+                # Who did the work on this period. Attribution, not a work
+                # queue — the row says who is on the engagement, it does not
+                # ask the reader to chase anyone.
+                "preparers":  _people(preparers_by, t.id, focus),
+                "reviewers":  _people(approvers_by, t.id, focus),
             }
 
         # Latest fully-closed month (reads as "Closed through Apr 2026").
