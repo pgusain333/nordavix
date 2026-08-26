@@ -15,7 +15,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { Brain, Calendar, FileText, Pencil, Trash2, X } from "lucide-react"
 
-import { Button, Spinner } from "@/core/ui/components"
+import { Button } from "@/core/ui/components"
+import { DataTable, type Column, type FilterDef } from "@/core/ui"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
@@ -123,6 +124,140 @@ function rateLabelForMethod(item: PrepaidItem): string {
     return dailyRateLabel(item.total_amount, item.start_date, item.end_date)
   }
   return monthlyAmount(item.total_amount, item.start_date, item.end_date)
+}
+
+// ── Table definition ────────────────────────────────────────────────────
+//
+// Columns and filters live at module scope: they close over nothing from the
+// component, so defining them here keeps them out of every render and makes
+// the page body about the page rather than about the table.
+
+/** Active / inactive used to be conveyed ONLY by 50% row opacity — invisible
+ *  in a screenshot or a print, and impossible to filter on. It is a column. */
+function StatusChip({ active }: { active: boolean }) {
+  return (
+    <span className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-semibold"
+      style={active
+        ? { color: "var(--green)", background: "var(--green-subtle)" }
+        : { color: "var(--text-muted)", background: "var(--surface-2)" }}>
+      {active ? "Active" : "Inactive"}
+    </span>
+  )
+}
+
+const PREPAID_COLUMNS: Column<PrepaidItem>[] = [
+  {
+    key: "description", header: "Description", width: "auto", hideable: false,
+    sortValue: (it) => it.description.toLowerCase(),
+    text: (it) => it.description,
+    // ONE line. The reference used to sit under the description as a second
+    // line, which made rows with a reference 48px against 37px for those
+    // without — measured — and a list whose row height depends on whether a
+    // field happens to be filled is hard to scan. It is its own column now,
+    // which also makes it sortable, searchable and exportable in its own right.
+    cell: (it) => (
+      <span className="text-theme text-[13px] truncate block">{it.description}</span>
+    ),
+  },
+  {
+    key: "reference", header: "Reference", width: "124px",
+    sortValue: (it) => it.reference?.toLowerCase() ?? null,
+    text: (it) => it.reference ?? "",
+    cell: (it) => (
+      <span className="text-[11.5px] truncate block" style={{ color: "var(--text-2)" }}>
+        {it.reference || "—"}
+      </span>
+    ),
+  },
+  {
+    key: "account", header: "GL account", width: "160px",
+    // Not sortable: the cell resolves an account NAME asynchronously, so the
+    // only value available here is the QBO id — ordering by it would look like
+    // sorting and be meaningless.
+    text: (it) => it.qbo_account_id,
+    cell: (it) => <GlAccountCell qboAccountId={it.qbo_account_id} />,
+  },
+  {
+    key: "vendor", header: "Vendor", width: "160px",
+    sortValue: (it) => it.vendor?.toLowerCase() ?? null,
+    text: (it) => it.vendor ?? "",
+    cell: (it) => (
+      <span className="text-[13px] truncate block">{it.vendor || "—"}</span>
+    ),
+  },
+  {
+    key: "total", header: "Total", width: "120px", align: "right",
+    sortValue: (it) => parseFloat(it.total_amount) || 0,
+    text: (it) => fmt(it.total_amount),
+    cell: (it) => <span className="tabular-nums text-[13px]">{fmt(it.total_amount)}</span>,
+  },
+  {
+    key: "window", header: "Window", width: "175px",
+    // Sorted by END date: "what finishes amortizing next" is the question this
+    // column answers, and start date almost never is.
+    sortValue: (it) => it.end_date,
+    text: (it) => `${it.start_date} → ${it.end_date}`,
+    cell: (it) => (
+      <span className="text-[11px]" style={{ color: "var(--text-2)" }}>
+        {it.start_date} → {it.end_date}
+      </span>
+    ),
+  },
+  {
+    key: "monthly", header: "Monthly", width: "125px", align: "right",
+    // Deliberately NOT sortable. The column mixes a monthly amount with a daily
+    // rate depending on each item's method, so one numeric ordering would be
+    // comparing different units and quietly ranking them wrong.
+    text: (it) => rateLabelForMethod(it),
+    cell: (it) => (
+      <span className="tabular-nums text-[13px]">{rateLabelForMethod(it)}</span>
+    ),
+  },
+  {
+    key: "status", header: "Status", width: "92px",
+    sortValue: (it) => (it.is_active ? "active" : "inactive"),
+    text: (it) => (it.is_active ? "Active" : "Inactive"),
+    cell: (it) => <StatusChip active={it.is_active} />,
+  },
+]
+
+/** Filters need the selected period, so they're built per render of the page
+ *  rather than frozen at module scope like the columns. */
+function prepaidFilters(periodEnd: string): FilterDef<PrepaidItem>[] {
+  const end = new Date(`${periodEnd}T00:00:00`)
+  const in3Months = new Date(end)
+  in3Months.setMonth(in3Months.getMonth() + 3)
+  const iso = (d: Date) => toISODate(d)
+
+  return [
+    {
+      key: "status", label: "All statuses",
+      options: [
+        { value: "active",   label: "Active" },
+        { value: "inactive", label: "Inactive" },
+      ],
+      test: (it, v) => (v === "active" ? it.is_active : !it.is_active),
+    },
+    {
+      key: "window", label: "Any window",
+      options: [
+        { value: "ends_this_period", label: "Finishes this period" },
+        { value: "ends_3mo",         label: "Finishes within 3 months" },
+        { value: "ended",            label: "Already finished" },
+        { value: "open",             label: "Still amortizing" },
+      ],
+      test: (it, v) => {
+        switch (v) {
+          case "ends_this_period":
+            return it.end_date.slice(0, 7) === periodEnd.slice(0, 7)
+          case "ends_3mo": return it.end_date >= periodEnd && it.end_date <= iso(in3Months)
+          case "ended":    return it.end_date < periodEnd
+          case "open":     return it.end_date >= periodEnd
+          default:         return true
+        }
+      },
+    },
+  ]
 }
 
 export function PrepaidsPage() {
@@ -326,91 +461,64 @@ export function PrepaidsPage() {
           stale={!!snapshot?.stale}
         />
 
-        {/* Items table */}
-        <div className="rounded-xl overflow-hidden"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-          <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        {/* Items */}
+        <div>
+          <div className="mb-2">
             <p className="text-sm font-semibold text-theme">Prepaid items</p>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              Each item is amortized over its [start → end] window per the
+              Each item is amortized over its [start &rarr; end] window per the
               method picked in the editor (straight-line monthly or
               days-based daily rate).
             </p>
           </div>
-          {itemsLoading ? (
-            <div className="py-12 flex justify-center"><Spinner className="h-5 w-5" /></div>
-          ) : items.length === 0 ? (
-            <div className="py-12 px-6 text-center">
-              <p className="text-sm font-semibold text-theme mb-1">No prepaid items yet</p>
-              <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
-                Add your first prepaid invoice — Nordavix will compute the monthly amortization automatically.
-              </p>
-              <Button size="sm" disabled={isClosed} onClick={() => setDialogState({ open: true })}>Add prepaid</Button>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: "var(--surface-2)" }}>
-                    <Th>Description</Th>
-                    <Th>GL account</Th>
-                    <Th>Vendor</Th>
-                    <Th right>Total</Th>
-                    <Th>Window</Th>
-                    <Th right>Monthly</Th>
-                    <Th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((it) => (
-                    <tr key={it.id} style={{ borderTop: "1px solid var(--border)", opacity: it.is_active ? 1 : 0.5 }}>
-                      <Td>
-                        <div className="text-theme">{it.description}</div>
-                        {it.reference && (
-                          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                            Ref: {it.reference}
-                          </div>
-                        )}
-                      </Td>
-                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
-                      <Td>{it.vendor || "—"}</Td>
-                      <Td right tabular>{fmt(it.total_amount)}</Td>
-                      <Td>
-                        <span className="text-[11px]" style={{ color: "var(--text-2)" }}>
-                          {it.start_date} → {it.end_date}
-                        </span>
-                      </Td>
-                      <Td right tabular>{rateLabelForMethod(it)}</Td>
-                      <Td>
-                        <div className="inline-flex items-center gap-1.5 justify-end w-full">
-                          <button
-                            onClick={() => setAmortizationItem(it)}
-                            className="p-1 rounded hover:bg-[var(--surface-2)]"
-                            title="View amortization schedule + journal entry">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#3c5a76" }} />
-                          </button>
-                          <button
-                            onClick={() => setDialogState({ open: true, item: it })}
-                            disabled={isClosed}
-                            className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed"
-                            title={isClosed ? "Period closed" : "Edit"}>
-                            <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-                          </button>
-                          <button
-                            onClick={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
-                            disabled={isClosed}
-                            className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed"
-                            title={isClosed ? "Period closed" : "Delete"}>
-                            <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
-                          </button>
-                        </div>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DataTable<PrepaidItem>
+            id="schedules.prepaids"
+            rows={items}
+            columns={PREPAID_COLUMNS}
+            rowKey={(it) => it.id}
+            isLoading={itemsLoading}
+            minWidth="1360px"
+            search={{ placeholder: "Search description, vendor, reference…" }}
+            // Soonest to finish amortizing first: on a prepaid schedule that is
+            // the order the work actually follows.
+            defaultSort={{ key: "window", dir: "asc" }}
+            filters={prepaidFilters(periodEnd)}
+            actions={(it) => (
+              <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                <button
+                  onClick={() => setAmortizationItem(it)}
+                  className="p-1 rounded hover:bg-[var(--surface-2)]"
+                  title="View amortization schedule + journal entry">
+                  <FileText size={13} strokeWidth={1.8} style={{ color: "#3c5a76" }} />
+                </button>
+                <button
+                  onClick={() => setDialogState({ open: true, item: it })}
+                  disabled={isClosed}
+                  className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={isClosed ? "Period closed" : "Edit"}>
+                  <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+                </button>
+                <button
+                  onClick={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
+                  disabled={isClosed}
+                  className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={isClosed ? "Period closed" : "Delete"}>
+                  <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
+                </button>
+              </div>
+            )}
+            actionsWidth="104px"
+            exportFilename="prepaid-schedule"
+            empty={{
+              title: "No prepaid items yet",
+              body: "Add your first prepaid invoice — Nordavix will compute the monthly amortization automatically.",
+              action: (
+                <Button size="sm" disabled={isClosed} onClick={() => setDialogState({ open: true })}>
+                  Add prepaid
+                </Button>
+              ),
+            }}
+          />
         </div>
         </ScheduleToolsLayout>
       </div>
@@ -438,24 +546,6 @@ export function PrepaidsPage() {
   )
 }
 
-// ── Inline KPI / table helpers ──────────────────────────────────────────
-
-function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
-  return (
-    <th className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`}
-      style={{ color: "var(--text-muted)" }}>
-      {children}
-    </th>
-  )
-}
-
-function Td({ children, right, tabular }: { children?: React.ReactNode; right?: boolean; tabular?: boolean }) {
-  return (
-    <td className={`px-3 py-2 ${right ? "text-right" : ""} ${tabular ? "tabular-nums" : ""}`}>
-      {children}
-    </td>
-  )
-}
 
 // ── Dialog ──────────────────────────────────────────────────────────────
 

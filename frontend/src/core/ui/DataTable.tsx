@@ -53,6 +53,11 @@ export interface Column<T> {
   /** Offer this column in the chooser. Defaults to true. */
   hideable?: boolean
   defaultHidden?: boolean
+  /** Allow this cell to wrap onto more lines. Off by default, and rarely
+   *  worth turning on: one wrapping cell sets the height of its whole row, so
+   *  a list's rhythm ends up decided by whichever record has the longest
+   *  value. */
+  wrap?: boolean
 }
 
 export interface FilterDef<T> {
@@ -550,10 +555,14 @@ export function DataTable<T>({
                   </td>
                 )}
                 {visible.map((c) => (
-                  // overflow-hidden so a long value clips instead of wrapping —
-                  // one wrapped cell doubles the row and the list stops scanning.
+                  // nowrap AND overflow-hidden. Clipping alone is not enough:
+                  // a cell whose content can wrap still grows the row, and the
+                  // primitive cannot rely on every consumer remembering to add
+                  // `truncate` to whatever it renders. Measured on Prepaids —
+                  // one date-range cell wrapped and took its row from 37px to
+                  // 61px while every other row stayed at 37.
                   <td key={c.key}
-                    className={`px-3 ${rowPad} overflow-hidden`}
+                    className={`px-3 ${rowPad} overflow-hidden ${c.wrap ? "" : "whitespace-nowrap"}`}
                     style={{ textAlign: c.align ?? "left" }}>
                     {c.cell(row)}
                   </td>
