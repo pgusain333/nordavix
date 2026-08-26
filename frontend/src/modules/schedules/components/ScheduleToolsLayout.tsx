@@ -1,31 +1,19 @@
 import type { ReactNode } from "react"
 
 /**
- * Two-column schedule body. The main content (filters, roll-forward and the
- * items table) sits on the left; the "tools" — the Import-from-QBO and
- * AI-detect cards — move into a STICKY right rail so they stay reachable while
- * the table scrolls, instead of pushing the table down the page.
+ * Schedule body layout.
  *
- * Responsive: on mobile it stacks with the tools ON TOP (the same order they
- * used to appear in); on lg+ the rail sits to the right and sticks. We use
- * `flex-row-reverse` so the tools can stay first in the DOM (= top on mobile)
- * yet render on the right on desktop.
+ * This used to be a two-column split with the import / AI-detect cards in a
+ * sticky 320px right rail. That rail cost the items table a fifth of the page
+ * permanently, for work that happens once at setup and occasionally after —
+ * and it left the table 876px inside a 1280px container, less than any of the
+ * five schedules needs, so every page scrolled horizontally all the time.
  *
- * When `tools` is falsy (closed period, or a schedule type with no import/AI
- * cards) the main content simply renders full-width with no rail.
+ * The tools moved into a slide-over reached from the header (see
+ * ScheduleTools.tsx), so this is now a single full-width column. The component
+ * is kept rather than deleted because all five pages compose through it and a
+ * future layout change should have one place to happen.
  */
-export function ScheduleToolsLayout({
-  tools,
-  children,
-}: {
-  tools?: ReactNode
-  children: ReactNode
-}) {
-  if (!tools) return <div className="space-y-5">{children}</div>
-  return (
-    <div className="flex flex-col lg:flex-row-reverse lg:items-start gap-5">
-      <aside className="lg:w-80 lg:shrink-0 lg:sticky lg:top-4 space-y-4">{tools}</aside>
-      <div className="flex-1 min-w-0 space-y-5">{children}</div>
-    </div>
-  )
+export function ScheduleToolsLayout({ children }: { tools?: ReactNode; children: ReactNode }) {
+  return <div className="space-y-5">{children}</div>
 }

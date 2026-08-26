@@ -305,7 +305,7 @@ export function AccrualsPage() {
         exporting={exportMut.isPending}
       />
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-6 py-5 max-w-[1680px] w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
         {/* Import + AI-detect tools move into a sticky right rail so they don't
             push the table down. Single column on a closed period (no rail). */}
@@ -405,7 +405,7 @@ export function AccrualsPage() {
             columns={ACCRUAL_COLUMNS}
             rowKey={(it) => it.id}
             isLoading={itemsLoading}
-            minWidth="1350px"
+            minWidth="1380px"
             search={{ placeholder: "Search description, reference\u2026" }}
             filters={accrualFilters(periodEnd)}
             actions={(it) => (

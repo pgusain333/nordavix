@@ -111,7 +111,7 @@ const ASSET_COLUMNS: Column<FixedAssetItem>[] = [
     ),
   },
   {
-    key: "reference", header: "Reference", width: "120px",
+    key: "reference", header: "Reference", width: "120px", defaultHidden: true,
     sortValue: (it) => it.reference?.toLowerCase() ?? null,
     text: (it) => it.reference ?? "",
     cell: (it) => (
@@ -322,7 +322,7 @@ export function FixedAssetsPage() {
         exporting={exportMut.isPending}
       />
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-6 py-5 max-w-[1680px] w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
         {/* Import + AI-detect tools move into a sticky right rail so they don't
             push the table down. Single column on a closed period (no rail). */}
@@ -420,7 +420,7 @@ export function FixedAssetsPage() {
             columns={ASSET_COLUMNS}
             rowKey={(it) => it.id}
             isLoading={itemsLoading}
-            minWidth="1470px"
+            minWidth="1380px"
             search={{ placeholder: "Search description, reference\u2026" }}
             filters={assetFilters(periodEnd)}
             actions={(it) => (

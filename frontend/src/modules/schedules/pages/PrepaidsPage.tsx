@@ -28,6 +28,7 @@ import { RenewalAlertsBanner } from "@/modules/schedules/components/RenewalAlert
 import { AiDetectBanner } from "@/modules/schedules/components/AiDetectBanner"
 import { ImportPrepaidsFromQboBanner } from "@/modules/schedules/components/ImportPrepaidsFromQboBanner"
 import { ScheduleToolsLayout } from "@/modules/schedules/components/ScheduleToolsLayout"
+import { FindingsStrip, ToolsButton, ToolsDrawer } from "@/modules/schedules/components/ScheduleTools"
 import { ClosedPeriodBanner } from "@/modules/schedules/components/ClosedPeriodBanner"
 import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
@@ -265,6 +266,18 @@ export function PrepaidsPage() {
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
   const isClosed = useIsPeriodClosed(periodEnd)
   const [filterAccount, setFilterAccount] = useState<string>("")
+  const [toolsOpen, setToolsOpen] = useState(false)
+
+  // Drives the findings strip AND the header badge. This is the LIST endpoint,
+  // which returns what a previous scan already stored — it never re-runs the
+  // detector, so showing the strip costs nothing. Running a scan stays an
+  // explicit click, which is the trigger model this feature was designed with.
+  const { data: candidates } = useQuery({
+    queryKey: ["schedules", "prepaid", "ai-candidates"],
+    queryFn:  () => schedulesApi.listPrepaidCandidates("open"),
+    staleTime: 30_000,
+  })
+  const candidateCount = candidates?.candidates?.length ?? 0
   const [dialogState, setDialogState] = useState<{
     open: boolean
     item?: PrepaidItem
@@ -408,27 +421,28 @@ export function PrepaidsPage() {
         addLabel="Add prepaid"
         onExport={() => exportMut.mutate()}
         exporting={exportMut.isPending}
+        extraActions={!isClosed
+          ? <ToolsButton onClick={() => setToolsOpen(true)} badge={candidateCount} />
+          : undefined}
       />
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-6 py-5 max-w-[1680px] w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
-        {/* Import-from-QBO + AI-detect tools move into a sticky right rail
-            so they stay reachable without pushing the table down. Hidden on a
-            closed period — passing undefined renders the body full-width. */}
-        <ScheduleToolsLayout
-          tools={!isClosed ? (
-            <>
-              <ImportPrepaidsFromQboBanner
-                qboAccountId={filterAccount}
-                existingItemCount={items.length}
-              />
-              <AiDetectBanner
-                periodEnd={periodEnd}
-                onAccept={handleAcceptCandidate}
-              />
-            </>
-          ) : undefined}
+        {/* The import / AI-detect tools live in a slide-over off the header
+            rather than a permanent rail — see ScheduleTools.tsx for why. */}
+        <ToolsDrawer
+          open={toolsOpen}
+          onClose={() => setToolsOpen(false)}
+          title="Find prepaid items"
         >
+          <ImportPrepaidsFromQboBanner
+            qboAccountId={filterAccount}
+            existingItemCount={items.length}
+          />
+          <AiDetectBanner periodEnd={periodEnd} onAccept={handleAcceptCandidate} />
+        </ToolsDrawer>
+
+        <ScheduleToolsLayout>
         {/* Renewal alerts stay in the main column — a data alert tied to the
             table, not an import tool. */}
         {!isClosed && (
@@ -461,6 +475,17 @@ export function PrepaidsPage() {
           stale={!!snapshot?.stale}
         />
 
+        {!isClosed && (
+          <FindingsStrip
+            count={candidateCount}
+            noun="prepaid"
+            periodLabel={formatDate(periodEnd)}
+            onReview={() => setToolsOpen(true)}
+            onScan={() => setToolsOpen(true)}
+            scanned={false}
+          />
+        )}
+
         {/* Items */}
         <div>
           <div className="mb-2">
@@ -477,7 +502,7 @@ export function PrepaidsPage() {
             columns={PREPAID_COLUMNS}
             rowKey={(it) => it.id}
             isLoading={itemsLoading}
-            minWidth="1360px"
+            minWidth="1380px"
             search={{ placeholder: "Search description, vendor, reference…" }}
             // Soonest to finish amortizing first: on a prepaid schedule that is
             // the order the work actually follows.

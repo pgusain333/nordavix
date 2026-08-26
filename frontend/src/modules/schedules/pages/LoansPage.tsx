@@ -98,7 +98,7 @@ const LOAN_COLUMNS: Column<LoanItem>[] = [
     ),
   },
   {
-    key: "reference", header: "Reference", width: "120px",
+    key: "reference", header: "Reference", width: "120px", defaultHidden: true,
     sortValue: (it) => it.reference?.toLowerCase() ?? null,
     text: (it) => it.reference ?? "",
     cell: (it) => (
@@ -274,7 +274,7 @@ export function LoansPage() {
         exporting={exportMut.isPending}
       />
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-6 py-5 max-w-[1680px] w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
         {/* Import-from-QBO tool moves into a sticky right rail so it doesn't
             push the table down. Single column on a closed period (no rail). */}
@@ -365,7 +365,7 @@ export function LoansPage() {
             columns={LOAN_COLUMNS}
             rowKey={(it) => it.id}
             isLoading={itemsLoading}
-            minWidth="1540px"
+            minWidth="1380px"
             search={{ placeholder: "Search description, reference\u2026" }}
             filters={loanFilters(periodEnd)}
             actions={(it) => (

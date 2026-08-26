@@ -281,7 +281,7 @@ export function LeasesPage() {
         exporting={exportMut.isPending}
       />
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-6 py-5 max-w-[1680px] w-full mx-auto space-y-5">
         <ClosedPeriodBanner periodEnd={periodEnd} />
         {/* Account filter — the roll-forward below carries the recon tie-out */}
         <div className="rounded-xl p-4"
@@ -311,7 +311,7 @@ export function LeasesPage() {
             columns={LEASE_COLUMNS}
             rowKey={(it) => it.id}
             isLoading={itemsLoading}
-            minWidth="1440px"
+            minWidth="1380px"
             search={{ placeholder: "Search description, reference\u2026" }}
             filters={leaseFilters(periodEnd)}
             actions={(it) => (

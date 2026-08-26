@@ -32,10 +32,13 @@ interface Props {
    *  page can drive its own spinner state. */
   onExport?:   () => void
   exporting?:  boolean
+  /** Extra control rendered left of Excel — the "Find items" trigger that
+   *  opens the tools slide-over. Optional so pages without tools stay clean. */
+  extraActions?: React.ReactNode
 }
 
 export function SchedulePageHeader({
-  type, periodEnd, onPeriod, onAddItem, addLabel, onExport, exporting,
+  type, periodEnd, onPeriod, onAddItem, addLabel, onExport, exporting, extraActions,
 }: Props) {
   const isClosed = useIsPeriodClosed(periodEnd)
   return (
@@ -46,6 +49,7 @@ export function SchedulePageHeader({
       actions={
         <>
           <DatePicker value={periodEnd} onChange={onPeriod} />
+          {extraActions}
           {onExport && (
             <Button
               size="sm"
