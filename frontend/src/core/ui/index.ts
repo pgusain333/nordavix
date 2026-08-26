@@ -12,6 +12,8 @@ export {
   Select,
   Input,
 } from "./components"
+export { DataTable } from "./DataTable"
+export type { Column, FilterDef, DataTableProps } from "./DataTable"
 export type {
   ButtonProps,
   BadgeProps,
