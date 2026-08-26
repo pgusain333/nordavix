@@ -33,7 +33,7 @@ import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { PageHeader } from "@/core/ui/PageHeader"
 import { toISODate } from "@/core/lib/dates"
-import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
+import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { schedulesApi } from "@/modules/schedules/api"
 import {
   SCHEDULE_BLURB, SCHEDULE_HUMAN, SCHEDULE_ROUTE,
@@ -86,7 +86,10 @@ function statusColor(s: "committed" | "draft" | "empty"): string {
 export function SchedulesOverview() {
   const navigate = useNavigate()
   const { organization } = useOrganization()
-  const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
+  // Shared close period: seeded from the user's last choice and written
+  // back when they change it here, so the month follows them into every
+  // other module instead of each page keeping its own.
+  const [periodEnd, setPeriodEnd] = useSelectedPeriod(defaultPeriodEnd())
   const [active, setActive] = useState<RailKey>("overview")
 
   const orgKey = schedulesLoadedKey(organization?.id)

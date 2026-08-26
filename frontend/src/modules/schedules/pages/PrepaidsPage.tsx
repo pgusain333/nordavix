@@ -30,7 +30,7 @@ import { ImportPrepaidsFromQboBanner } from "@/modules/schedules/components/Impo
 import { ScheduleToolsLayout } from "@/modules/schedules/components/ScheduleToolsLayout"
 import { FindingsStrip, ToolsButton, ToolsDrawer } from "@/modules/schedules/components/ScheduleTools"
 import { ClosedPeriodBanner } from "@/modules/schedules/components/ClosedPeriodBanner"
-import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
+import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
 import { schedulesApi } from "@/modules/schedules/api"
 import { memoryApi } from "@/modules/memory/api"
@@ -263,7 +263,10 @@ function prepaidFilters(periodEnd: string): FilterDef<PrepaidItem>[] {
 
 export function PrepaidsPage() {
   const qc = useQueryClient()
-  const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
+  // Shared close period: seeded from the user's last choice and written
+  // back when they change it here, so the month follows them into every
+  // other module instead of each page keeping its own.
+  const [periodEnd, setPeriodEnd] = useSelectedPeriod(defaultPeriodEnd())
   const isClosed = useIsPeriodClosed(periodEnd)
   const [filterAccount, setFilterAccount] = useState<string>("")
   const [toolsOpen, setToolsOpen] = useState(false)

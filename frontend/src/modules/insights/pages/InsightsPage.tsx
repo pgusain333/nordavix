@@ -27,6 +27,7 @@ import {
 import { Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { PageHeader } from "@/core/ui/PageHeader"
+import { usePublishSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import {
   insightsApi, type InsightsOverview, type KpiRow, type RiskLevel, type HistoryPoint,
   type Advisory,
@@ -206,6 +207,11 @@ export function InsightsPage() {
 
   const [mode, setMode] = useState<DateMode>(initialMode)
   const [periodEnd, setPeriodEnd] = useState<string>(initialEnd)
+
+  // Publish whichever month is on screen so it follows the user to the next
+  // module. Insights keeps its own richer last-run (mode + custom range), so
+  // it publishes rather than handing over ownership of the period.
+  usePublishSelectedPeriod(periodEnd)
   const [periodStart, setPeriodStart] = useState<string>(initialStart ?? defaultPeriodStart(initialEnd))
 
   // ── What's actually been requested (gates the query) ──

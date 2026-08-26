@@ -53,6 +53,26 @@ export function useSelectedPeriodDefault(fallback: string): string {
 }
 
 /**
+ * Write-through for pages that derive their period from somewhere else — a
+ * URL param on Reconciliations, a saved custom range on Financials and
+ * Insights — and so can't hand ownership to useSelectedPeriod.
+ *
+ * The gap this closes: most pages READ the shared period on mount but never
+ * wrote it back, so the month a user picked on Schedules didn't follow them
+ * into Reconciliations. Publishing is enough — nobody is yanked mid-session,
+ * because every reader takes its value once on mount.
+ *
+ * Ignores empty and malformed values, so a page can call it unconditionally
+ * while its own state is still settling.
+ */
+export function usePublishSelectedPeriod(iso: string | null | undefined): void {
+  const { organization } = useOrganization()
+  useEffect(() => {
+    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) writeSelectedPeriod(iso, organization?.id)
+  }, [iso, organization?.id])
+}
+
+/**
  * Read + write — used by the dashboard's own month picker. Writes
  * propagate to every page that mounts after.
  */

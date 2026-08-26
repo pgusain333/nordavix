@@ -55,6 +55,7 @@ import {
 } from "@/modules/intercompany/api"
 import { useQboConnection } from "@/modules/flux/hooks"
 import { toISODate } from "@/core/lib/dates"
+import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 
 type Tab = "accounts" | "eliminations" | "consolidated"
 
@@ -82,7 +83,9 @@ export function IntercompanyPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>("accounts")
-  const [periodEnd, setPeriodEnd] = useState<string>(defaultPeriodEnd())
+  // Shared close period — Intercompany was fully detached, so opening it
+  // always reset the user to last month regardless of where they had been.
+  const [periodEnd, setPeriodEnd] = useSelectedPeriod(defaultPeriodEnd())
   const [search, setSearch] = useState("")
   const [editingAccount, setEditingAccount] = useState<IcAccount | null>(null)
   const [addingNew, setAddingNew] = useState(false)

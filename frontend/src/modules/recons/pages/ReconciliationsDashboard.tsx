@@ -73,7 +73,7 @@ import {
   readDrawerAcctFromHash,
 } from "@/modules/recons/components/AccountDetailDrawer"
 import { useQboConnection } from "@/modules/flux/hooks"
-import { useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
+import { useSelectedPeriodDefault, usePublishSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { InitialRecordingSuggestionsPanel } from "@/modules/schedules/components/InitialRecordingSuggestionsPanel"
 import { SchedulePeriodJesPanel } from "@/modules/schedules/components/SchedulePeriodJesPanel"
 import { BankReconWorksheet } from "@/modules/recons/components/BankReconWorksheet"
@@ -214,6 +214,9 @@ export function ReconciliationsDashboard() {
     return sp && /^\d{4}-\d{2}-\d{2}$/.test(sp) ? sp : fallback
   })()
   const [periodEnd, setPeriodEnd] = useState<string>(initialPeriod)
+  // A URL param still wins on arrival (deep links and bookmarks), but whatever
+  // month the user ends up on is published so it follows them to the next page.
+  usePublishSelectedPeriod(periodEnd)
 
   // Keep the URL and the picker in sync — when the user changes the
   // period selector in the header, push the new path so refresh / bookmark

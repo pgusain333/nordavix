@@ -47,6 +47,7 @@ import { Button, Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { PageHeader } from "@/core/ui/PageHeader"
 import { toISODate, formatDate } from "@/core/lib/dates"
+import { readSelectedPeriod, usePublishSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import {
   financialsApi, FINANCIAL_SCHEDULES, SCHEDULE_GROUPS,
   type Statement, type FinancialRow, type FinancialSource, type ComparativeBasis,
@@ -216,6 +217,7 @@ export function FinancialsPage() {
   const [tab, setTab]                 = useState<Tab>("is")           // statement driving the query
   const [active, setActive]           = useState<RailKey>("is")       // rail selection (statements + panels)
   const [periodEnd, setPeriodEnd]     = useState<string>(defaultPeriodEnd())
+  usePublishSelectedPeriod(periodEnd)
   // Period type — "Custom" is the default: it exposes a Period Start picker
   // and defaults the range to the month being viewed (1st → period-end). YTD
   // calculates start as Jan 1 server-side. Only affects IS + CF; BS is
@@ -373,6 +375,10 @@ export function FinancialsPage() {
       setPeriodStart(v.periodStart); setSource(v.source); setComparative(v.comparative)
       setHasLoaded(true)
     } else {
+      // No saved view for this workspace — open on the month the user was last
+      // working in elsewhere rather than defaulting to last month.
+      const shared = readSelectedPeriod(orgId)
+      if (shared) setPeriodEnd(shared)
       setHasLoaded(false)   // a workspace with no prior view shows the Load gate
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
