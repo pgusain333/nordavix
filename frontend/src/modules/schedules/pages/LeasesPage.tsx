@@ -16,7 +16,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { Home, FileText, Pencil, Trash2, X } from "lucide-react"
 
-import { Button, Spinner } from "@/core/ui/components"
+import { Button } from "@/core/ui/components"
+import { DataTable, type Column, type FilterDef } from "@/core/ui"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
@@ -84,6 +85,155 @@ export function computeLeasePv(
   return { pv: Math.round(pv * 100) / 100, months }
 }
 
+
+/** Edit / delete for one row, disabled while the period is locked. */
+function RowActions({ onEdit, onDelete, disabled }: { onEdit: () => void; onDelete: () => void; disabled?: boolean }) {
+  return (
+    <>
+      <button onClick={onEdit} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Edit"}>
+        <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+      </button>
+      <button onClick={onDelete} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Delete"}>
+        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
+      </button>
+    </>
+  )
+}
+
+/** Active / inactive was conveyed ONLY by 50% row opacity — invisible in a
+ *  screenshot or a print, and impossible to filter on. It is a column. */
+function StatusChip({ active }: { active: boolean }) {
+  return (
+    <span className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-semibold"
+      style={active
+        ? { color: "var(--green)", background: "var(--green-subtle)" }
+        : { color: "var(--text-muted)", background: "var(--surface-2)" }}>
+      {active ? "Active" : "Inactive"}
+    </span>
+  )
+}
+
+const LEASE_COLUMNS: Column<LeaseItem>[] = [
+  {
+    key: "description", header: "Lease", width: "auto", hideable: false,
+    sortValue: (it) => it.description.toLowerCase(),
+    text: (it) => it.description,
+    // One line. The reference used to sit under the description as a second
+    // line, so rows with a reference were taller than rows without and the
+    // list's rhythm depended on whether a field happened to be filled.
+    cell: (it) => (
+      <span className="text-theme text-[13px] truncate block">{it.description}</span>
+    ),
+  },
+  {
+    key: "reference", header: "Reference", width: "120px",
+    sortValue: (it) => it.reference?.toLowerCase() ?? null,
+    text: (it) => it.reference ?? "",
+    cell: (it) => (
+      <span className="text-[11.5px] truncate block" style={{ color: "var(--text-2)" }}>
+        {it.reference || "—"}
+      </span>
+    ),
+  },
+  {
+    key: "account", header: "GL account", width: "158px",
+    // Not sortable: the cell resolves an account NAME asynchronously, so the
+    // only value here is the QBO id — ordering by it would look like sorting
+    // and mean nothing.
+    text: (it) => it.qbo_account_id,
+    cell: (it) => <GlAccountCell qboAccountId={it.qbo_account_id} />,
+  },
+  {
+    key: "lessor", header: "Lessor", width: "150px",
+    sortValue: (it) => it.lessor?.toLowerCase() ?? null,
+    text: (it) => it.lessor ?? "",
+    cell: (it) => <span className="text-[13px] truncate block">{it.lessor || "—"}</span>,
+  },
+  {
+    key: "term", header: "Term", width: "180px",
+    // Sorted by END date: "which leases expire next" is the question, and a
+    // lease's start date is rarely the one being asked about.
+    sortValue: (it) => it.lease_end,
+    text: (it) => `${it.lease_start} → ${it.lease_end}`,
+    cell: (it) => (
+      <span className="text-[11px]" style={{ color: "var(--text-2)" }}>
+        {it.lease_start} → {it.lease_end}
+      </span>
+    ),
+  },
+  {
+    key: "monthly", header: "Monthly", width: "120px", align: "right",
+    sortValue: (it) => parseFloat(it.monthly_payment) || 0,
+    text: (it) => fmt(it.monthly_payment),
+    cell: (it) => <span className="tabular-nums text-[13px]">{fmt(it.monthly_payment)}</span>,
+  },
+  {
+    key: "initial_liability", header: "Initial liability", width: "134px", align: "right",
+    sortValue: (it) => (it.initial_liability ? parseFloat(it.initial_liability) : null),
+    text: (it) => (it.initial_liability ? fmt(it.initial_liability) : ""),
+    cell: (it) => (
+      <span className="tabular-nums text-[13px]">
+        {it.initial_liability ? fmt(it.initial_liability) : "—"}
+      </span>
+    ),
+  },
+  {
+    key: "mode", header: "Mode", width: "104px",
+    sortValue: (it) => (it.initial_liability ? "asc842" : "cash"),
+    text: (it) => (it.initial_liability ? "ASC 842" : "Cash-basis"),
+    cell: (it) => (
+      <span className="text-[10px] font-semibold uppercase tracking-wider"
+        style={{ color: it.initial_liability ? "#54588a" : "var(--text-muted)" }}>
+        {it.initial_liability ? "ASC 842" : "Cash-basis"}
+      </span>
+    ),
+  },
+  {
+    key: "status", header: "Status", width: "88px",
+    sortValue: (it) => (it.is_active ? "active" : "inactive"),
+    text: (it) => (it.is_active ? "Active" : "Inactive"),
+    cell: (it) => <StatusChip active={it.is_active} />,
+  },
+]
+
+/** Filters need the selected period, so they are built per render
+ *  rather than frozen at module scope like the columns. */
+function leaseFilters(periodEnd: string): FilterDef<LeaseItem>[] {
+  return [
+  {
+    key: "expiry", label: "Any term",
+    options: [
+      { value: "expiring_12mo", label: "Expires within 12 months" },
+      { value: "expired",       label: "Already expired" },
+      { value: "current",       label: "Current" },
+    ],
+    test: (it, v) => {
+      if (v === "expired") return it.lease_end < periodEnd
+      if (v === "current") return it.lease_end >= periodEnd
+      const horizon = new Date(`${periodEnd}T00:00:00`)
+      horizon.setMonth(horizon.getMonth() + 12)
+      return it.lease_end >= periodEnd && it.lease_end <= toISODate(horizon)
+    },
+  },
+  {
+    key: "mode", label: "Any mode",
+    options: [
+      { value: "asc842", label: "ASC 842" },
+      { value: "cash",   label: "Cash-basis" },
+    ],
+    test: (it, v) => (v === "asc842" ? !!it.initial_liability : !it.initial_liability),
+  },
+  {
+    key: "status", label: "All statuses",
+    options: [
+      { value: "active",   label: "Active" },
+      { value: "inactive", label: "Inactive" },
+    ],
+    test: (it, v) => (v === "active" ? it.is_active : !it.is_active),
+  },
+  ]
+}
+
 export function LeasesPage() {
   const qc = useQueryClient()
   const [periodEnd, setPeriodEnd] = useState<string>(useSelectedPeriodDefault(defaultPeriodEnd()))
@@ -147,68 +297,45 @@ export function LeasesPage() {
           stale={!!snapshot?.stale}
         />
 
-        <div className="rounded-xl overflow-hidden"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-          <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        {/* Items */}
+        <div>
+          <div className="mb-2">
             <p className="text-sm font-semibold text-theme">Leases</p>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              Fill in discount rate + initial ROU + initial liability to enable ASC 842
-              roll-forward. Otherwise the lease is tracked cash-basis (payments only).
+              Fill in discount rate + initial ROU + initial liability to enable ASC 842 roll-forward. Otherwise the lease is tracked cash-basis (payments only).
             </p>
           </div>
-          {itemsLoading ? (
-            <div className="py-12 flex justify-center"><Spinner className="h-5 w-5" /></div>
-          ) : items.length === 0 ? (
-            <Empty onAdd={() => setDialog({ open: true })} verb="lease" />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: "var(--surface-2)" }}>
-                    <Th>Lease</Th><Th>GL account</Th><Th>Lessor</Th><Th>Term</Th>
-                    <Th right>Monthly</Th><Th right>Initial liability</Th><Th>Mode</Th><Th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((it) => (
-                    <tr key={it.id} style={{ borderTop: "1px solid var(--border)", opacity: it.is_active ? 1 : 0.5 }}>
-                      <Td>
-                        <div className="text-theme">{it.description}</div>
-                        {it.reference && (
-                          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Ref: {it.reference}</div>
-                        )}
-                      </Td>
-                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
-                      <Td>{it.lessor || "—"}</Td>
-                      <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.lease_start} → {it.lease_end}</span></Td>
-                      <Td right tabular>{fmt(it.monthly_payment)}</Td>
-                      <Td right tabular>{it.initial_liability ? fmt(it.initial_liability) : "—"}</Td>
-                      <Td>
-                        <span className="text-[10px] font-semibold uppercase tracking-wider"
-                          style={{ color: it.initial_liability ? "#54588a" : "var(--text-muted)" }}>
-                          {it.initial_liability ? "ASC 842" : "Cash-basis"}
-                        </span>
-                      </Td>
-                      <Td>
-                        <div className="inline-flex items-center gap-1.5 justify-end w-full">
-                          <button
-                            onClick={() => setDrawerItem(it)}
-                            className="p-1 rounded hover:bg-[var(--surface-2)]"
-                            title="View lease amortization + JE">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#54588a" }} />
-                          </button>
-                          <RowActions
-                            onEdit={() => setDialog({ open: true, item: it })}
-                            onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
-                            disabled={isClosed} />
-                        </div>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DataTable<LeaseItem>
+            id="schedules.leases"
+            rows={items}
+            columns={LEASE_COLUMNS}
+            rowKey={(it) => it.id}
+            isLoading={itemsLoading}
+            minWidth="1440px"
+            search={{ placeholder: "Search description, reference\u2026" }}
+            filters={leaseFilters(periodEnd)}
+            actions={(it) => (
+              <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                <button
+                  onClick={() => setDrawerItem(it)}
+                  className="p-1 rounded hover:bg-[var(--surface-2)]"
+                  title="View lease amortization + JE">
+                  <FileText size={13} strokeWidth={1.8} style={{ color: "#54588a" }} />
+                </button>
+                <RowActions
+                  disabled={isClosed}
+                  onEdit={() => setDialog({ open: true, item: it })}
+                  onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
+                />
+              </div>
+            )}
+            actionsWidth="104px"
+            exportFilename="lease-schedule"
+            empty={{
+              title: "No leases yet",
+              action: <Button size="sm" disabled={isClosed} onClick={() => setDialog({ open: true })}>Add lease</Button>,
+            }}
+          />
         </div>
       </div>
 
@@ -227,34 +354,6 @@ export function LeasesPage() {
           />
         )}
       </AnimatePresence>
-    </div>
-  )
-}
-
-function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
-  return <th className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`} style={{ color: "var(--text-muted)" }}>{children}</th>
-}
-function Td({ children, right, tabular }: { children?: React.ReactNode; right?: boolean; tabular?: boolean }) {
-  return <td className={`px-3 py-2 ${right ? "text-right" : ""} ${tabular ? "tabular-nums" : ""}`}>{children}</td>
-}
-function Empty({ onAdd, verb }: { onAdd: () => void; verb: string }) {
-  return (
-    <div className="py-12 px-6 text-center">
-      <p className="text-sm font-semibold text-theme mb-1">No {verb}s yet</p>
-      <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>Add your first {verb} to get started.</p>
-      <Button size="sm" onClick={onAdd}>Add {verb}</Button>
-    </div>
-  )
-}
-function RowActions({ onEdit, onDelete, disabled }: { onEdit: () => void; onDelete: () => void; disabled?: boolean }) {
-  return (
-    <div className="inline-flex items-center gap-1.5 justify-end w-full">
-      <button onClick={onEdit} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Edit"}>
-        <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-      </button>
-      <button onClick={onDelete} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Delete"}>
-        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
-      </button>
     </div>
   )
 }

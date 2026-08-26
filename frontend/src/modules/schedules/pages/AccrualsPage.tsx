@@ -6,7 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { ClipboardList, FileText, Pencil, Trash2, X, CheckCircle2 } from "lucide-react"
 
-import { Button, Spinner } from "@/core/ui/components"
+import { Button } from "@/core/ui/components"
+import { DataTable, type Column, type FilterDef } from "@/core/ui"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
@@ -58,6 +59,144 @@ function defaultPeriodEnd(): string {
 function fmt(s: string | null | undefined): string {
   const n = parseFloat(s ?? "0") || 0
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+
+/** Edit / delete for one row, disabled while the period is locked. */
+function RowActions({ onEdit, onDelete, disabled }: { onEdit: () => void; onDelete: () => void; disabled?: boolean }) {
+  return (
+    <>
+      <button onClick={onEdit} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Edit"}>
+        <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+      </button>
+      <button onClick={onDelete} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Delete"}>
+        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
+      </button>
+    </>
+  )
+}
+
+/** Active / inactive was conveyed ONLY by 50% row opacity — invisible in a
+ *  screenshot or a print, and impossible to filter on. It is a column. */
+function StatusChip({ active }: { active: boolean }) {
+  return (
+    <span className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-semibold"
+      style={active
+        ? { color: "var(--green)", background: "var(--green-subtle)" }
+        : { color: "var(--text-muted)", background: "var(--surface-2)" }}>
+      {active ? "Active" : "Inactive"}
+    </span>
+  )
+}
+
+const ACCRUAL_COLUMNS: Column<AccrualItem>[] = [
+  {
+    key: "description", header: "Description", width: "auto", hideable: false,
+    sortValue: (it) => it.description.toLowerCase(),
+    text: (it) => it.description,
+    // One line. The reference used to sit under the description as a second
+    // line, so rows with a reference were taller than rows without and the
+    // list's rhythm depended on whether a field happened to be filled.
+    cell: (it) => (
+      <span className="text-theme text-[13px] truncate block">{it.description}</span>
+    ),
+  },
+  {
+    key: "reference", header: "Reference", width: "120px",
+    sortValue: (it) => it.reference?.toLowerCase() ?? null,
+    text: (it) => it.reference ?? "",
+    cell: (it) => (
+      <span className="text-[11.5px] truncate block" style={{ color: "var(--text-2)" }}>
+        {it.reference || "—"}
+      </span>
+    ),
+  },
+  {
+    key: "account", header: "GL account", width: "158px",
+    // Not sortable: the cell resolves an account NAME asynchronously, so the
+    // only value here is the QBO id — ordering by it would look like sorting
+    // and mean nothing.
+    text: (it) => it.qbo_account_id,
+    cell: (it) => <GlAccountCell qboAccountId={it.qbo_account_id} />,
+  },
+  {
+    key: "vendor", header: "Vendor", width: "150px",
+    sortValue: (it) => it.vendor?.toLowerCase() ?? null,
+    text: (it) => it.vendor ?? "",
+    cell: (it) => <span className="text-[13px] truncate block">{it.vendor || "—"}</span>,
+  },
+  {
+    key: "amount", header: "Amount", width: "118px", align: "right",
+    sortValue: (it) => parseFloat(it.amount) || 0,
+    text: (it) => fmt(it.amount),
+    cell: (it) => <span className="tabular-nums text-[13px]">{fmt(it.amount)}</span>,
+  },
+  {
+    key: "accrued", header: "Accrued", width: "112px",
+    sortValue: (it) => it.accrual_date,
+    text: (it) => it.accrual_date,
+    cell: (it) => (
+      <span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.accrual_date}</span>
+    ),
+  },
+  {
+    key: "reverses", header: "Reverses", width: "112px",
+    sortValue: (it) => it.reverses_on,
+    text: (it) => it.reverses_on ?? "",
+    cell: (it) => (
+      <span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.reverses_on ?? "—"}</span>
+    ),
+  },
+  {
+    key: "reversed", header: "Reversal", width: "104px",
+    sortValue: (it) => (it.is_reversed ? "reversed" : "outstanding"),
+    text: (it) => (it.is_reversed ? "Reversed" : "Outstanding"),
+    cell: (it) => it.is_reversed ? (
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold"
+        style={{ color: "var(--text-muted)" }}>
+        <CheckCircle2 size={10} strokeWidth={2.4} />Reversed
+      </span>
+    ) : (
+      <span className="text-[10px] font-semibold" style={{ color: "#8a6326" }}>Outstanding</span>
+    ),
+  },
+  {
+    key: "status", header: "Status", width: "88px",
+    sortValue: (it) => (it.is_active ? "active" : "inactive"),
+    text: (it) => (it.is_active ? "Active" : "Inactive"),
+    cell: (it) => <StatusChip active={it.is_active} />,
+  },
+]
+
+/** Filters need the selected period, so they are built per render
+ *  rather than frozen at module scope like the columns. */
+function accrualFilters(periodEnd: string): FilterDef<AccrualItem>[] {
+  return [
+  {
+    key: "reversal", label: "Any reversal state",
+    options: [
+      { value: "outstanding",  label: "Not yet reversed" },
+      { value: "reversed",     label: "Reversed" },
+      { value: "due",          label: "Reverses this period or earlier" },
+    ],
+    // "Reverses this period or earlier" and still outstanding is the accrual
+    // that should have come off the balance sheet already — the one worth
+    // looking at, and the reason this filter exists.
+    test: (it, v) => {
+      if (v === "reversed")    return it.is_reversed
+      if (v === "outstanding") return !it.is_reversed
+      return !it.is_reversed && !!it.reverses_on && it.reverses_on <= periodEnd
+    },
+  },
+  {
+    key: "status", label: "All statuses",
+    options: [
+      { value: "active",   label: "Active" },
+      { value: "inactive", label: "Inactive" },
+    ],
+    test: (it, v) => (v === "active" ? it.is_active : !it.is_active),
+  },
+  ]
 }
 
 export function AccrualsPage() {
@@ -252,70 +391,45 @@ export function AccrualsPage() {
           stale={!!snapshot?.stale}
         />
 
-        <div className="rounded-xl overflow-hidden"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-          <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        {/* Items */}
+        <div>
+          <div className="mb-2">
             <p className="text-sm font-semibold text-theme">Accrued items</p>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
               Each accrual stays on the BS until you mark it reversed (typically when paid).
             </p>
           </div>
-          {itemsLoading ? (
-            <div className="py-12 flex justify-center"><Spinner className="h-5 w-5" /></div>
-          ) : items.length === 0 ? (
-            <Empty onAdd={() => setDialog({ open: true })} verb="accrual" />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: "var(--surface-2)" }}>
-                    <Th>Description</Th><Th>GL account</Th><Th>Vendor</Th><Th right>Amount</Th>
-                    <Th>Accrued</Th><Th>Reverses</Th><Th>Status</Th><Th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((it) => (
-                    <tr key={it.id} style={{ borderTop: "1px solid var(--border)", opacity: it.is_active ? 1 : 0.5 }}>
-                      <Td>
-                        <div className="text-theme">{it.description}</div>
-                        {it.reference && (
-                          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Ref: {it.reference}</div>
-                        )}
-                      </Td>
-                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
-                      <Td>{it.vendor || "—"}</Td>
-                      <Td right tabular>{fmt(it.amount)}</Td>
-                      <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.accrual_date}</span></Td>
-                      <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.reverses_on ?? "—"}</span></Td>
-                      <Td>
-                        {it.is_reversed ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold"
-                            style={{ color: "var(--text-muted)" }}>
-                            <CheckCircle2 size={10} strokeWidth={2.4} />Reversed
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold"
-                            style={{ color: "#8a6326" }}>Active</span>
-                        )}
-                      </Td>
-                      <Td>
-                        <div className="inline-flex items-center gap-1.5 justify-end w-full">
-                          <button
-                            onClick={() => setDrawerItem(it)}
-                            className="p-1 rounded hover:bg-[var(--surface-2)]"
-                            title="View lifecycle: accrual JE + reversal JE">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#8a6326" }} />
-                          </button>
-                          <RowActions disabled={isClosed} onEdit={() => setDialog({ open: true, item: it })}
-                            onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} />
-                        </div>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DataTable<AccrualItem>
+            id="schedules.accruals"
+            rows={items}
+            columns={ACCRUAL_COLUMNS}
+            rowKey={(it) => it.id}
+            isLoading={itemsLoading}
+            minWidth="1350px"
+            search={{ placeholder: "Search description, reference\u2026" }}
+            filters={accrualFilters(periodEnd)}
+            actions={(it) => (
+              <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                <button
+                  onClick={() => setDrawerItem(it)}
+                  className="p-1 rounded hover:bg-[var(--surface-2)]"
+                  title="View lifecycle: accrual JE + reversal JE">
+                  <FileText size={13} strokeWidth={1.8} style={{ color: "#8a6326" }} />
+                </button>
+                <RowActions
+                  disabled={isClosed}
+                  onEdit={() => setDialog({ open: true, item: it })}
+                  onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
+                />
+              </div>
+            )}
+            actionsWidth="104px"
+            exportFilename="accrual-schedule"
+            empty={{
+              title: "No accruals yet",
+              action: <Button size="sm" disabled={isClosed} onClick={() => setDialog({ open: true })}>Add accrual</Button>,
+            }}
+          />
         </div>
         </div>
         </div>
@@ -340,36 +454,6 @@ export function AccrualsPage() {
           />
         )}
       </AnimatePresence>
-    </div>
-  )
-}
-
-function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
-  return <th className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`} style={{ color: "var(--text-muted)" }}>{children}</th>
-}
-function Td({ children, right, tabular }: { children?: React.ReactNode; right?: boolean; tabular?: boolean }) {
-  return <td className={`px-3 py-2 ${right ? "text-right" : ""} ${tabular ? "tabular-nums" : ""}`}>{children}</td>
-}
-function Empty({ onAdd, verb }: { onAdd: () => void; verb: string }) {
-  return (
-    <div className="py-12 px-6 text-center">
-      <p className="text-sm font-semibold text-theme mb-1">No {verb}s yet</p>
-      <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
-        Add your first {verb} to start tracking.
-      </p>
-      <Button size="sm" onClick={onAdd}>Add {verb}</Button>
-    </div>
-  )
-}
-function RowActions({ onEdit, onDelete, disabled }: { onEdit: () => void; onDelete: () => void; disabled?: boolean }) {
-  return (
-    <div className="inline-flex items-center gap-1.5 justify-end w-full">
-      <button onClick={onEdit} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Edit"}>
-        <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-      </button>
-      <button onClick={onDelete} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Delete"}>
-        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
-      </button>
     </div>
   )
 }

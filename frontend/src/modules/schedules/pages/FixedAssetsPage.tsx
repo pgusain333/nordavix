@@ -11,7 +11,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { Building2, FileText, Pencil, Trash2, X } from "lucide-react"
 
-import { Button, Spinner } from "@/core/ui/components"
+import { Button } from "@/core/ui/components"
+import { DataTable, type Column, type FilterDef } from "@/core/ui"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
@@ -67,6 +68,162 @@ function monthlyDep(cost: string, salvage: string, life: number): string {
   const c = parseFloat(cost) || 0, s = parseFloat(salvage) || 0
   if (life < 1) return "$0.00"
   return `$${((c - s) / life).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+
+/** Edit / delete for one row, disabled while the period is locked. */
+function RowActions({ onEdit, onDelete, disabled }: { onEdit: () => void; onDelete: () => void; disabled?: boolean }) {
+  return (
+    <>
+      <button onClick={onEdit} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Edit"}>
+        <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+      </button>
+      <button onClick={onDelete} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Delete"}>
+        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
+      </button>
+    </>
+  )
+}
+
+/** Active / inactive was conveyed ONLY by 50% row opacity — invisible in a
+ *  screenshot or a print, and impossible to filter on. It is a column. */
+function StatusChip({ active }: { active: boolean }) {
+  return (
+    <span className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-semibold"
+      style={active
+        ? { color: "var(--green)", background: "var(--green-subtle)" }
+        : { color: "var(--text-muted)", background: "var(--surface-2)" }}>
+      {active ? "Active" : "Inactive"}
+    </span>
+  )
+}
+
+const ASSET_COLUMNS: Column<FixedAssetItem>[] = [
+  {
+    key: "description", header: "Asset", width: "auto", hideable: false,
+    sortValue: (it) => it.description.toLowerCase(),
+    text: (it) => it.description,
+    // One line. The reference used to sit under the description as a second
+    // line, so rows with a reference were taller than rows without and the
+    // list's rhythm depended on whether a field happened to be filled.
+    cell: (it) => (
+      <span className="text-theme text-[13px] truncate block">{it.description}</span>
+    ),
+  },
+  {
+    key: "reference", header: "Reference", width: "120px",
+    sortValue: (it) => it.reference?.toLowerCase() ?? null,
+    text: (it) => it.reference ?? "",
+    cell: (it) => (
+      <span className="text-[11.5px] truncate block" style={{ color: "var(--text-2)" }}>
+        {it.reference || "—"}
+      </span>
+    ),
+  },
+  {
+    key: "account", header: "GL account", width: "158px",
+    // Not sortable: the cell resolves an account NAME asynchronously, so the
+    // only value here is the QBO id — ordering by it would look like sorting
+    // and mean nothing.
+    text: (it) => it.qbo_account_id,
+    cell: (it) => <GlAccountCell qboAccountId={it.qbo_account_id} />,
+  },
+  {
+    key: "vendor", header: "Vendor", width: "150px",
+    sortValue: (it) => it.vendor?.toLowerCase() ?? null,
+    text: (it) => it.vendor ?? "",
+    cell: (it) => <span className="text-[13px] truncate block">{it.vendor || "—"}</span>,
+  },
+  {
+    key: "category", header: "Category", width: "130px",
+    sortValue: (it) => it.category?.toLowerCase() ?? null,
+    text: (it) => it.category ?? "",
+    cell: (it) => <span className="text-[13px] truncate block">{it.category || "—"}</span>,
+  },
+  {
+    key: "in_service", header: "In service", width: "112px",
+    sortValue: (it) => it.in_service_date,
+    text: (it) => it.in_service_date,
+    cell: (it) => (
+      <span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.in_service_date}</span>
+    ),
+  },
+  {
+    key: "cost", header: "Cost", width: "118px", align: "right",
+    sortValue: (it) => parseFloat(it.cost) || 0,
+    text: (it) => fmt(it.cost),
+    cell: (it) => <span className="tabular-nums text-[13px]">{fmt(it.cost)}</span>,
+  },
+  {
+    key: "salvage", header: "Salvage", width: "110px", align: "right",
+    defaultHidden: true,
+    sortValue: (it) => parseFloat(it.salvage_value) || 0,
+    text: (it) => fmt(it.salvage_value),
+    cell: (it) => <span className="tabular-nums text-[13px]">{fmt(it.salvage_value)}</span>,
+  },
+  {
+    key: "life", header: "Life", width: "82px", align: "right",
+    sortValue: (it) => it.useful_life_months,
+    text: (it) => `${it.useful_life_months} mo`,
+    cell: (it) => (
+      <span className="text-[11px] tabular-nums" style={{ color: "var(--text-2)" }}>
+        {it.useful_life_months} mo
+      </span>
+    ),
+  },
+  {
+    key: "monthly_dep", header: "Monthly dep.", width: "126px", align: "right",
+    sortValue: (it) => {
+      const c = parseFloat(it.cost) || 0
+      const s = parseFloat(it.salvage_value) || 0
+      return it.useful_life_months < 1 ? 0 : (c - s) / it.useful_life_months
+    },
+    text: (it) => monthlyDep(it.cost, it.salvage_value, it.useful_life_months),
+    cell: (it) => (
+      <span className="tabular-nums text-[13px]">
+        {monthlyDep(it.cost, it.salvage_value, it.useful_life_months)}
+      </span>
+    ),
+  },
+  {
+    key: "status", header: "Status", width: "88px",
+    sortValue: (it) => (it.is_active ? "active" : "inactive"),
+    text: (it) => (it.is_active ? "Active" : "Inactive"),
+    cell: (it) => <StatusChip active={it.is_active} />,
+  },
+]
+
+/** Filters need the selected period, so they are built per render
+ *  rather than frozen at module scope like the columns. */
+function assetFilters(periodEnd: string): FilterDef<FixedAssetItem>[] {
+  return [
+  {
+    key: "life_state", label: "Any depreciation state",
+    options: [
+      { value: "depreciating", label: "Still depreciating" },
+      { value: "fully",        label: "Fully depreciated" },
+      { value: "disposed",     label: "Disposed" },
+    ],
+    // Fully depreciated is derived from in-service date + useful life rather
+    // than stored, so it stays true as periods roll without a backfill.
+    test: (it, v) => {
+      if (v === "disposed") return !!it.disposed_on
+      const start = new Date(`${it.in_service_date}T00:00:00`)
+      const end = new Date(start)
+      end.setMonth(end.getMonth() + it.useful_life_months)
+      const done = toISODate(end) <= periodEnd
+      return v === "fully" ? (done && !it.disposed_on) : (!done && !it.disposed_on)
+    },
+  },
+  {
+    key: "status", label: "All statuses",
+    options: [
+      { value: "active",   label: "Active" },
+      { value: "inactive", label: "Inactive" },
+    ],
+    test: (it, v) => (v === "active" ? it.is_active : !it.is_active),
+  },
+  ]
 }
 
 export function FixedAssetsPage() {
@@ -249,68 +406,45 @@ export function FixedAssetsPage() {
           stale={!!snapshot?.stale}
         />
 
-        <div className="rounded-xl overflow-hidden"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-          <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        {/* Items */}
+        <div>
+          <div className="mb-2">
             <p className="text-sm font-semibold text-theme">Fixed assets</p>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
               Straight-line depreciation: (cost − salvage) ÷ useful life in months.
             </p>
           </div>
-          {itemsLoading ? (
-            <div className="py-12 flex justify-center"><Spinner className="h-5 w-5" /></div>
-          ) : items.length === 0 ? (
-            <Empty onAdd={() => setDialog({ open: true })} verb="asset" />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: "var(--surface-2)" }}>
-                    <Th>Asset</Th><Th>GL account</Th><Th>Category</Th><Th>In service</Th>
-                    <Th right>Cost</Th><Th right>Salvage</Th><Th>Life</Th><Th right>Monthly dep.</Th><Th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((it) => (
-                    <tr key={it.id} style={{ borderTop: "1px solid var(--border)", opacity: it.is_active ? 1 : 0.5 }}>
-                      <Td>
-                        <div className="text-theme">{it.description}</div>
-                        {it.reference && (
-                          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Tag: {it.reference}</div>
-                        )}
-                        {it.disposed_on && (
-                          <div className="text-[10px] font-semibold" style={{ color: "#9b3d37" }}>
-                            Disposed {it.disposed_on}
-                          </div>
-                        )}
-                      </Td>
-                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
-                      <Td>{it.category || "—"}</Td>
-                      <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.in_service_date}</span></Td>
-                      <Td right tabular>{fmt(it.cost)}</Td>
-                      <Td right tabular>{fmt(it.salvage_value)}</Td>
-                      <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.useful_life_months} mo</span></Td>
-                      <Td right tabular>{monthlyDep(it.cost, it.salvage_value, it.useful_life_months)}</Td>
-                      <Td>
-                        <div className="inline-flex items-center gap-1.5 justify-end w-full">
-                          <button
-                            onClick={() => setDrawerItem(it)}
-                            className="p-1 rounded hover:bg-[var(--surface-2)]"
-                            title="View depreciation schedule + JE">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#2e7a55" }} />
-                          </button>
-                          <RowActions
-                            onEdit={() => setDialog({ open: true, item: it })}
-                            onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
-                            disabled={isClosed} />
-                        </div>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DataTable<FixedAssetItem>
+            id="schedules.assets"
+            rows={items}
+            columns={ASSET_COLUMNS}
+            rowKey={(it) => it.id}
+            isLoading={itemsLoading}
+            minWidth="1470px"
+            search={{ placeholder: "Search description, reference\u2026" }}
+            filters={assetFilters(periodEnd)}
+            actions={(it) => (
+              <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                <button
+                  onClick={() => setDrawerItem(it)}
+                  className="p-1 rounded hover:bg-[var(--surface-2)]"
+                  title="View depreciation schedule + JE">
+                  <FileText size={13} strokeWidth={1.8} style={{ color: "#2e7a55" }} />
+                </button>
+                <RowActions
+                  disabled={isClosed}
+                  onEdit={() => setDialog({ open: true, item: it })}
+                  onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
+                />
+              </div>
+            )}
+            actionsWidth="104px"
+            exportFilename="asset-schedule"
+            empty={{
+              title: "No assets yet",
+              action: <Button size="sm" disabled={isClosed} onClick={() => setDialog({ open: true })}>Add asset</Button>,
+            }}
+          />
         </div>
         </div>
         </div>
@@ -335,34 +469,6 @@ export function FixedAssetsPage() {
           />
         )}
       </AnimatePresence>
-    </div>
-  )
-}
-
-function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
-  return <th className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`} style={{ color: "var(--text-muted)" }}>{children}</th>
-}
-function Td({ children, right, tabular }: { children?: React.ReactNode; right?: boolean; tabular?: boolean }) {
-  return <td className={`px-3 py-2 ${right ? "text-right" : ""} ${tabular ? "tabular-nums" : ""}`}>{children}</td>
-}
-function Empty({ onAdd, verb }: { onAdd: () => void; verb: string }) {
-  return (
-    <div className="py-12 px-6 text-center">
-      <p className="text-sm font-semibold text-theme mb-1">No {verb}s yet</p>
-      <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>Add your first {verb} to start the depreciation roll-forward.</p>
-      <Button size="sm" onClick={onAdd}>Add {verb}</Button>
-    </div>
-  )
-}
-function RowActions({ onEdit, onDelete, disabled }: { onEdit: () => void; onDelete: () => void; disabled?: boolean }) {
-  return (
-    <div className="inline-flex items-center gap-1.5 justify-end w-full">
-      <button onClick={onEdit} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Edit"}>
-        <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-      </button>
-      <button onClick={onDelete} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Delete"}>
-        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
-      </button>
     </div>
   )
 }

@@ -11,7 +11,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { Banknote, FileText, Pencil, Trash2, X } from "lucide-react"
 
-import { Button, Spinner } from "@/core/ui/components"
+import { Button } from "@/core/ui/components"
+import { DataTable, type Column, type FilterDef } from "@/core/ui"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { useScheduleOptimistic } from "@/modules/schedules/optimistic"
 import { SchedulePageHeader } from "@/modules/schedules/components/SchedulePageHeader"
@@ -48,6 +49,182 @@ function computePMT(principal: string, ratePct: string, term: string): string {
   if (r === 0) return (p / n).toFixed(2)
   const pmt = (p * r) / (1 - Math.pow(1 + r, -n))
   return pmt.toFixed(2)
+}
+
+
+/** Edit / delete for one row, disabled while the period is locked. */
+function RowActions({ onEdit, onDelete, disabled }: { onEdit: () => void; onDelete: () => void; disabled?: boolean }) {
+  return (
+    <>
+      <button onClick={onEdit} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Edit"}>
+        <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
+      </button>
+      <button onClick={onDelete} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Delete"}>
+        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
+      </button>
+    </>
+  )
+}
+
+/** Active / inactive was conveyed ONLY by 50% row opacity — invisible in a
+ *  screenshot or a print, and impossible to filter on. It is a column. */
+function StatusChip({ active }: { active: boolean }) {
+  return (
+    <span className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-semibold"
+      style={active
+        ? { color: "var(--green)", background: "var(--green-subtle)" }
+        : { color: "var(--text-muted)", background: "var(--surface-2)" }}>
+      {active ? "Active" : "Inactive"}
+    </span>
+  )
+}
+
+/** Payment-type label, shared by the cell and by CSV export so the exported
+ *  file reads the same as the screen. */
+function LOAN_TYPE_LABEL(t: string): string {
+  return t === "interest_only" ? "I/O" : t === "balloon" ? "Balloon" : "Amortizing"
+}
+
+const LOAN_COLUMNS: Column<LoanItem>[] = [
+  {
+    key: "description", header: "Loan", width: "auto", hideable: false,
+    sortValue: (it) => it.description.toLowerCase(),
+    text: (it) => it.description,
+    // One line. The reference used to sit under the description as a second
+    // line, so rows with a reference were taller than rows without and the
+    // list's rhythm depended on whether a field happened to be filled.
+    cell: (it) => (
+      <span className="text-theme text-[13px] truncate block">{it.description}</span>
+    ),
+  },
+  {
+    key: "reference", header: "Reference", width: "120px",
+    sortValue: (it) => it.reference?.toLowerCase() ?? null,
+    text: (it) => it.reference ?? "",
+    cell: (it) => (
+      <span className="text-[11.5px] truncate block" style={{ color: "var(--text-2)" }}>
+        {it.reference || "—"}
+      </span>
+    ),
+  },
+  {
+    key: "account", header: "GL account", width: "158px",
+    // Not sortable: the cell resolves an account NAME asynchronously, so the
+    // only value here is the QBO id — ordering by it would look like sorting
+    // and mean nothing.
+    text: (it) => it.qbo_account_id,
+    cell: (it) => <GlAccountCell qboAccountId={it.qbo_account_id} />,
+  },
+  {
+    key: "lender", header: "Lender", width: "150px",
+    sortValue: (it) => it.lender?.toLowerCase() ?? null,
+    text: (it) => it.lender ?? "",
+    cell: (it) => <span className="text-[13px] truncate block">{it.lender || "—"}</span>,
+  },
+  {
+    key: "origination", header: "Origination", width: "112px",
+    sortValue: (it) => it.loan_date,
+    text: (it) => it.loan_date,
+    cell: (it) => (
+      <span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.loan_date}</span>
+    ),
+  },
+  {
+    key: "principal", header: "Principal", width: "124px", align: "right",
+    sortValue: (it) => parseFloat(it.original_principal) || 0,
+    text: (it) => fmt(it.original_principal),
+    cell: (it) => <span className="tabular-nums text-[13px]">{fmt(it.original_principal)}</span>,
+  },
+  {
+    key: "rate", header: "Rate", width: "86px", align: "right",
+    sortValue: (it) => parseFloat(it.interest_rate_pct) || 0,
+    text: (it) => `${it.interest_rate_pct}%`,
+    cell: (it) => <span className="tabular-nums text-[13px]">{it.interest_rate_pct}%</span>,
+  },
+  {
+    key: "term", header: "Term", width: "84px", align: "right",
+    sortValue: (it) => it.term_months,
+    text: (it) => `${it.term_months} mo`,
+    cell: (it) => (
+      <span className="text-[11px] tabular-nums" style={{ color: "var(--text-2)" }}>
+        {it.term_months} mo
+      </span>
+    ),
+  },
+  {
+    key: "monthly", header: "Monthly", width: "120px", align: "right",
+    sortValue: (it) => (it.monthly_payment ? parseFloat(it.monthly_payment) : null),
+    text: (it) => (it.monthly_payment ? fmt(it.monthly_payment) : ""),
+    cell: (it) => (
+      <span className="tabular-nums text-[13px]">
+        {it.monthly_payment ? fmt(it.monthly_payment) : "—"}
+      </span>
+    ),
+  },
+  {
+    key: "type", header: "Type", width: "106px",
+    sortValue: (it) => it.payment_type,
+    text: (it) => LOAN_TYPE_LABEL(it.payment_type),
+    cell: (it) => (
+      <span className="text-[10px] font-semibold uppercase tracking-wider"
+        style={{ color: "var(--text-muted)" }}>
+        {LOAN_TYPE_LABEL(it.payment_type)}
+      </span>
+    ),
+  },
+  {
+    key: "status", header: "Status", width: "88px",
+    sortValue: (it) => (it.is_active ? "active" : "inactive"),
+    text: (it) => (it.is_active ? "Active" : "Inactive"),
+    cell: (it) => <StatusChip active={it.is_active} />,
+  },
+]
+
+/** Filters need the selected period, so they are built per render
+ *  rather than frozen at module scope like the columns. */
+function loanFilters(periodEnd: string): FilterDef<LoanItem>[] {
+  return [
+  {
+    key: "maturity", label: "Any maturity",
+    options: [
+      { value: "maturing_12mo", label: "Matures within 12 months" },
+      { value: "matured",       label: "Already matured" },
+      { value: "current",       label: "Current" },
+    ],
+    // Maturity is derived from origination + term rather than stored, so it
+    // stays correct as periods roll forward.
+    test: (it, v) => {
+      const start = new Date(`${it.loan_date}T00:00:00`)
+      const mat = new Date(start)
+      mat.setMonth(mat.getMonth() + it.term_months)
+      const maturity = toISODate(mat)
+      if (v === "matured") return maturity < periodEnd
+      if (v === "current") return maturity >= periodEnd
+      const horizon = new Date(`${periodEnd}T00:00:00`)
+      horizon.setMonth(horizon.getMonth() + 12)
+      return maturity >= periodEnd && maturity <= toISODate(horizon)
+    },
+  },
+  {
+    key: "type", label: "Any type",
+    options: [
+      { value: "amortizing",     label: "Amortizing" },
+      { value: "interest_only",  label: "Interest only" },
+      { value: "balloon",        label: "Balloon" },
+    ],
+    test: (it, v) => (v === "amortizing"
+      ? it.payment_type !== "interest_only" && it.payment_type !== "balloon"
+      : it.payment_type === v),
+  },
+  {
+    key: "status", label: "All statuses",
+    options: [
+      { value: "active",   label: "Active" },
+      { value: "inactive", label: "Inactive" },
+    ],
+    test: (it, v) => (v === "active" ? it.is_active : !it.is_active),
+  },
+  ]
 }
 
 export function LoansPage() {
@@ -174,73 +351,45 @@ export function LoansPage() {
           stale={!!snapshot?.stale}
         />
 
-        <div className="rounded-xl overflow-hidden"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
-          <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        {/* Items */}
+        <div>
+          <div className="mb-2">
             <p className="text-sm font-semibold text-theme">Loans</p>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              Amortization runs from loan_date. Interest expense and principal paydown
-              are computed per period — no manual amortization tables needed.
+              Amortization runs from loan_date. Interest expense and principal paydown are computed per period — no manual amortization tables needed.
             </p>
           </div>
-          {itemsLoading ? (
-            <div className="py-12 flex justify-center"><Spinner className="h-5 w-5" /></div>
-          ) : items.length === 0 ? (
-            <Empty onAdd={() => setDialog({ open: true })} verb="loan" />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: "var(--surface-2)" }}>
-                    <Th>Loan</Th><Th>GL account</Th><Th>Lender</Th><Th>Origination</Th>
-                    <Th right>Principal</Th><Th right>Rate</Th><Th>Term</Th>
-                    <Th right>Monthly</Th><Th>Type</Th><Th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((it) => (
-                    <tr key={it.id} style={{ borderTop: "1px solid var(--border)", opacity: it.is_active ? 1 : 0.5 }}>
-                      <Td>
-                        <div className="text-theme">{it.description}</div>
-                        {it.reference && (
-                          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>Loan #: {it.reference}</div>
-                        )}
-                      </Td>
-                      <Td><GlAccountCell qboAccountId={it.qbo_account_id} /></Td>
-                      <Td>{it.lender || "—"}</Td>
-                      <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.loan_date}</span></Td>
-                      <Td right tabular>{fmt(it.original_principal)}</Td>
-                      <Td right tabular>{it.interest_rate_pct}%</Td>
-                      <Td><span className="text-[11px]" style={{ color: "var(--text-2)" }}>{it.term_months} mo</span></Td>
-                      <Td right tabular>{it.monthly_payment ? fmt(it.monthly_payment) : "—"}</Td>
-                      <Td>
-                        <span className="text-[10px] font-semibold uppercase tracking-wider"
-                          style={{ color: "var(--text-muted)" }}>
-                          {it.payment_type === "interest_only" ? "I/O"
-                            : it.payment_type === "balloon" ? "Balloon"
-                            : "Amortizing"}
-                        </span>
-                      </Td>
-                      <Td>
-                        <div className="inline-flex items-center gap-1.5 justify-end w-full">
-                          <button
-                            onClick={() => setDrawerItem(it)}
-                            className="p-1 rounded hover:bg-[var(--surface-2)]"
-                            title="View loan amortization + JE">
-                            <FileText size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
-                          </button>
-                          <RowActions
-                            disabled={isClosed}
-                            onEdit={() => setDialog({ open: true, item: it })}
-                            onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }} />
-                        </div>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DataTable<LoanItem>
+            id="schedules.loans"
+            rows={items}
+            columns={LOAN_COLUMNS}
+            rowKey={(it) => it.id}
+            isLoading={itemsLoading}
+            minWidth="1540px"
+            search={{ placeholder: "Search description, reference\u2026" }}
+            filters={loanFilters(periodEnd)}
+            actions={(it) => (
+              <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                <button
+                  onClick={() => setDrawerItem(it)}
+                  className="p-1 rounded hover:bg-[var(--surface-2)]"
+                  title="View loan amortization + JE">
+                  <FileText size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
+                </button>
+                <RowActions
+                  disabled={isClosed}
+                  onEdit={() => setDialog({ open: true, item: it })}
+                  onDelete={() => { if (window.confirm(`Delete "${it.description}"?`)) deleteMut.mutate(it.id) }}
+                />
+              </div>
+            )}
+            actionsWidth="104px"
+            exportFilename="loan-schedule"
+            empty={{
+              title: "No loans yet",
+              action: <Button size="sm" disabled={isClosed} onClick={() => setDialog({ open: true })}>Add loan</Button>,
+            }}
+          />
         </div>
         </div>
         </div>
@@ -261,34 +410,6 @@ export function LoansPage() {
           />
         )}
       </AnimatePresence>
-    </div>
-  )
-}
-
-function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
-  return <th className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`} style={{ color: "var(--text-muted)" }}>{children}</th>
-}
-function Td({ children, right, tabular }: { children?: React.ReactNode; right?: boolean; tabular?: boolean }) {
-  return <td className={`px-3 py-2 ${right ? "text-right" : ""} ${tabular ? "tabular-nums" : ""}`}>{children}</td>
-}
-function Empty({ onAdd, verb }: { onAdd: () => void; verb: string }) {
-  return (
-    <div className="py-12 px-6 text-center">
-      <p className="text-sm font-semibold text-theme mb-1">No {verb}s yet</p>
-      <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>Add your first {verb} to compute the amortization.</p>
-      <Button size="sm" onClick={onAdd}>Add {verb}</Button>
-    </div>
-  )
-}
-function RowActions({ onEdit, onDelete, disabled }: { onEdit: () => void; onDelete: () => void; disabled?: boolean }) {
-  return (
-    <div className="inline-flex items-center gap-1.5 justify-end w-full">
-      <button onClick={onEdit} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Edit"}>
-        <Pencil size={13} strokeWidth={1.8} style={{ color: "var(--text-muted)" }} />
-      </button>
-      <button onClick={onDelete} disabled={disabled} className="p-1 rounded hover:bg-[var(--surface-2)] disabled:opacity-30 disabled:cursor-not-allowed" title={disabled ? "Period closed" : "Delete"}>
-        <Trash2 size={13} strokeWidth={1.8} style={{ color: "#9b3d37" }} />
-      </button>
     </div>
   )
 }
