@@ -106,6 +106,7 @@ _INVARIANT_FILES = {
     "test_cross_tenant_access.py",  # firm-view membership from Clerk (fails closed)
     "test_recon_conclusion.py",   # frozen recon working paper (variance derived, hash covers edits)
     "test_insights_accuracy.py",  # insights figures (TB resolution, ledger-sourced AR/AP, cache staleness)
+    "test_task_recurrence.py",    # recurring task roll-forward (month-end series never drifts)
 }
 
 

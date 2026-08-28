@@ -5,6 +5,15 @@ import { apiClient } from "@/core/api/client"
 export type TaskSeverity   = "info" | "warn" | "critical"
 export type TaskSourceType = "recon_account" | "flux" | "schedule" | "manual"
 export type TaskStatus     = "pending" | "reviewed" | "approved" | "flagged" | "manual"
+/** null = one-time. Anything else repeats: completing the task writes the next
+ *  occurrence, so a series only advances when the work is actually done. */
+export type TaskRecurrence = "monthly" | "quarterly" | "annually" | null
+
+export const RECURRENCE_LABEL: Record<string, string> = {
+  monthly:   "Monthly",
+  quarterly: "Quarterly",
+  annually:  "Annually",
+}
 
 export interface Task {
   key:           string
@@ -38,6 +47,7 @@ export interface Task {
 
   // Manual-only
   priority:      string | null
+  recurrence:    TaskRecurrence
   created_by:    string | null
   created_at:    string | null
 }
@@ -97,8 +107,11 @@ interface BulkAction {
   completed?:            boolean
 }
 
-async function bulkAction(body: BulkAction): Promise<{ applied: number }> {
-  const { data } = await apiClient.post<{ applied: number }>("/api/tasks/bulk-action", body)
+/** `recurred` counts how many of the completed tasks were repeating and so
+ *  minted their next occurrence — the list grows by that many on refetch. */
+async function bulkAction(body: BulkAction): Promise<{ applied: number; recurred: number }> {
+  const { data } = await apiClient.post<{ applied: number; recurred: number }>(
+    "/api/tasks/bulk-action", body)
   return data
 }
 
@@ -107,6 +120,9 @@ interface ManualTaskCreate {
   description?:          string | null
   priority?:             string | null
   period_end?:           string | null
+  /** Omit or null for a one-time task. A repeating task needs a period or a
+   *  due date to repeat from — the API rejects it otherwise. */
+  recurrence?:           TaskRecurrence
   assigned_preparer_id?: string | null
   assigned_reviewer_id?: string | null
   due_date?:             string | null
@@ -122,6 +138,8 @@ interface ManualTaskUpdate {
   description?:          string | null
   priority?:             string | null
   notes?:                string | null
+  /** "" turns repeating off; a value turns it on or changes the interval. */
+  recurrence?:           string | null
   assigned_preparer_id?: string | null
   assigned_reviewer_id?: string | null
   due_date?:             string | null
@@ -132,8 +150,12 @@ async function updateManual(taskId: string, body: ManualTaskUpdate): Promise<Tas
   return data
 }
 
-async function complete(actionId: string): Promise<void> {
-  await apiClient.post(`/api/tasks/${actionId}/complete`)
+/** Completing a repeating task also creates its next occurrence server-side —
+ *  `next_task_id` is that new row, so callers know the list has grown. */
+async function complete(actionId: string): Promise<{ next_task_id: string | null }> {
+  const { data } = await apiClient.post<{ next_task_id: string | null }>(
+    `/api/tasks/${actionId}/complete`)
+  return data
 }
 
 export const tasksApi = {

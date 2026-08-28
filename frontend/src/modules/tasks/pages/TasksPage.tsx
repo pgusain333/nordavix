@@ -31,12 +31,16 @@ import {
   Filter,
   Pencil,
   Calendar,
+  Repeat,
 } from "lucide-react"
 import { Button } from "@/core/ui/components"
 import { SkeletonTable } from "@/core/ui/Skeleton"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { PageHeader } from "@/core/ui/PageHeader"
-import { tasksApi, type Task, type TaskSeverity, type TaskSourceType } from "@/modules/tasks/api"
+import {
+  tasksApi, RECURRENCE_LABEL,
+  type Task, type TaskSeverity, type TaskSourceType, type TaskRecurrence,
+} from "@/modules/tasks/api"
 import { useUserNames } from "@/modules/workspace/hooks"
 import { workspaceApi } from "@/modules/workspace/api"
 
@@ -167,6 +171,11 @@ export function TasksPage() {
     }
     return Array.from(s).sort().reverse()
   }, [tasks, yearFilter])
+
+  // What a new task's period defaults to. The period the list is filtered to
+  // if there is one, else the most recent period anything is filed under —
+  // which is the month someone adding a task is almost always working on.
+  const defaultPeriod = periodFilter !== "all" ? periodFilter : (periodOptions[0] ?? "")
 
   // If the current period filter falls outside the new year, reset it
   useEffect(() => {
@@ -373,6 +382,7 @@ export function TasksPage() {
               <ManualTaskForm
                 isAdmin={isAdmin}
                 members={members}
+                defaultPeriod={defaultPeriod}
                 onClose={() => setShowManualForm(false)}
                 onCreated={() => {
                   setShowManualForm(false)
@@ -465,7 +475,7 @@ export function TasksPage() {
               <table className="w-full text-sm min-w-[1100px]">
                 <thead>
                   <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
-                    <th className="px-3 py-2.5 text-center" style={{ width: 32 }}>
+                    <th className="px-3 py-2 text-center" style={{ width: 32 }}>
                       <input type="checkbox"
                         checked={isAllSelected}
                         ref={(el) => { if (el) el.indeterminate = isSomeSelected && !isAllSelected }}
@@ -571,7 +581,7 @@ export function TasksPage() {
 
 function Th({ label, filter }: { label: string; filter?: React.ReactNode }) {
   return (
-    <th className="text-left text-[10px] font-semibold uppercase tracking-wide px-3 py-2.5 whitespace-nowrap"
+    <th className="text-left text-[10px] font-semibold uppercase tracking-wide px-3 py-2 whitespace-nowrap"
       style={{ color: "var(--text-muted)" }}>
       <span className="inline-flex items-center gap-1.5">
         {label}
@@ -887,14 +897,14 @@ const TaskRow = memo(function TaskRow({ task, userNames, members, isAdmin, check
       background: checked ? "var(--green-subtle)" : rowBg,
       opacity: dismissed ? 0.5 : 1,
     }}>
-      <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+      <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
         <input type="checkbox" checked={checked} onChange={() => onToggleCheck(task.key)} aria-label="Select task" />
       </td>
 
       {/* Task */}
-      <td className="px-3 py-3">
+      <td className="px-3 py-2">
         <div className="flex items-start gap-2">
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full shrink-0 mt-0.5"
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full shrink-0 mt-px"
             style={{ background: sev.bg, color: sev.fg }}>
             <SeverityIcon size={11} strokeWidth={2} />
           </span>
@@ -903,8 +913,16 @@ const TaskRow = memo(function TaskRow({ task, userNames, members, isAdmin, check
               style={{ textDecoration: completed ? "line-through" : "none" }}>
               {task.subject}
             </span>
+            {task.recurrence && (
+              <span className="ml-1.5 inline-flex items-center gap-1 rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wide align-middle"
+                style={{ background: "var(--info-subtle)", color: "var(--info)" }}
+                title={`Repeats ${task.recurrence} — completing this one creates the next`}>
+                <Repeat size={9} strokeWidth={2.4} />
+                {RECURRENCE_LABEL[task.recurrence] ?? task.recurrence}
+              </span>
+            )}
             {task.notes && (
-              <p className="text-[11px] mt-1 italic inline-flex items-center gap-1"
+              <p className="text-[11px] mt-0.5 italic inline-flex items-center gap-1"
                 style={{ color: "var(--text-2)" }}>
                 <StickyNote size={9} strokeWidth={1.8} />
                 {task.notes}
@@ -914,20 +932,20 @@ const TaskRow = memo(function TaskRow({ task, userNames, members, isAdmin, check
         </div>
       </td>
 
-      <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+      <td className="px-3 py-2 text-xs" style={{ color: "var(--text-2)" }}>
         {task.period_end
           ? new Date(task.period_end + "T00:00:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })
           : "—"}
       </td>
 
-      <td className="px-3 py-3">
+      <td className="px-3 py-2">
         <span className="text-[9px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5"
           style={{ background: src.bg, color: src.fg }}>
           {src.label}
         </span>
       </td>
 
-      <td className="px-3 py-3">
+      <td className="px-3 py-2">
         <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
           style={{ background: stat.bg, color: stat.fg }}>
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: stat.fg }} />
@@ -936,7 +954,7 @@ const TaskRow = memo(function TaskRow({ task, userNames, members, isAdmin, check
       </td>
 
       {/* Preparer */}
-      <td className="px-3 py-3 text-xs">
+      <td className="px-3 py-2 text-xs">
         <PersonCell
           actorName={preparerActor}
           actorAt={task.prepared_at}
@@ -950,7 +968,7 @@ const TaskRow = memo(function TaskRow({ task, userNames, members, isAdmin, check
       </td>
 
       {/* Reviewer */}
-      <td className="px-3 py-3 text-xs">
+      <td className="px-3 py-2 text-xs">
         <PersonCell
           actorName={reviewerActor}
           actorAt={task.approved_at}
@@ -964,7 +982,7 @@ const TaskRow = memo(function TaskRow({ task, userNames, members, isAdmin, check
       </td>
 
       {/* Due */}
-      <td className="px-3 py-3 text-xs">
+      <td className="px-3 py-2 text-xs">
         <DueCell
           dueDate={task.due_date}
           overridden={task.due_date_overridden}
@@ -975,7 +993,7 @@ const TaskRow = memo(function TaskRow({ task, userNames, members, isAdmin, check
       </td>
 
       {/* Completed */}
-      <td className="px-3 py-3 text-xs" style={{ color: "var(--text-2)" }}>
+      <td className="px-3 py-2 text-xs" style={{ color: "var(--text-2)" }}>
         {completedAt ? (
           <>
             <p className="text-theme">{fmtDate(completedAt)}</p>
@@ -985,7 +1003,7 @@ const TaskRow = memo(function TaskRow({ task, userNames, members, isAdmin, check
       </td>
 
       {/* Actions */}
-      <td className="px-3 py-3">
+      <td className="px-3 py-2">
         <div className="flex items-center justify-end gap-1">
           {task.deep_link && !completed && !dismissed && (
             <Button size="sm" variant="outline"
@@ -1153,10 +1171,11 @@ function EmptyState({ tab, statusFilter, onSwitchTab, onClearStatusFilter }:
   )
 }
 
-function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
+function ManualTaskForm({ onClose, onCreated, members, isAdmin, defaultPeriod }: {
   onClose: () => void; onCreated: () => void
   members: { id: string | null; display_name: string; role: string }[]
   isAdmin: boolean
+  defaultPeriod: string
 }) {
   const [subject, setSubject] = useState("")
   const [description, setDescription] = useState("")
@@ -1165,6 +1184,17 @@ function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
   const [dueDate, setDueDate] = useState("")
   const [preparerId, setPreparerId] = useState("")
   const [reviewerId, setReviewerId] = useState("")
+  const [recurrence, setRecurrence] = useState<string>("")
+
+  // A repeating task needs something to repeat FROM — the API rejects one with
+  // neither a period nor a due date. Rather than let the user submit and read
+  // a 400, the period is filled in for them the moment they choose to repeat,
+  // and the rule is stated where the choice is made.
+  const needsAnchor = !!recurrence && !periodEnd && !dueDate
+  function pickRecurrence(v: string) {
+    setRecurrence(v)
+    if (v && !periodEnd && !dueDate && defaultPeriod) setPeriodEnd(defaultPeriod)
+  }
 
   const createMut = useMutation({
     mutationFn: () => tasksApi.createManual({
@@ -1172,6 +1202,7 @@ function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
       description: description.trim() || null,
       priority,
       period_end:  periodEnd || null,
+      recurrence:  (recurrence || null) as TaskRecurrence,
       // Admin-only — send blank otherwise
       due_date:             isAdmin ? (dueDate || null) : null,
       assigned_preparer_id: isAdmin ? (preparerId || null) : null,
@@ -1180,9 +1211,18 @@ function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
     onSuccess: onCreated,
   })
 
+  const canSubmit = !!subject.trim() && !needsAnchor && !createMut.isPending
+  function submit() { if (canSubmit) createMut.mutate() }
+
   return (
     <div className="rounded-xl p-4 space-y-3"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
+      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}
+      onKeyDown={(e) => {
+        // Esc closes, Cmd/Ctrl+Enter saves — the two shortcuts anyone who lives
+        // in a task list reaches for without thinking.
+        if (e.key === "Escape") { e.stopPropagation(); onClose() }
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit() }
+      }}>
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-theme">New task</h3>
         <button onClick={onClose} className="h-7 w-7 rounded-md flex items-center justify-center"
@@ -1190,32 +1230,79 @@ function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
           <X size={14} strokeWidth={1.8} />
         </button>
       </div>
+
       <Label text="Subject">
-        <input type="text" value={subject} onChange={(e) => setSubject(e.target.value)}
+        <input type="text" value={subject} onChange={(e) => setSubject(e.target.value)} autoFocus
           placeholder="e.g. Email client for September bank statement"
           className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
           style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
       </Label>
+
       <Label text="Description (optional)">
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
           className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none resize-none"
           style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
       </Label>
+
+      {/* Repeat. Close work is mostly the same list every month; without this
+          the recurring half of it lives in a spreadsheet beside Nordavix. */}
+      <Label text="Repeat">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-1">
+          {RECURRENCE_CHOICES.map((o) => {
+            const on = recurrence === o.value
+            return (
+              <button key={o.value || "once"} type="button" onClick={() => pickRecurrence(o.value)}
+                className="rounded-lg px-2.5 py-1.5 text-left transition-colors"
+                style={on
+                  ? { background: "var(--green-subtle)", border: "1px solid var(--green)" }
+                  : { background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                <span className="block text-[12px] font-semibold"
+                  style={{ color: on ? "var(--green)" : "var(--text)" }}>{o.label}</span>
+                <span className="block text-[10px] leading-snug"
+                  style={{ color: "var(--text-muted)" }}>{o.hint}</span>
+              </button>
+            )
+          })}
+        </div>
+      </Label>
+
+      {recurrence && (
+        <p className="text-[11px] flex items-start gap-1.5 rounded-lg px-2.5 py-1.5"
+          style={{ background: "var(--info-subtle)", color: "var(--info)" }}>
+          <Repeat size={11} strokeWidth={2} className="shrink-0 mt-px" />
+          <span>
+            {needsAnchor
+              ? "Pick a period or a due date below — a repeating task needs one to repeat from."
+              : <>The next one is created when you complete this task, so nothing piles up
+                 while the work is still open.</>}
+          </span>
+        </p>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Label text="Priority">
-          <select value={priority} onChange={(e) => setPriority(e.target.value)}
-            className="w-full rounded-lg px-3 py-2 mt-1 text-sm outline-none"
-            style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }}>
-            <option value="low">Low</option><option value="normal">Normal</option>
-            <option value="high">High</option><option value="critical">Critical</option>
-          </select>
+          <div className="grid grid-cols-4 gap-1 mt-1">
+            {PRIORITY_CHOICES.map((o) => {
+              const on = priority === o.value
+              return (
+                <button key={o.value} type="button" onClick={() => setPriority(o.value)}
+                  className="rounded-lg px-1 py-1.5 text-[11.5px] font-semibold transition-colors"
+                  style={on
+                    ? { background: o.bg, color: o.fg, border: `1px solid ${o.fg}` }
+                    : { background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                  {o.label}
+                </button>
+              )
+            })}
+          </div>
         </Label>
-        <Label text="Period (optional)">
+        <Label text={recurrence ? "Period" : "Period (optional)"}>
           <div className="mt-1">
             <DatePicker value={periodEnd} onChange={setPeriodEnd} className="block w-full" triggerClassName="inline-flex items-center gap-2 w-full rounded-lg px-3 py-2 text-sm outline-none transition-colors hover:bg-[var(--surface)]" />
           </div>
         </Label>
       </div>
+
       {isAdmin && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Label text="Preparer (optional)">
@@ -1245,19 +1332,50 @@ function ManualTaskForm({ onClose, onCreated, members, isAdmin }: {
           </Label>
         </div>
       )}
+
+      {isAdmin && recurrence && (
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+          Preparer and reviewer carry over to each occurrence. A due date keeps its
+          distance from the period end, so a “10 days after” habit survives the roll.
+        </p>
+      )}
+
       {createMut.error ? (
         <p className="text-xs" style={{ color: "#9b3d37" }}>
-          {((createMut.error as { message?: string })?.message) ?? "Couldn't create the task."}
+          {(createMut.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+            ?? (createMut.error as { message?: string })?.message
+            ?? "Couldn't create the task."}
         </p>
       ) : null}
-      <div className="flex items-center justify-end gap-2 pt-1">
-        <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button size="sm" loading={createMut.isPending} disabled={!subject.trim()}
-          onClick={() => createMut.mutate()}>Create task</Button>
+
+      <div className="flex items-center justify-between gap-2 pt-1">
+        <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+          {navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl"}+Enter to save · Esc to cancel
+        </span>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button size="sm" loading={createMut.isPending} disabled={!canSubmit} onClick={submit}>
+            Create task
+          </Button>
+        </div>
       </div>
     </div>
   )
 }
+
+const RECURRENCE_CHOICES = [
+  { value: "",          label: "One-time",  hint: "Just this once" },
+  { value: "monthly",   label: "Monthly",   hint: "Every close" },
+  { value: "quarterly", label: "Quarterly", hint: "Every 3 months" },
+  { value: "annually",  label: "Annually",  hint: "Once a year" },
+]
+
+const PRIORITY_CHOICES = [
+  { value: "low",      label: "Low",      bg: "var(--surface-2)",   fg: "var(--text-2)" },
+  { value: "normal",   label: "Normal",   bg: "var(--info-subtle)", fg: "var(--info)" },
+  { value: "high",     label: "High",     bg: "var(--warn-subtle)", fg: "var(--warn)" },
+  { value: "critical", label: "Critical", bg: "var(--danger-subtle)", fg: "var(--danger)" },
+]
 
 function Label({ text, children }: { text: string; children: React.ReactNode }) {
   return (

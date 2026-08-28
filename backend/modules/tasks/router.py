@@ -57,6 +57,7 @@ from models.schedule import (
 from models.task_action import TaskAction
 from models.tenant import Tenant
 from models.trial_balance import TrialBalance
+from modules.tasks.recurrence import anchor_error, next_occurrence
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,9 @@ class TaskOut(BaseModel):
     dismissed_at:  str | None
     # Manual-only
     priority:      str | None
+    # NULL = one-time. 'monthly' | 'quarterly' | 'annually' means completing
+    # this task writes the next occurrence.
+    recurrence:    str | None = None
     created_by:    str | None
     created_at:    str | None
 
@@ -147,6 +151,9 @@ class ManualTaskCreate(BaseModel):
     description:  str | None = None
     priority:     str | None = "normal"
     period_end:   str | None = None
+    # None / "" = one-time. Anything else must be in VALID_RECURRENCE and needs
+    # a period or a due date to repeat from.
+    recurrence:   str | None = None
     # Admin-set (silently ignored when caller isn't admin).
     assigned_preparer_id: str | None = None
     assigned_reviewer_id: str | None = None
@@ -158,6 +165,8 @@ class ManualTaskUpdate(BaseModel):
     description:  str | None = None
     priority:     str | None = None
     notes:        str | None = None
+    # "" turns recurrence off; a valid value turns it on or changes the interval.
+    recurrence:   str | None = None
     # Admin-set
     assigned_preparer_id: str | None = None
     assigned_reviewer_id: str | None = None
@@ -891,6 +900,8 @@ async def bulk_action(
 
     now = datetime.now(UTC)
     applied = 0
+    # How many repeating tasks minted their next occurrence in this call.
+    recurred = 0
     for t in body.targets:
         # Parse period
         pe: date | None = None
@@ -942,7 +953,15 @@ async def bulk_action(
         elif body.dismissed is False:
             row.dismissed_at = None
         if body.completed is True:
+            # Only roll forward on the transition to complete. Re-completing an
+            # already-completed task in a second bulk call must not mint another
+            # occurrence.
+            was_open = row.completed_at is None
             row.completed_at = now
+            if was_open:
+                rolled = await _roll_forward(db, row, tenant_id=tenant_id, user_id=user.id)
+                if rolled:
+                    recurred += 1
         elif body.completed is False:
             row.completed_at = None
         applied += 1
@@ -951,10 +970,58 @@ async def bulk_action(
         await write_audit_event(
             db, tenant_id=tenant_id, user_id=user.id,
             action="task.bulk_updated", entity_type="task", entity_id=None,
-            metadata={"summary": f"Bulk task update applied to {applied} task{'s' if applied != 1 else ''}"},
+            metadata={"summary": f"Bulk task update applied to {applied} task{'s' if applied != 1 else ''}"
+                                 + (f"; {recurred} repeated" if recurred else "")},
         )
     await db.commit()
-    return {"applied": applied}
+    return {"applied": applied, "recurred": recurred}
+
+
+async def _roll_forward(
+    db: AsyncSession, row: TaskAction, *, tenant_id: uuid.UUID, user_id: uuid.UUID,
+) -> str | None:
+    """Write the next occurrence of a just-completed repeating manual task.
+
+    Completion is the ONLY trigger, so an open period never accumulates copies
+    of work still outstanding. Assignments carry over — the same person usually
+    owns it next month — but notes and the completion stamp do not, because
+    those described the occurrence that just finished.
+
+    Returns the new row's id, or None when nothing was created. Both completion
+    paths (this endpoint and /bulk-action) call this; the UI only uses the
+    latter, so a roll-forward wired to just one of them would never fire.
+    """
+    if row.source_type != "manual" or not row.recurrence:
+        return None
+    nxt = next_occurrence(row.recurrence, row.period_end, row.due_date)
+    if nxt is None:
+        return None
+    next_pe, next_due = nxt
+    follow_on = TaskAction(
+        source_type="manual",
+        source_id=None,
+        period_end=next_pe,
+        subject=row.subject,
+        description=row.description,
+        priority=row.priority,
+        recurrence=row.recurrence,
+        recurred_from_id=row.id,
+        created_by=row.created_by,
+        assigned_preparer_id=row.assigned_preparer_id,
+        assigned_reviewer_id=row.assigned_reviewer_id,
+        # Only carry a due date if this occurrence had an explicit one; a task
+        # that relied on the period default keeps relying on it.
+        due_date=next_due if row.due_date is not None else None,
+    )
+    db.add(follow_on)
+    await db.flush()
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user_id,
+        action="task.created", entity_type="task", entity_id=follow_on.id,
+        metadata={"summary": f"Next occurrence of '{row.subject or 'task'}' "
+                             f"({row.recurrence}) created on completion"},
+    )
+    return str(follow_on.id)
 
 
 @router.post("/manual", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
@@ -976,6 +1043,13 @@ async def create_manual_task(
     assigned_reviewer = _parse_uuid_if_admin(body.assigned_reviewer_id, is_admin, "assigned_reviewer_id")
     due_override = _parse_date_if_admin(body.due_date, is_admin, "due_date")
 
+    recurrence = (body.recurrence or "").strip() or None
+    # Validate against the effective due date, not just the override: a task
+    # with a period but no explicit due date still has one, so it can recur.
+    err = anchor_error(recurrence, pe, due_override or pe)
+    if err:
+        raise HTTPException(400, err)
+
     row = TaskAction(
         source_type="manual",
         source_id=None,
@@ -983,6 +1057,7 @@ async def create_manual_task(
         subject=body.subject,
         description=body.description,
         priority=body.priority or "normal",
+        recurrence=recurrence,
         created_by=user.id,
         assigned_preparer_id=assigned_preparer,
         assigned_reviewer_id=assigned_reviewer,
@@ -992,7 +1067,8 @@ async def create_manual_task(
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
         action="task.created", entity_type="task", entity_id=row.id,
-        metadata={"summary": f"Created manual task '{body.subject}'"},
+        metadata={"summary": f"Created manual task '{body.subject}'"
+                             + (f" (repeats {recurrence})" if recurrence else "")},
     )
     await db.commit()
     await db.refresh(row)
@@ -1055,6 +1131,7 @@ def _serialize_manual_task(row: TaskAction) -> TaskOut:
         completed_at=row.completed_at.isoformat() if row.completed_at else None,
         dismissed_at=row.dismissed_at.isoformat() if row.dismissed_at else None,
         priority=row.priority,
+        recurrence=row.recurrence,
         created_by=str(row.created_by),
         created_at=row.created_at.isoformat() if row.created_at else None,
     )
@@ -1088,6 +1165,15 @@ async def update_manual_task(
         row.assigned_reviewer_id = _parse_uuid_if_admin(body.assigned_reviewer_id, is_admin, "assigned_reviewer_id")
     if body.due_date is not None:
         row.due_date = _parse_date_if_admin(body.due_date, is_admin, "due_date")
+    if body.recurrence is not None:
+        nxt = body.recurrence.strip() or None
+        # Re-check the anchor against the row as it now stands: clearing the due
+        # date in the same call must not leave a recurring task with nothing to
+        # repeat from.
+        err = anchor_error(nxt, row.period_end, row.due_date or row.period_end)
+        if err:
+            raise HTTPException(400, err)
+        row.recurrence = nxt
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
         action="task.updated", entity_type="task", entity_id=row.id,
@@ -1116,5 +1202,12 @@ async def complete_task(
         action="task.completed", entity_type="task", entity_id=row.id,
         metadata={"summary": f"Marked task '{row.subject or row.source_type}' complete"},
     )
+
+    next_id = await _roll_forward(db, row, tenant_id=tenant_id, user_id=user.id)
+
     await db.commit()
-    return {"id": str(row.id), "completed_at": row.completed_at.isoformat()}
+    return {
+        "id": str(row.id),
+        "completed_at": row.completed_at.isoformat(),
+        "next_task_id": next_id,
+    }

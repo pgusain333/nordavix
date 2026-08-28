@@ -60,6 +60,15 @@ class TaskAction(TenantBase):
     subject:     Mapped[str | None] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
     priority:    Mapped[str | None] = mapped_column(String(16))
+    # NULL = one-time, which is every row created before migration 079 and the
+    # default. Otherwise 'monthly' | 'quarterly' | 'annually': completing the
+    # task writes the next occurrence. Only meaningful on manual rows — a
+    # derived task's own module already regenerates it each period.
+    recurrence:  Mapped[str | None] = mapped_column(String(16))
+    # The occurrence this one was generated from, so a series is walkable for
+    # audit. Not a FK: deleting an old occurrence must not orphan-cascade the
+    # ones that came after it.
+    recurred_from_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
