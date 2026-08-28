@@ -237,10 +237,14 @@ def test_agreement_reports_a_zero_variance():
 
 def test_a_cache_built_before_a_resync_is_not_fresh():
     """The reported bug. Open March, cache it, re-sync March from QuickBooks —
-    the cached payload must no longer be served."""
-    from modules.insights.service import cache_is_fresh
+    the cached payload must no longer be served.
 
-    cached = {"source_synced_at": "2026-04-02T09:15:00+00:00"}
+    The payload carries the current version so this isolates the SYNC STAMP;
+    version staleness is covered in test_insights_history.py."""
+    from modules.insights.service import INSIGHTS_PAYLOAD_VERSION, cache_is_fresh
+
+    cached = {"payload_version": INSIGHTS_PAYLOAD_VERSION,
+              "source_synced_at": "2026-04-02T09:15:00+00:00"}
     assert cache_is_fresh(cached, "2026-04-02T09:15:00+00:00") is True
     assert cache_is_fresh(cached, "2026-05-11T18:40:00+00:00") is False
 
@@ -257,9 +261,11 @@ def test_a_payload_with_no_stamp_is_stale():
 def test_an_unsynced_period_still_caches_normally():
     """A period QuickBooks was never synced for has no sync stamp on either
     side. That is a legitimate match, not a permanent recompute loop."""
-    from modules.insights.service import cache_is_fresh
+    from modules.insights.service import INSIGHTS_PAYLOAD_VERSION, cache_is_fresh
 
-    assert cache_is_fresh({"source_synced_at": None}, None) is True
+    assert cache_is_fresh(
+        {"payload_version": INSIGHTS_PAYLOAD_VERSION, "source_synced_at": None}, None,
+    ) is True
 
 
 # ── 5. An absent figure is not a zero ────────────────────────────────────────

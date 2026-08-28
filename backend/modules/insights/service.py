@@ -401,8 +401,16 @@ def cache_is_fresh(payload: dict | None, current_synced_at_iso: str | None) -> b
 
     A payload with no stamp predates this and is treated as stale, so the first
     view after deploy recomputes once.
+
+    The sync stamp alone is not enough. It answers "is the DATA the same", not
+    "was it computed the same way" — so a cached blob survives a deploy that
+    changes what compute_overview puts in it, and a corrected figure never
+    reaches anyone whose period hasn't been re-synced since. INSIGHTS_PAYLOAD_VERSION
+    covers that half: bump it and every cache recomputes once, on first view.
     """
     if not payload:
+        return False
+    if payload.get("payload_version") != INSIGHTS_PAYLOAD_VERSION:
         return False
     stamped = payload.get("source_synced_at", _MISSING_STAMP)
     if stamped is _MISSING_STAMP:
@@ -411,6 +419,15 @@ def cache_is_fresh(payload: dict | None, current_synced_at_iso: str | None) -> b
 
 
 _MISSING_STAMP = object()
+
+# Bump whenever a change alters what compute_overview PUTS IN the payload —
+# corrected arithmetic, new fields the UI depends on, a different history
+# window. Not for display-only changes, which read the cached blob fine.
+#
+#   1 → 2: history charts derive each month against a basis month instead of
+#          returning a raw year-to-date for the oldest point, and carry
+#          `has_data` so unsynced months render as gaps rather than zeros.
+INSIGHTS_PAYLOAD_VERSION = 2
 
 
 def control_account_figures(
@@ -2239,6 +2256,9 @@ async def compute_overview(
         period_label = period_end.strftime("%B %Y")
 
     payload = {
+        # Lets cache_is_fresh retire blobs computed by superseded logic, not
+        # just blobs built from superseded data.
+        "payload_version": INSIGHTS_PAYLOAD_VERSION,
         "period_end":     period_end.isoformat(),
         "period_start":   period_start.isoformat() if period_start else None,
         "period_label":   period_label,

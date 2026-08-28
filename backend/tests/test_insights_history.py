@@ -151,3 +151,48 @@ def test_no_non_january_month_ever_returns_a_year_to_date_without_a_prior(pe):
     assert month_activity(
         pe=pe, ytd_current=D("999999"), prior_pe=None, ytd_prior=None,
     ) is None
+
+
+# ── Cache versioning ────────────────────────────────────────────────────────
+# Without this the fix above never reaches anyone: cache_is_fresh compared only
+# the sync stamp, so a payload cached before the deploy stayed "fresh" and kept
+# serving charts built by the superseded arithmetic.
+
+from modules.insights.service import (  # noqa: E402
+    INSIGHTS_PAYLOAD_VERSION,
+    cache_is_fresh,
+)
+
+
+def _payload(**kw):
+    return {"payload_version": INSIGHTS_PAYLOAD_VERSION,
+            "source_synced_at": "2026-03-01T00:00:00+00:00", **kw}
+
+
+def test_a_current_payload_on_the_same_sync_is_fresh():
+    assert cache_is_fresh(_payload(), "2026-03-01T00:00:00+00:00") is True
+
+
+def test_a_payload_from_an_older_version_is_stale_however_recent_the_sync():
+    stale = _payload(payload_version=INSIGHTS_PAYLOAD_VERSION - 1)
+    assert cache_is_fresh(stale, "2026-03-01T00:00:00+00:00") is False
+
+
+def test_a_payload_with_no_version_is_stale():
+    """Everything cached before versioning existed."""
+    blob = {"source_synced_at": "2026-03-01T00:00:00+00:00"}
+    assert cache_is_fresh(blob, "2026-03-01T00:00:00+00:00") is False
+
+
+def test_the_sync_stamp_still_matters_at_the_current_version():
+    assert cache_is_fresh(_payload(), "2026-03-09T00:00:00+00:00") is False
+
+
+def test_compute_stamps_the_running_version_into_the_payload():
+    """Guards the pairing: a version constant nothing writes would make every
+    cache permanently stale and every view a full recompute."""
+    import inspect
+
+    from modules.insights import service
+    src = inspect.getsource(service.compute_overview)
+    assert '"payload_version": INSIGHTS_PAYLOAD_VERSION' in src
