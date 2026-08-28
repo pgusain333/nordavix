@@ -827,7 +827,7 @@ function SectionBody({ id, data, onJumpToMonth }: {
           {data.balance_sheet.equity_history.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <SparklineCard label="Equity / net worth"
-                points={data.balance_sheet.equity_history.map((h) => ({ x: h.label, y: h.equity, period: h.period }))}
+                points={data.balance_sheet.equity_history.map((h) => ({ x: h.label, y: h.equity, period: h.period, hasData: h.has_data }))}
                 color="var(--green)" onPointClick={onJumpToMonth} />
             </div>
           )}
@@ -852,7 +852,7 @@ function SectionBody({ id, data, onJumpToMonth }: {
           {data.growth.history.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <SparklineCard label="Revenue"
-                points={data.growth.history.map((h) => ({ x: h.label, y: Number(h.revenue ?? 0), period: h.period }))}
+                points={data.growth.history.map((h) => ({ x: h.label, y: Number(h.revenue ?? 0), period: h.period, hasData: h.has_data }))}
                 color="var(--green)" onPointClick={onJumpToMonth} />
             </div>
           )}
@@ -1197,8 +1197,8 @@ function DualSparkline({ history, leftKey, rightKey, leftLabel, rightLabel, onPo
 }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <SparklineCard label={leftLabel}  points={history.map((h) => ({ x: h.label, y: Number(h[leftKey] ?? 0),  period: h.period }))} color="var(--green)" onPointClick={onPointClick} />
-      <SparklineCard label={rightLabel} points={history.map((h) => ({ x: h.label, y: Number(h[rightKey] ?? 0), period: h.period }))} color="#5b5e8c"       onPointClick={onPointClick} />
+      <SparklineCard label={leftLabel}  points={history.map((h) => ({ x: h.label, y: Number(h[leftKey] ?? 0),  period: h.period, hasData: h.has_data }))} color="var(--green)" onPointClick={onPointClick} />
+      <SparklineCard label={rightLabel} points={history.map((h) => ({ x: h.label, y: Number(h[rightKey] ?? 0), period: h.period, hasData: h.has_data }))} color="#5b5e8c"       onPointClick={onPointClick} />
     </div>
   )
 }
@@ -1212,14 +1212,14 @@ function TripleSparkline({ history, keys, labels, onPointClick }: {
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
       {keys.map((k, i) => (
         <SparklineCard key={String(k)} label={labels[i]}
-          points={history.map((h) => ({ x: h.label, y: Number(h[k] ?? 0), period: h.period }))}
+          points={history.map((h) => ({ x: h.label, y: Number(h[k] ?? 0), period: h.period, hasData: h.has_data }))}
           color={colors[i]} onPointClick={onPointClick} />
       ))}
     </div>
   )
 }
 
-interface SparkPoint { x: string; y: number; period: string }
+interface SparkPoint { x: string; y: number; period: string; hasData?: boolean }
 
 function SparklineCard({ label, points, color, onPointClick }: {
   label: string; points: SparkPoint[]; color: string; onPointClick: (periodEnd: string) => void;
@@ -1229,21 +1229,63 @@ function SparklineCard({ label, points, color, onPointClick }: {
   const ref = useRef<SVGSVGElement | null>(null)
 
   if (!points || points.length === 0) return null
-  const ys = points.map((p) => p.y)
+
+  // A month with no snapshot arrives carrying 0. Plotting it draws a trough
+  // that reads as "revenue collapsed" when the truth is "we never pulled it",
+  // and it drags the axis so the real months flatten. Known points only.
+  const known = (p: SparkPoint) => p.hasData !== false
+  const knownPoints = points.filter(known)
+  if (knownPoints.length === 0) {
+    return (
+      <div className="rounded-lg p-3"
+        style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+        <p className="text-[11px] font-semibold uppercase tracking-wider mb-1"
+          style={{ color: "var(--text-muted)" }}>{label}</p>
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+          No synced months in this window yet.
+        </p>
+      </div>
+    )
+  }
+
+  const ys = knownPoints.map((p) => p.y)
   const min = Math.min(...ys, 0)
   const max = Math.max(...ys, 0)
   const span = max - min || 1
   const dx = (W - PAD * 2) / Math.max(1, points.length - 1)
   const toY = (v: number) => H - PAD - ((v - min) / span) * (H - PAD * 2)
-  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${PAD + i * dx} ${toY(p.y)}`).join(" ")
-  const area = `${path} L ${PAD + (points.length - 1) * dx} ${H - PAD} L ${PAD} ${H - PAD} Z`
+
+  // Break the line into runs of consecutive known months, so an unsynced month
+  // is a visible hole rather than a straight line drawn across it as if the
+  // months either side were adjacent.
+  const runs: { i: number; p: SparkPoint }[][] = []
+  let run: { i: number; p: SparkPoint }[] = []
+  points.forEach((p, i) => {
+    if (known(p)) { run.push({ i, p }) } else if (run.length) { runs.push(run); run = [] }
+  })
+  if (run.length) runs.push(run)
+
+  const path = runs
+    .map((r) => r.map(({ i, p }, k) => `${k === 0 ? "M" : "L"} ${PAD + i * dx} ${toY(p.y)}`).join(" "))
+    .join(" ")
+  // Fill only under runs of two or more, so a lone point gets a dot, not a spike.
+  const area = runs
+    .filter((r) => r.length > 1)
+    .map((r) => {
+      const line = r.map(({ i, p }, k) => `${k === 0 ? "M" : "L"} ${PAD + i * dx} ${toY(p.y)}`).join(" ")
+      return `${line} L ${PAD + r[r.length - 1].i * dx} ${H - PAD} L ${PAD + r[0].i * dx} ${H - PAD} Z`
+    })
+    .join(" ")
   const gradId = `sg-${label.replace(/[^a-z0-9]/gi, "")}`
 
-  const last = points[points.length - 1].y
-  const prev = points.length > 1 ? points[points.length - 2].y : last
-  const change = prev !== 0 ? ((last - prev) / Math.abs(prev)) * 100 : null
+  // Change compares the last two months that actually have data.
+  const last = knownPoints[knownPoints.length - 1].y
+  const prev = knownPoints.length > 1 ? knownPoints[knownPoints.length - 2].y : last
+  const change = knownPoints.length > 1 && prev !== 0 ? ((last - prev) / Math.abs(prev)) * 100 : null
 
-  const displayed = hoverIdx !== null ? points[hoverIdx] : points[points.length - 1]
+  const displayed = hoverIdx !== null ? points[hoverIdx] : knownPoints[knownPoints.length - 1]
+  const displayedKnown = known(displayed)
+  const gapCount = points.length - knownPoints.length
 
   function handlePointer(e: React.PointerEvent<SVGSVGElement>) {
     if (!ref.current) return
@@ -1276,8 +1318,9 @@ function SparklineCard({ label, points, color, onPointClick }: {
           </span>
         )}
       </div>
-      <p className="text-base font-bold mb-1 tabular-nums" style={{ color: "var(--text)" }}>
-        {fmtMoney(displayed.y)}
+      <p className="text-base font-bold mb-1 tabular-nums"
+        style={{ color: displayedKnown ? "var(--text)" : "var(--text-muted)" }}>
+        {displayedKnown ? fmtMoney(displayed.y) : "Not synced"}
       </p>
       <div className="relative">
         <svg ref={ref}
@@ -1308,6 +1351,17 @@ function SparklineCard({ label, points, color, onPointClick }: {
           {points.map((p, i) => {
             const isHover = hoverIdx === i
             const isLast  = i === points.length - 1
+            // An unsynced month gets a hollow marker on the baseline — present
+            // enough to hover and explain, never on the line as a value.
+            if (!known(p)) {
+              return (
+                <circle key={i}
+                  cx={PAD + i * dx} cy={H - PAD} r={isHover ? 3 : 2}
+                  fill="none" stroke="var(--text-muted)" strokeWidth="1"
+                  strokeDasharray="1.5 1.5" opacity={isHover ? 1 : 0.55}
+                />
+              )
+            }
             return (
               <circle key={i}
                 cx={PAD + i * dx}
@@ -1328,6 +1382,11 @@ function SparklineCard({ label, points, color, onPointClick }: {
           </span>
         ))}
       </div>
+      {gapCount > 0 && (
+        <p className="text-[9px] mt-1" style={{ color: "var(--text-muted)" }}>
+          {gapCount} month{gapCount === 1 ? "" : "s"} not synced — shown as gaps, not zeros.
+        </p>
+      )}
       <p className="text-[9px] mt-1 flex items-center gap-1 opacity-0 group-hover/spark:opacity-100 transition-opacity"
         style={{ color: "var(--text-muted)" }}>
         <MousePointerClick size={9} strokeWidth={2} />

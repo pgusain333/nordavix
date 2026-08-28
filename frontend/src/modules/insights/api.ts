@@ -19,6 +19,10 @@ export interface HistoryPoint {
   revenue?: number
   gp?:    number
   ni?:    number
+  /** False when this month has no snapshot, or its activity can't be derived
+   *  from year-to-date figures. The numeric fields are then filler, NOT data —
+   *  charts must gap the point rather than plot it at zero. */
+  has_data?: boolean
 }
 
 export interface AgingBucket {
@@ -117,7 +121,7 @@ export interface BalanceSheet {
   long_term_liabilities: number
   debt_to_equity:        number | null
   debt_to_assets:        number | null   // ratio (0–1)
-  equity_history:        { period: string; label: string; equity: number }[]
+  equity_history:        { period: string; label: string; equity: number; has_data?: boolean }[]
   kpis:                  KpiRow[]
   advisory?:             Advisory
 }

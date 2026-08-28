@@ -346,6 +346,46 @@ def period_data_status(rows, *, synced: bool, period_end: date) -> dict:
     }
 
 
+def month_activity(
+    *,
+    pe: date,
+    ytd_current: Decimal | None,
+    prior_pe: date | None,
+    ytd_prior: Decimal | None,
+) -> Decimal | None:
+    """One month's P&L activity, derived from two year-to-date figures.
+
+    Snapshots store income-statement accounts year-to-date, so a single month is
+    `YTD(this month) − YTD(last month)`. That subtraction has three ways of
+    being impossible, and each used to produce a confident wrong number on the
+    history charts instead of an admission:
+
+      * The month itself never synced. Summing no rows gives 0, so the month
+        plotted at zero — or, once the prior was subtracted, NEGATIVE. A chart
+        showing negative revenue for a month that simply wasn't pulled.
+
+      * There is no earlier month to subtract. This was the OLDEST point on
+        every chart: with nothing to subtract, it returned the raw year-to-date
+        and plotted nine months of revenue as "Sep". The y-axis then scaled to
+        that spike and flattened every real month beneath it.
+
+      * The preceding month never synced, so its YTD read as 0 and this month
+        absorbed the whole year before it.
+
+    None means "not knowable", which the caller renders as a gap. January is
+    the one month whose year-to-date IS the month, so it needs no prior.
+
+    Pure, because it decides whether a chart states a figure or leaves a hole.
+    """
+    if ytd_current is None:
+        return None
+    if pe.month == 1:
+        return ytd_current
+    if prior_pe is None or ytd_prior is None:
+        return None
+    return ytd_current - ytd_prior
+
+
 def cache_is_fresh(payload: dict | None, current_synced_at_iso: str | None) -> bool:
     """Does a cached Insights payload still describe the data it was built from?
 
@@ -1035,13 +1075,34 @@ async def compute_overview(
     gracefully (None / empty arrays + a friendly error string).
     """
     # ── Period scaffolding ──────────────────────────────────────────────────
+    # One month MORE than the history shows. A month's P&L activity is its
+    # year-to-date minus the previous month's, so the oldest DISPLAYED point
+    # needs a month behind it to subtract. Without that basis month it returned
+    # its raw year-to-date and the charts plotted nine months of revenue as
+    # "Sep" — a spike on the left that rescaled the axis and flattened every
+    # real month beside it.
     period_ends: list[date] = [period_end]
     cursor = period_end
-    for _ in range(months_history):
+    for _ in range(months_history + 1):
         cursor = _prior_month_end(cursor)
         period_ends.append(cursor)
     period_ends.sort()  # ascending: oldest first
+    # The basis month is loaded and subtracted from, never charted.
+    history_ends = period_ends[1:]
     prior_pe = period_ends[-2] if len(period_ends) > 1 else None
+
+    # Is the requested window exactly one calendar month? Month-mode selections
+    # send a period_start too, so a start date alone does not mean "custom" —
+    # only a window that isn't a whole month does. Computed here because the KPI
+    # labels below need it, not just the period label at the end.
+    is_full_month = (
+        period_start is not None
+        and period_start.day == 1
+        and period_start.year == period_end.year
+        and period_start.month == period_end.month
+        and period_end == _last_day_of_month(period_end)
+    )
+    custom_range_active = period_start is not None and not is_full_month
 
     # Exact length of the window the P&L numbers cover — used so DSO/DPO/DIO
     # annualize against the RIGHT number of days. A custom range uses its real
@@ -1074,6 +1135,9 @@ async def compute_overview(
     custom_pl: dict | None = None
     custom_pl_prior: dict | None = None
     custom_pl_error: str | None = None
+    # Set when the selected window loaded but its comparative did not: the prior
+    # column is then genuinely unknown, not zero and not last calendar month.
+    custom_prior_unavailable = False
     if period_start is not None:
         custom_pl, custom_pl_error = await _fetch_pl_summary(qbo_conn, db, period_start, period_end)
         # Same-length window immediately preceding. (period_end - period_start)
@@ -1082,7 +1146,30 @@ async def compute_overview(
         custom_span_days = (period_end - period_start).days
         custom_prior_end   = period_start - timedelta(days=1)
         custom_prior_start = custom_prior_end - timedelta(days=custom_span_days)
-        custom_pl_prior, _ = await _fetch_pl_summary(qbo_conn, db, custom_prior_start, custom_prior_end)
+        custom_pl_prior, custom_prior_error = await _fetch_pl_summary(
+            qbo_conn, db, custom_prior_start, custom_prior_end,
+        )
+        # The two windows are separate QBO calls and can fail independently. If
+        # the selected window loaded but its comparative didn't, the code below
+        # would fall back to the prior CALENDAR MONTH — so a quarter would be
+        # compared against one month and the change % stated as fact. Drop the
+        # comparison instead, and say why.
+        #
+        # The prior call's error used to be discarded outright (`, _ =`), which
+        # is what made that silent.
+        if custom_pl is not None and custom_pl_prior is None:
+            logger.warning(
+                "Insights: selected window [%s..%s] loaded but its comparative "
+                "[%s..%s] did not — suppressing the prior comparison rather than "
+                "falling back to a calendar month of a different length.",
+                period_start, period_end, custom_prior_start, custom_prior_end,
+            )
+            custom_prior_unavailable = True
+            if not custom_pl_error:
+                custom_pl_error = (
+                    custom_prior_error
+                    or "Could not load the comparative period from QuickBooks."
+                ) + " Figures for the selected window are correct; the change vs prior is hidden."
 
     # ── What data actually exists for this period ────────────────────────────
     # `_sum_by_types` over an empty list returns 0, and a screen cannot tell
@@ -1133,15 +1220,38 @@ async def compute_overview(
                 total += _signed_presentation(r.account_type, r.balance)
         return total
 
-    def _month_diff(pe: date, ytd_func) -> Decimal:
-        """Convert a YTD measure into the single month ending at pe."""
-        if pe.month == 1:
-            return ytd_func(pe)
+    def _prior_same_year(pe: date) -> date | None:
+        """The latest loaded month before `pe` in the same fiscal year — the one
+        whose year-to-date gets subtracted to isolate `pe`'s own activity."""
         prior = None
         for p in period_ends:
             if p < pe and p.year == pe.year:
                 prior = p
-        return ytd_func(pe) if prior is None else ytd_func(pe) - ytd_func(prior)
+        return prior
+
+    def _ytd_or_none(p: date | None, ytd_func) -> Decimal | None:
+        """A month's year-to-date figure, or None when that month has no
+        snapshot at all. Summing zero rows gives 0, and 0 is indistinguishable
+        from a real zero once it reaches a chart."""
+        if p is None or not snaps_by_pe.get(p):
+            return None
+        return ytd_func(p)
+
+    def month_opt(pe: date, ytd_func) -> Decimal | None:
+        """This month's activity, or None when it cannot be derived."""
+        prior = _prior_same_year(pe)
+        return month_activity(
+            pe=pe,
+            ytd_current=_ytd_or_none(pe, ytd_func),
+            prior_pe=prior,
+            ytd_prior=_ytd_or_none(prior, ytd_func),
+        )
+
+    def _month_diff(pe: date, ytd_func) -> Decimal:
+        """Scalar form for the KPI arithmetic: unknowable reads as zero. The
+        history builders use month_opt instead, so a gap stays a gap there."""
+        v = month_opt(pe, ytd_func)
+        return v if v is not None else ZERO
 
     def monthly_ni(pe: date) -> Decimal:
         return _month_diff(pe, ytd_ni)
@@ -1180,7 +1290,7 @@ async def compute_overview(
         return ni + dep - d_ar - d_oca + d_ap + d_ocl
 
     # Trailing operating cash flow + burn rate (3-mo average of months w/ data).
-    ocf_series = [(p, monthly_ocf(p)) for p in period_ends]
+    ocf_series = [(p, monthly_ocf(p)) for p in history_ends]
     recent_ocf = [v for _, v in ocf_series[-3:] if v is not None]
     avg_monthly_ocf = sum(recent_ocf) / len(recent_ocf) if recent_ocf else ZERO
     operating_burn = -avg_monthly_ocf if avg_monthly_ocf < 0 else ZERO  # positive = burning
@@ -1211,12 +1321,16 @@ async def compute_overview(
         - wc_at(prior_pe, CURRENT_LIAB_TYPES, presented=True)
     ) if prior_pe else ZERO
 
+    # `has_data` marks a month with no snapshot. cash_at() sums zero rows to 0,
+    # which plotted as a real balance of nothing — a false trough between two
+    # months that were merely unsynced.
     cash_history = [
         {
-            "period": p.isoformat(),
-            "label":  p.strftime("%b"),
-            "cash":   _to_money(cash_at(p)),
-            "ocf":    _to_money(v if v is not None else ZERO),
+            "period":   p.isoformat(),
+            "label":    p.strftime("%b"),
+            "cash":     _to_money(cash_at(p)),
+            "ocf":      _to_money(v if v is not None else ZERO),
+            "has_data": bool(snaps_by_pe.get(p)),
         }
         for p, v in ocf_series
     ]
@@ -1395,16 +1509,9 @@ async def compute_overview(
         out.sort(key=lambda x: abs(x[1]), reverse=True)
         return out
 
-    def monthly_metric(pe: date, ytd_func) -> Decimal:
-        if pe.month == 1:
-            return ytd_func(pe)
-        prior = None
-        for p in period_ends:
-            if p < pe and p.year == pe.year:
-                prior = p
-        if prior is None:
-            return ytd_func(pe)
-        return ytd_func(pe) - ytd_func(prior)
+    # Was a second, independent copy of the month-diff logic — and carried the
+    # same year-to-date-as-a-month bug. One implementation now.
+    monthly_metric = _month_diff
 
     # P&L for the requested window. If period_start was provided AND the live
     # QBO call succeeded, use those exact numbers; otherwise fall back to the
@@ -1467,6 +1574,13 @@ async def compute_overview(
         revenue_prior = custom_pl_prior["revenue"]
         gp_prior      = custom_pl_prior["revenue"] - custom_pl_prior["cogs"]
         gm_pct_prior  = _to_pct(gp_prior, revenue_prior) if revenue_prior else None
+    elif custom_prior_unavailable:
+        # Comparing a custom window against a calendar month of a different
+        # length is worse than not comparing: the change % looks authoritative
+        # and is arithmetic on two different things.
+        revenue_prior = ZERO
+        gp_prior      = ZERO
+        gm_pct_prior  = None
     else:
         revenue_prior = monthly_metric(prior_pe, revenue_at) if prior_pe else ZERO
         gp_prior      = monthly_metric(prior_pe, revenue_at) - monthly_metric(prior_pe, cogs_at) if prior_pe else ZERO
@@ -1475,7 +1589,11 @@ async def compute_overview(
     # Pre-compute per-period monthly P&L so the history sparkline is consistent
     # and we don't recompute the same diffs four times per row.
     def per_period_pl(p: date) -> dict:
-        rev  = monthly_metric(p, revenue_at)
+        # month_opt, not monthly_metric: a month that cannot be derived must
+        # reach the chart as a gap, not as a zero the reader takes for a fact.
+        rev_opt = month_opt(p, revenue_at)
+        known   = rev_opt is not None
+        rev  = rev_opt if known else ZERO
         cogs = monthly_metric(p, cogs_at)
         opex = monthly_metric(p, opex_at)
         oi   = monthly_metric(p, other_income_at)
@@ -1484,14 +1602,15 @@ async def compute_overview(
         oi_excl_other = gp - opex  # Operating Income
         ni   = oi_excl_other + (oi - oe)
         return {
-            "period":  p.isoformat(),
-            "label":   p.strftime("%b"),
-            "revenue": _to_money(rev),
-            "gp":      _to_money(gp),
-            "ni":      _to_money(ni),
+            "period":   p.isoformat(),
+            "label":    p.strftime("%b"),
+            "revenue":  _to_money(rev),
+            "gp":       _to_money(gp),
+            "ni":       _to_money(ni),
+            "has_data": known,
         }
 
-    revenue_history = [per_period_pl(p) for p in period_ends]
+    revenue_history = [per_period_pl(p) for p in history_ends]
 
     profitability = {
         "revenue":              _to_money(revenue_month),
@@ -1515,7 +1634,9 @@ async def compute_overview(
         "history":              revenue_history,
         "kpis": [
             {
-                "kpi":     "Revenue (month)",
+                # "(month)" was hardcoded, so a Mar 1–15 window or a quarter was
+                # still labelled a month while showing that window's figure.
+                "kpi":     "Revenue (selected window)" if custom_range_active else "Revenue (month)",
                 "value":   _money_str(revenue_month),
                 "risk":    "neutral",
                 "insight": (
@@ -1524,7 +1645,16 @@ async def compute_overview(
                     # vs the prior calendar month. Phrase accordingly.
                     f"{_change_str(_to_money(revenue_month), _to_money(revenue_prior))} "
                     f"vs prior {'period' if custom_pl is not None else 'month'}."
-                    if revenue_prior else "First period — no prior comparison available."
+                    if revenue_prior
+                    else (
+                        # Distinguish "there is no prior" from "the prior failed
+                        # to load" — the second is a fixable, retryable state and
+                        # calling it "first period" sends the reader nowhere.
+                        "The comparative period couldn't be loaded from QuickBooks, "
+                        "so the change vs prior is hidden. The figure itself is correct."
+                        if custom_prior_unavailable
+                        else "First period — no prior comparison available."
+                    )
                 ),
             },
             {
@@ -1988,8 +2118,9 @@ async def compute_overview(
     d_to_e = float((total_liabilities / equity_nw).quantize(Decimal("0.01"))) if equity_nw > 0 else None
     d_to_a = float((total_liabilities / total_assets).quantize(Decimal("0.001"))) if total_assets > 0 else None
     equity_history = [
-        {"period": p.isoformat(), "label": p.strftime("%b"), "equity": _to_money(_equity_at(p))}
-        for p in period_ends
+        {"period": p.isoformat(), "label": p.strftime("%b"),
+         "equity": _to_money(_equity_at(p)), "has_data": bool(snaps_by_pe.get(p))}
+        for p in history_ends
     ]
     eq_prior = _equity_at(prior_pe) if prior_pe else ZERO
     balance_sheet = {
@@ -2100,13 +2231,6 @@ async def compute_overview(
     # Period label: month-year when the range is exactly one calendar
     # month (so "January 2026" stays readable for Month-mode selections),
     # otherwise a date-range string for true custom windows.
-    is_full_month = (
-        period_start is not None
-        and period_start.day == 1
-        and period_start.year == period_end.year
-        and period_start.month == period_end.month
-        and period_end == _last_day_of_month(period_end)
-    )
     if is_full_month:
         period_label = period_end.strftime("%B %Y")
     elif period_start is not None:
@@ -2121,7 +2245,7 @@ async def compute_overview(
         # `custom_range` reflects whether this is a TRUE custom window
         # (not aligned to a calendar month). Frontend uses this to decide
         # whether to show the "custom-range fallback" banner.
-        "custom_range":   period_start is not None and not is_full_month,
+        "custom_range":   custom_range_active,
         "is_full_month":  is_full_month,
         "custom_pl_error": custom_pl_error,
         # Whether the period has balances to report at all — lets the UI show a
