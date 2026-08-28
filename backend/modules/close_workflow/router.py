@@ -23,6 +23,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Qu
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import links
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, require_role
 from core.db.base import current_request_readonly
@@ -229,7 +230,7 @@ async def update_step(
                 type="close_step_assigned",
                 title=f"Close step assigned: {step_title}",
                 body=f"{user.email} assigned you “{step_title}” for {pe.strftime('%b %Y')}.",
-                link="/app/close",
+                link=links.close_workflow(pe),
                 entity_type="close_step_instance", entity_id=str(inst.id),
                 actor_name=user.email,
             )

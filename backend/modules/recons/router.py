@@ -40,6 +40,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import links
 from core.ai.guard import enforce_ai_limits
 from core.audit.log import write_audit_event
 from core.auth.clerk_users import _format_display_name, get_clerk_user
@@ -324,7 +325,7 @@ async def run_agentic_endpoint(
                 db, tenant_id=tenant_id, recipient_user_id=user.id,
                 type="agentic_done", title="AI preparer finished",
                 body=f"Agentic run on {pe.isoformat()}: {summary_txt}.",
-                link="/app/reconciliations", entity_type="period", entity_id=pe.isoformat(),
+                link=links.recon_period(pe), entity_type="period", entity_id=pe.isoformat(),
             )
         except Exception:
             logger.warning("agentic-done notification failed", exc_info=True)
@@ -505,7 +506,7 @@ async def sync_overview_endpoint(
         await notify_user(
             db, tenant_id=tenant_id, recipient_user_id=user.id,
             type="sync_complete", title="QuickBooks sync complete", body=body,
-            link="/app/reconciliations", entity_type="period", entity_id=pe.isoformat(),
+            link=links.recon_period(pe), entity_type="period", entity_id=pe.isoformat(),
         )
     except Exception:
         logger.warning("sync-complete notification failed", exc_info=True)
@@ -1257,7 +1258,7 @@ async def update_account_review_status(
                 type="review_ready",
                 title="A reconciliation is ready for review",
                 body=f"{user.email} marked account {qbo_account_id} ({period_end}) prepared.",
-                link="/app/reconciliations",
+                link=links.recon_account(period_end, qbo_account_id),
                 entity_type="account_review_status", entity_id=review_row_id,
             )
         except Exception:
@@ -1272,7 +1273,7 @@ async def update_account_review_status(
                 type="recon_approved",
                 title="Your reconciliation was approved",
                 body=f"{user.email} approved account {qbo_account_id} ({period_end}).",
-                link="/app/reconciliations",
+                link=links.recon_account(period_end, qbo_account_id),
                 entity_type="account_review_status", entity_id=review_row_id,
                 actor_name=user.email,
             )
@@ -1514,7 +1515,7 @@ async def bulk_update_account_review_status(
                 type="review_ready",
                 title=f"{n} reconciliation{plural} ready for review",
                 body=f"{user.email} marked {n} account{plural} prepared for {body.get('period_end')}.",
-                link="/app/reconciliations",
+                link=links.recon_period(body.get("period_end") or ""),
             )
         except Exception:
             logger.warning("recon bulk review-ready notifications failed", exc_info=True)
@@ -1531,7 +1532,7 @@ async def bulk_update_account_review_status(
                 type="recon_approved",
                 title="Your reconciliation work was approved",
                 body=f"{user.email} approved reconciliations for {pe_txt}.",
-                link="/app/reconciliations",
+                link=links.recon_period(pe_txt or ""),
                 actor_name=user.email,
             )
         except Exception:
@@ -2609,14 +2610,14 @@ async def close_period(
             type="period_closed",
             title=title,
             body=cbody,
-            link="/app",
+            link=links.dashboard(pe),
             exclude_user_id=user.id,
             entity_type="closed_period", entity_id=closed_id,
         )
         await db.commit()
         targets = await resolve_email_targets(db, recipients)
         schedule_notification_emails(
-            background_tasks, targets=targets, title=title, body=cbody, link="/app",
+            background_tasks, targets=targets, title=title, body=cbody, link=links.dashboard(pe),
         )
     except Exception:
         logger.warning("period-closed notifications failed for %s", pe, exc_info=True)
@@ -2713,14 +2714,14 @@ async def reopen_period(
             type="period_reopened",
             title=title,
             body=rbody,
-            link="/app",
+            link=links.dashboard(pe),
             exclude_user_id=user.id,
             entity_type="closed_period", entity_id=closed_id,
         )
         await db.commit()
         targets = await resolve_email_targets(db, recipients)
         schedule_notification_emails(
-            background_tasks, targets=targets, title=title, body=rbody, link="/app",
+            background_tasks, targets=targets, title=title, body=rbody, link=links.dashboard(pe),
         )
     except Exception:
         logger.warning("period-reopened notifications failed for %s", pe, exc_info=True)
@@ -4836,7 +4837,7 @@ async def _reflag_stale_approvals(
                     f"{len(rows)} approved account(s) no longer tie out — "
                     "they were moved back to review."
                 ),
-                link="/app/reconciliations",
+                link=links.recon_period(period_end),
             )
     except Exception:
         logger.warning("recon stale re-flag notifications failed", exc_info=True)

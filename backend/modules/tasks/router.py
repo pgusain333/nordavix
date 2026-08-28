@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import links
 from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
@@ -374,7 +375,7 @@ async def _derive_recon_tasks(
             # which account it is about; dropping that put the user on a
             # dashboard of forty rows to find the one the task named. The
             # dashboard reads `#acct=` on mount and opens that drawer.
-            deep_link = f"/app/reconciliations/period/{pe.isoformat()}#acct={qid}"
+            deep_link = links.recon_account(pe, qid)
 
             out.append(TaskOut(
                 key=key,
@@ -475,7 +476,7 @@ async def _derive_flux_tasks(
             subject=subject,
             description=f"Status: {tb.status}.",
             severity=sev,
-            deep_link=f"/app/flux/{tb.id}",
+            deep_link=links.flux_analysis(tb.id),
             status=effective_status,
             prepared_by=None,    # flux module doesn't track prep actor separately yet
             prepared_at=None,
@@ -512,12 +513,15 @@ async def _derive_flux_tasks(
 # status="committed". Per-account commit completeness is a refinement
 # we can layer on top later if needed — for v1, one commit = done.
 
-_SCHEDULE_KINDS: dict[str, tuple[type, str, str]] = {
-    "prepaid":     (SchedulePrepaid,    "Prepaids",      "/app/schedules/prepaids"),
-    "accrual":     (ScheduleAccrual,    "Accruals",      "/app/schedules/accruals"),
-    "fixed_asset": (ScheduleFixedAsset, "Fixed Assets",  "/app/schedules/fixed-assets"),
-    "lease":       (ScheduleLease,      "Leases",        "/app/schedules/leases"),
-    "loan":        (ScheduleLoan,       "Loans",         "/app/schedules/loans"),
+# (model, human label). The route used to live here too and was a second copy
+# of the one in core.links — which is how a route table drifts. links.schedules()
+# owns the destinations now.
+_SCHEDULE_KINDS: dict[str, tuple[type, str]] = {
+    "prepaid":     (SchedulePrepaid,    "Prepaids"),
+    "accrual":     (ScheduleAccrual,    "Accruals"),
+    "fixed_asset": (ScheduleFixedAsset, "Fixed Assets"),
+    "lease":       (ScheduleLease,      "Leases"),
+    "loan":        (ScheduleLoan,       "Loans"),
 }
 
 
@@ -533,7 +537,7 @@ async def _derive_schedule_tasks(
     for the activation + completion rules."""
     # Step 1: which kinds have at least one active item? Skip the rest.
     active_kinds: set[str] = set()
-    for kind, (Model, _human, _route) in _SCHEDULE_KINDS.items():
+    for kind, (Model, _human) in _SCHEDULE_KINDS.items():
         q = select(Model.id).where(Model.is_active == True).limit(1)  # noqa: E712
         if (await db.execute(q)).scalar_one_or_none() is not None:
             active_kinds.add(kind)
@@ -569,7 +573,7 @@ async def _derive_schedule_tasks(
             # Carry the period the task is for. The bare route landed on
             # whatever month the reader's own localStorage held, so a task
             # titled "Prepaids · Mar 2026" could open on April.
-            route = f"{_SCHEDULE_KINDS[kind][2]}?period={period_end.isoformat()}"
+            route = links.schedules(period_end, kind)
             snap = by_kind_period.get((kind, period_end))
             committed = snap is not None
             period_label = period_end.strftime("%b %Y")
@@ -857,7 +861,7 @@ async def upsert_action(
                 type="task_assigned",
                 title="You've been assigned a close task",
                 body=f"{user.email} assigned you a {label} task{period_txt}.",
-                link="/app/tasks",
+                link=links.tasks(),
             )
         except Exception:
             logger.warning("task-assigned notifications failed", exc_info=True)

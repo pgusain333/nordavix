@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import links
 from core.audit.log import write_audit_event
 from core.db.base import current_tenant_id
 from core.db.session import AsyncSessionLocal
@@ -296,7 +297,7 @@ async def run_auto_scan(
                     session, tenant_id=tenant_id, recipient_user_id=recipient_user_id,
                     type="risk_findings",
                     title=f"Risk Radar found {n} issue{'' if n == 1 else 's'}",
-                    body=body, link="/app/gl-accuracy",
+                    body=body, link=links.risk_radar(period_end),
                     entity_type="period", entity_id=period_end.isoformat(),
                 )
         except Exception:  # noqa: BLE001
