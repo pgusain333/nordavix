@@ -385,13 +385,15 @@ export function InsightsPage() {
               transition={{ duration: 0.2, ease: "easeOut" }}
               className="space-y-4"
             >
-              {data.custom_range && data.custom_pl_error && (
+              {/* Not gated on custom_range. Month mode sends a period_start too
+                  and runs the same live P&L call, so gating this on a custom
+                  window hid every failure that happened on a plain month. */}
+              {data.custom_pl_error && (
                 <div className="rounded-lg p-3 flex items-start gap-2"
                   style={{ background: "#f4eddf", border: "1px solid #c79a52" }}>
                   <Info size={14} className="shrink-0 mt-0.5" style={{ color: "#7a5622" }} />
                   <p className="text-[12px]" style={{ color: "#7a5622" }}>
-                    Custom-range P&L call failed: <em>{data.custom_pl_error}</em> — showing
-                    snapshot-based monthly figures instead.
+                    {data.custom_pl_error}
                   </p>
                 </div>
               )}

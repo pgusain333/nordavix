@@ -109,6 +109,7 @@ _INVARIANT_FILES = {
     "test_task_recurrence.py",    # recurring task roll-forward (month-end series never drifts)
     "test_flux_periods.py",       # flux comparison periods + P&L period-activity override (both columns or neither)
     "test_insights_history.py",   # insights chart months (YTD never plotted as a month; gaps stay gaps)
+    "test_insights_pl_parse.py",  # QBO P&L section parse (nested subtotal never overwrites; parts tie to net income)
 }
 
 

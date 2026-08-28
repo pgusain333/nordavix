@@ -427,7 +427,12 @@ _MISSING_STAMP = object()
 #   1 → 2: history charts derive each month against a basis month instead of
 #          returning a raw year-to-date for the oldest point, and carry
 #          `has_data` so unsynced months render as gaps rather than zeros.
-INSIGHTS_PAYLOAD_VERSION = 2
+#   2 → 3: the ProfitAndLoss parse reads only top-level sections (a nested
+#          sub-group no longer overwrites its parent's total), falls back to
+#          leaf sums when a section summary is blank, and recovers Other Income
+#          and Other Expense. Cached revenue and margins predating this are
+#          wrong figures, not merely stale ones.
+INSIGHTS_PAYLOAD_VERSION = 3
 
 
 def control_account_figures(
@@ -523,48 +528,150 @@ def _last_numeric_cell(col_data: list[dict]) -> Decimal:
     return ZERO
 
 
-def _parse_pl_summary(report: dict) -> dict:
+# QBO tags each top-level ProfitAndLoss section with a `group`. Older company
+# files and some locales omit it, so the section header text is a fallback.
+_PL_GROUP_TO_BUCKET = {
+    "Income":        "revenue",
+    "COGS":          "cogs",
+    "Expenses":      "opex",
+    "OtherIncome":   "other_income",
+    "OtherExpenses": "other_expense",
+    "NetIncome":     "net_income",
+}
+_PL_HEADER_TO_BUCKET = {
+    "income":              "revenue",
+    "total income":        "revenue",
+    "cost of goods sold":  "cogs",
+    "cost of sales":       "cogs",
+    "expenses":            "opex",
+    "expense":             "opex",
+    "other income":        "other_income",
+    "other expenses":      "other_expense",
+    "other expense":       "other_expense",
+    "net income":          "net_income",
+}
+_PL_BUCKETS = ("revenue", "cogs", "opex", "other_income", "other_expense", "net_income")
+
+
+def _pl_section_bucket(row: dict) -> str | None:
+    """Which P&L total this section carries, by `group` then by header text."""
+    group = (row.get("group") or "").strip()
+    if group in _PL_GROUP_TO_BUCKET:
+        return _PL_GROUP_TO_BUCKET[group]
+    header = ((row.get("Header") or {}).get("ColData") or [{}])[0].get("value") or ""
+    return _PL_HEADER_TO_BUCKET.get(header.strip().lower())
+
+
+def _pl_leaf_rows(row: dict) -> list[tuple[str, Decimal]]:
+    """Every (name, amount) leaf beneath a section, at any depth.
+
+    Only rows QBO marks type "Data" count. Nested Sections are containers whose
+    Summary repeats their children, so summing those too would double-count.
     """
-    Walk a QBO ProfitAndLoss report and return:
-      { revenue, cogs, opex, net_income, expense_by_account: {name: Decimal} }
+    out: list[tuple[str, Decimal]] = []
 
-    The report nests group totals (Income / COGS / Expenses / NetIncome).
-    For each group we read the Summary.ColData last numeric cell. For
-    Expenses we also collect every leaf account so the Insights page
-    can show top-categories + MoM movers over the custom range.
-    """
-    totals = {"revenue": ZERO, "cogs": ZERO, "opex": ZERO, "net_income": ZERO}
-    expense_by_account: dict[str, Decimal] = {}
-
-    def walk(rows: list[dict], inside_expenses: bool = False) -> None:
-        for r in rows:
-            group = r.get("group") or ""
-            row_type = r.get("type") or ""
-            summary = (r.get("Summary") or {}).get("ColData") or []
-
-            if group == "Income":
-                totals["revenue"] = _last_numeric_cell(summary)
-            elif group == "COGS":
-                totals["cogs"] = _last_numeric_cell(summary)
-            elif group == "Expenses":
-                totals["opex"] = _last_numeric_cell(summary)
-            elif group == "NetIncome":
-                totals["net_income"] = _last_numeric_cell(summary)
-
-            # Collect leaf expense accounts when we're inside the Expenses section.
-            if inside_expenses and row_type == "Data":
+    def walk(rows: list[dict]) -> None:
+        for r in rows or []:
+            if (r.get("type") or "") == "Data":
                 col = r.get("ColData") or []
                 name = (col[0].get("value") if col else None) or ""
                 amt = _last_numeric_cell(col)
-                if name and amt != 0:
+                if name:
+                    out.append((name, amt))
+            walk((r.get("Rows") or {}).get("Row") or [])
+
+    walk((row.get("Rows") or {}).get("Row") or [])
+    return out
+
+
+def _pl_section_total(row: dict, leaves: list[tuple[str, Decimal]]) -> Decimal:
+    """A section's total: its own Summary, or the sum of its leaves.
+
+    QBO normally supplies the Summary. When the amount cell is blank the old
+    code took ZERO, which silently deleted a whole section — an Expenses
+    section that vanished this way turned a 57% net margin into 89%.
+    """
+    summary = (row.get("Summary") or {}).get("ColData") or []
+    has_amount = any(
+        (c or {}).get("value") not in (None, "") for c in summary[1:]
+    )
+    if has_amount:
+        return _last_numeric_cell(summary)
+    return sum((amt for _n, amt in leaves), ZERO)
+
+
+def _parse_pl_summary(report: dict) -> dict:
+    """
+    Walk a QBO ProfitAndLoss report and return:
+      { revenue, cogs, opex, other_income, other_expense, net_income,
+        expense_by_account: {name: Decimal}, parse_warning: str | None }
+
+    ONLY TOP-LEVEL SECTIONS ARE READ. QBO nests sub-accounts as Sections of
+    their own, and a nested one can repeat its parent's `group`. The previous
+    version recursed and ASSIGNED on every match, so the last nested subtotal
+    it met overwrote the section total — a company with 772,000 of income and a
+    "Services" sub-group reported the sub-group's 93,400 as its revenue. The
+    figure was wrong by a factor of eight and nothing on screen said so.
+
+    `parse_warning` carries a reconciliation failure: the parts must tie to
+    QBO's own Net Income. When they don't, the parse is not trustworthy and the
+    caller should say so rather than render a confident margin.
+    """
+    totals: dict[str, Decimal] = dict.fromkeys(_PL_BUCKETS, ZERO)
+    seen: set[str] = set()
+    expense_by_account: dict[str, Decimal] = {}
+
+    for row in (report.get("Rows") or {}).get("Row") or []:
+        bucket = _pl_section_bucket(row)
+        if bucket is None or bucket in seen:
+            continue
+        leaves = _pl_leaf_rows(row)
+        totals[bucket] = _pl_section_total(row, leaves)
+        seen.add(bucket)
+        if bucket == "opex":
+            for name, amt in leaves:
+                if amt != 0:
                     expense_by_account[name] = expense_by_account.get(name, ZERO) + amt
 
-            nested = (r.get("Rows") or {}).get("Row") or []
-            if nested:
-                walk(nested, inside_expenses=inside_expenses or group == "Expenses")
+    return {
+        **totals,
+        "expense_by_account": expense_by_account,
+        "parse_warning": pl_reconciliation_warning(totals),
+    }
 
-    walk((report.get("Rows") or {}).get("Row") or [])
-    return {**totals, "expense_by_account": expense_by_account}
+
+def pl_reconciliation_warning(totals: dict[str, Decimal]) -> str | None:
+    """Do the parsed P&L sections tie to QuickBooks' own Net Income?
+
+    revenue − cogs − opex + other income − other expense should equal net
+    income. When it doesn't, a section was missed or double-counted, and every
+    figure downstream — gross margin, net margin, operating income — is built on
+    it. Saying so beats rendering 89% as a fact.
+
+    A missing Net Income section means QBO gave us nothing to check against, not
+    that the parse is wrong; that is not a warning.
+
+    Pure, so the reconciliation rule is testable without a QBO round trip.
+    """
+    net = totals.get("net_income", ZERO)
+    if net == ZERO:
+        return None
+    derived = (
+        totals.get("revenue", ZERO)
+        - totals.get("cogs", ZERO)
+        - totals.get("opex", ZERO)
+        + totals.get("other_income", ZERO)
+        - totals.get("other_expense", ZERO)
+    )
+    drift = abs(derived - net)
+    # A dollar covers rounding across sections; anything more is a lost section.
+    if drift <= Decimal("1"):
+        return None
+    return (
+        f"QuickBooks' profit and loss didn't add up as parsed: revenue less costs "
+        f"gives {derived:,.2f} but QuickBooks reports net income of {net:,.2f}. "
+        f"Some figures on this page may be understated."
+    )
 
 
 async def _fetch_pl_summary(
@@ -575,7 +682,8 @@ async def _fetch_pl_summary(
 ) -> tuple[dict | None, str | None]:
     """Return (summary, error). Either is non-null."""
     if conn is None:
-        return None, "QuickBooks isn't connected — can't compute P&L for the custom range."
+        return None, ("QuickBooks isn't connected, so profit-and-loss figures for this "
+                      "period fall back to saved monthly snapshots.")
     try:
         report = await _qbo_get(
             conn, db, "/reports/ProfitAndLoss",
@@ -588,7 +696,10 @@ async def _fetch_pl_summary(
         )
     except Exception:
         logger.exception("Insights P&L pull failed for [%s..%s]", period_start, period_end)
-        return None, f"Could not load ProfitAndLoss from QuickBooks for {period_start} to {period_end}."
+        return None, (
+            f"Couldn't load the profit and loss from QuickBooks for "
+            f"{period_start} to {period_end} — showing saved monthly snapshots instead."
+        )
     return _parse_pl_summary(report), None
 
 
@@ -1174,7 +1285,16 @@ async def compute_overview(
         #
         # The prior call's error used to be discarded outright (`, _ =`), which
         # is what made that silent.
-        if custom_pl is not None and custom_pl_prior is None:
+        # A parse that doesn't tie to QuickBooks' own net income means a section was
+    # missed; every margin below is built on it, so it must not render silently.
+    if custom_pl is not None and custom_pl.get("parse_warning"):
+        logger.error(
+            "Insights: ProfitAndLoss parse did not reconcile for [%s..%s] — %s",
+            period_start, period_end, custom_pl["parse_warning"],
+        )
+        custom_pl_error = custom_pl["parse_warning"]
+
+    if custom_pl is not None and custom_pl_prior is None:
             logger.warning(
                 "Insights: selected window [%s..%s] loaded but its comparative "
                 "[%s..%s] did not — suppressing the prior comparison rather than "
@@ -1556,11 +1676,16 @@ async def compute_overview(
         direct_expenses_month = cogs_month + direct_in_opex
         gross_profit  = revenue_month - direct_expenses_month
         operating_inc = gross_profit - opex_month
-        # QBO's own NetIncome already includes Other Income / Other Expense
-        net_income    = custom_pl["net_income"] or operating_inc
-        other_income_month   = Decimal("0")
-        other_expense_month  = Decimal("0")
-        net_other            = (net_income - operating_inc) if custom_pl["net_income"] else Decimal("0")
+        # Other Income / Other Expense are parsed from their own sections now.
+        # They used to be hardcoded to zero on this path and net_other derived
+        # by subtraction, so the two lines always read $0 for a custom window
+        # however much sat in them.
+        other_income_month  = custom_pl["other_income"]
+        other_expense_month = custom_pl["other_expense"]
+        net_other           = other_income_month - other_expense_month
+        # QBO's own NetIncome is authoritative when present; it already includes
+        # the Other lines.
+        net_income    = custom_pl["net_income"] or (operating_inc + net_other)
     else:
         revenue_month       = monthly_metric(period_end, revenue_at)
         cogs_month          = monthly_metric(period_end, cogs_at)
