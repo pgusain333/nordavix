@@ -15,6 +15,7 @@ None is the answer in all three cases. The caller renders a gap.
 """
 from datetime import date
 from decimal import Decimal
+from itertools import pairwise
 
 import pytest
 
@@ -196,3 +197,127 @@ def test_compute_stamps_the_running_version_into_the_payload():
     from modules.insights import service
     src = inspect.getsource(service.compute_overview)
     assert '"payload_version": INSIGHTS_PAYLOAD_VERSION' in src
+
+
+# ── The charted window starts at the books-start date ───────────────────────
+# A rolling six-month lookback both truncated a company's own history and, for
+# a client onboarded three months ago, invented months that never had data.
+
+from modules.insights.service import history_window  # noqa: E402
+
+
+def test_the_window_starts_at_the_books_start_month():
+    w = history_window(date(2026, 5, 31), books_start=date(2024, 7, 15), max_months=36)
+    assert w[0] == date(2024, 7, 31), "first point is the books-start month end"
+    assert w[-1] == date(2026, 5, 31)
+    assert len(w) == 23
+
+
+def test_a_mid_month_books_start_resolves_to_that_months_end():
+    """books_start_date is a day; the charts plot month ends."""
+    w = history_window(date(2026, 3, 31), books_start=date(2026, 1, 17), max_months=36)
+    assert w == [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31)]
+
+
+def test_a_young_company_gets_only_the_months_it_has():
+    """Onboarded in March, viewing May: three points, not six with three
+    empty ones invented ahead of the books."""
+    w = history_window(date(2026, 5, 31), books_start=date(2026, 3, 1), max_months=36)
+    assert w == [date(2026, 3, 31), date(2026, 4, 30), date(2026, 5, 31)]
+
+
+def test_the_first_month_alone_is_a_valid_window():
+    w = history_window(date(2026, 5, 31), books_start=date(2026, 5, 1), max_months=36)
+    assert w == [date(2026, 5, 31)]
+
+
+def test_books_starting_after_the_period_still_yields_that_period():
+    """Nonsense input must not produce an empty chart or a runaway loop."""
+    w = history_window(date(2026, 5, 31), books_start=date(2027, 1, 1), max_months=36)
+    assert w == [date(2026, 5, 31)]
+
+
+def test_the_ceiling_bounds_a_long_history_to_the_most_recent_months():
+    """Five years of books would be sixty points three pixels apart, and sixty
+    months of snapshots to load."""
+    w = history_window(date(2026, 5, 31), books_start=date(2021, 1, 1), max_months=36)
+    assert len(w) == 36
+    assert w[-1] == date(2026, 5, 31)
+    assert w[0] == date(2023, 6, 30)
+
+
+def test_no_books_start_falls_back_to_the_ceiling():
+    """Onboarding incomplete — there is nothing better to anchor to."""
+    w = history_window(date(2026, 5, 31), books_start=None, max_months=6)
+    assert len(w) == 6
+    assert w[-1] == date(2026, 5, 31)
+
+
+def test_the_window_is_ascending_contiguous_and_never_overshoots():
+    w = history_window(date(2026, 5, 31), books_start=date(2025, 2, 3), max_months=36)
+    assert w == sorted(w)
+    assert w[-1] == date(2026, 5, 31)
+    for a, b in pairwise(w):
+        assert b == _next_month_end(a), f"{a} -> {b} is not the next month"
+
+
+def _next_month_end(d: date) -> date:
+    import calendar
+    y, m = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+    return date(y, m, calendar.monthrange(y, m)[1])
+
+
+@pytest.mark.parametrize("cap", [0, -5])
+def test_a_nonsense_ceiling_still_returns_one_month(cap):
+    assert history_window(date(2026, 5, 31), books_start=None, max_months=cap) == [date(2026, 5, 31)]
+
+
+# ── The books-start month needs no prior ────────────────────────────────────
+
+def test_the_books_start_month_uses_its_ytd_because_nothing_precedes_it():
+    """Every other module begins at books_start too, so no earlier month exists
+    or is coming — this is a boundary like January, not missing data."""
+    assert month_activity(
+        pe=date(2026, 7, 31), ytd_current=D("140000"),
+        prior_pe=None, ytd_prior=None, is_first_period=True,
+    ) == D("140000")
+
+
+def test_without_that_flag_the_same_month_is_still_a_gap():
+    """The flag must be the ONLY thing that opens this door — otherwise the
+    year-to-date-as-a-month bug walks straight back in."""
+    assert month_activity(
+        pe=date(2026, 7, 31), ytd_current=D("140000"),
+        prior_pe=None, ytd_prior=None,
+    ) is None
+
+
+def test_the_books_start_month_is_still_a_gap_when_it_never_synced():
+    assert month_activity(
+        pe=date(2026, 7, 31), ytd_current=None,
+        prior_pe=None, ytd_prior=None, is_first_period=True,
+    ) is None
+
+
+def test_months_after_the_books_start_are_still_derived_normally():
+    """The flag applies to one month only; August must still subtract July."""
+    assert month_activity(
+        pe=date(2026, 8, 31), ytd_current=D("300000"),
+        prior_pe=date(2026, 7, 31), ytd_prior=D("140000"),
+    ) == D("160000")
+
+
+def test_a_mid_month_period_end_still_plots_whole_months():
+    """The MTD preset and any custom range end on an arbitrary day. The charts
+    plot MONTHS, so the window must resolve to month ends — otherwise the last
+    point is labelled for a month it only partly covers, and the month-diff
+    arithmetic subtracts against a date no snapshot exists for."""
+    w = history_window(date(2026, 5, 15), books_start=date(2026, 2, 1), max_months=36)
+    assert w == [date(2026, 2, 28), date(2026, 3, 31), date(2026, 4, 30), date(2026, 5, 31)]
+    assert all(d == _next_month_end(_prior(d)) for d in w[1:])
+
+
+def _prior(d: date) -> date:
+    y, m = (d.year - 1, 12) if d.month == 1 else (d.year, d.month - 1)
+    import calendar
+    return date(y, m, calendar.monthrange(y, m)[1])

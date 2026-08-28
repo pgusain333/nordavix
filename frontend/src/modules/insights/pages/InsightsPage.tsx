@@ -1377,12 +1377,24 @@ function SparklineCard({ label, points, color, onPointClick }: {
           })}
         </svg>
       </div>
+      {/* The window follows the books-start date, so it can be three years
+          long. Every other label was fine at seven points and unreadable at
+          thirty-six — stride so about six show, first and last always among
+          them, plus whatever is hovered. */}
       <div className="flex justify-between mt-1">
-        {points.map((p, i) => (
-          <span key={i} className="text-[9px]" style={{ color: hoverIdx === i ? "var(--text)" : "var(--text-muted)" }}>
-            {i === 0 || i === points.length - 1 || i % 2 === 0 ? p.x : ""}
-          </span>
-        ))}
+        {points.map((p, i) => {
+          const stride = Math.max(1, Math.ceil(points.length / 6))
+          const show = i === 0 || i === points.length - 1
+            || hoverIdx === i
+            // Drop a label that would collide with the fixed last one.
+            || (i % stride === 0 && points.length - 1 - i >= stride)
+          return (
+            <span key={i} className="text-[9px] whitespace-nowrap"
+              style={{ color: hoverIdx === i ? "var(--text)" : "var(--text-muted)" }}>
+              {show ? p.x : ""}
+            </span>
+          )
+        })}
       </div>
       {gapCount > 0 && (
         <p className="text-[9px] mt-1" style={{ color: "var(--text-muted)" }}>

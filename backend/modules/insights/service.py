@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.gl_balance_snapshot import GlBalanceSnapshot
 from models.period_sync import PeriodSync
 from models.qbo_connection import QboConnection
+from models.tenant import Tenant
 from modules.recons.service import _flatten_report_rows, _qbo_get
 
 logger = logging.getLogger(__name__)
@@ -346,12 +347,49 @@ def period_data_status(rows, *, synced: bool, period_end: date) -> dict:
     }
 
 
+def history_window(
+    period_end: date,
+    *,
+    books_start: date | None,
+    max_months: int,
+) -> list[date]:
+    """The month-ends the Insights charts plot, oldest first.
+
+    From the tenant's books-start month through `period_end`, because that is
+    the company's actual history — a rolling six-month lookback both cut off
+    everything earlier and, for a client onboarded three months ago, invented
+    months that never had data.
+
+    `max_months` is a ceiling, not a target. It bounds the snapshot query and
+    keeps a 220px sparkline readable; a company with five years of books gets
+    the most recent `max_months` rather than sixty points three pixels apart.
+
+    With no books-start date (onboarding incomplete) it falls back to
+    `max_months` back from `period_end` — the previous behaviour, since there
+    is nothing better to anchor to.
+
+    Never returns a month later than `period_end`, and never returns empty.
+    """
+    out: list[date] = []
+    cursor = _last_day_of_month(period_end)
+    first = _last_day_of_month(books_start) if books_start else None
+    limit = max(1, max_months)
+    while len(out) < limit:
+        out.append(cursor)
+        if first is not None and cursor <= first:
+            break
+        cursor = _prior_month_end(cursor)
+    out.reverse()
+    return out
+
+
 def month_activity(
     *,
     pe: date,
     ytd_current: Decimal | None,
     prior_pe: date | None,
     ytd_prior: Decimal | None,
+    is_first_period: bool = False,
 ) -> Decimal | None:
     """One month's P&L activity, derived from two year-to-date figures.
 
@@ -372,14 +410,25 @@ def month_activity(
       * The preceding month never synced, so its YTD read as 0 and this month
         absorbed the whole year before it.
 
-    None means "not knowable", which the caller renders as a gap. January is
-    the one month whose year-to-date IS the month, so it needs no prior.
+    None means "not knowable", which the caller renders as a gap. Two months
+    need no prior:
+
+      * January, whose year-to-date IS the month.
+      * `is_first_period` — the tenant's books-start month. Nothing precedes it
+        anywhere in Nordavix (recons, close periods and schedules all begin
+        there), so there is no earlier month to subtract and none is coming.
+
+    The books-start caveat, stated plainly: when the books start mid-year AND
+    the QuickBooks file carries activity earlier in the same fiscal year, that
+    first month's year-to-date includes the pre-books part and reads high. Only
+    that one point is affected — every later month is a difference of two
+    year-to-dates, so the pre-books portion cancels out.
 
     Pure, because it decides whether a chart states a figure or leaves a hole.
     """
     if ytd_current is None:
         return None
-    if pe.month == 1:
+    if pe.month == 1 or is_first_period:
         return ytd_current
     if prior_pe is None or ytd_prior is None:
         return None
@@ -432,7 +481,10 @@ _MISSING_STAMP = object()
 #          leaf sums when a section summary is blank, and recovers Other Income
 #          and Other Expense. Cached revenue and margins predating this are
 #          wrong figures, not merely stale ones.
-INSIGHTS_PAYLOAD_VERSION = 3
+#   3 → 4: the charts run from the tenant's books-start date rather than a
+#          rolling six months, so a cached payload holds a shorter history and
+#          month labels without the year they now need.
+INSIGHTS_PAYLOAD_VERSION = 4
 
 
 def control_account_figures(
@@ -1194,7 +1246,10 @@ async def compute_overview(
     period_end: date,
     *,
     period_start: date | None = None,
-    months_history: int = 6,
+    # Ceiling on how many months the charts plot, not a fixed lookback.
+    # Generous: books rarely predate the product by three years, and the
+    # cap exists to bound the snapshot query and keep a sparkline legible.
+    months_history: int = 36,
 ) -> dict[str, Any]:
     """
     Compute the full insights blob for the requested period_end.
@@ -1203,20 +1258,42 @@ async def compute_overview(
     gracefully (None / empty arrays + a friendly error string).
     """
     # ── Period scaffolding ──────────────────────────────────────────────────
-    # One month MORE than the history shows. A month's P&L activity is its
-    # year-to-date minus the previous month's, so the oldest DISPLAYED point
-    # needs a month behind it to subtract. Without that basis month it returned
-    # its raw year-to-date and the charts plotted nine months of revenue as
-    # "Sep" — a spike on the left that rescaled the axis and flattened every
-    # real month beside it.
-    period_ends: list[date] = [period_end]
-    cursor = period_end
-    for _ in range(months_history + 1):
-        cursor = _prior_month_end(cursor)
-        period_ends.append(cursor)
-    period_ends.sort()  # ascending: oldest first
-    # The basis month is loaded and subtracted from, never charted.
-    history_ends = period_ends[1:]
+    # The charts run from the tenant's BOOKS START, not a rolling six months.
+    # A fixed lookback hides the beginning of the company's own history and,
+    # for a client onboarded three months ago, invented four months of window
+    # that never had data. books_start_date is where every other module already
+    # begins — recons, close periods, schedules — so the graphs begin there too.
+    tenant = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    books_start = tenant.books_start_date if tenant else None
+    first_period = _last_day_of_month(books_start) if books_start else None
+
+    period_ends = history_window(
+        period_end, books_start=books_start, max_months=months_history,
+    )
+    # One month MORE than the history shows, when there is one. A month's P&L
+    # activity is its year-to-date minus the previous month's, so the oldest
+    # DISPLAYED point needs a month behind it to subtract. Without that basis
+    # month it returned its raw year-to-date and the charts plotted nine months
+    # of revenue as "Sep" — a spike that rescaled the axis and flattened every
+    # real month beside it. The books-start month is the one exception: nothing
+    # precedes it, so month_activity takes its year-to-date directly.
+    if not period_ends:
+        period_ends = [period_end]
+    # "May" twice on one axis is ambiguous once the window spans a year
+    # boundary, which a books-start-anchored window routinely does.
+    _multi_year = period_ends[0].year != period_ends[-1].year
+    def _pt_label(p: date) -> str:
+        return p.strftime("%b %y") if _multi_year else p.strftime("%b")
+    basis = _prior_month_end(period_ends[0])
+    charts_start_at_books = first_period is not None and period_ends[0] <= first_period
+    if not charts_start_at_books:
+        period_ends = [basis, *period_ends]
+        history_ends = period_ends[1:]
+    else:
+        history_ends = list(period_ends)
     prior_pe = period_ends[-2] if len(period_ends) > 1 else None
 
     # Is the requested window exactly one calendar month? Month-mode selections
@@ -1382,6 +1459,7 @@ async def compute_overview(
             ytd_current=_ytd_or_none(pe, ytd_func),
             prior_pe=prior,
             ytd_prior=_ytd_or_none(prior, ytd_func),
+            is_first_period=first_period is not None and pe == first_period,
         )
 
     def _month_diff(pe: date, ytd_func) -> Decimal:
@@ -1464,7 +1542,7 @@ async def compute_overview(
     cash_history = [
         {
             "period":   p.isoformat(),
-            "label":    p.strftime("%b"),
+            "label":    _pt_label(p),
             "cash":     _to_money(cash_at(p)),
             "ocf":      _to_money(v if v is not None else ZERO),
             "has_data": bool(snaps_by_pe.get(p)),
@@ -1745,7 +1823,7 @@ async def compute_overview(
         ni   = oi_excl_other + (oi - oe)
         return {
             "period":   p.isoformat(),
-            "label":    p.strftime("%b"),
+            "label":    _pt_label(p),
             "revenue":  _to_money(rev),
             "gp":       _to_money(gp),
             "ni":       _to_money(ni),
@@ -2260,7 +2338,7 @@ async def compute_overview(
     d_to_e = float((total_liabilities / equity_nw).quantize(Decimal("0.01"))) if equity_nw > 0 else None
     d_to_a = float((total_liabilities / total_assets).quantize(Decimal("0.001"))) if total_assets > 0 else None
     equity_history = [
-        {"period": p.isoformat(), "label": p.strftime("%b"),
+        {"period": p.isoformat(), "label": _pt_label(p),
          "equity": _to_money(_equity_at(p)), "has_data": bool(snaps_by_pe.get(p))}
         for p in history_ends
     ]
