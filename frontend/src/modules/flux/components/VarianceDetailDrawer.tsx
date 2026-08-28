@@ -15,6 +15,7 @@
  * the parent (VarianceTable) keeps owning the NarrativePanel +
  * VarianceTxnsSection components — drawer is presentation only.
  */
+import { useNavigate } from "react-router-dom"
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import {
@@ -29,6 +30,8 @@ import {
   Layers,
   Lightbulb,
   MessageSquare,
+  Link2,
+  Scale,
   Receipt,
   ShieldCheck,
   Sparkles,
@@ -44,12 +47,18 @@ import { CommentThread } from "@/modules/comments/CommentThread"
 import { MemoryContextNote } from "@/modules/memory/MemoryContextNote"
 import { ExpectationCapture } from "@/modules/memory/ExpectationCapture"
 import { GlFlagChip } from "@/modules/gl_accuracy/components/GlFlagChip"
+import { RelatedPanel } from "@/modules/graph/RelatedPanel"
 
 const TABS = [
   { id: "summary",      label: "Summary",      icon: Sparkles },
   { id: "commentary",   label: "Commentary",   icon: FileText },
   { id: "transactions", label: "Transactions", icon: Receipt  },
   { id: "discussion",   label: "Discussion",   icon: MessageSquare },
+  // The knowledge graph already records what explains a variance — the
+  // adjusting entry, the account, the findings raised on it — and nothing
+  // rendered it here. flux_variance is a node type with edges being written;
+  // this is the read side finally showing up.
+  { id: "related",      label: "Related",      icon: Link2 },
 ] as const
 type TabId = typeof TABS[number]["id"]
 export type VarianceDrawerTabId = TabId
@@ -330,6 +339,13 @@ export function VarianceDetailDrawer({
                     entityId={row.id}
                     link={`/app/flux#var=${row.id}&vtab=discussion`}
                   />
+                </div>
+              )}
+              {/* Mounts only when active so its query fires lazily, matching
+                  the recon drawer's Related tab. */}
+              {tab === "related" && (
+                <div className="px-5 py-5">
+                  <RelatedPanel nodeType="flux_variance" nodeId={row.id} periodEnd={periodEnd} />
                 </div>
               )}
             </div>
@@ -704,6 +720,32 @@ function FluxReviewChecklist({ row }: { row: VarianceRow }) {
 
 // ── Summary tab ───────────────────────────────────────────────────────
 
+/** Straight to this account's reconciliation for the same period, drawer
+ *  open. `#acct=` is the convention the reconciliations dashboard reads on
+ *  mount — the same one the task deep links use. */
+function ReconLink({ qboAccountId, periodEnd, accountName }: {
+  qboAccountId: string; periodEnd: string; accountName: string
+}) {
+  const navigate = useNavigate()
+  return (
+    <button
+      onClick={() => navigate(`/app/reconciliations/period/${periodEnd}#acct=${qboAccountId}`)}
+      className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-[var(--surface-2)]"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <Scale size={14} strokeWidth={1.9} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+      <span className="flex-1 min-w-0">
+        <span className="block text-[12.5px] font-semibold text-theme truncate">
+          Open the reconciliation
+        </span>
+        <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
+          {accountName} · {periodEnd}
+        </span>
+      </span>
+      <ChevronRight size={14} strokeWidth={2} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+    </button>
+  )
+}
+
 function SummaryTab({ row, tbId, periodEnd, readOnly }: { row: VarianceRow; tbId?: string; periodEnd?: string; readOnly: boolean }) {
   const anomalyLabels: Record<string, string> = {
     new_account:         "No prior balance",
@@ -731,6 +773,17 @@ function SummaryTab({ row, tbId, periodEnd, readOnly }: { row: VarianceRow; tbId
       {/* Second pair of eyes — the GL-accuracy watchdog. Shows only when an open
           finding points at this exact account; links to the full review. */}
       <GlFlagChip qboAccountId={row.qbo_account_id} periodEnd={periodEnd} />
+
+      {/* The account's own reconciliation. A material variance is usually
+          answered by what the reconciliation already shows — the subledger, the
+          reconciling items, the AI's commentary — and there was no way to get
+          there from here. Needs both ids: an Excel-uploaded trial balance has
+          no QBO account, and without a period there is no reconciliation to
+          open. */}
+      {row.qbo_account_id && periodEnd && (
+        <ReconLink qboAccountId={row.qbo_account_id} periodEnd={periodEnd}
+          accountName={row.account_name} />
+      )}
 
       {/* Expectation — shown when NDVX formed an expectation for this account
           (run-rate, or a confirmed recurring rule). Mode-independent context. */}
