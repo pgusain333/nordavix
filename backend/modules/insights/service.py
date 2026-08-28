@@ -484,7 +484,9 @@ _MISSING_STAMP = object()
 #   3 → 4: the charts run from the tenant's books-start date rather than a
 #          rolling six months, so a cached payload holds a shorter history and
 #          month labels without the year they now need.
-INSIGHTS_PAYLOAD_VERSION = 4
+#   4 → 5: recommendations and management-summary lines carry an `action`, and
+#          the summary lines became {text, action} objects rather than strings.
+INSIGHTS_PAYLOAD_VERSION = 5
 
 
 def control_account_figures(
@@ -781,6 +783,18 @@ async def _fetch_aging(
 
 # ── recommendation heuristics ────────────────────────────────────────────────
 
+def act(label: str, *, section: str | None = None, href: str | None = None) -> dict:
+    """Where a recommendation sends you.
+
+    `section` jumps within Insights (the rail ids); `href` leaves for another
+    module. Every recommendation gets one: naming a problem precisely and then
+    leaving the reader to find it is the difference between a report and a tool.
+    "36% of AR is over 60 days old" told you to escalate the 61–90 bucket and
+    gave you no way to reach it, though the screen listing it already existed.
+    """
+    return {"label": label, "section": section, "href": href}
+
+
 def _build_recommendations(payload: dict) -> list[dict]:
     """Surface 0–6 actionable recommendations based on computed KPIs."""
     recs: list[dict] = []
@@ -799,6 +813,7 @@ def _build_recommendations(payload: dict) -> list[dict]:
             "detail":   f"Cash will last about {runway:.1f} months at the current burn. "
                         "Plan a fundraise, cut discretionary spend, or accelerate collections "
                         "in the next 30–60 days.",
+            "action":   act("See the cash forecast", section="cash_forecast"),
         })
 
     dso = ar.get("dso_days")
@@ -809,6 +824,7 @@ def _build_recommendations(payload: dict) -> list[dict]:
             "detail":   "Customers are paying slower than industry norms. Review largest "
                         "overdue accounts, send dunning, and consider offering an early-pay "
                         "discount on the top 10 receivables.",
+            "action":   act("Open AR aging", href="/app/reconciliations/ar"),
         })
 
     over_60_pct = ar.get("aging_over_60_pct")
@@ -819,6 +835,7 @@ def _build_recommendations(payload: dict) -> list[dict]:
             "detail":   "Concentration in the late-aged buckets is a leading indicator of "
                         "write-off risk. Escalate the top customers in the 61–90 and 90+ "
                         "buckets to collections.",
+            "action":   act("Open AR aging", href="/app/reconciliations/ar"),
         })
 
     gm = prof.get("gross_margin_pct")
@@ -829,6 +846,7 @@ def _build_recommendations(payload: dict) -> list[dict]:
             "title":    f"Gross margin slipped {gm_prev - gm:.1f} pts MoM",
             "detail":   "Could be input cost inflation, discounting, or product mix. Pull "
                         "COGS detail by category to confirm the driver before next pricing review.",
+            "action":   act("Break down expenses", section="expenses"),
         })
 
     nm = prof.get("net_margin_pct")
@@ -838,6 +856,7 @@ def _build_recommendations(payload: dict) -> list[dict]:
             "title":    f"Operating at a {abs(nm):.1f}% net loss",
             "detail":   "Revenue isn't covering total costs. Identify the largest expense "
                         "categories and the biggest MoM movers to find quick savings.",
+            "action":   act("Break down expenses", section="expenses"),
         })
 
     biggest_change = exp.get("biggest_mom_mover")
@@ -848,6 +867,7 @@ def _build_recommendations(payload: dict) -> list[dict]:
             "detail":   f"Spiked from {_money_str(biggest_change['from'])} to "
                         f"{_money_str(biggest_change['to'])}. Investigate to confirm it's "
                         "intentional (e.g. one-off project) vs. recurring drift.",
+            "action":   act("Explain it in flux analysis", href="/app/flux"),
         })
 
     ap_concentration = ap.get("aging_over_60_pct")
@@ -857,6 +877,7 @@ def _build_recommendations(payload: dict) -> list[dict]:
             "title":    f"{ap_concentration:.0f}% of AP is over 60 days past due",
             "detail":   "Stretched payables can damage supplier relationships. Prioritize "
                         "critical-vendor payments and renegotiate terms where possible.",
+            "action":   act("Open AP aging", href="/app/reconciliations/ap"),
         })
 
     burn = liq.get("monthly_burn")
@@ -866,6 +887,7 @@ def _build_recommendations(payload: dict) -> list[dict]:
             "title":    f"Healthy runway but burning {_money_str(burn)}/mo",
             "detail":   "Track burn closely — set a monthly target and review variances "
                         "in the close. Each percentage cut today compounds in runway.",
+            "action":   act("Track burn in liquidity", section="liquidity"),
         })
 
     if not recs:
@@ -874,6 +896,7 @@ def _build_recommendations(payload: dict) -> list[dict]:
             "title":    "Healthy across the board",
             "detail":   "No high-priority risks flagged. Keep watching cash burn and AR "
                         "concentration as you grow.",
+            "action":   act("Review liquidity", section="liquidity"),
         })
 
     return recs[:6]
@@ -1209,32 +1232,54 @@ def _build_advisory(payload: dict) -> None:
     else:
         headline = "Generally stable with a few areas to tighten this month."
 
-    strengths: list[str] = []
-    if runway is None and op_cf >= 0: strengths.append("Operations are cash-generative.")
-    if runway is not None and runway >= 12: strengths.append(f"Strong runway ({runway:.0f}+ months).")
-    if nm is not None and nm >= 10: strengths.append(f"Healthy net margin ({nm:.0f}%).")
-    if cur_r is not None and cur_r >= 1.5: strengths.append(f"Solid liquidity (current ratio {cur_r:.2f}×).")
-    if dso is not None and dso <= 30: strengths.append(f"Fast collections (DSO {dso:.0f} days).")
-    if wc > 0 and wc >= wc_prior: strengths.append("Positive, growing working capital.")
+    # Every summary line is {text, action}. They were bare strings, so the
+    # sharpest reading in the product — "AR concentration in 60+ days (36%)" —
+    # was somewhere to read and nowhere to click. A strength needs no action;
+    # a thing to fix or watch does.
+    def item(text: str, action: dict | None = None) -> dict:
+        return {"text": text, "action": action}
 
-    watch_items: list[str] = []
-    if runway is not None and runway < 12: watch_items.append(f"Runway: ~{runway:.1f} months.")
-    if nm is not None and nm < 5: watch_items.append(f"Thin/negative net margin ({nm:.0f}%).")
-    if dso is not None and dso > 45: watch_items.append(f"Slow collections (DSO {dso:.0f} days).")
-    if cur_r is not None and cur_r < 1.0: watch_items.append(f"Tight liquidity (current ratio {cur_r:.2f}×).")
-    if (ar_over60 or 0) > 25: watch_items.append(f"AR concentration in 60+ days ({ar_over60:.0f}%).")
+    strengths: list[dict] = []
+    if runway is None and op_cf >= 0: strengths.append(item("Operations are cash-generative."))
+    if runway is not None and runway >= 12: strengths.append(item(f"Strong runway ({runway:.0f}+ months)."))
+    if nm is not None and nm >= 10: strengths.append(item(f"Healthy net margin ({nm:.0f}%)."))
+    if cur_r is not None and cur_r >= 1.5: strengths.append(item(f"Solid liquidity (current ratio {cur_r:.2f}×)."))
+    if dso is not None and dso <= 30: strengths.append(item(f"Fast collections (DSO {dso:.0f} days)."))
+    if wc > 0 and wc >= wc_prior: strengths.append(item("Positive, growing working capital."))
 
-    # Priority moves = the high/medium recommendations, top 3.
+    watch_items: list[dict] = []
+    if runway is not None and runway < 12:
+        watch_items.append(item(f"Runway: ~{runway:.1f} months.",
+                                act("See the cash forecast", section="cash_forecast")))
+    if nm is not None and nm < 5:
+        watch_items.append(item(f"Thin/negative net margin ({nm:.0f}%).",
+                                act("Break down expenses", section="expenses")))
+    if dso is not None and dso > 45:
+        watch_items.append(item(f"Slow collections (DSO {dso:.0f} days).",
+                                act("Open AR aging", href="/app/reconciliations/ar")))
+    if cur_r is not None and cur_r < 1.0:
+        watch_items.append(item(f"Tight liquidity (current ratio {cur_r:.2f}×).",
+                                act("Review liquidity", section="liquidity")))
+    if (ar_over60 or 0) > 25:
+        watch_items.append(item(f"AR concentration in 60+ days ({ar_over60:.0f}%).",
+                                act("Open AR aging", href="/app/reconciliations/ar")))
+
+    # Priority moves = the high/medium recommendations, top 3. They carry the
+    # recommendation's own action, so the summary and the risk list agree on
+    # where a problem is solved rather than each deciding separately.
     recs = payload.get("recommendations", [])
-    priorities = [r["title"] for r in recs if r.get("priority") in ("high", "medium")][:3]
+    priorities = [
+        item(r["title"], r.get("action"))
+        for r in recs if r.get("priority") in ("high", "medium")
+    ][:3]
 
     payload["management_summary"] = {
         "headline":    headline,
         "health":      health,            # strong | watch | at_risk
         "score":       score,             # 0–100
-        "priorities":  priorities or ["Maintain the close cadence and keep the cash forecast current."],
-        "strengths":   strengths or ["Books are synced and current."],
-        "watch_items": watch_items or ["Nothing flagged for active monitoring this period."],
+        "priorities":  priorities or [item("Maintain the close cadence and keep the cash forecast current.")],
+        "strengths":   strengths or [item("Books are synced and current.")],
+        "watch_items": watch_items or [item("Nothing flagged for active monitoring this period.")],
     }
 
 

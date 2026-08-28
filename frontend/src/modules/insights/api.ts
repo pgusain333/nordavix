@@ -49,13 +49,26 @@ export interface Advisory {
   risks:        string[]
 }
 
+/** Where a finding is acted on. `section` jumps within Insights (a rail id);
+ *  `href` leaves for another module. Exactly one is set. */
+export interface InsightAction {
+  label:   string
+  section: string | null
+  href:    string | null
+}
+
+export interface SummaryItem {
+  text:   string
+  action: InsightAction | null
+}
+
 export interface ManagementSummary {
   headline:    string
   health:      "strong" | "watch" | "at_risk"
   score:       number          // 0–100
-  priorities:  string[]
-  strengths:   string[]
-  watch_items: string[]
+  priorities:  SummaryItem[]
+  strengths:   SummaryItem[]
+  watch_items: SummaryItem[]
 }
 
 export interface Liquidity {
@@ -205,6 +218,7 @@ export interface Recommendation {
   priority: "high" | "medium" | "low"
   title:    string
   detail:   string
+  action:   InsightAction | null
 }
 
 /**

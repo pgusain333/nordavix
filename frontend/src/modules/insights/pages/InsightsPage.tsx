@@ -12,7 +12,7 @@
  *    month (re-fetches automatically).
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useOrganization } from "@clerk/clerk-react"
 import { motion, AnimatePresence } from "framer-motion"
@@ -22,7 +22,7 @@ import {
   ArrowUpFromLine, LineChart as LineIcon, Sparkles, AlertTriangle,
   Play, Info, Lightbulb, MousePointerClick,
   Target, Eye, ShieldCheck, CheckCircle2,
-  CalendarClock, Scale, Gauge, RefreshCw,
+  CalendarClock, Scale, Gauge, RefreshCw, ChevronRight,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -30,7 +30,7 @@ import { PageHeader } from "@/core/ui/PageHeader"
 import { usePublishSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import {
   insightsApi, type InsightsOverview, type KpiRow, type RiskLevel, type HistoryPoint,
-  type Advisory,
+  type Advisory, type InsightAction, type SummaryItem,
 } from "@/modules/insights/api"
 
 // ── Period helpers ───────────────────────────────────────────────────────────
@@ -402,7 +402,7 @@ export function InsightsPage() {
               <div className="flex flex-col md:flex-row gap-4 lg:gap-6">
                 <SectionRail active={active} onSelect={setActive} data={data} />
                 <div className="flex-1 min-w-0">
-                  <SectionDetail id={active} data={data} onJumpToMonth={jumpToMonth} />
+                  <SectionDetail id={active} data={data} onJumpToMonth={jumpToMonth} onSection={setActive} />
                 </div>
               </div>
             </motion.div>
@@ -735,8 +735,9 @@ function HealthGauge({ score, health }: { score: number; health: "strong" | "wat
 
 // ── Detail pane — the selected section, visualize-first ───────────────────────
 
-function SectionDetail({ id, data, onJumpToMonth }: {
+function SectionDetail({ id, data, onJumpToMonth, onSection }: {
   id: SectionId; data: InsightsOverview; onJumpToMonth: (periodEnd: string) => void;
+  onSection: (id: SectionId) => void;
 }) {
   const section = SECTIONS.find((s) => s.id === id)!
   const Icon = section.icon
@@ -767,15 +768,16 @@ function SectionDetail({ id, data, onJumpToMonth }: {
           </div>
         </div>
         <div className="p-5 space-y-5">
-          <SectionBody id={id} data={data} onJumpToMonth={onJumpToMonth} />
+          <SectionBody id={id} data={data} onJumpToMonth={onJumpToMonth} onSection={onSection} />
         </div>
       </motion.section>
     </AnimatePresence>
   )
 }
 
-function SectionBody({ id, data, onJumpToMonth }: {
+function SectionBody({ id, data, onJumpToMonth, onSection }: {
   id: SectionId; data: InsightsOverview; onJumpToMonth: (periodEnd: string) => void;
+  onSection: (id: SectionId) => void;
 }) {
   switch (id) {
     case "overview":
@@ -795,12 +797,12 @@ function SectionBody({ id, data, onJumpToMonth }: {
             </div>
           )}
           <HeroKpis data={data} />
-          <ManagementSummary data={data} embedded />
+          <ManagementSummary data={data} embedded onSection={onSection} />
         </div>
       )
     case "recommendations":
       return (data.recommendations && data.recommendations.length > 0)
-        ? <Recommendations data={data} />
+        ? <Recommendations data={data} onSection={onSection} />
         : <InlineHint text="No risks flagged for this period — nothing needs your attention here." />
     case "liquidity":
       return (
@@ -1022,7 +1024,9 @@ function HeroKpis({ data }: { data: InsightsOverview }) {
 
 // ── Recommendations ─────────────────────────────────────────────────────────
 
-function Recommendations({ data }: { data: InsightsOverview }) {
+function Recommendations({ data, onSection }: {
+  data: InsightsOverview; onSection: (id: SectionId) => void
+}) {
   if (!data.recommendations || data.recommendations.length === 0) return null
   return (
     <ul className="divide-y -mx-5 -my-5" style={{ borderColor: "var(--border)" }}>
@@ -1043,6 +1047,11 @@ function Recommendations({ data }: { data: InsightsOverview }) {
               </span>
             </div>
             <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>{r.detail}</p>
+            {r.action && (
+              <div className="mt-1.5">
+                <ActionLink action={r.action} onSection={onSection} />
+              </div>
+            )}
           </div>
         </li>
       ))}
@@ -1052,7 +1061,9 @@ function Recommendations({ data }: { data: InsightsOverview }) {
 
 // ── Management summary ───────────────────────────────────────────────────────
 
-function ManagementSummary({ data, embedded = false }: { data: InsightsOverview; embedded?: boolean }) {
+function ManagementSummary({ data, embedded = false, onSection }: {
+  data: InsightsOverview; embedded?: boolean; onSection: (id: SectionId) => void
+}) {
   const ms = data.management_summary
   if (!ms) return null
   const tone =
@@ -1085,15 +1096,45 @@ function ManagementSummary({ data, embedded = false }: { data: InsightsOverview;
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x"
         style={{ borderColor: "var(--border)" }}>
-        <SummaryCol title="Do this first" Icon={Target}      items={ms.priorities}  fg="#9b3d37" />
-        <SummaryCol title="Strengths"     Icon={CheckCircle2} items={ms.strengths}   fg="#3e8f66" />
-        <SummaryCol title="Keep watching" Icon={Eye}         items={ms.watch_items} fg="#8a6326" />
+        <SummaryCol title="Do this first" Icon={Target}      items={ms.priorities}  fg="#9b3d37" onSection={onSection} />
+        <SummaryCol title="Strengths"     Icon={CheckCircle2} items={ms.strengths}   fg="#3e8f66" onSection={onSection} />
+        <SummaryCol title="Keep watching" Icon={Eye}         items={ms.watch_items} fg="#8a6326" onSection={onSection} />
       </div>
     </div>
   )
 }
 
-function SummaryCol({ title, Icon, items, fg }: { title: string; Icon: React.ElementType; items: string[]; fg: string }) {
+/** The link on a finding. Keeps the two surfaces — the risk list and the
+ *  management summary — agreeing on where a problem is solved, because both
+ *  render the action the backend attached rather than deciding for themselves. */
+function ActionLink({ action, onSection }: {
+  action: InsightAction | null
+  onSection: (id: SectionId) => void
+}) {
+  const navigate = useNavigate()
+  if (!action) return null
+  const go = () => {
+    // The backend names a rail id; trust but verify, so a stale section name
+    // in a cached payload is a no-op rather than an empty pane.
+    if (action.section && SECTIONS.some((x) => x.id === action.section)) {
+      onSection(action.section as SectionId)
+    }
+    else if (action.href) navigate(action.href)
+  }
+  return (
+    <button onClick={go}
+      className="inline-flex items-center gap-0.5 text-[11px] font-semibold hover:underline"
+      style={{ color: "var(--green)" }}>
+      {action.label}
+      <ChevronRight size={11} strokeWidth={2.4} />
+    </button>
+  )
+}
+
+function SummaryCol({ title, Icon, items, fg, onSection }: {
+  title: string; Icon: React.ElementType; items: SummaryItem[]; fg: string
+  onSection: (id: SectionId) => void
+}) {
   return (
     <div className="px-5 py-4" style={{ borderColor: "var(--border)" }}>
       <div className="flex items-center gap-1.5 mb-2">
@@ -1104,7 +1145,12 @@ function SummaryCol({ title, Icon, items, fg }: { title: string; Icon: React.Ele
         {items.map((it, i) => (
           <li key={i} className="text-[12px] leading-snug flex items-start gap-1.5" style={{ color: "var(--text-2)" }}>
             <span className="mt-1.5 h-1 w-1 rounded-full shrink-0" style={{ background: fg }} />
-            {it}
+            <span className="min-w-0">
+              {it.text}
+              {it.action && (
+                <> <ActionLink action={it.action} onSection={onSection} /></>
+              )}
+            </span>
           </li>
         ))}
       </ul>

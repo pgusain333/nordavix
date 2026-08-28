@@ -10,6 +10,8 @@
  *   the wrong month over.
  *
  * Behavior:
+ *   - a `?period=YYYY-MM-DD` URL param wins over the stored value on mount,
+ *     so a link that names a month lands on that month
  *   - readSelectedPeriod() — returns ISO date or null when unset
  *   - writeSelectedPeriod(iso) — persist; safe in private-mode browsers
  *   - useSelectedPeriodDefault(fallback) — returns the stored value on
@@ -23,6 +25,26 @@ const KEY_PREFIX = "nordavix:selected-period"
 
 function scopedKey(orgId: string | null | undefined): string {
   return orgId ? `${KEY_PREFIX}:${orgId}` : KEY_PREFIX
+}
+
+/**
+ * A `?period=YYYY-MM-DD` in the URL, if present and well-formed.
+ *
+ * A link that names a period must land on that period. Task deep links, close
+ * steps and anything shared between colleagues used to drop the month on the
+ * floor — you clicked "Prepaids schedule · Mar 2026" and arrived on whatever
+ * month your own localStorage happened to hold. The link is a more specific
+ * intent than a stored default, so it wins.
+ *
+ * Read from window.location rather than useSearchParams so the plain
+ * (non-hook) readers can use it too and no caller needs a Router context.
+ */
+export function periodFromUrl(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const v = new URLSearchParams(window.location.search).get("period")
+    return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null
+  } catch { return null }
 }
 
 export function readSelectedPeriod(orgId?: string | null): string | null {
@@ -48,7 +70,9 @@ export function writeSelectedPeriod(iso: string, orgId?: string | null): void {
  */
 export function useSelectedPeriodDefault(fallback: string): string {
   const { organization } = useOrganization()
-  const [val] = useState<string>(() => readSelectedPeriod(organization?.id) ?? fallback)
+  const [val] = useState<string>(
+    () => periodFromUrl() ?? readSelectedPeriod(organization?.id) ?? fallback,
+  )
   return val
 }
 
@@ -78,7 +102,9 @@ export function usePublishSelectedPeriod(iso: string | null | undefined): void {
  */
 export function useSelectedPeriod(fallback: string): [string, (iso: string) => void] {
   const { organization } = useOrganization()
-  const [val, setVal] = useState<string>(() => readSelectedPeriod(organization?.id) ?? fallback)
+  const [val, setVal] = useState<string>(
+    () => periodFromUrl() ?? readSelectedPeriod(organization?.id) ?? fallback,
+  )
 
   // Cross-tab sync — listen for storage events from other tabs and
   // resync local state. Same-tab updates write directly via setVal.

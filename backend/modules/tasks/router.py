@@ -370,7 +370,11 @@ async def _derive_recon_tasks(
             # otherwise the auto-computed default.
             effective_due = overlay.due_date if (overlay and overlay.due_date) else due
             severity = _severity_for_recon(effective_status, effective_due)
-            deep_link = f"/app/reconciliations/period/{pe.isoformat()}"
+            # Land on the ACCOUNT, not the period. The task already knows
+            # which account it is about; dropping that put the user on a
+            # dashboard of forty rows to find the one the task named. The
+            # dashboard reads `#acct=` on mount and opens that drawer.
+            deep_link = f"/app/reconciliations/period/{pe.isoformat()}#acct={qid}"
 
             out.append(TaskOut(
                 key=key,
@@ -562,7 +566,10 @@ async def _derive_schedule_tasks(
     for period_end in periods:
         for kind in sorted(active_kinds):
             human = _SCHEDULE_KINDS[kind][1]
-            route = _SCHEDULE_KINDS[kind][2]
+            # Carry the period the task is for. The bare route landed on
+            # whatever month the reader's own localStorage held, so a task
+            # titled "Prepaids · Mar 2026" could open on April.
+            route = f"{_SCHEDULE_KINDS[kind][2]}?period={period_end.isoformat()}"
             snap = by_kind_period.get((kind, period_end))
             committed = snap is not None
             period_label = period_end.strftime("%b %Y")

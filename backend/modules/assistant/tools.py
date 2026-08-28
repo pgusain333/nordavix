@@ -416,6 +416,24 @@ TOOL_DEFS: list[dict[str, Any]] = [
 _CLOSE_STAGES = ("sync", "recon", "flux", "schedule", "close")
 
 
+def _summary_texts(items) -> list[str]:
+    """Management-summary lines as plain strings.
+
+    They are {text, action} objects now; a payload cached before that change
+    still holds bare strings, so both are accepted rather than one crashing the
+    assistant on a stale blob.
+    """
+    out: list[str] = []
+    for it in items or []:
+        if isinstance(it, dict):
+            t = it.get("text")
+            if t:
+                out.append(str(t))
+        elif it:
+            out.append(str(it))
+    return out
+
+
 async def latest_synced_period(db: AsyncSession) -> date | None:
     """The most recent period that has a GL snapshot — the assistant's default
     context period when the caller doesn't specify one. Tenant-scoped via the
@@ -825,9 +843,12 @@ async def dispatch_tool(
                 "headline": ms.get("headline"),
                 "health": ms.get("health"),
                 "score": ms.get("score"),
-                "strengths": ms.get("strengths"),
-                "watch_items": ms.get("watch_items"),
-                "priorities": ms.get("priorities"),
+                # Summary lines are {text, action} objects; the action is a UI
+                # affordance the assistant cannot click, so it reads the text.
+                # Tolerates the older plain-string shape from a stale cache.
+                "strengths": _summary_texts(ms.get("strengths")),
+                "watch_items": _summary_texts(ms.get("watch_items")),
+                "priorities": _summary_texts(ms.get("priorities")),
             },
             "liquidity": {
                 "cash_balance": liq.get("cash_balance"),
