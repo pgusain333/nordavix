@@ -7,6 +7,7 @@ This module has no HTTP concerns — it's pure business logic.
 import io
 import logging
 import uuid
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 import pandas as pd
@@ -536,6 +537,84 @@ def _pl_to_signed(qbo_acct_type: str | None, amount: Decimal | None) -> Decimal:
     return -a if qbo_acct_type in _PL_CREDIT_NATURAL else a
 
 
+def monthly_comparison_periods(pe: date) -> tuple[date, date, date]:
+    """The four dates a month-over-month flux on `pe` needs.
+
+    Returns (period_start_current, period_prior_end, period_start_prior) — the
+    caller already has `pe` as period_current.
+
+    Month-over-month, not year-over-year: this is what a monthly close asks —
+    "what moved since last month". Every automated flux goes through here so an
+    unattended run and a hand-made one for the same month mean the same thing.
+
+    `pe` is treated as the month it falls in, so a period end of the 30th or the
+    31st both resolve to that month's first day.
+    """
+    start_current = pe.replace(day=1)
+    prior_end     = start_current - timedelta(days=1)
+    start_prior   = prior_end.replace(day=1)
+    return start_current, prior_end, start_prior
+
+
+async def fetch_pl_period_amounts(
+    conn,
+    *,
+    period_current: date,
+    period_prior: date,
+    period_start_current: date | None,
+    period_start_prior: date | None,
+) -> tuple[dict[str, Decimal] | None, dict[str, Decimal] | None]:
+    """True period activity for BOTH periods, or (None, None).
+
+    A TrialBalance reports income-statement accounts as fiscal-YTD, so a monthly
+    flux needs the ProfitAndLoss report to show the month rather than Jan→now.
+
+    Both periods are fetched here, together, deliberately. The parser must never
+    see one period's true activity against the other's year-to-date — that is a
+    wrong number wearing the right label, and it is exactly what happened when
+    the ProfitAndLoss pull lived inline in one caller and not the other. The
+    only two answers this can give are "both" and "neither"; failure falls back
+    to the TrialBalance for both, which is coarser but internally consistent.
+
+    An empty prior report while the current one has rows is treated as missing
+    data, not as a period with no activity. QBO returns an empty ProfitAndLoss
+    for a range that predates the books, and honouring it would zero every
+    income and expense account's prior column — a 100% variance on everything,
+    with nothing on screen saying the figure was never there.
+    """
+    if not period_start_current or not period_start_prior:
+        return None, None
+    try:
+        from core.qbo_tb import fetch_profit_and_loss
+        report_current = await fetch_profit_and_loss(
+            conn, period_current, period_start=period_start_current,
+        )
+        report_prior = await fetch_profit_and_loss(
+            conn, period_prior, period_start=period_start_prior,
+        )
+        pl_current = parse_qbo_pl_amounts(report_current)
+        pl_prior   = parse_qbo_pl_amounts(report_prior)
+    except Exception:
+        logger.warning(
+            "flux: ProfitAndLoss period-activity pull failed (%s vs %s) — "
+            "income-statement accounts will show TrialBalance year-to-date instead.",
+            period_current, period_prior, exc_info=True,
+        )
+        return None, None
+
+    if pl_current and not pl_prior:
+        logger.error(
+            "flux: ProfitAndLoss returned no rows for the prior period (%s→%s) while "
+            "the current period (%s→%s) has %d accounts. Falling back to TrialBalance "
+            "year-to-date for both rather than reporting a zero prior column.",
+            period_start_prior, period_prior,
+            period_start_current, period_current, len(pl_current),
+        )
+        return None, None
+
+    return pl_current, pl_prior
+
+
 def parse_qbo_pl_amounts(report: dict) -> dict[str, Decimal]:
     """{qbo_account_id: amount} from a QBO ProfitAndLoss report (single period).
 
@@ -681,9 +760,15 @@ def parse_qbo_trial_balance_report(
         # TB's debit-positive convention so variance / classification / display are
         # unaffected — only the magnitude changes. Done before the zero-skip so an
         # account with YTD activity but none THIS period correctly drops out.
-        if qbo_id and pl_current is not None and _is_pl_type(qbo_acct_type):
+        # BOTH sides or neither. Gating on pl_current alone let a caller that
+        # supplied only the current period silently zero every prior column —
+        # `(pl_prior or {})` reads as defensive and is the opposite: it turns
+        # missing data into a confident 0.00 and a 100% variance on every P&L
+        # account. fetch_pl_period_amounts guarantees the pair; this is the
+        # second lock on the same door.
+        if qbo_id and pl_current is not None and pl_prior is not None and _is_pl_type(qbo_acct_type):
             cur_bal = _pl_to_signed(qbo_acct_type, pl_current.get(str(qbo_id)))
-            pri_bal = _pl_to_signed(qbo_acct_type, (pl_prior or {}).get(str(qbo_id)))
+            pri_bal = _pl_to_signed(qbo_acct_type, pl_prior.get(str(qbo_id)))
 
         if cur_bal == 0 and pri_bal == 0:
             continue

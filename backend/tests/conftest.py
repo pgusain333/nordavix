@@ -107,6 +107,7 @@ _INVARIANT_FILES = {
     "test_recon_conclusion.py",   # frozen recon working paper (variance derived, hash covers edits)
     "test_insights_accuracy.py",  # insights figures (TB resolution, ledger-sourced AR/AP, cache staleness)
     "test_task_recurrence.py",    # recurring task roll-forward (month-end series never drifts)
+    "test_flux_periods.py",       # flux comparison periods + P&L period-activity override (both columns or neither)
 }
 
 

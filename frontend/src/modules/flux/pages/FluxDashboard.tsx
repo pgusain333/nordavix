@@ -1107,25 +1107,53 @@ function QboFluxInlineForm({ onComplete }: QboInlineProps) {
     setName(`Flux ${ce.slice(0, 7)}`)
   }
 
-  // When user manually edits dates, clear the active preset highlight + recompute
-  // prior to match (same range, one year back) only if they had been on a preset.
+  /** Whole months currently separating the two windows: 1 on the default
+   *  month-over-month preset, 12 on a year-over-year one. */
+  function comparisonOffsetMonths(): number {
+    const c = periodEnd.split("-").map(Number)
+    const pr = priorEnd.split("-").map(Number)
+    if (c.length < 2 || pr.length < 2 || c.some(isNaN) || pr.some(isNaN)) return 1
+    const months = (c[0] - pr[0]) * 12 + (c[1] - pr[1])
+    return months > 0 ? months : 1
+  }
+
+  /** `iso` moved back `months` whole months.
+   *
+   *  A date that IS its month's last day stays on the last day — Sep 30 back
+   *  one month is Aug 31, not Aug 30. Period ends are month ends, and keeping
+   *  the day number would shave a day of activity off every prior window that
+   *  started in a 30-day month. Otherwise the day is preserved, clamped to the
+   *  target month's length so Mar 31 lands on Feb 28 rather than Mar 3. */
+  function shiftBackMonths(iso: string, months: number): string {
+    const d = new Date(iso + "T00:00:00")
+    const day = d.getDate()
+    const wasMonthEnd = day === new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+    d.setDate(1)
+    d.setMonth(d.getMonth() - months)
+    const lastOfTarget = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+    d.setDate(wasMonthEnd ? lastOfTarget : Math.min(day, lastOfTarget))
+    return toISODate(d)
+  }
+
+  // Editing a date drops the preset highlight and moves the prior window to
+  // match. It used to move it a YEAR back regardless — so nudging the end date
+  // while on "Last month vs prior month" silently turned the analysis into
+  // year-over-year, with only a de-highlighted chip to say so. Keep whatever
+  // span the user is on instead.
   function onPeriodStartChange(v: string) {
     setPeriodStart(v)
     if (activePreset) {
       setActivePreset(null)
-      // Compute new prior as same-dates-one-year-back
-      const d = new Date(v + "T00:00:00")
-      d.setFullYear(d.getFullYear() - 1)
-      setPriorStart(toISODate(d))
+      setPriorStart(shiftBackMonths(v, comparisonOffsetMonths()))
     }
   }
   function onPeriodEndChange(v: string) {
     setPeriodEnd(v)
     if (activePreset) {
       setActivePreset(null)
-      const d = new Date(v + "T00:00:00")
-      d.setFullYear(d.getFullYear() - 1)
-      setPriorEnd(toISODate(d))
+      // Offset is read from state, i.e. from BEFORE this edit — which is the
+      // span the user had chosen and the one to preserve.
+      setPriorEnd(shiftBackMonths(v, comparisonOffsetMonths()))
     }
   }
 

@@ -96,8 +96,8 @@ async def _step_prepare(db: AsyncSession, tenant_id: uuid.UUID, actor: User, pe:
 
 
 async def _step_flux(db: AsyncSession, tenant_id: uuid.UUID, actor: User, pe: date, results: dict) -> None:
-    """Create the month's flux analysis from QBO (current vs same month
-    prior year — the app's convention) and queue AI commentary for the
+    """Create the month's flux analysis from QBO (this month vs the prior
+    month, matching the flux form's default) and queue AI commentary for the
     first N material variances. Skips creation if an analysis for this
     period already exists."""
     import httpx
@@ -107,7 +107,12 @@ async def _step_flux(db: AsyncSession, tenant_id: uuid.UUID, actor: User, pe: da
     from models.account import Account
     from models.trial_balance import TrialBalance
     from models.variance import Variance
-    from modules.flux.service import create_accounts_and_variances, parse_qbo_trial_balance_report
+    from modules.flux.service import (
+        create_accounts_and_variances,
+        fetch_pl_period_amounts,
+        monthly_comparison_periods,
+        parse_qbo_trial_balance_report,
+    )
     from modules.qbo.router import _get_valid_token
 
     existing = (await db.execute(
@@ -124,7 +129,12 @@ async def _step_flux(db: AsyncSession, tenant_id: uuid.UUID, actor: User, pe: da
         if conn is None:
             results["errors"].append("QuickBooks isn't connected — flux skipped.")
             return
-        prior = date(pe.year - 1, pe.month, monthrange(pe.year - 1, pe.month)[1])
+        # Month over month, matching the flux form's default preset. This used
+        # to compare the same month a YEAR earlier, so "Sep 2026 (Autopilot)"
+        # and a hand-made "Sep 2026" were different analyses under the same
+        # name — one answering "what moved since August", the other "how does
+        # this September compare to last September".
+        start_current, prior, start_prior = monthly_comparison_periods(pe)
         tb = TrialBalance(
             id=uuid.uuid4(), tenant_id=tenant_id,
             name=f"{pe.strftime('%b %Y')} (Autopilot)",
@@ -135,8 +145,20 @@ async def _step_flux(db: AsyncSession, tenant_id: uuid.UUID, actor: User, pe: da
         await db.commit()
         await db.refresh(tb)
 
-        report_current = await fetch_trial_balance(conn, pe)
-        report_prior   = await fetch_trial_balance(conn, prior)
+        # Pass the period starts. Without them fetch_trial_balance defaults to
+        # Jan 1, so every income and expense row was calendar-year-to-date — a
+        # September run showed nine months of expense where the same month made
+        # by hand showed one.
+        report_current = await fetch_trial_balance(conn, pe, period_start=start_current)
+        report_prior   = await fetch_trial_balance(conn, prior, period_start=start_prior)
+
+        # And the ProfitAndLoss pair, so P&L rows carry true period activity
+        # rather than the TrialBalance's year-to-date figure.
+        pl_current, pl_prior = await fetch_pl_period_amounts(
+            conn,
+            period_current=pe, period_prior=prior,
+            period_start_current=start_current, period_start_prior=start_prior,
+        )
 
         # Account-number lookup — mirrors the from-QBO endpoint so flux rows
         # carry proper AcctNums (best-effort; parser falls back without it).
@@ -161,6 +183,7 @@ async def _step_flux(db: AsyncSession, tenant_id: uuid.UUID, actor: User, pe: da
 
         account_dicts = parse_qbo_trial_balance_report(
             report_current, report_prior, {}, qbo_acct_lookup=qbo_acct_lookup,
+            pl_current=pl_current, pl_prior=pl_prior,
         )
         if not account_dicts:
             tb.status = "error"

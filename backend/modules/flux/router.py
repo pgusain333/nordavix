@@ -53,9 +53,9 @@ from modules.flux.schemas import (
 from modules.flux.service import (
     _account_key,
     create_accounts_and_variances,
+    fetch_pl_period_amounts,
     parse_accounts_from_file,
     parse_file_to_preview,
-    parse_qbo_pl_amounts,
     parse_qbo_trial_balance_report,
 )
 from modules.flux.tasks import (  # noqa: F401  (kept for celery)
@@ -256,32 +256,17 @@ async def create_trial_balance_from_qbo(
         # Best-effort: parser falls back to text-prefix parsing if lookup is empty
         qbo_acct_lookup = {}
 
-    # 3c) Pull the ProfitAndLoss report for each period so income-statement
-    # accounts show TRUE PERIOD activity (May, not Jan→May), instead of the
-    # TrialBalance's fiscal-YTD figure. The parser overrides P&L-type rows with
-    # these; balance-sheet accounts keep the TB point-in-time balance. Best-effort:
-    # on any failure (or when a period start wasn't supplied) we fall back to the
-    # TB figures — P&L then reads YTD, as before — rather than failing the run.
-    pl_current: dict | None = None
-    pl_prior: dict | None = None
-    if body.period_start_current and body.period_start_prior:
-        try:
-            from core.qbo_tb import fetch_profit_and_loss
-            pl_report_current = await fetch_profit_and_loss(
-                conn, body.period_current, period_start=body.period_start_current,
-            )
-            pl_report_prior = await fetch_profit_and_loss(
-                conn, body.period_prior, period_start=body.period_start_prior,
-            )
-            pl_current = parse_qbo_pl_amounts(pl_report_current)
-            pl_prior = parse_qbo_pl_amounts(pl_report_prior)
-        except Exception:
-            logger.warning(
-                "flux: ProfitAndLoss period-activity pull failed for tb %s — "
-                "income-statement accounts will show TrialBalance year-to-date instead.",
-                tb.id, exc_info=True,
-            )
-            pl_current = pl_prior = None
+    # 3c) True period activity for the income statement. A TrialBalance reports
+    # P&L accounts as fiscal-YTD, so without this a May flux shows Jan→May.
+    # Balance-sheet accounts keep the TB point-in-time balance. Returns the pair
+    # or nothing — see fetch_pl_period_amounts for why that is the whole point.
+    pl_current, pl_prior = await fetch_pl_period_amounts(
+        conn,
+        period_current=body.period_current,
+        period_prior=body.period_prior,
+        period_start_current=body.period_start_current,
+        period_start_prior=body.period_start_prior,
+    )
 
     # 4) Parse into account dicts and persist accounts + variances
     try:

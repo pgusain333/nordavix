@@ -87,6 +87,32 @@ function _formatHeaderDate(iso?: string, suffix?: string): string {
   } catch { return suffix ?? iso }
 }
 
+/** What the prior column actually IS, from the two period ends.
+ *
+ *  The suffix used to be the literal "PY" on every analysis, so the default
+ *  month-over-month flux labelled August 2026 as "prior YEAR". The dates were
+ *  right and the label contradicted them, which is worse than no label: a
+ *  reviewer scanning the header reads the wrong comparison basis.
+ *
+ *  Whole months apart is the only thing worth naming — 1 is the prior month,
+ *  12 the prior year, 3 the prior quarter. Anything else is a custom range and
+ *  gets no suffix, because the date beside it already says everything true.
+ */
+function _priorSuffix(current?: string, prior?: string): string | undefined {
+  if (!current || !prior) return undefined
+  // Parse by hand: `new Date("2026-08-31")` is UTC midnight, which is the
+  // previous month west of Greenwich and would mislabel the column it exists
+  // to label correctly.
+  const c = current.slice(0, 10).split("-").map(Number)
+  const p = prior.slice(0, 10).split("-").map(Number)
+  if (c.length < 2 || p.length < 2 || c.some(isNaN) || p.some(isNaN)) return undefined
+  const months = (c[0] - p[0]) * 12 + (c[1] - p[1])
+  if (months === 1)  return "prior month"
+  if (months === 3)  return "prior quarter"
+  if (months === 12) return "PY"
+  return undefined
+}
+
 const col = createColumnHelper<VarianceRow>()
 
 const STATUS_ORDER: Record<string, number> = {
@@ -581,7 +607,9 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
       ),
     }),
     col.accessor("current_balance", {
-      header: _formatHeaderDate(periodCurrent, "CY"),
+      // No suffix on the current column — the date is the whole story, and
+      // "CY" (current YEAR) was wrong on every monthly analysis.
+      header: _formatHeaderDate(periodCurrent),
       size:   140,
       cell: (c) => (
         <span className="tabular-nums text-sm text-right block text-theme">
@@ -592,7 +620,9 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
     col.accessor("prior_balance", {
       // In the expected lens this column shows NDVX's expected balance (with
       // its basis on hover) instead of the prior-year balance.
-      header: expectedView ? "Expected" : _formatHeaderDate(periodPrior, "PY"),
+      header: expectedView
+        ? "Expected"
+        : _formatHeaderDate(periodPrior, _priorSuffix(periodCurrent, periodPrior)),
       size:   140,
       cell: (c) => {
         const r = c.row.original
@@ -846,7 +876,7 @@ export function VarianceTable({ tbId, rows, isLoading, onExport, periodCurrent, 
           {hasExpected && (
             <div className="flex items-center gap-1 rounded-lg p-1"
               style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
-              title="Compare actuals against the same month last year (Prior), or against NDVX's trailing run-rate expectation (Expected)">
+              title="Compare actuals against the comparative period this analysis was built with (Prior), or against NDVX's trailing run-rate expectation (Expected)">
               {([["prior", "vs Prior"], ["expected", "vs Expected"]] as const).map(([m, label]) => {
                 const active = mode === m
                 return (
