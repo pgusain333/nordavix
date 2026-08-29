@@ -187,6 +187,27 @@
   /* Kill the mobile tap flash — transitions carry the feedback instead. */
   html { -webkit-tap-highlight-color: transparent; }
 
+  /* …and this is the feedback that line was promising. Without it, pressing a
+     row acknowledged nothing until the work finished — which on a slow query is
+     a second later, long enough to press again. Every clickable thing in the
+     app is a <button> or an <a>, so this reaches all of them at once.
+
+     Opacity, never transform: a transform makes the element a containing block,
+     which would re-anchor any position:fixed menu inside it for the duration of
+     the press. `:active` only lasts while the pointer is down, so this costs
+     nothing at rest. The reduced-motion rule below collapses the transition;
+     the state change itself stays, because it is feedback, not decoration. */
+  button:not(:disabled),
+  a[href],
+  [role="button"]:not([aria-disabled="true"]) {
+    transition: opacity 0.12s ease;
+  }
+  button:not(:disabled):active,
+  a[href]:active,
+  [role="button"]:not([aria-disabled="true"]):active {
+    opacity: 0.7;
+  }
+
   /* Brand watermark — a faint Nordavix mark pinned to the bottom-right of
      every screen (marketing + app). Pure chrome: pointer-events none, ~4%
      opacity, sits above backgrounds but never intercepts a click. Swaps to

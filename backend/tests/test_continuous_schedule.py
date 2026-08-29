@@ -68,11 +68,50 @@ def test_a_check_from_yesterday_does_not_block_today():
     assert len(fired) == 1
 
 
-def test_it_never_fires_outside_the_chosen_hour():
+def test_it_never_fires_before_the_chosen_hour():
     for h in range(24):
+        local_hour = local_now(utc(2026, 6, 10, h), NY).hour
         due = is_due(timezone=NY, check_hour=9, last_ok_scan_at=None,
                      now_utc=utc(2026, 6, 10, h))
-        assert due == (local_now(utc(2026, 6, 10, h), NY).hour == 9)
+        if local_hour < 9:
+            assert not due, f"fired at {local_hour}:00, before the chosen hour"
+
+
+# ── The catch-up window ────────────────────────────────────────────────────
+#
+# GitHub's scheduled workflows are best-effort: they run late under load and are
+# sometimes dropped outright. Against a single-hour window a dropped tick meant
+# no check that day, silently — for a feature whose entire claim is that it
+# checks every day. The window lets a late tick still land, and the once-a-day
+# guard keeps it to one check.
+
+def test_a_tick_missed_at_the_chosen_hour_is_caught_up_later():
+    """THE FAILURE THIS EXISTS FOR. The 9am tick never arrived; 11am's does."""
+    assert is_due(timezone=NY, check_hour=9, last_ok_scan_at=None,
+                  now_utc=utc(2026, 6, 10, 15)) is True   # 11:00 EDT
+
+
+def test_a_caught_up_check_is_late_never_extra():
+    """Every hour in the window ticks, and exactly one check comes out of it."""
+    fired = run_a_day(NY, 9, utc(2026, 6, 10, 0))
+    assert len(fired) == 1, f"the window fired {len(fired)} times"
+
+
+def test_the_window_closes_and_does_not_run_all_day():
+    """An unbounded window would retry a persistently failing workspace fifteen
+    times a day on QuickBooks' dime."""
+    assert is_due(timezone=NY, check_hour=9, last_ok_scan_at=None,
+                  now_utc=utc(2026, 6, 10, 21)) is False  # 17:00 EDT, long past
+
+
+def test_a_late_evening_check_hour_never_spills_into_tomorrow():
+    """23:00 + a 3-hour window would reach 02:00, which the guard reads as a new
+    local date — so it would fire again as 'today's' check a few hours later."""
+    fired = run_a_day(NY, 23, utc(2026, 6, 10, 0), hours=30)
+    days = [local_now(f, NY).date() for f in fired]
+    assert len(days) == len(set(days)), "fired twice on one local day"
+    assert all(local_now(f, NY).hour == 23 for f in fired), \
+        "a 23:00 check ran after midnight"
 
 
 # ── Clock changes ──────────────────────────────────────────────────────────
@@ -92,12 +131,19 @@ def test_autumn_fall_back_does_not_fire_twice():
     assert len(fired) == 1, f"fired {len(fired)} times across the repeated hour"
 
 
-def test_an_hour_that_does_not_exist_simply_skips_that_day():
-    """2026-03-08 02:00 America/New_York never happens. A workspace that chose
-    2am gets no check that day — and, critically, is not stuck forever: it
-    fires again the next day."""
+def test_an_hour_that_does_not_exist_is_caught_up_not_lost():
+    """2026-03-08 02:00 America/New_York never happens — the clock jumps 01:59
+    to 03:00. A 2am workspace used to lose that day entirely; the catch-up
+    window lands it at 03:00 instead, and the next day resumes at 2am.
+
+    Once per local day either way — being late is fine, being extra is not."""
     fired = run_a_day(NY, 2, utc(2026, 3, 8, 0), hours=48)
-    assert len(fired) == 1, "skipped the lost hour, resumed the next day"
+    local = [local_now(f, NY) for f in fired]
+    days = [d.date() for d in local]
+    assert len(days) == len(set(days)), f"fired twice on one local day: {local}"
+    assert len(fired) == 2, "the lost hour cost a whole day's check"
+    assert local[0].hour == 3, "did not catch up on the spring-forward day"
+    assert local[1].hour == 2
 
 
 # ── Degenerate input must not take down the sweep ──────────────────────────

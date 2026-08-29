@@ -41,6 +41,9 @@ class _Result:
     def all(self):
         return self._rows
 
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
 
 class _Session:
     """Answers the recipient lookup and records commits."""
@@ -146,3 +149,88 @@ async def test_a_failing_email_never_breaks_the_sweep(monkeypatch):
     monkeypatch.setattr(C, "_email_digest", _boom)
     s, added = await _run(new=2, email=True)      # must not raise
     assert len(added) == 2 and s.commits == 1
+
+
+# ── The once-a-day guard must only be fed by the schedule ──────────────────
+#
+# THE BUG THAT SHIPPED. The guard exists to stop the hourly cron re-running the
+# sweep it already ran today. It was reading the last SUCCESSFUL scan of any
+# kind — so one press of "Check now", or the automatic pass after a QuickBooks
+# sync, satisfied it and suppressed that day's scheduled check. The people who
+# lost the feature were the ones using the product most: open it, sync, and the
+# 9am watch never fires. Worse, the sync pass usually scans the month being
+# CLOSED, so a successful scan of July suppressed the watch on August.
+
+class _ScanRow:
+    def __init__(self, trigger, finished_at, ok=True):
+        self.trigger = trigger
+        self.finished_at = finished_at
+        self.ok = ok
+
+
+class _ScanQueryDb:
+    """Answers _last_ok_scan_at, recording the triggers the query filtered on."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.trigger_filters: list[str | None] = []
+
+    async def execute(self, stmt, **kw):
+        params = stmt.compile().params
+        trig = next((v for k, v in params.items() if k.startswith("trigger")), None)
+        self.trigger_filters.append(trig)
+        match = [r for r in self.rows
+                 if r.ok and (trig is None or r.trigger == trig)]
+        match.sort(key=lambda r: r.finished_at, reverse=True)
+        return _Result([match[0].finished_at] if match else [])
+
+
+async def test_a_manual_check_does_not_satisfy_the_daily_guard():
+    from datetime import UTC, datetime
+    pressed = datetime(2026, 8, 29, 14, 0, tzinfo=UTC)
+    db = _ScanQueryDb([_ScanRow("manual", pressed)])
+    assert await C._last_ok_scan_at(db, _Tenant.id) is None, \
+        "a button press suppressed the day's scheduled check"
+
+
+async def test_a_post_sync_scan_does_not_satisfy_the_daily_guard():
+    from datetime import UTC, datetime
+    synced = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    db = _ScanQueryDb([_ScanRow("sync", synced)])
+    assert await C._last_ok_scan_at(db, _Tenant.id) is None
+
+
+async def test_the_schedules_own_run_does_satisfy_it():
+    from datetime import UTC, datetime
+    ran = datetime(2026, 8, 29, 13, 0, tzinfo=UTC)
+    db = _ScanQueryDb([_ScanRow("scheduled", ran)])
+    assert await C._last_ok_scan_at(db, _Tenant.id) == ran
+
+
+async def test_a_failed_scheduled_run_leaves_the_workspace_due():
+    """Otherwise a workspace whose scans keep failing is skipped forever while
+    the strip shows a failure nobody is acting on."""
+    from datetime import UTC, datetime
+    db = _ScanQueryDb([_ScanRow("scheduled", datetime(2026, 8, 29, 13, tzinfo=UTC), ok=False)])
+    assert await C._last_ok_scan_at(db, _Tenant.id) is None
+
+
+async def test_the_trigger_filter_is_applied_in_sql():
+    from datetime import UTC, datetime
+    db = _ScanQueryDb([_ScanRow("manual", datetime(2026, 8, 29, 14, tzinfo=UTC))])
+    await C._last_ok_scan_at(db, _Tenant.id)
+    assert "scheduled" in db.trigger_filters, "the query did not filter on trigger"
+
+
+async def test_the_busiest_workspace_still_gets_its_daily_check():
+    """End to end on the shape that produced the bug: fourteen manual checks
+    today, and the schedule has still never run — so it is due."""
+    from datetime import UTC, datetime
+
+    from modules.gl_accuracy.schedule import is_due
+    today = [_ScanRow("manual", datetime(2026, 8, 29, 10 + i, tzinfo=UTC))
+             for i in range(14)]
+    last = await C._last_ok_scan_at(_ScanQueryDb(today), _Tenant.id)
+    assert is_due(timezone="America/New_York", check_hour=9,
+                  last_ok_scan_at=last,
+                  now_utc=datetime(2026, 8, 29, 13, tzinfo=UTC)) is True

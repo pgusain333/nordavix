@@ -40,15 +40,31 @@ logger = logging.getLogger(__name__)
 
 
 async def _last_ok_scan_at(session, tenant_id: uuid.UUID) -> datetime | None:
-    """When this workspace was last checked SUCCESSFULLY, any period.
+    """When THE SCHEDULE last completed a check for this workspace.
 
-    Successful only: a crashed run must not satisfy the once-a-day guard, or a
-    workspace whose scans keep failing would be quietly skipped forever while
-    the strip showed the failure nobody was acting on.
+    Scheduled runs only, and this is the whole point. The guard exists to stop
+    the hourly cron re-running the sweep it already ran today — it is not "have
+    these books been looked at recently". Counting every successful scan meant a
+    single press of Check now, or the automatic pass after a QuickBooks sync,
+    satisfied it and suppressed the day's scheduled check entirely. The users
+    most likely to lose the feature were the ones using the product most: open
+    it in the morning, sync, and the 9am watch never fires. The digest email
+    only sends from the scheduled sweep, so it never arrived either.
+
+    Worse still, the sync-triggered pass usually scans the month being CLOSED —
+    so a successful scan of July was suppressing the watch on August.
+
+    Successful only: a crashed run must not satisfy the guard, or a workspace
+    whose scans keep failing would be quietly skipped forever while the strip
+    showed a failure nobody was acting on.
     """
     return (await session.execute(
         select(GlScanRun.finished_at)
-        .where(GlScanRun.tenant_id == tenant_id, GlScanRun.ok.is_(True))
+        .where(
+            GlScanRun.tenant_id == tenant_id,
+            GlScanRun.ok.is_(True),
+            GlScanRun.trigger == "scheduled",
+        )
         .order_by(GlScanRun.finished_at.desc())
         .limit(1)
     )).scalar_one_or_none()

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react"
 import { Routes, Route, Navigate, useLocation } from "react-router-dom"
 import { AnimatePresence, motion } from "framer-motion"
@@ -74,14 +74,33 @@ const PublicHelpPage          = lazy(() => import("@/marketing/PublicHelpPage").
 const BlogIndex               = lazy(() => import("@/marketing/blog/BlogIndex").then(m => ({ default: m.BlogIndex })))
 const BlogPostPage            = lazy(() => import("@/marketing/blog/BlogPostPage").then(m => ({ default: m.BlogPostPage })))
 
-/** Lightweight loading state shown while a lazy route is being fetched.
- *  Intentionally minimal: a single centered spinner with the same
- *  surface color as the app shell so the transition feels like a
- *  natural loading state, not a flash of empty page. */
+/** Loading state for a lazy route — deliberately silent for the first beat.
+ *
+ *  The nav warms each chunk on hover, so most navigations resolve in well under
+ *  200ms. Rendering a spinner immediately meant that common case showed one for
+ *  ~100ms between the outgoing page and the incoming one: long enough to see,
+ *  too short to read as loading. It registers as a flicker, which is most of
+ *  what "navigation doesn't feel smooth" actually is.
+ *
+ *  So: hold the app background silently, and only if the wait turns out to be
+ *  real does the spinner fade in. A spinner that appears after a beat reads as
+ *  the app loading something; one that appears and vanishes reads as a glitch. */
+const LOADER_DELAY_MS = 220
+
 function RouteLoader() {
+  const [show, setShow] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setShow(true), LOADER_DELAY_MS)
+    return () => clearTimeout(t)
+  }, [])
   return (
     <div className="h-full flex items-center justify-center" style={{ background: "var(--bg)" }}>
-      <Spinner className="h-6 w-6" />
+      {show && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+          transition={{ duration: MOTION.DEFAULT }}>
+          <Spinner className="h-6 w-6" />
+        </motion.div>
+      )}
     </div>
   )
 }
@@ -116,9 +135,16 @@ function AppRoutes() {
       <motion.div
         key={transitionKey}
         initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -6 }}
-        transition={{ duration: MOTION.DEFAULT, ease: EASE.OUT }}
+        animate={{ opacity: 1, y: 0,
+                   transition: { duration: MOTION.DEFAULT, ease: EASE.OUT } }}
+        // Leaving is faster than arriving. `mode="wait"` runs these in series,
+        // so the exit is dead time on every single navigation — the page you
+        // asked for cannot start mounting until the one you left has finished
+        // going. Matching both to 0.18s spent a third of the transition on the
+        // page nobody is looking at any more. The incoming page keeps its
+        // unhurried entrance; the outgoing one gets out of the way.
+        exit={{ opacity: 0, y: -6,
+                transition: { duration: MOTION.FAST, ease: EASE.OUT } }}
         className="h-full"
       >
         <Suspense fallback={<RouteLoader />}>

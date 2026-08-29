@@ -89,6 +89,15 @@ def watch_periods(
     return [current]
 
 
+# How long after the chosen hour a missed tick may still be caught up, in
+# whole hours. GitHub's scheduled workflows are best-effort: they run late under
+# load and are sometimes dropped outright, and against a single-hour window a
+# dropped tick means no check that day, silently, for a feature whose entire
+# claim is that it checks every day. Bounded rather than open-ended so a
+# workspace whose scans keep failing retries a few times, not fifteen.
+CATCH_UP_HOURS = 3
+
+
 def is_due(
     *,
     timezone: str | None,
@@ -100,13 +109,18 @@ def is_due(
 
     Two conditions, both required:
 
-      * it is the workspace's chosen hour, on its own clock;
-      * it has not already been checked successfully today, on that same clock.
+      * the local clock has reached the chosen hour and is still within the
+        catch-up window;
+      * the SCHEDULE has not already completed a check today, on that clock.
 
-    The second is what makes the sweep idempotent. The cron fires every hour and
-    may be retried; without a once-a-day guard a workspace would be scanned
-    repeatedly through its check hour, burning QuickBooks calls and re-notifying
-    on findings it already reported.
+    The second is what makes the sweep idempotent, and it must be fed only by
+    scheduled runs — see `_last_ok_scan_at`. Fed by any successful scan, a
+    single Check now press suppressed the whole day.
+
+    The window is what makes it reliable. Firing only in the exact hour assumes
+    the cron ticks in that hour, and GitHub's does not guarantee that; a late or
+    dropped tick simply lost the day. Within the window the once-a-day guard
+    still allows exactly one check, so a caught-up run is late, never extra.
 
     Comparing LOCAL dates rather than a 24-hour elapsed window matters on the
     days a clock changes: in a spring-forward the chosen hour may not exist at
@@ -116,7 +130,13 @@ def is_due(
     """
     if check_hour is None or not (0 <= int(check_hour) <= 23):
         return False
+    start = int(check_hour)
+    # The window cannot wrap past midnight, and deliberately doesn't: the lower
+    # bound alone rules out every hour before the chosen one, so a 23:00 check
+    # only ever matches hour 23. That matters — spilling into 00:00 would land
+    # on a date the once-a-day guard reads as tomorrow, and the same night's
+    # check would fire twice.
     here = local_now(now_utc, timezone)
-    if here.hour != int(check_hour):
+    if not (start <= here.hour <= start + CATCH_UP_HOURS):
         return False
     return local_date_of(last_ok_scan_at, timezone) != here.date()
