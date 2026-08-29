@@ -359,7 +359,10 @@ function MonitoringHead({ m, scanning, enabled, reduce, periodEnd, onCheckNow, c
       <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
         {inFlight ? "Reading " : failed ? "Was reading " : "Tracking "}
         <span className="text-theme font-medium">{monthLabel(periodEnd)}</span>
-        <span> · the month in progress</span>
+        {/* "the month in progress" means the CLOSE in progress — the other
+            feature's month. This one is today's real month, whatever period
+            the close happens to be on, so say exactly that. */}
+        <span> · live, today&apos;s month</span>
       </p>
 
       {failed ? (
@@ -647,9 +650,10 @@ export function GlAccuracyPage() {
                   in progress. Two features, two months; naming both is the only
                   way the page stops being ambiguous. */}
               Checking <span className="text-theme font-semibold">{activePeriod ? monthLabel(activePeriod) : "—"}</span>
+              <span> · the close in progress</span>
               {scanned?.period === activePeriod
                 ? <> · swept <span className="text-theme font-semibold">{scanned.total.toLocaleString()} entries</span> and your full chart of accounts.</>
-                : <> · the month you&apos;re closing. Deterministic, evidence-first, and never writes to QuickBooks.</>}
+                : <>. Deterministic, evidence-first, and never writes to QuickBooks.</>}
             </p>
           </div>
         </div>

@@ -59,17 +59,19 @@ def watch_periods(
     closed: set[date],
     today: date,
 ) -> list[date]:
-    """The month continuous close tracks: the CURRENT, in-progress one. Only.
+    """The month continuous close tracks: today's CALENDAR month. Only.
 
-    Continuous close and Risk Radar watch different months on purpose, and
-    conflating them is what made this confusing:
+    Calendar month, not "the month in progress" — that phrase reads as "the
+    month whose close is in progress", which is the other feature entirely.
+    These two watch different months on purpose, and the close month and the
+    calendar month are routinely different: on 20 August you are closing July.
 
-      * CONTINUOUS CLOSE tracks the month happening NOW. Its question is "has
-        anything odd been entered today", and the answer is only ever about the
-        live month. It runs on a schedule, unattended.
-      * RISK RADAR checks the month being CLOSED — whichever period the user has
-        selected. Its question is "is this month clean enough to sign off", and
-        the user drives it.
+      * CONTINUOUS CLOSE tracks AUGUST — the month transactions are being
+        entered into right now. Its question is "has anything odd been entered
+        today". It runs on a schedule, unattended.
+      * RISK RADAR checks JULY — whichever period the user selected. Its
+        question is "is this month clean enough to sign off", and the user
+        drives it.
 
     Scanning the closing month here too would double the QuickBooks pulls to
     re-derive findings Risk Radar already shows on the period the user is

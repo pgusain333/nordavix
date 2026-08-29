@@ -441,7 +441,12 @@ def serialize_finding(f: GlAccuracyFinding) -> dict:
 
 
 def _current_period() -> date:
-    """The month in progress — what continuous close tracks."""
+    """Today's calendar month — what continuous close tracks.
+
+    Not the period being closed. On 20 August this is August while the close is
+    still on July, and the rail must describe August or its numbers are about
+    the wrong books.
+    """
     from calendar import monthrange
     today = date.today()
     return date(today.year, today.month, monthrange(today.year, today.month)[1])
