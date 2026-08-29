@@ -56,15 +56,44 @@ function ContinuousSettings() {
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
   const effTz = tz ?? cfg?.timezone ?? browserTz
 
+  // Defaults for a workspace that has never saved automation settings. The
+  // config row is created on first PUT, so continuous close can be the thing
+  // that creates it — requiring a trip through Autopilot first would hide this
+  // feature behind an unrelated one.
+  const base = cfg ?? {
+    enabled: false, run_day: 1, run_flux: true, send_pbc_requests: false,
+    pbc_recipient_email: null, run_review: true, attach_reports: false,
+    continuous_enabled: false, check_hour: 9, timezone: null, updated_at: null,
+  }
+
   const save = useMutation({
-    mutationFn: (patch: { on?: boolean; h?: number; z?: string }) => {
-      if (!cfg) throw new Error("Automation settings haven't loaded yet.")
+    mutationFn: async (patch: { on?: boolean; h?: number; z?: string }) => {
+      // Re-read the config at call time rather than closing over the render's
+      // copy. The toggle fires the moment the page settles, and a body built
+      // from a snapshot taken before the GET resolved is how a first click
+      // fails and an identical second click succeeds.
+      const fresh = qc.getQueryData<AutopilotState>(["autopilot"])?.config ?? base
       return autopilotApi.saveConfig({
-        ...cfg,
-        continuous_enabled: patch.on ?? cfg.continuous_enabled,
-        check_hour:         patch.h ?? effHour,
-        timezone:           patch.z ?? effTz,
+        ...fresh,
+        continuous_enabled: patch.on ?? fresh.continuous_enabled ?? false,
+        check_hour:         patch.h ?? (fresh.check_hour ?? effHour),
+        timezone:           patch.z ?? (fresh.timezone ?? effTz),
       })
+    },
+    // Flip immediately and roll back if the server disagrees. A checkbox that
+    // waits on a round trip before moving reads as broken even when it works.
+    onMutate: async (patch) => {
+      await qc.cancelQueries({ queryKey: ["autopilot"] })
+      const prev = qc.getQueryData<AutopilotState>(["autopilot"])
+      if (prev?.config && patch.on !== undefined) {
+        qc.setQueryData(["autopilot"], {
+          ...prev, config: { ...prev.config, continuous_enabled: patch.on },
+        })
+      }
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["autopilot"], ctx.prev)
     },
     onSuccess: (saved) => {
       qc.setQueryData(["autopilot"], (old: AutopilotState | undefined) =>
@@ -72,8 +101,32 @@ function ContinuousSettings() {
     },
   })
 
-  if (!cfg) return null
-  const on = cfg.continuous_enabled
+  /** The real reason, not "couldn't save that."
+   *
+   *  FastAPI returns a string `detail` for a raised HTTPException and a LIST of
+   *  objects for a 422 validation error; rendering the list directly throws, and
+   *  falling through to a generic string hides the only useful information on
+   *  the screen. Both shapes are flattened, and the status is shown because
+   *  "401" and "500" send you to completely different places. */
+  function saveError(e: unknown): string | null {
+    if (!e) return null
+    const err = e as { response?: { status?: number; data?: { detail?: unknown } }; message?: string }
+    const status = err.response?.status
+    const detail = err.response?.data?.detail
+    let text: string
+    if (typeof detail === "string") text = detail
+    else if (Array.isArray(detail)) {
+      text = detail
+        .map((d) => (d as { msg?: string })?.msg ?? JSON.stringify(d))
+        .join("; ")
+    } else if (err.message) text = err.message
+    else text = "Couldn't save that."
+    return status ? `${text} (HTTP ${status})` : text
+  }
+
+  // Wait for the query, but not for a row to exist.
+  if (!state) return null
+  const on = base.continuous_enabled
 
   return (
     <div className="mb-4">
@@ -135,8 +188,7 @@ function ContinuousSettings() {
 
           {save.error ? (
             <p className="text-[11.5px]" style={{ color: "var(--danger)" }}>
-              {(save.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-                ?? "Couldn't save that."}
+              {saveError(save.error)}
             </p>
           ) : null}
         </div>
@@ -251,6 +303,24 @@ function MonitoringStrip({ m, scanning }: { m?: GlMonitoring; scanning: boolean 
   )
 }
 
+/** SSR-safe matchMedia. Returns the current value and re-renders on change, so
+ *  dragging a window across the breakpoint moves the layout with it. */
+function useMatchMedia(query: string): boolean {
+  const [matches, setMatches] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false
+    return window.matchMedia(query).matches
+  })
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const mql = window.matchMedia(query)
+    const on = () => setMatches(mql.matches)
+    on()
+    mql.addEventListener("change", on)
+    return () => mql.removeEventListener("change", on)
+  }, [query])
+  return matches
+}
+
 function fmtUsd(s: string | number | null | undefined): string {
   if (s == null || s === "") return "—"
   const n = Number(s)
@@ -323,6 +393,11 @@ export function GlAccuracyPage() {
   const [err, setErr] = useState<string | null>(null)
   const [filter, setFilter] = useState<"all" | "high" | "medium">("all")
   const [openId, setOpenId] = useState<string | null>(null)
+
+  // Two columns only where there is room for them. Below xl the page keeps the
+  // inline list it always had, so `open` and `active` are never both true and a
+  // finding is never rendered expanded twice.
+  const isWide = useMatchMedia("(min-width: 1280px)")
   // C3c — the reviewer's pre-close sweep: multi-select for bulk-accept and a
   // guided one-at-a-time walk. Accept-only by design; dismiss stays single.
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -358,6 +433,12 @@ export function GlAccuracyPage() {
   const medium = open.length - high
   const dollars = open.filter((f) => f.action_kind !== "flag").reduce((s, f) => s + Math.abs(Number(f.amount) || 0), 0)
   const shown = items.filter((f) => filter === "all" || (f.status === "open" && f.severity === filter))
+
+  // Declared after `items` on purpose: it reads it, and a const cannot be read
+  // above its own declaration — the build catches that, the browser would not
+  // until the page rendered.
+  const splitOpen = isWide && !!openId
+  const selectedFinding = splitOpen ? (items.find((f) => f.id === openId) ?? null) : null
   // Trophy only right after an explicit scan of this period returned nothing.
   const justScannedClean = scanned?.period === activePeriod && open.length === 0
 
@@ -556,14 +637,51 @@ export function GlAccuracyPage() {
               </div>
             )
           ) : (
-            <div className="space-y-2">
-              {shown.map((f) => (
-                <FindingCard key={f.id} f={f} open={openId === f.id} canReview={canReview} reduce={reduce}
-                  selectable checked={selected.has(f.id)} onCheck={() => toggleSelect(f.id)}
-                  onToggle={() => setOpenId(openId === f.id ? null : f.id)}
-                  onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}
-                  onGoAdjustments={() => navigate("/app/adjustments")} />
-              ))}
+            /* Split review. On a wide screen the list stays put on the left and
+               the finding under review opens beside it, so the queue never
+               reflows under the cursor and you keep your place in it — the
+               thing inline accordions get wrong. Below xl there is no room for
+               two columns, so it stays the inline list it always was. */
+            <div className="flex flex-col xl:flex-row gap-4 items-start">
+              <motion.div layout={!reduce}
+                transition={{ type: "spring", stiffness: 380, damping: 34 }}
+                className={`space-y-2 w-full min-w-0 ${
+                  splitOpen ? "xl:w-[400px] xl:shrink-0" : "xl:flex-1"
+                }`}>
+                <AnimatePresence initial={false}>
+                  {shown.map((f) => (
+                    <motion.div key={f.id} layout={!reduce}
+                      initial={reduce ? false : { opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={reduce ? undefined : { opacity: 0, x: -12, height: 0, marginBottom: 0 }}
+                      transition={{ duration: 0.18 }}>
+                      <FindingCard f={f} canReview={canReview} reduce={reduce}
+                        open={!splitOpen && openId === f.id}
+                        active={splitOpen && openId === f.id}
+                        selectable checked={selected.has(f.id)} onCheck={() => toggleSelect(f.id)}
+                        onToggle={() => setOpenId(openId === f.id ? null : f.id)}
+                        onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}
+                        onGoAdjustments={() => navigate("/app/adjustments")} />
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </motion.div>
+
+              <AnimatePresence initial={false} mode="wait">
+                {splitOpen && selectedFinding && (
+                  <motion.div key={selectedFinding.id}
+                    initial={reduce ? false : { opacity: 0, x: 16 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={reduce ? undefined : { opacity: 0, x: 16 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    className="hidden xl:block flex-1 min-w-0 sticky top-4">
+                    <FindingCard f={selectedFinding} open canReview={canReview} reduce={reduce}
+                      onToggle={() => setOpenId(null)}
+                      onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}
+                      onGoAdjustments={() => navigate("/app/adjustments")} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           )}
         </>
@@ -574,8 +692,11 @@ export function GlAccuracyPage() {
 
 // ── Finding card (collapsed row + expanded review) ─────────────────────────
 
-function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck, onToggle, onChanged, onGoAdjustments }: {
+function FindingCard({ f, open, active, canReview, reduce, selectable, checked, onCheck, onToggle, onChanged, onGoAdjustments }: {
   f: GlFinding; open: boolean; canReview: boolean; reduce: boolean
+  /** Selected in the left column while its detail shows on the right. Marks the
+   *  row without expanding it — in split view the body lives in the other pane. */
+  active?: boolean
   selectable?: boolean; checked?: boolean; onCheck?: () => void
   onToggle: () => void; onChanged: () => void; onGoAdjustments: () => void
 }) {
@@ -584,6 +705,13 @@ function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck,
   const isMisc = f.kind === "misclassification"
   const isFlag = f.action_kind === "flag"   // review-only: acknowledge, not a JE
   const dot = f.severity === "high" ? "var(--green)" : f.severity === "low" ? "var(--text-muted)" : "#8a6326"
+  // In split view the row is selected but not expanded — its body is in the
+  // other pane. A left rule and a lifted surface say "this is the one you're
+  // reading" without duplicating the content.
+  const selectedStyle = active
+    ? { background: "var(--surface)", borderColor: "var(--green)",
+        boxShadow: "var(--card-shadow)" }
+    : undefined
 
   const acceptMut = useMutation({
     mutationFn: () => glAccuracyApi.accept(f.id),
@@ -606,9 +734,15 @@ function FindingCard({ f, open, canReview, reduce, selectable, checked, onCheck,
     : null
 
   return (
-    <div className="rounded-xl overflow-hidden"
-      style={{ background: "var(--surface)", border: `1px solid ${open ? "var(--green)" : "var(--border)"}`,
-               boxShadow: "var(--card-shadow)", opacity: isOpen ? 1 : 0.72 }}>
+    <div className="rounded-xl overflow-hidden transition-colors"
+      style={{ background: "var(--surface)",
+               border: `1px solid ${open || active ? "var(--green)" : "var(--border)"}`,
+               // A left rule marks the row being read in the other pane —
+               // present enough to find at a glance, quiet enough not to
+               // compete with the detail itself.
+               borderLeftWidth: active ? 3 : 1,
+               boxShadow: "var(--card-shadow)", opacity: isOpen ? 1 : 0.72,
+               ...(selectedStyle ?? {}) }}>
       <div onClick={onToggle} className="flex items-center gap-2.5 px-3.5 py-3 cursor-pointer">
         {selectable && isOpen && !isFlag && (
           <input type="checkbox" checked={!!checked}
