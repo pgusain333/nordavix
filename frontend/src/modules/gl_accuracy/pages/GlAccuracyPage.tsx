@@ -49,6 +49,10 @@ function ContinuousSettings() {
   const cfg = state?.config
   const [hour, setHour] = useState<number | null>(null)
   const [tz, setTz] = useState<string | null>(null)
+  // Set when the API accepted the save but plainly didn't understand it. See
+  // the onSuccess guard — this is the "your backend is behind" case, which
+  // otherwise looks exactly like a broken checkbox.
+  const [apiBehind, setApiBehind] = useState<string | null>(null)
 
   const effHour = hour ?? cfg?.check_hour ?? 9
   // The browser's own zone is the right default and almost always correct —
@@ -103,7 +107,22 @@ function ContinuousSettings() {
     onError: (_e, _v, ctx) => {
       if (ctx?.prev) qc.setQueryData(["autopilot"], ctx.prev)
     },
-    onSuccess: (saved) => {
+    onSuccess: (saved, patch, ctx) => {
+      // A server that predates a field IGNORES it — pydantic drops unknown keys
+      // and still answers 200 — so the response comes back without it and the
+      // merge below silently reverts the control that was just moved. No error,
+      // nothing in the console, a checkbox that unticks itself. Name it instead:
+      // the difference between "the API is behind" and "this is broken" is the
+      // difference between a deploy and an afternoon.
+      if (patch.mail !== undefined && saved.continuous_email === undefined) {
+        if (ctx?.prev) qc.setQueryData(["autopilot"], ctx.prev)
+        setApiBehind(
+          "Saved, but this workspace's API doesn't know about email digests yet — " +
+          "deploy the backend and try again.",
+        )
+        return
+      }
+      setApiBehind(null)
       qc.setQueryData(["autopilot"], (old: AutopilotState | undefined) =>
         old ? { ...old, config: saved } : old)
     },
@@ -238,6 +257,8 @@ function ContinuousSettings() {
             <p className="text-[11.5px]" style={{ color: "var(--danger)" }}>
               {saveError(save.error)}
             </p>
+          ) : apiBehind ? (
+            <p className="text-[11.5px]" style={{ color: "var(--warn)" }}>{apiBehind}</p>
           ) : null}
         </div>
       )}
