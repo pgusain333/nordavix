@@ -136,11 +136,18 @@ def test_a_naive_timestamp_is_treated_as_utc_rather_than_crashing():
                   now_utc=utc(2026, 6, 10, 13)) is False
 
 
-# ── Which months get watched ───────────────────────────────────────────────
-# The bug this section exists for: the sweep borrowed Autopilot's
-# focus_period_for, which returns the oldest non-closed FULLY-ELAPSED month.
-# Correct for a monthly close, wrong for a daily watch — an entry made today,
-# dated today, was never looked at, which is exactly what checking daily is for.
+# ── Which month gets watched ───────────────────────────────────────────────
+# Continuous close and Risk Radar deliberately watch DIFFERENT months:
+#
+#   * continuous close tracks the month happening NOW — "has anything odd been
+#     entered today", answered on a schedule, unattended;
+#   * Risk Radar checks the month being CLOSED — "is this clean enough to sign
+#     off", answered on whichever period the user selected.
+#
+# It first borrowed Autopilot's focus_period_for (oldest non-closed FULLY
+# ELAPSED month), so an entry made today was never looked at. Then it watched
+# both, which doubled the QuickBooks pulls and made the rail's numbers ambiguous
+# about which month they described. It watches the current month. Only.
 
 from datetime import date  # noqa: E402
 
@@ -149,43 +156,32 @@ from modules.gl_accuracy.schedule import month_end_of, watch_periods  # noqa: E4
 BOOKS = date(2025, 1, 1)
 
 
-def watch(today, closed=frozenset(), focus=None, books=BOOKS):
-    return watch_periods(books_start=books, closed=set(closed), today=today,
-                         elapsed_focus=focus)
+def watch(today, closed=frozenset(), books=BOOKS):
+    return watch_periods(books_start=books, closed=set(closed), today=today)
 
 
 def test_the_current_in_progress_month_is_watched():
-    """THE BUG. Mid-August, August must be in the list."""
-    got = watch(date(2026, 8, 20), focus=date(2026, 7, 31))
-    assert date(2026, 8, 31) in got
+    """THE BUG THIS EXISTS FOR. Mid-August, August is the month being tracked."""
+    assert watch(date(2026, 8, 20)) == [date(2026, 8, 31)]
 
 
-def test_the_current_month_comes_first():
-    """Newest first: if a tick is cut short, the open month is the one that
-    mattered most."""
-    got = watch(date(2026, 8, 20), focus=date(2026, 7, 31))
-    assert got[0] == date(2026, 8, 31)
+def test_the_month_being_closed_is_not_watched_here():
+    """July is unclosed and mid-close, and it is still not this feature's job —
+    Risk Radar covers it on the period the user has selected. Scanning it here
+    would re-derive findings the page already shows, on QuickBooks' dime."""
+    assert date(2026, 7, 31) not in watch(date(2026, 8, 20))
 
 
-def test_the_prior_unclosed_month_is_watched_too():
-    """Late entries land in the month still being closed."""
-    got = watch(date(2026, 8, 20), focus=date(2026, 7, 31))
-    assert got == [date(2026, 8, 31), date(2026, 7, 31)]
+def test_exactly_one_month_is_ever_returned():
+    assert len(watch(date(2026, 8, 20))) == 1
 
 
 def test_a_closed_current_month_is_skipped():
-    got = watch(date(2026, 8, 20), closed={date(2026, 8, 31)}, focus=date(2026, 7, 31))
-    assert date(2026, 8, 31) not in got
-    assert got == [date(2026, 7, 31)]
-
-
-def test_a_closed_elapsed_month_is_skipped():
-    got = watch(date(2026, 8, 20), closed={date(2026, 7, 31)}, focus=date(2026, 7, 31))
-    assert got == [date(2026, 8, 31)]
+    """Nothing continuous to track in a month already signed off."""
+    assert watch(date(2026, 8, 20), closed={date(2026, 8, 31)}) == []
 
 
 def test_nothing_before_the_books_start():
-    """A workspace whose books begin next year has nothing to watch today."""
     assert watch(date(2026, 8, 20), books=date(2027, 1, 1)) == []
 
 
@@ -193,23 +189,19 @@ def test_no_books_start_watches_nothing():
     assert watch(date(2026, 8, 20), books=None) == []
 
 
-def test_never_more_than_two_periods():
-    """A daily cadence over two months is a bounded amount of QuickBooks; an
-    unbounded list would grow with every unclosed month."""
-    assert len(watch(date(2026, 8, 20), focus=date(2025, 3, 31))) == 2
+def test_the_first_day_of_a_month_watches_that_month():
+    """On the 1st there is almost no activity yet, but the month is live — the
+    watch must not have a blind day every month."""
+    assert watch(date(2026, 9, 1)) == [date(2026, 9, 30)]
 
 
-def test_no_duplicate_when_the_focus_is_the_current_month():
-    """focus_period_for cannot return the current month today, but it must not
-    double up if that ever changes."""
-    got = watch(date(2026, 8, 20), focus=date(2026, 8, 31))
-    assert got == [date(2026, 8, 31)]
+def test_the_last_day_of_a_month_still_watches_that_month():
+    assert watch(date(2026, 9, 30)) == [date(2026, 9, 30)]
 
 
-def test_the_first_day_of_a_month_still_watches_that_month():
-    """On the 1st there is almost no activity yet — but the month is open and
-    must be in the list, or the watch has a blind day every month."""
-    assert date(2026, 9, 30) in watch(date(2026, 9, 1), focus=date(2026, 8, 31))
+def test_the_books_start_month_itself_is_watched():
+    """A workspace onboarded this month has exactly one month to track."""
+    assert watch(date(2026, 8, 20), books=date(2026, 8, 1)) == [date(2026, 8, 31)]
 
 
 @pytest.mark.parametrize("d,expected", [

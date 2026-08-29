@@ -440,6 +440,13 @@ def serialize_finding(f: GlAccuracyFinding) -> dict:
     }
 
 
+def _current_period() -> date:
+    """The month in progress — what continuous close tracks."""
+    from calendar import monthrange
+    today = date.today()
+    return date(today.year, today.month, monthrange(today.year, today.month)[1])
+
+
 async def monitoring_status(db: AsyncSession, period_end: date) -> dict:
     """What the "we are watching" strip renders.
 
@@ -494,9 +501,12 @@ async def list_findings(db: AsyncSession, period_end: date) -> dict:
         "high": high,
         "medium": len(open_rows) - high,
         "dollars": str(dollars),
-        # Folded into the same call the page already makes — the status strip
-        # should not cost a second round trip on every load.
-        "monitoring": await monitoring_status(db, period_end),
+        # CONTINUOUS CLOSE, always about the CURRENT month — never the one the
+        # user has selected. Risk Radar checks the month being closed; the watch
+        # tracks the month happening now. They are different questions about
+        # different periods, and the payload keeps them apart so the UI can too.
+        "monitoring": await monitoring_status(db, _current_period()),
+        "monitoring_period": _current_period().isoformat(),
     }
 
 

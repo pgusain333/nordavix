@@ -58,32 +58,33 @@ def watch_periods(
     books_start: date | None,
     closed: set[date],
     today: date,
-    elapsed_focus: date | None,
 ) -> list[date]:
-    """The months continuous close watches, newest first.
+    """The month continuous close tracks: the CURRENT, in-progress one. Only.
 
-    THE CURRENT, IN-PROGRESS MONTH IS THE POINT. Autopilot's focus_period_for
-    returns the oldest non-closed FULLY-ELAPSED month, which is right for a
-    monthly close — that close is about a month that is over — and wrong here.
-    Reusing it meant an entry made today, dated today, was never looked at: the
-    watch only ever saw a finished month, which is precisely what the daily
-    check exists to stop.
+    Continuous close and Risk Radar watch different months on purpose, and
+    conflating them is what made this confusing:
 
-    The prior unclosed month comes too, because late entries land there while it
-    is still open, and it is the month someone is actively closing.
+      * CONTINUOUS CLOSE tracks the month happening NOW. Its question is "has
+        anything odd been entered today", and the answer is only ever about the
+        live month. It runs on a schedule, unattended.
+      * RISK RADAR checks the month being CLOSED — whichever period the user has
+        selected. Its question is "is this month clean enough to sign off", and
+        the user drives it.
 
-    Nothing before books_start, nothing already closed, and never more than two
-    periods — a daily cadence over two months is a bounded amount of QuickBooks.
+    Scanning the closing month here too would double the QuickBooks pulls to
+    re-derive findings Risk Radar already shows on the period the user is
+    looking at, and would make the rail's numbers ambiguous about which month
+    they describe.
+
+    Empty when the books haven't started, when the current month predates them,
+    or when it has somehow been closed already.
     """
-    out: list[date] = []
     if books_start is None:
-        return out
+        return []
     current = month_end_of(today)
-    if current >= month_end_of(books_start) and current not in closed:
-        out.append(current)
-    if elapsed_focus is not None and elapsed_focus not in out and elapsed_focus not in closed:
-        out.append(elapsed_focus)
-    return out
+    if current < month_end_of(books_start) or current in closed:
+        return []
+    return [current]
 
 
 def is_due(

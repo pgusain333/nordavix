@@ -14,7 +14,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { useNavigate } from "react-router-dom"
 import {
   ShieldCheck, Sparkles, Brain, ArrowRight, ArrowUpRight, ArrowDown, ArrowLeft,
-  Check, ThumbsUp, ChevronDown, ListChecks, ScanSearch, Settings, History,
+  Check, ThumbsUp, ChevronDown, ListChecks, ScanSearch, Settings, History, RefreshCw,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
@@ -204,11 +204,16 @@ function ContinuousSettings() {
  *  three and read as an afterthought. Top to bottom: is it watching, when did
  *  it last look, what has it caught, and the schedule.
  */
-function ContinuousRail({ m, scanning, recent, reduce, onOpen, periodEnd }: {
+function ContinuousRail({ m, scanning, recent, reduce, onOpen, periodEnd, onCheckNow, checking }: {
   m?: GlMonitoring; scanning: boolean; recent: GlFinding[]
   reduce: boolean; onOpen: (id: string) => void
-  /** The month on screen. Every figure in this rail is scoped to it. */
+  /** The CURRENT month. Everything in this rail is about the month happening
+   *  now — never the period selected for the close. */
   periodEnd: string
+  /** Run the watch's own check, against the current month. Separate from Risk
+   *  Radar's Scan, which runs against the month being closed. */
+  onCheckNow: () => void
+  checking: boolean
 }) {
   // Whether the daily watch is switched on — the dot only breathes when it is.
   const { data: autopilot } = useQuery({
@@ -226,7 +231,7 @@ function ContinuousRail({ m, scanning, recent, reduce, onOpen, periodEnd }: {
           the corner of the eye and never compete with a figure. */}
       <style>{"@keyframes ndvx-beat{0%,100%{transform:scale(1);opacity:.45}50%{transform:scale(2.1);opacity:0}}"}</style>
       <MonitoringHead m={m} scanning={scanning} enabled={enabled} reduce={reduce}
-        periodEnd={periodEnd} />
+        periodEnd={periodEnd} onCheckNow={onCheckNow} checking={checking} />
       <RecentlyCaught recent={recent} reduce={reduce} onOpen={onOpen} />
       <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
         <ContinuousSettings />
@@ -262,9 +267,9 @@ function monthLabel(iso: string): string {
  *  A scan that crashed or is still running NEVER reads as a clean bill of
  *  health. Findings mean nothing until the check has finished.
  */
-function MonitoringHead({ m, scanning, enabled, reduce, periodEnd }: {
+function MonitoringHead({ m, scanning, enabled, reduce, periodEnd, onCheckNow, checking }: {
   m?: GlMonitoring; scanning: boolean; enabled: boolean; reduce: boolean
-  periodEnd: string
+  periodEnd: string; onCheckNow: () => void; checking: boolean
 }) {
   // Re-render on a timer so "12 minutes ago" stays true between refetches. A
   // stale clock is worse than no clock.
@@ -285,6 +290,13 @@ function MonitoringHead({ m, scanning, enabled, reduce, periodEnd }: {
           Not watching <span className="text-theme font-medium">{monthLabel(periodEnd)}</span> yet.
           Turn it on below and Nordavix checks these books every day.
         </p>
+        {/* Without this the first proof it works is tomorrow morning. */}
+        <button onClick={onCheckNow} disabled={checking}
+          className="mt-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-[var(--surface-2)] disabled:opacity-50"
+          style={{ color: "var(--text-2)", border: "1px solid var(--border)" }}>
+          {checking ? <Spinner className="h-3 w-3" /> : <RefreshCw size={11} strokeWidth={2.2} />}
+          Check {shortMonth(periodEnd)} now
+        </button>
       </div>
     )
   }
@@ -327,21 +339,27 @@ function MonitoringHead({ m, scanning, enabled, reduce, periodEnd }: {
             {m.new_last_check} new
           </span>
         )}
+        {/* The watch's OWN check, against the current month. Separate from Risk
+            Radar's Scan, which runs on the month being closed — one button for
+            two different periods was the whole confusion. */}
+        <button onClick={onCheckNow} disabled={checking || inFlight}
+          title={`Check ${monthLabel(periodEnd)} now`}
+          className={`${m.new_last_check ? "" : "ml-auto"} inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold transition-colors hover:bg-[var(--surface-2)] disabled:opacity-50`}
+          style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+          {checking || inFlight
+            ? <Spinner className="h-2.5 w-2.5" />
+            : <RefreshCw size={10} strokeWidth={2.2} />}
+          Check now
+        </button>
       </div>
 
       {/* WHICH MONTH. Every number under this line is scoped to one period,
           and the rail used to imply that and never say it — "checks this
           period" reads as a fact about a month you have to guess. */}
       <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-        {inFlight ? "Reading " : failed ? "Was reading " : "Watching "}
+        {inFlight ? "Reading " : failed ? "Was reading " : "Tracking "}
         <span className="text-theme font-medium">{monthLabel(periodEnd)}</span>
-        {/* The sweep also covers the previous unclosed month, so a scan
-            recorded against a different period would otherwise look like a
-            contradiction on screen. */}
-        {m.scanned_period && m.scanned_period !== periodEnd && (
-          <> · last run covered <span className="text-theme font-medium">
-            {monthLabel(m.scanned_period)}</span></>
-        )}
+        <span> · the month in progress</span>
       </p>
 
       {failed ? (
@@ -535,6 +553,20 @@ export function GlAccuracyPage() {
   const [guided, setGuided] = useState(false)
   const [step, setStep] = useState(0)
 
+  // The month continuous close tracks. Comes from the server so the client's
+  // clock can't disagree with the sweep's about which month is "current".
+  const monitoringPeriod = data?.monitoring_period ?? activePeriod
+
+  // Continuous close's own check, against the CURRENT month — distinct from
+  // Risk Radar's Scan below, which runs on the period being closed. Same
+  // endpoint, deliberately different period.
+  const watchMut = useMutation({
+    mutationFn: () => glAccuracyApi.scan(monitoringPeriod),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })
+    },
+  })
+
   const scanMut = useMutation({
     mutationFn: () => glAccuracyApi.scan(activePeriod),
     onSuccess: (s) => {
@@ -610,9 +642,14 @@ export function GlAccuracyPage() {
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-theme leading-tight">Risk Radar</h1>
             <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+              {/* WHICH MONTH. Risk Radar checks the month being CLOSED — the one
+                  in the picker. Continuous close, in the rail, tracks the month
+                  in progress. Two features, two months; naming both is the only
+                  way the page stops being ambiguous. */}
+              Checking <span className="text-theme font-semibold">{activePeriod ? monthLabel(activePeriod) : "—"}</span>
               {scanned?.period === activePeriod
-                ? <>Nordavix swept <span className="text-theme font-semibold">{scanned.total.toLocaleString()} entries</span> and your full chart of accounts.</>
-                : "A second pair of eyes on this period's books — deterministic, evidence-first, and never writes to QuickBooks."}
+                ? <> · swept <span className="text-theme font-semibold">{scanned.total.toLocaleString()} entries</span> and your full chart of accounts.</>
+                : <> · the month you&apos;re closing. Deterministic, evidence-first, and never writes to QuickBooks.</>}
             </p>
           </div>
         </div>
@@ -628,7 +665,9 @@ export function GlAccuracyPage() {
           )}
           <Button size="sm" loading={scanMut.isPending} disabled={!activePeriod} onClick={() => scanMut.mutate()}
             icon={<Sparkles size={14} strokeWidth={2} />}>
-            {data && items.length > 0 ? "Re-run check" : "Run accuracy check"}
+            {data && items.length > 0
+              ? `Re-check ${activePeriod ? shortMonth(activePeriod) : ""}`.trim()
+              : `Check ${activePeriod ? shortMonth(activePeriod) : ""}`.trim()}
           </Button>
         </div>
       </div>
@@ -809,9 +848,10 @@ export function GlAccuracyPage() {
       </div>
 
       <aside className="w-full xl:w-[360px] xl:shrink-0 xl:sticky xl:top-5 space-y-3">
-        <ContinuousRail m={data?.monitoring} scanning={scanMut.isPending}
+        <ContinuousRail m={data?.monitoring} scanning={false}
           recent={recentlyCaught} reduce={reduce} onOpen={(id) => setOpenId(id)}
-          periodEnd={activePeriod} />
+          periodEnd={monitoringPeriod}
+          onCheckNow={() => watchMut.mutate()} checking={watchMut.isPending} />
       </aside>
       </div>
     </Shell>

@@ -51,25 +51,19 @@ async def _last_ok_scan_at(session, tenant_id: uuid.UUID) -> datetime | None:
 
 
 async def _periods_to_watch(session, tenant: Tenant, today: date) -> list[date]:
-    """The months to check: the CURRENT, in-progress one and the prior unclosed one.
+    """The month continuous close tracks: the CURRENT one.
 
-    This used to borrow Autopilot's focus_period_for, which returns the oldest
-    non-closed FULLY-ELAPSED month. Right for a monthly close, wrong for a daily
-    watch — it meant an entry made today, dated today, was never looked at, and
-    the whole point of checking daily is that it is.
+    Not the month being closed — that is Risk Radar's job and the user drives
+    it on whichever period they have selected. Two features, two months, on
+    purpose.
     """
-    from modules.autopilot.engine import focus_period_for
-
     closed = {
         r for r in (await session.execute(
             select(ClosedPeriod.period_end).where(ClosedPeriod.tenant_id == tenant.id)
         )).scalars().all()
     }
     return watch_periods(
-        books_start=tenant.books_start_date,
-        closed=closed,
-        today=today,
-        elapsed_focus=focus_period_for(tenant, closed, today),
+        books_start=tenant.books_start_date, closed=closed, today=today,
     )
 
 
@@ -126,9 +120,6 @@ async def run_continuous_sweep(now_utc: datetime | None = None) -> dict:
                     continue
 
                 from modules.gl_accuracy.service import scan_period
-                # Newest first, so the open month is scanned before the one
-                # being closed — if a tick is cut short, the current month is
-                # the one that mattered most.
                 for pe in periods:
                     summary = await scan_period(
                         conn, session, tenant_id=tenant.id, period_end=pe,

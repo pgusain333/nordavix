@@ -59,6 +59,9 @@ export interface GlMonitoring {
 }
 
 export interface GlFindingsResponse {
+  /** The month CONTINUOUS CLOSE tracks — always the current one, never the
+   *  period the user selected. Risk Radar checks the month being closed. */
+  monitoring_period: string
   items:      GlFinding[]
   open_count: number
   high:       number
