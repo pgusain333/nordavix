@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import links
@@ -23,6 +23,7 @@ from core.db.session import AsyncSessionLocal
 from core.qbo_gl import pull_gl_transactions_multi
 from models.gl_accuracy_finding import GlAccuracyFinding
 from models.gl_balance_snapshot import GlBalanceSnapshot
+from models.gl_scan_run import GlScanRun
 from models.proposed_entry import ProposedEntry
 from models.qbo_connection import QboConnection
 from modules.gl_accuracy.engine import _norm_vendor, run_detectors
@@ -125,13 +126,33 @@ def _finding_key(flag: dict) -> str:
 
 async def _replace_open_findings(
     db: AsyncSession, tenant_id: uuid.UUID, period_end: date, flags: list[dict]
-) -> int:
+) -> tuple[int, int]:
     """Refresh OPEN findings for the period; never clobber actioned ones
-    (in_adjustments / dismissed) — those are the human's decisions."""
+    (in_adjustments / dismissed) — those are the human's decisions.
+
+    Returns (inserted, newly_seen).
+
+    The row churns on every scan — delete then re-insert — which is fine for
+    the finding but was fatal for its age: `created_at` reset each run, so after
+    a nightly scan a fortnight-old problem looked like it appeared this morning.
+    `first_seen_at` is carried forward by finding_key so the row can churn while
+    the moment we first saw the problem does not. Everything continuous close
+    claims — "4 new since yesterday", "flagged 6 minutes after it was entered" —
+    is measured from it.
+    """
     existing = (await db.execute(
         select(GlAccuracyFinding).where(GlAccuracyFinding.period_end == period_end)
     )).scalars().all()
     actioned_keys = {f.finding_key for f in existing if f.status != "open"}
+    # Age survives the churn. Actioned rows are included: a dismissed finding
+    # that re-opens later is the same problem coming back, not a new one.
+    seen_before: dict[str, datetime] = {
+        f.finding_key: (f.first_seen_at or f.created_at)
+        for f in existing
+        if (f.first_seen_at or f.created_at) is not None
+    }
+    now = datetime.now(UTC)
+    newly_seen = 0
 
     await db.execute(
         delete(GlAccuracyFinding).where(
@@ -150,7 +171,12 @@ async def _replace_open_findings(
             continue
         seen.add(key)
         new_edges.append((key, fl.get("posted_account_id")))
+        first_seen = seen_before.get(key)
+        if first_seen is None:
+            first_seen = now
+            newly_seen += 1
         db.add(GlAccuracyFinding(
+            first_seen_at=first_seen,
             id=uuid.uuid4(), tenant_id=tenant_id, period_end=period_end, finding_key=key,
             kind=fl.get("kind") or "misclassification",
             severity=fl.get("severity") or fl.get("confidence") or "medium",
@@ -193,7 +219,7 @@ async def _replace_open_findings(
         except Exception:
             logger.exception("graph dual-write failed for GL-accuracy findings (non-fatal)")
 
-    return inserted
+    return inserted, newly_seen
 
 
 async def scan_period(
@@ -203,9 +229,28 @@ async def scan_period(
     tenant_id: uuid.UUID,
     period_end: date,
     lookback_months: int = 12,
+    trigger: str = "sync",
 ) -> dict:
     """Pull evidence, run the engine, persist findings. Returns a summary the UI
-    uses for the reassurance strip. Caller commits."""
+    uses for the reassurance strip. Caller commits.
+
+    Every run leaves a GlScanRun row. That record is the difference between
+    claiming continuous monitoring and being able to show it: "last checked 12
+    minutes ago, 1,847 transactions reviewed" is a fact a client can read, where
+    "real-time" is an adjective they have to take on trust.
+
+    The row is written BEFORE the QuickBooks pulls and finished after, so a scan
+    that dies mid-pull leaves `ok = NULL` rather than vanishing. A screen must
+    never read a crashed scan as a clean bill of health.
+    """
+    run = GlScanRun(
+        id=uuid.uuid4(), tenant_id=tenant_id, period_end=period_end,
+        trigger=trigger if trigger in ("sync", "scheduled", "manual") else "sync",
+        started_at=datetime.now(UTC),
+    )
+    db.add(run)
+    await db.flush()
+
     period_start = period_end.replace(day=1)
     hist_start = _shift_months(period_start, lookback_months)
     hist_end = period_start - timedelta(days=1)
@@ -224,7 +269,7 @@ async def scan_period(
         history = await pull_gl_transactions_multi(conn, db, acct_ids, hist_start, hist_end)
     exceptions = await active_classification_exceptions(db)
     flags = run_detectors(current, history, snapshots=snapshots, exceptions=exceptions)
-    await _replace_open_findings(db, tenant_id, period_end, flags)
+    _inserted, newly_seen = await _replace_open_findings(db, tenant_id, period_end, flags)
 
     open_findings = (await db.execute(
         select(GlAccuracyFinding).where(
@@ -237,6 +282,14 @@ async def scan_period(
     # review-only flags (duplicates, missing memos, …) aren't a dollar to move.
     dollars = sum((abs(_dec(f.amount)) for f in open_findings
                    if (f.action_kind or "reclass") != "flag"), Decimal("0"))
+
+    run.finished_at = datetime.now(UTC)
+    run.ok = True
+    run.transactions_reviewed = len(current)
+    run.accounts_scanned = len(acct_ids)
+    run.findings_total = len(open_findings)
+    run.findings_new = newly_seen
+
     return {
         "period_end": period_end.isoformat(),
         "scanned": len(current),
@@ -245,6 +298,8 @@ async def scan_period(
         "high": high,
         "medium": len(open_findings) - high,
         "dollars": str(dollars),
+        # Newly first-seen this run — what "N new since you last looked" counts.
+        "new": newly_seen,
     }
 
 
@@ -317,6 +372,10 @@ def serialize_finding(f: GlAccuracyFinding) -> dict:
         "id": str(f.id),
         "finding_key": f.finding_key,
         "period_end": f.period_end.isoformat(),
+        # When we first saw this, surviving re-scans. Drives "new" badges and
+        # "first flagged 3 days ago" — not created_at, which resets each scan.
+        "first_seen_at": (f.first_seen_at or f.created_at).isoformat()
+                         if (f.first_seen_at or f.created_at) else None,
         "kind": f.kind or "misclassification",
         "severity": f.severity or f.confidence or "medium",
         "action_kind": f.action_kind or "reclass",
@@ -343,6 +402,41 @@ def serialize_finding(f: GlAccuracyFinding) -> dict:
     }
 
 
+async def monitoring_status(db: AsyncSession, period_end: date) -> dict:
+    """What the "we are watching" strip renders.
+
+    Reads the most recent scan for the period. `ok` is NULL while a run is in
+    flight and False if it failed — both are reported as-is, because a screen
+    that shows "all clear" after a crashed scan is worse than one that shows
+    nothing. `checked_at` is finished_at, not started_at: a scan is evidence of
+    having looked only once it has finished looking.
+    """
+    latest = (await db.execute(
+        select(GlScanRun)
+        .where(GlScanRun.period_end == period_end)
+        .order_by(GlScanRun.started_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    total_runs = (await db.execute(
+        select(func.count()).select_from(GlScanRun).where(GlScanRun.period_end == period_end)
+    )).scalar_one()
+    if latest is None:
+        return {"ever_scanned": False, "checks_this_period": 0}
+    return {
+        "ever_scanned": True,
+        "checks_this_period": int(total_runs or 0),
+        "checked_at": latest.finished_at.isoformat() if latest.finished_at else None,
+        "started_at": latest.started_at.isoformat(),
+        # True = completed cleanly. False = failed. None = still running.
+        "ok": latest.ok,
+        "error": latest.error,
+        "trigger": latest.trigger,
+        "transactions_reviewed": latest.transactions_reviewed,
+        "accounts_scanned": latest.accounts_scanned,
+        "new_last_check": latest.findings_new,
+    }
+
+
 async def list_findings(db: AsyncSession, period_end: date) -> dict:
     rows = (await db.execute(
         select(GlAccuracyFinding).where(GlAccuracyFinding.period_end == period_end)
@@ -359,6 +453,9 @@ async def list_findings(db: AsyncSession, period_end: date) -> dict:
         "high": high,
         "medium": len(open_rows) - high,
         "dollars": str(dollars),
+        # Folded into the same call the page already makes — the status strip
+        # should not cost a second round trip on every load.
+        "monitoring": await monitoring_status(db, period_end),
     }
 
 

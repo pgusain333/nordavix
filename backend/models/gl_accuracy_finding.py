@@ -87,6 +87,13 @@ class GlAccuracyFinding(TenantBase):
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     note:              Mapped[str | None] = mapped_column(Text)
 
+    # When this problem was FIRST seen, carried across re-scans by finding_key.
+    # `created_at` cannot answer that: the scan replaces open findings on every
+    # run, so the row is new even when the problem is a fortnight old. Without
+    # this there is no "new since yesterday" and no time-to-detection — which is
+    # the whole of continuous close.
+    first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

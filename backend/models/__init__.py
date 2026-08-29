@@ -29,6 +29,7 @@ from models.cost_allocation import (
 from models.evidence_request import EvidenceRequest
 from models.feedback import Feedback
 from models.gl_accuracy_finding import GlAccuracyFinding
+from models.gl_scan_run import GlScanRun
 from models.insights_snapshot import InsightsSnapshot
 from models.intercompany_account import IntercompanyAccount
 from models.intercompany_pair import IntercompanyPair
@@ -90,6 +91,7 @@ __all__ = [
     "Comment",
     "Feedback",
     "GlAccuracyFinding",
+    "GlScanRun",
     "InsightsSnapshot",
     "IntercompanyAccount",
     "IntercompanyPair",

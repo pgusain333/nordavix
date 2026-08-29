@@ -88,7 +88,11 @@ async def scan(
             status_code=400,
             detail="QuickBooks isn't connected for this workspace. Connect QBO and try again.",
         )
-    summary = await service.scan_period(conn, db, tenant_id=tenant_id, period_end=pe)
+    # A human pressed the button. Recorded as such so the strip never
+    # presents an on-demand scan as evidence of continuous monitoring.
+    summary = await service.scan_period(
+        conn, db, tenant_id=tenant_id, period_end=pe, trigger="manual",
+    )
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id, action="gl_accuracy.scan",
         entity_type="period", entity_id=None,

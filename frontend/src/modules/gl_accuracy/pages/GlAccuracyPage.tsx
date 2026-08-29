@@ -7,14 +7,14 @@
  * static dot, the dollar stat is "to reclassify" (P&L-neutral). Accept files a
  * fix into Adjustments; Dismiss teaches it. Nothing is ever written to QuickBooks.
  */
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useOrganization } from "@clerk/clerk-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { useNavigate } from "react-router-dom"
 import {
   ShieldCheck, Sparkles, Brain, ArrowRight, ArrowUpRight, ArrowDown, ArrowLeft,
-  Check, ThumbsUp, ChevronDown, ListChecks,
+  Check, ThumbsUp, ChevronDown, ListChecks, ScanSearch,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
@@ -24,7 +24,113 @@ import { workspaceApi } from "@/modules/workspace/api"
 import { ProposedEntryCard } from "@/modules/adjustments/components/ProposedEntryCard"
 import { RelatedPanel } from "@/modules/graph/RelatedPanel"
 import type { ProposedEntry } from "@/modules/adjustments/api"
-import { glAccuracyApi, type GlFinding } from "@/modules/gl_accuracy/api"
+import { glAccuracyApi, type GlFinding, type GlMonitoring } from "@/modules/gl_accuracy/api"
+
+/** "12 minutes ago" from an ISO stamp. Coarse on purpose: a clock that claims
+ *  seconds invites someone to check it against theirs. */
+function agoLabel(iso?: string | null): string | null {
+  if (!iso) return null
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return null
+  const mins = Math.floor((Date.now() - t) / 60000)
+  if (mins < 1)  return "just now"
+  if (mins === 1) return "1 minute ago"
+  if (mins < 60) return `${mins} minutes ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs === 1) return "1 hour ago"
+  if (hrs < 24) return `${hrs} hours ago`
+  const days = Math.round(hrs / 24)
+  return days === 1 ? "yesterday" : `${days} days ago`
+}
+
+/** Proof the books are being watched.
+ *
+ *  This is the honest form of "real-time monitoring": a clock the reader can
+ *  check beats an adjective they have to trust, and it survives a partner
+ *  asking how it works. It renders in every state — including the clean one,
+ *  because "we looked and nothing is wrong" is the whole reassurance.
+ *
+ *  A scan that crashed or is still running NEVER reads as a clean bill of
+ *  health. The absence of findings only means something once the check
+ *  finished. */
+function MonitoringStrip({ m, scanning }: { m?: GlMonitoring; scanning: boolean }) {
+  // Re-render on a timer so "12 minutes ago" stays true between refetches —
+  // a stale clock is worse than no clock.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (!m || !m.ever_scanned) {
+    return (
+      <div className="rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2.5"
+        style={{ background: "var(--surface-2)", border: "1px dashed var(--border-strong)" }}>
+        <ScanSearch size={14} strokeWidth={1.9} style={{ color: "var(--text-muted)" }} />
+        <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+          Not checked yet — run a scan and Nordavix starts tracking this period.
+        </span>
+      </div>
+    )
+  }
+
+  const inFlight = scanning || (m.ok == null && !m.checked_at)
+  const failed   = m.ok === false
+  const ago      = agoLabel(m.checked_at)
+
+  const tone = failed
+    ? { dot: "var(--warn)", bg: "var(--warn-subtle)", border: "var(--warn-border)" }
+    : { dot: "var(--green)", bg: "var(--green-subtle)", border: "var(--green)" }
+
+  return (
+    <div className="rounded-xl px-4 py-2.5 mb-4 flex items-center gap-3 flex-wrap"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)",
+               boxShadow: "var(--card-shadow)" }}>
+      <span className="inline-flex items-center gap-2 shrink-0">
+        <span className="relative inline-flex h-2 w-2">
+          {inFlight && (
+            <span className="absolute inline-flex h-full w-full rounded-full animate-ping"
+              style={{ background: tone.dot, opacity: 0.6 }} />
+          )}
+          <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: tone.dot }} />
+        </span>
+        <span className="text-[12px] font-semibold text-theme">
+          {inFlight ? "Checking now" : failed ? "Last check didn't finish" : "Continuous close"}
+        </span>
+      </span>
+
+      {!inFlight && !failed && (
+        <>
+          <span className="text-[12px]" style={{ color: "var(--text-2)" }}>
+            Checked <strong className="text-theme">{ago ?? "—"}</strong>
+          </span>
+          {!!m.transactions_reviewed && (
+            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+              · {m.transactions_reviewed.toLocaleString()} transactions reviewed
+            </span>
+          )}
+          {m.checks_this_period > 1 && (
+            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+              · {m.checks_this_period} checks this period
+            </span>
+          )}
+          {!!m.new_last_check && (
+            <span className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide"
+              style={{ background: tone.bg, color: tone.dot, border: `1px solid ${tone.border}` }}>
+              {m.new_last_check} new
+            </span>
+          )}
+        </>
+      )}
+
+      {failed && (
+        <span className="text-[12px]" style={{ color: "var(--warn)" }}>
+          {m.error || "The scan stopped before it finished — findings below may be incomplete."}
+        </span>
+      )}
+    </div>
+  )
+}
 
 function fmtUsd(s: string | number | null | undefined): string {
   if (s == null || s === "") return "—"
@@ -197,6 +303,8 @@ export function GlAccuracyPage() {
           {err} <span style={{ color: "var(--text-muted)" }}>Retry when ready.</span>
         </div>
       )}
+
+      <MonitoringStrip m={data?.monitoring} scanning={scanMut.isPending} />
 
       {scanMut.isPending ? (
         <ScanningCard />

@@ -34,6 +34,25 @@ export interface GlFinding {
   confidence:               GlConfidence | string
   status:                   GlFindingStatus | string
   linked_proposed_entry_id: string | null
+  /** When Nordavix FIRST saw this, surviving re-scans. Not created_at, which
+   *  resets every scan because open findings are replaced wholesale. */
+  first_seen_at:            string | null
+}
+
+/** Evidence that the books are actually being watched — the honest version of
+ *  "real-time monitoring". `ok` is null while a scan is in flight and false if
+ *  it failed; neither may render as a clean bill of health. */
+export interface GlMonitoring {
+  ever_scanned:          boolean
+  checks_this_period:    number
+  checked_at?:           string | null   // finished_at of the latest run
+  started_at?:           string | null
+  ok?:                   boolean | null
+  error?:                string | null
+  trigger?:              string          // sync | scheduled | manual
+  transactions_reviewed?: number
+  accounts_scanned?:     number
+  new_last_check?:       number
 }
 
 export interface GlFindingsResponse {
@@ -42,6 +61,7 @@ export interface GlFindingsResponse {
   high:       number
   medium:     number
   dollars:    string
+  monitoring: GlMonitoring
 }
 
 export interface GlScanSummary {
