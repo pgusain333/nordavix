@@ -10,7 +10,7 @@ loop under a hard read-only DB guard.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -298,6 +298,96 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "get_audit_trail",
+        "description": (
+            "Who did what, and when — the tamper-evident audit log. Every "
+            "approval, sync, adjustment, close, and configuration change, newest "
+            "first, with the person's name and timestamp. Optionally scoped to one "
+            "object. Use for 'who approved this', 'who changed X', 'when was this "
+            "signed off', 'what happened to this account', 'show me the history', "
+            "'who closed the books', 'audit trail', 'segregation of duties'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string", "description": "Optional: narrow to one object type, e.g. 'account_review_status', 'period', 'trial_balance'."},
+                "entity_id": {"type": "string", "description": "Optional: narrow to one object's id. Use with entity_type."},
+                "limit": {"type": "integer", "description": "How many events (default 25, max 100)."},
+            },
+        },
+    },
+    {
+        "name": "get_close_review",
+        "description": (
+            "The AI reviewing-partner pass over the period — completeness, "
+            "reconciliation hygiene and anomaly exceptions, each graded high / "
+            "review / info, plus what passed and whether a human has signed it off. "
+            "Use for 'is this close ready to sign', 'reviewing partner', 'what "
+            "would a reviewer flag', 'exceptions', 'is anything missing before we "
+            "close', 'quality check'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "get_workpapers",
+        "description": (
+            "The workpaper binder for the period — which sections have supporting "
+            "documents attached and which are still empty, with file names and "
+            "sizes. Use for 'is the binder complete', 'what evidence do we have', "
+            "'what's missing for the auditor', 'supporting documents', "
+            "'attachments', 'audit readiness'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "get_advisory",
+        "description": (
+            "Client-facing advisory: tracked recommendations for the period with "
+            "their priority and whether the client has acted, plus KPI targets the "
+            "firm set and how the business is grading against them. Use for 'what "
+            "did we advise', 'recommendations', 'is the client acting on our "
+            "advice', 'KPI targets', 'how are they tracking', 'advisory points for "
+            "the meeting'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "get_evidence_requests",
+        "description": (
+            "Client evidence (PBC) requests — bank statements and other documents "
+            "asked of the client via magic link, with who it went to, whether they "
+            "uploaded, and whether the link has expired. Use for 'what are we "
+            "waiting on from the client', 'outstanding requests', 'did they send "
+            "the bank statement', 'PBC', 'chase list'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "get_automation_status",
+        "description": (
+            "Whether the automation is actually running: the QuickBooks connection "
+            "and when it last synced, Close Autopilot's configuration and recent "
+            "runs, and continuous close — whether the daily watch is on, the hour "
+            "it checks, and when it last looked at the current month. Use for 'is "
+            "QuickBooks connected', 'when did it last sync', 'is autopilot on', "
+            "'is anything monitoring the books', 'when did it last check', "
+            "'continuous close status', 'why hasn't it run'."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "draft_journal_entry",
         "description": (
             "Draft a balanced adjusting journal entry from the user's request "
@@ -495,6 +585,90 @@ async def dispatch_tool(
         members = await workspace_members(db, tenant_id)
         return {"members": members, "count": len(members)}
 
+    if name == "get_audit_trail":
+        # The audit log's entity filters have existed since it was built and had
+        # no caller anywhere in the product. "Who approved this account?" is
+        # exactly what it answers and nothing was asking it.
+        from models.audit_log import AuditLog
+
+        limit = min(int(ti.get("limit") or 25), 100)
+        q = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+        etype = (ti.get("entity_type") or "").strip() or None
+        eid = (ti.get("entity_id") or "").strip() or None
+        if etype:
+            q = q.where(AuditLog.entity_type == etype)
+        if eid:
+            q = q.where(AuditLog.entity_id == eid)
+        rows = list((await db.execute(q)).scalars().all())
+        # Reuse the workspace roster rather than a second Clerk lookup — the
+        # audit log stores user ids and the reader wants names.
+        members = await workspace_members(db, tenant_id)
+        names = {str(m.get("id")): m.get("display_name") for m in members if m.get("id")}
+        return {
+            "events": [
+                {
+                    "action": r.action,
+                    "who": names.get(str(r.user_id), "System") if r.user_id else "System",
+                    "at": r.created_at.isoformat() if r.created_at else None,
+                    "entity_type": r.entity_type,
+                    "summary": (r.event_data or {}).get("summary")
+                               if isinstance(r.event_data, dict) else None,
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+            "scoped_to": {"entity_type": etype, "entity_id": eid} if etype else None,
+        }
+
+    if name == "get_automation_status":
+        from models.autopilot import AutopilotConfig, AutopilotRun
+        from models.gl_scan_run import GlScanRun
+        from models.period_sync import PeriodSync
+        from models.qbo_connection import QboConnection
+
+        conn = (await db.execute(
+            select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+            execution_options={"skip_tenant_filter": True},
+        )).scalar_one_or_none()
+        last_sync = (await db.execute(
+            select(PeriodSync.synced_at).order_by(PeriodSync.synced_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        cfg = (await db.execute(select(AutopilotConfig))).scalar_one_or_none()
+        last_run = (await db.execute(
+            select(AutopilotRun).order_by(AutopilotRun.started_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        # Continuous close tracks the CURRENT calendar month, never the one
+        # being closed — so its last check is looked up against that month.
+        from modules.gl_accuracy.service import _current_period
+        watch = (await db.execute(
+            select(GlScanRun).where(GlScanRun.period_end == _current_period())
+            .order_by(GlScanRun.started_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        return {
+            "quickbooks": {
+                "connected": conn is not None,
+                "last_sync_at": last_sync.isoformat() if last_sync else None,
+            },
+            "autopilot": {
+                "enabled": bool(cfg and cfg.enabled),
+                "run_day": cfg.run_day if cfg else None,
+                "last_run": {
+                    "period_end": last_run.period_end.isoformat(),
+                    "status": last_run.status,
+                    "started_at": last_run.started_at.isoformat() if last_run.started_at else None,
+                } if last_run else None,
+            },
+            "continuous_close": {
+                "enabled": bool(cfg and cfg.continuous_enabled),
+                "check_hour": cfg.check_hour if cfg else None,
+                "tracking_period": _current_period().isoformat(),
+                "last_checked_at": watch.finished_at.isoformat()
+                                   if watch and watch.finished_at else None,
+                "last_check_ok": watch.ok if watch else None,
+                "transactions_reviewed": watch.transactions_reviewed if watch else None,
+            },
+        }
+
     if name == "make_chart":
         ctype = (ti.get("type") or "").strip().lower()
         if ctype not in ("bar", "pie", "line"):
@@ -519,6 +693,103 @@ async def dispatch_tool(
     pe = _parse_period(ti.get("period_end"), default_period)
     if pe is None:
         return {"error": "No period specified and no active period is set. Ask the user which month (YYYY-MM-DD)."}
+
+    if name == "get_close_review":
+        from models.close_review import CloseReview
+
+        row = (await db.execute(
+            select(CloseReview).where(CloseReview.period_end == pe)
+            .order_by(CloseReview.generated_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        if row is None:
+            return {"period_end": pe.isoformat(), "reviewed": False,
+                    "message": "No reviewing-partner pass has been run for this period yet."}
+        return {
+            "period_end": pe.isoformat(),
+            "reviewed": True,
+            "status": row.status,
+            "summary": row.summary,
+            "high": row.high_count,
+            "to_review": row.review_count,
+            "info": row.info_count,
+            "cleared": row.cleared_count,
+            "checks_run": row.checks_run,
+            "signed_off": row.signed_off_by is not None,
+            "generated_at": row.generated_at.isoformat() if row.generated_at else None,
+        }
+
+    if name == "get_workpapers":
+        from models.workpaper_evidence import WorkpaperEvidence
+
+        rows = list((await db.execute(
+            select(WorkpaperEvidence).where(WorkpaperEvidence.period_end == pe)
+        )).scalars().all())
+        by_section: dict[str, int] = {}
+        for r in rows:
+            by_section[r.ref_type] = by_section.get(r.ref_type, 0) + 1
+        return {
+            "period_end": pe.isoformat(),
+            "documents": len(rows),
+            "sections_with_evidence": by_section,
+            "files": [
+                {"section": r.ref_type, "name": r.file_name,
+                 "size_kb": round((r.file_size or 0) / 1024, 1)}
+                for r in rows[:40]
+            ],
+        }
+
+    if name == "get_advisory":
+        from models.advisory import KpiTarget, TrackedRecommendation
+
+        recs = list((await db.execute(
+            select(TrackedRecommendation).where(TrackedRecommendation.period_end == pe)
+        )).scalars().all())
+        targets = list((await db.execute(select(KpiTarget))).scalars().all())
+        return {
+            "period_end": pe.isoformat(),
+            "recommendations": [
+                {"title": r.title, "priority": r.priority, "status": r.status,
+                 "detail": r.detail, "client_action": r.client_action}
+                for r in recs
+            ],
+            "open_count": sum(1 for r in recs if r.status == "open"),
+            "kpi_targets": [
+                {"kpi": t.kpi_key, "comparator": t.comparator,
+                 "target": float(t.target_value), "note": t.note}
+                for t in targets
+            ],
+        }
+
+    if name == "get_evidence_requests":
+        from models.evidence_request import EvidenceRequest
+
+        rows = list((await db.execute(
+            select(EvidenceRequest).where(EvidenceRequest.period_end == pe)
+        )).scalars().all())
+        now = datetime.now(UTC)
+
+        def _state(r) -> str:
+            # Fulfilled beats expired: a client who delivered before the link
+            # lapsed is not outstanding, and listing them as such sends someone
+            # to chase a document they already sent.
+            if r.fulfilled_at is not None:
+                return "received"
+            if r.expires_at and r.expires_at < now:
+                return "expired"
+            return "waiting"
+
+        items = [
+            {"account": r.account_label or r.qbo_account_id, "title": r.title,
+             "sent_to": r.recipient_email, "state": _state(r),
+             "files": len(r.files or []) if isinstance(r.files, list) else 0}
+            for r in rows
+        ]
+        return {
+            "period_end": pe.isoformat(),
+            "requests": items,
+            "waiting_on_client": sum(1 for i in items if i["state"] == "waiting"),
+            "expired": sum(1 for i in items if i["state"] == "expired"),
+        }
 
     if name == "get_reconciliations_overview":
         return _slim_overview(await read_overview_from_snapshots(db, pe))
