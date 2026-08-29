@@ -123,9 +123,36 @@ apiClient.interceptors.request.use(async (config) => {
   return config
 })
 
-// Internal marker so we only retry an auth-bounced request once. Without
-// this guard, a permanently-bad token would loop forever.
-type RetryableConfig = AxiosRequestConfig & { _nordavixAuthRetry?: boolean }
+// Internal markers so we only retry a request once per reason. Without these
+// guards, a permanently-bad token (or a genuinely dead server) would loop.
+type RetryableConfig = AxiosRequestConfig & {
+  _nordavixAuthRetry?: boolean
+  _nordavixNetRetry?: boolean
+}
+
+/**
+ * Methods HTTP defines as idempotent — replaying one has the same effect as
+ * sending it once, so a retry can't double-charge anything. POST and PATCH are
+ * deliberately absent: a POST that DID reach the server and whose response was
+ * lost would be run twice, which for /scan means a second GlScanRun and for an
+ * accept means a second proposed entry.
+ */
+const IDEMPOTENT = new Set(["get", "head", "put", "delete", "options"])
+
+/**
+ * A dropped connection, not an HTTP error: the request never got a response.
+ *
+ * The usual cause is a keep-alive socket the server (or Fly's proxy) closed
+ * while the tab sat idle. The browser doesn't know it's dead, writes the
+ * request into it, and the connection resets. Browsers silently re-open and
+ * replay this for navigations and idempotent GETs — but NOT for a PUT — which
+ * is exactly why saving a setting failed on the first click and worked on the
+ * second. Axios reports it with no `response` and message "Network Error".
+ */
+function isTransportFailure(error: { response?: unknown; code?: string }): boolean {
+  if (error?.response) return false            // the server answered; not transport
+  return error?.code !== "ERR_CANCELED"        // an aborted request is not a failure
+}
 
 apiClient.interceptors.response.use(
   (response) => response,
@@ -141,6 +168,21 @@ apiClient.interceptors.response.use(
     // expired session still bubbles up as an error after one attempt.
     const status   = error?.response?.status
     const original = error?.config as RetryableConfig | undefined
+
+    // Stale keep-alive socket → replay once on a fresh connection. Only for
+    // methods HTTP guarantees are idempotent, and only once, so a server that
+    // is genuinely down still surfaces its error immediately rather than
+    // doubling every request on the way to the same failure.
+    if (
+      isTransportFailure(error) && original && !original._nordavixNetRetry &&
+      IDEMPOTENT.has(String(original.method ?? "get").toLowerCase())
+    ) {
+      original._nordavixNetRetry = true
+      // A beat, so a retry into a socket that's still tearing down doesn't
+      // hit the same dead connection.
+      await new Promise((r) => setTimeout(r, 250))
+      return apiClient.request(original)
+    }
 
     // The active workspace was deleted (soft-deleted on the backend). Every
     // request to it now returns 410 tenant_deleted. This happens when a

@@ -184,6 +184,7 @@ export function AutopilotSection() {
         // monitoring someone turned on elsewhere.
         continuous_enabled: state?.config?.continuous_enabled ?? false,
         check_hour:         state?.config?.check_hour ?? 9,
+        continuous_email:   state?.config?.continuous_email ?? false,
         timezone:           state?.config?.timezone ?? null,
       }),
     onSuccess: (saved) => {

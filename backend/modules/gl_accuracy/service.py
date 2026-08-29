@@ -155,11 +155,13 @@ def _finding_key(flag: dict) -> str:
 
 async def _replace_open_findings(
     db: AsyncSession, tenant_id: uuid.UUID, period_end: date, flags: list[dict]
-) -> tuple[int, int]:
+) -> tuple[int, int, list[str]]:
     """Refresh OPEN findings for the period; never clobber actioned ones
     (in_adjustments / dismissed) — those are the human's decisions.
 
-    Returns (inserted, newly_seen).
+    Returns (inserted, newly_seen, newly_seen_keys). The keys are what the
+    digest email lists: naming the items is the difference between a mail that
+    gets read and one that gets a filter rule.
 
     The row churns on every scan — delete then re-insert — which is fine for
     the finding but was fatal for its age: `created_at` reset each run, so after
@@ -182,6 +184,7 @@ async def _replace_open_findings(
     }
     now = datetime.now(UTC)
     newly_seen = 0
+    newly_seen_keys: list[str] = []
 
     await db.execute(
         delete(GlAccuracyFinding).where(
@@ -204,6 +207,7 @@ async def _replace_open_findings(
         if first_seen is None:
             first_seen = now
             newly_seen += 1
+            newly_seen_keys.append(key)
         db.add(GlAccuracyFinding(
             first_seen_at=first_seen,
             id=uuid.uuid4(), tenant_id=tenant_id, period_end=period_end, finding_key=key,
@@ -248,7 +252,7 @@ async def _replace_open_findings(
         except Exception:
             logger.exception("graph dual-write failed for GL-accuracy findings (non-fatal)")
 
-    return inserted, newly_seen
+    return inserted, newly_seen, newly_seen_keys
 
 
 async def scan_period(
@@ -306,8 +310,15 @@ async def scan_period(
         current = await pull_gl_transactions_multi(conn, db, acct_ids, period_start, period_end)
         history = await pull_gl_transactions_multi(conn, db, acct_ids, hist_start, hist_end)
     exceptions = await active_classification_exceptions(db)
-    flags = run_detectors(current, history, snapshots=snapshots, exceptions=exceptions)
-    _inserted, newly_seen = await _replace_open_findings(db, tenant_id, period_end, flags)
+    # The engine is pure and cannot ask what day it is; the future-dated
+    # detector needs to know and stands down without it rather than guessing.
+    flags = run_detectors(
+        current, history, snapshots=snapshots, exceptions=exceptions,
+        opts={"today": date.today()},
+    )
+    _inserted, newly_seen, new_keys = await _replace_open_findings(
+        db, tenant_id, period_end, flags
+    )
 
     open_findings = (await db.execute(
         select(GlAccuracyFinding).where(
@@ -338,6 +349,9 @@ async def scan_period(
         "dollars": str(dollars),
         # Newly first-seen this run — what "N new since you last looked" counts.
         "new": newly_seen,
+        # Internal: which findings were new, so the continuous-close digest can
+        # NAME them. Stripped before this dict reaches the client.
+        "new_keys": new_keys,
     }
 
 

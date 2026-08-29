@@ -19,6 +19,7 @@ import {
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
+import { TZ_GROUPS, browserZone, isListedZone, timeInZone, zoneLabel } from "@/core/lib/timezones"
 import { closeApi } from "@/modules/close/api"
 import { workspaceApi } from "@/modules/workspace/api"
 import { ProposedEntryCard } from "@/modules/adjustments/components/ProposedEntryCard"
@@ -51,9 +52,9 @@ function ContinuousSettings() {
 
   const effHour = hour ?? cfg?.check_hour ?? 9
   // The browser's own zone is the right default and almost always correct —
-  // asking someone to pick their timezone from a list of 400 is a worse
-  // first-run than getting it right and letting them correct it.
-  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+  // the dropdown is for correcting it (a firm keeping books for a client in
+  // another state), not for making everyone choose on first run.
+  const browserTz = browserZone()
   const effTz = tz ?? cfg?.timezone ?? browserTz
 
   // Defaults for a workspace that has never saved automation settings. The
@@ -63,11 +64,12 @@ function ContinuousSettings() {
   const base = cfg ?? {
     enabled: false, run_day: 1, run_flux: true, send_pbc_requests: false,
     pbc_recipient_email: null, run_review: true, attach_reports: false,
-    continuous_enabled: false, check_hour: 9, timezone: null, updated_at: null,
+    continuous_enabled: false, check_hour: 9, continuous_email: false,
+    timezone: null, updated_at: null,
   }
 
   const save = useMutation({
-    mutationFn: async (patch: { on?: boolean; h?: number; z?: string }) => {
+    mutationFn: async (patch: { on?: boolean; h?: number; z?: string; mail?: boolean }) => {
       // Re-read the config at call time rather than closing over the render's
       // copy. The toggle fires the moment the page settles, and a body built
       // from a snapshot taken before the GET resolved is how a first click
@@ -77,6 +79,7 @@ function ContinuousSettings() {
         ...fresh,
         continuous_enabled: patch.on ?? fresh.continuous_enabled ?? false,
         check_hour:         patch.h ?? (fresh.check_hour ?? effHour),
+        continuous_email:   patch.mail ?? (fresh.continuous_email ?? false),
         timezone:           patch.z ?? (fresh.timezone ?? effTz),
       })
     },
@@ -85,9 +88,14 @@ function ContinuousSettings() {
     onMutate: async (patch) => {
       await qc.cancelQueries({ queryKey: ["autopilot"] })
       const prev = qc.getQueryData<AutopilotState>(["autopilot"])
-      if (prev?.config && patch.on !== undefined) {
+      if (prev?.config && (patch.on !== undefined || patch.mail !== undefined)) {
         qc.setQueryData(["autopilot"], {
-          ...prev, config: { ...prev.config, continuous_enabled: patch.on },
+          ...prev,
+          config: {
+            ...prev.config,
+            ...(patch.on !== undefined ? { continuous_enabled: patch.on } : {}),
+            ...(patch.mail !== undefined ? { continuous_email: patch.mail } : {}),
+          },
         })
       }
       return { prev }
@@ -134,7 +142,9 @@ function ContinuousSettings() {
         className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold transition-colors"
         style={{ color: "var(--text-muted)" }}>
         <Settings size={12} strokeWidth={2} />
-        {on ? `Checking daily at ${String(effHour).padStart(2, "0")}:00` : "Set up daily checks"}
+        {on
+          ? `Checking daily at ${String(effHour).padStart(2, "0")}:00${base.continuous_email ? " · emailing" : ""}`
+          : "Set up daily checks"}
         <ChevronDown size={12} strokeWidth={2.2}
           style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease" }} />
       </button>
@@ -173,17 +183,55 @@ function ContinuousSettings() {
               <label className="block">
                 <span className="block text-[10px] font-bold uppercase tracking-wider mb-1"
                   style={{ color: "var(--text-muted)" }}>Timezone</span>
-                <input value={effTz}
-                  onChange={(e) => setTz(e.target.value)}
-                  onBlur={(e) => save.mutate({ z: e.target.value.trim() || browserTz })}
-                  spellCheck={false}
+                <select value={effTz}
+                  onChange={(e) => { const z = e.target.value; setTz(z); save.mutate({ z }) }}
                   className="w-full rounded-lg px-2 py-1.5 text-[12.5px] outline-none"
-                  style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }} />
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                  {/* The browser's own zone first, and included even when the
+                      curated list doesn't carry it — otherwise a workspace on
+                      an unlisted zone would silently be re-saved onto whatever
+                      option happened to be selected. */}
+                  <option value={browserTz}>{zoneLabel(browserTz)} · detected</option>
+                  {effTz !== browserTz && !isListedZone(effTz) && (
+                    <option value={effTz}>{zoneLabel(effTz)}</option>
+                  )}
+                  {TZ_GROUPS.map((g) => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.zones.filter((z) => z !== browserTz).map((z) => (
+                        <option key={z} value={z}>{zoneLabel(z)}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                {/* The only question the picker really raises: is the hour I
+                    chose the hour I meant? */}
                 <span className="block text-[10.5px] mt-1" style={{ color: "var(--text-muted)" }}>
-                  Detected {browserTz}
+                  {timeInZone(effTz)
+                    ? <>It&apos;s {timeInZone(effTz)} there now · {effTz}</>
+                    : effTz}
                 </span>
               </label>
             </div>
+          )}
+
+          {on && (
+            <label className="flex items-start gap-2.5 cursor-pointer pt-1"
+              style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+              <input type="checkbox" checked={!!base.continuous_email} className="mt-0.5"
+                onChange={(e) => save.mutate({ mail: e.target.checked })} />
+              <span className="min-w-0">
+                <span className="block text-[13px] font-semibold text-theme">
+                  Email me when something new is caught
+                </span>
+                <span className="block text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+                  {/* Saying what it will NOT send is the part that earns the
+                      opt-in: the fear is a daily "all clear" nobody reads. */}
+                  One email per check, listing what&apos;s new — and nothing at all on a
+                  quiet day. Goes to everyone in the workspace who has notification
+                  emails on.
+                </span>
+              </span>
+            </label>
           )}
 
           {save.error ? (

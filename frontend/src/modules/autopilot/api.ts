@@ -14,6 +14,9 @@ export interface AutopilotConfig {
   /** 0-23, in the WORKSPACE's timezone — the cron ticks hourly and each
    *  workspace fires in its own window. */
   check_hour: number
+  /** Email the workspace when a daily check finds something NEW. The per-user
+   *  opt-out in Settings still applies on top of this. */
+  continuous_email: boolean
   /** IANA name ("America/New_York"). Lives on the tenant; surfaced here because
    *  check_hour is meaningless without knowing whose clock it is. */
   timezone: string | null

@@ -63,6 +63,7 @@ def _serialize_config(c: AutopilotConfig | None, timezone: str | None = None) ->
         # ── Continuous close ──
         "continuous_enabled":  c.continuous_enabled,
         "check_hour":          c.check_hour,
+        "continuous_email":    c.continuous_email,
         # Lives on the tenant, surfaced here because it is meaningless without
         # check_hour beside it — "9am" needs to know whose 9am.
         "timezone":            timezone,
@@ -123,6 +124,9 @@ class ConfigBody(BaseModel):
     # ── Continuous close ──
     continuous_enabled: bool = False
     check_hour: int = Field(ge=0, le=23, default=9)
+    # Email the workspace when a check finds something NEW. The per-user opt-out
+    # still applies on top of this.
+    continuous_email: bool = False
     # IANA name, e.g. "America/New_York". Validated server-side; an offset would
     # be wrong twice a year.
     timezone: str | None = Field(default=None, max_length=64)
@@ -158,6 +162,7 @@ async def put_config(
     config.attach_reports      = body.attach_reports
     config.continuous_enabled  = body.continuous_enabled
     config.check_hour          = body.check_hour
+    config.continuous_email    = body.continuous_email
     config.updated_by          = user.id
 
     # The timezone lives on the tenant. Rejected rather than silently coerced:
@@ -188,6 +193,8 @@ async def put_config(
             f"day {body.run_day}, flux {'on' if body.run_flux else 'off'}, "
             f"client evidence emails {'ON to ' + (config.pbc_recipient_email or '') if body.send_pbc_requests else 'off'}"
             + f"; continuous close {'on at ' + str(body.check_hour) + ':00' if body.continuous_enabled else 'off'}"
+            + (f" ({'emailing the workspace' if body.continuous_email else 'in-app only'})"
+               if body.continuous_enabled else "")
         )},
     )
     await db.commit()

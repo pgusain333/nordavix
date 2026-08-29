@@ -432,6 +432,287 @@ def _detector_round_dollar(current, history, snapshots, exceptions, opts) -> lis
     return flags
 
 
+# ── Open-month detectors (the daily watch's own catch) ───────────────────────
+#
+# These read only the TRANSACTION STREAM — current rows plus the trailing
+# history window — and never the balance snapshots. That is deliberate and it
+# is what makes them the continuous-close detectors: the month happening now
+# has no snapshot of its own (nobody syncs a month-end that hasn't happened),
+# so every snapshot-based detector correctly stands down on it. A detector that
+# only ever fires at month end cannot be part of a daily watch.
+
+KIND_NEW_VENDOR = "new_vendor"
+KIND_ACCOUNT_SPIKE = "account_spike"
+KIND_FUTURE_DATED = "future_dated"
+KIND_MISSING_PAYEE = "missing_payee"
+
+# Transaction types where a blank payee is normal bookkeeping, not a gap:
+# a journal entry books an accrual, a transfer moves money between own accounts,
+# a deposit lands from a batch. Flagging these would train people to ignore the
+# check within a week.
+_PAYEE_EXEMPT_TYPES = ("journal", "transfer", "deposit")
+
+
+def _txn_type(t: dict) -> str:
+    return str(t.get("txn_type") or "").lower()
+
+
+def _detector_new_vendor(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """A material payment to a payee with NO history in the lookback window.
+
+    One finding per vendor, not per line: a new supplier billing four times in a
+    month is one thing to check, and four identical alerts is how an inbox gets
+    a filter rule.
+
+    The guard that matters is the one against an empty history. A workspace on
+    its first month, or a history pull that came back short, would make EVERY
+    vendor look new and bury the real findings under a hundred false ones — so
+    the detector stands down entirely unless the window carries a believable
+    number of distinct vendors.
+    """
+    o = opts or {}
+    min_amt = o.get("newvendor_min", Decimal("1000"))
+    high_amt = o.get("newvendor_high", Decimal("10000"))
+    min_known = int(o.get("newvendor_min_known_vendors", 5))
+
+    known: set[str] = set()
+    for t in history:
+        v = _norm_vendor(t.get("entity_name"))
+        if v:
+            known.add(v)
+    if len(known) < min_known:
+        return []   # not enough history to call anything "new"
+
+    groups: dict[str, list[dict]] = {}
+    for t in current:
+        v = _norm_vendor(t.get("entity_name"))
+        if not v or v in known:
+            continue
+        groups.setdefault(v, []).append(t)
+
+    flags: list[dict] = []
+    for v, txns in groups.items():
+        total = sum((_cents(t.get("amount")) for t in txns), Decimal("0"))
+        if total < min_amt:
+            continue
+        biggest = max(txns, key=lambda t: _cents(t.get("amount")))
+        vendor_disp = next((str(t.get("entity_name")).strip() for t in txns if t.get("entity_name")), v)
+        acct = str(biggest.get("qbo_account_id") or "")
+        acct_name = str(biggest.get("qbo_account_name") or "")
+        n = len(txns)
+        sev = "high" if total >= high_amt else "medium"
+        flags.append({
+            "kind": KIND_NEW_VENDOR, "severity": sev, "confidence": sev, "action_kind": "flag",
+            "dedupe_key": v,
+            "title": f"{vendor_disp}: first payment — {_money(total)}",
+            "detail": (
+                f"{vendor_disp} has no entries in the last 12 months and now has "
+                f"{n} totalling {_money(total)}, mostly to {acct_name or acct or 'an expense account'}. "
+                f"Confirm the payee and that the coding is right before it becomes a habit."
+            ),
+            "vendor": vendor_disp, "amount": str(total),
+            "posted_account_id": acct or None, "posted_account_name": acct_name or None,
+            "suggested_account_id": None, "suggested_account_name": None,
+            "dominant_count": n, "total_count": n, "posted_count": 0,
+            "qbo_txn_id": biggest.get("qbo_txn_id"), "txn_type": biggest.get("txn_type"),
+            "txn_number": biggest.get("txn_number"), "txn_date": biggest.get("txn_date"),
+            "evidence": {"entries": n, "total": str(total), "lookback_vendors": len(known),
+                         "account_id": acct, "account_name": acct_name},
+        })
+    return flags
+
+
+def _detector_account_spike(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """An account running well above its own monthly norm.
+
+    The baseline is that account's median MONTHLY total across the lookback
+    window — its own history, never a benchmark — so a genuinely expensive
+    account never trips and a quiet one doesn't need a special case.
+
+    Note what this does NOT do mid-month: nothing. Compared against a full
+    month's median, a part-month total is smaller than it will end up, so on the
+    10th this detector can only be LATE, never premature. Under-calling early is
+    the right failure for a check that speaks unprompted — the alternative is
+    pro-rating, which invents a spike out of a big invoice that always lands on
+    the 3rd.
+
+    One finding per account, keyed on the account alone, so the daily re-scan
+    updates the figure in place instead of announcing it again.
+    """
+    o = opts or {}
+    min_months = int(o.get("spike_min_months", 4))
+    mult = Decimal(str(o.get("spike_mult", 3)))
+    high_mult = Decimal(str(o.get("spike_high_mult", 5)))
+    floor = o.get("spike_floor", Decimal("2500"))        # excess must clear this
+    high_floor = o.get("spike_high_floor", Decimal("10000"))
+
+    # account_id -> month -> total (abs), from history only.
+    by_acct: dict[str, dict[str, Decimal]] = {}
+    names: dict[str, str] = {}
+    for t in history:
+        acct = str(t.get("qbo_account_id") or "")
+        month = _month_key(t.get("txn_date"))
+        if not acct or not month:
+            continue
+        by_acct.setdefault(acct, {})
+        by_acct[acct][month] = by_acct[acct].get(month, Decimal("0")) + _cents(t.get("amount"))
+        if t.get("qbo_account_name"):
+            names.setdefault(acct, str(t["qbo_account_name"]))
+
+    cur_totals: dict[str, Decimal] = {}
+    cur_counts: dict[str, int] = {}
+    for t in current:
+        acct = str(t.get("qbo_account_id") or "")
+        if not acct:
+            continue
+        cur_totals[acct] = cur_totals.get(acct, Decimal("0")) + _cents(t.get("amount"))
+        cur_counts[acct] = cur_counts.get(acct, 0) + 1
+        if t.get("qbo_account_name"):
+            names.setdefault(acct, str(t["qbo_account_name"]))
+
+    flags: list[dict] = []
+    for acct, total in cur_totals.items():
+        months = by_acct.get(acct) or {}
+        if len(months) < min_months:
+            continue    # too little history to know what normal looks like
+        baseline = _median(list(months.values()))
+        if baseline <= 0:
+            continue
+        excess = total - baseline
+        if excess < floor or total < baseline * mult:
+            continue
+        name = names.get(acct) or acct
+        sev = "high" if (total >= baseline * high_mult and excess >= high_floor) else "medium"
+        times = (total / baseline).quantize(Decimal("0.1"))
+        flags.append({
+            "kind": KIND_ACCOUNT_SPIKE, "severity": sev, "confidence": sev, "action_kind": "flag",
+            "dedupe_key": acct,
+            "title": f"{name}: {_money(total)} so far — {times}× its usual month",
+            "detail": (
+                f"{name} normally runs about {_money(baseline)} a month across the last "
+                f"{len(months)} months; it is at {_money(total)} across {cur_counts.get(acct, 0)} "
+                f"entries. Check for a miscode, a duplicate, or a genuine one-off worth knowing about."
+            ),
+            "vendor": name, "amount": str(total),
+            "posted_account_id": acct, "posted_account_name": names.get(acct),
+            "suggested_account_id": None, "suggested_account_name": None,
+            "dominant_count": cur_counts.get(acct, 0), "total_count": len(months), "posted_count": 0,
+            "evidence": {"account_id": acct, "account_name": names.get(acct),
+                         "period_total": str(total), "monthly_median": str(baseline),
+                         "excess": str(excess), "months_of_history": len(months),
+                         "multiple": str(times)},
+        })
+    return flags
+
+
+def _detector_future_dated(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """An entry dated after today.
+
+    Almost always a date typo — the 2027-for-2026 kind — and it silently
+    distorts every period it lands in until someone notices. Needs to know what
+    day it is, which a pure function can't ask: `opts["today"]` supplies it and
+    the detector stands down without it rather than guessing.
+
+    A small forward window is allowed: scheduled and recurring transactions
+    legitimately carry a near-future date, and flagging those would make the
+    check noise. A year out is not that.
+    """
+    o = opts or {}
+    today = _as_day(o.get("today"))
+    if today is None:
+        return []
+    min_days = int(o.get("future_min_days", 1))         # strictly after today
+    min_amt = o.get("future_min", Decimal("250"))
+    high_days = int(o.get("future_high_days", 45))
+    high_amt = o.get("future_high", Decimal("5000"))
+
+    flags: list[dict] = []
+    for t in current:
+        d = _as_day(t.get("txn_date"))
+        if d is None:
+            continue
+        ahead = (d - today).days
+        if ahead < min_days:
+            continue
+        amt = _cents(t.get("amount"))
+        if amt < min_amt:
+            continue
+        vendor_disp = str(t.get("entity_name") or "").strip() or "Entry"
+        acct = str(t.get("qbo_account_id") or "")
+        acct_name = str(t.get("qbo_account_name") or "")
+        txn_id = str(t.get("qbo_txn_id") or "")
+        sev = "high" if (ahead >= high_days or amt >= high_amt) else "medium"
+        when = "tomorrow" if ahead == 1 else f"{ahead} days from now"
+        flags.append({
+            "kind": KIND_FUTURE_DATED, "severity": sev, "confidence": sev, "action_kind": "flag",
+            "dedupe_key": f"{txn_id}:{acct}:{d.isoformat()}",
+            "title": f"{vendor_disp}: dated {d.isoformat()} — {when}",
+            "detail": (
+                f"A {_money(amt)} entry to {acct_name or acct or 'an account'} is dated "
+                f"{d.isoformat()}, {when}. Check the date: a future-dated entry lands in a "
+                f"period nobody is looking at yet."
+            ),
+            "vendor": vendor_disp, "amount": str(amt),
+            "posted_account_id": acct or None, "posted_account_name": acct_name or None,
+            "suggested_account_id": None, "suggested_account_name": None,
+            "dominant_count": 0, "total_count": 0, "posted_count": 0,
+            "qbo_txn_id": t.get("qbo_txn_id"), "txn_type": t.get("txn_type"),
+            "txn_number": t.get("txn_number"), "txn_date": t.get("txn_date"),
+            "evidence": {"txn_date": d.isoformat(), "today": today.isoformat(),
+                         "days_ahead": ahead, "amount": str(amt),
+                         "account_id": acct, "account_name": acct_name},
+        })
+    return flags
+
+
+def _detector_missing_payee(current, history, snapshots, exceptions, opts) -> list[dict]:
+    """A material EXPENSE with no payee at all.
+
+    Distinct from the blank-memo check: a missing memo is a thin explanation, a
+    missing payee is no trail to follow — you cannot ask who was paid.
+
+    Journals, transfers and deposits are exempt by type, because a blank name on
+    those is normal bookkeeping rather than a gap. Everything here is already on
+    an expense or COGS account, which is the other half of the guard: a bank
+    line with no name never reaches this detector.
+    """
+    o = opts or {}
+    min_amt = o.get("payee_min", Decimal("2500"))
+    high_amt = o.get("payee_high", Decimal("10000"))
+    flags: list[dict] = []
+    for t in current:
+        if _norm_vendor(t.get("entity_name")):
+            continue
+        ttype = _txn_type(t)
+        if any(x in ttype for x in _PAYEE_EXEMPT_TYPES):
+            continue
+        amt = _cents(t.get("amount"))
+        if amt < min_amt:
+            continue
+        acct = str(t.get("qbo_account_id") or "")
+        acct_name = str(t.get("qbo_account_name") or "")
+        txn_id = str(t.get("qbo_txn_id") or "")
+        sev = "high" if amt >= high_amt else "medium"
+        flags.append({
+            "kind": KIND_MISSING_PAYEE, "severity": sev, "confidence": sev, "action_kind": "flag",
+            "dedupe_key": f"{txn_id}:{acct}:{amt}",
+            "title": f"{_money(amt)} to {acct_name or acct or 'an account'} with no payee",
+            "detail": (
+                f"A {_money(amt)} {t.get('txn_type') or 'entry'} has no vendor or customer on it. "
+                f"Add the payee so the entry can be traced to support before close."
+            ),
+            "vendor": "(no payee)", "amount": str(amt),
+            "posted_account_id": acct or None, "posted_account_name": acct_name or None,
+            "suggested_account_id": None, "suggested_account_name": None,
+            "dominant_count": 0, "total_count": 0, "posted_count": 0,
+            "qbo_txn_id": t.get("qbo_txn_id"), "txn_type": t.get("txn_type"),
+            "txn_number": t.get("txn_number"), "txn_date": t.get("txn_date"),
+            "evidence": {"amount": str(amt), "account_id": acct, "account_name": acct_name,
+                         "txn_type": t.get("txn_type")},
+        })
+    return flags
+
+
 # ── Structural detectors (chart-of-accounts balances, not the txn stream) ────
 #
 # These read the period's GL balance SNAPSHOTS — one row per account, EVERY
@@ -640,6 +921,12 @@ DETECTORS: list[dict[str, Any]] = [
     {"key": KIND_DUPLICATE, "fn": _detector_duplicates},
     {"key": KIND_LARGE_NO_MEMO, "fn": _detector_large_no_memo},
     {"key": KIND_ROUND_DOLLAR, "fn": _detector_round_dollar},
+    # Open-month detectors — the ones the daily watch can actually use, since
+    # they read the transaction stream rather than a month-end snapshot.
+    {"key": KIND_NEW_VENDOR, "fn": _detector_new_vendor},
+    {"key": KIND_ACCOUNT_SPIKE, "fn": _detector_account_spike},
+    {"key": KIND_FUTURE_DATED, "fn": _detector_future_dated},
+    {"key": KIND_MISSING_PAYEE, "fn": _detector_missing_payee},
     {"key": KIND_SUSPENSE, "fn": _detector_suspense_accounts},
     {"key": KIND_AMOUNT_OUTLIER, "fn": _detector_amount_outlier},
     {"key": KIND_CONTRA_BALANCE, "fn": _detector_contra_balance},

@@ -661,6 +661,7 @@ async def dispatch_tool(
             "continuous_close": {
                 "enabled": bool(cfg and cfg.continuous_enabled),
                 "check_hour": cfg.check_hour if cfg else None,
+                "emails_the_workspace": bool(cfg and cfg.continuous_email),
                 "tracking_period": _current_period().isoformat(),
                 "last_checked_at": watch.finished_at.isoformat()
                                    if watch and watch.finished_at else None,

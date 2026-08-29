@@ -4,9 +4,13 @@ Hit hourly by the cron. Every workspace with continuous close enabled fires in
 its OWN hour, on its own clock, at most once a day; `schedule.is_due` owns that
 rule and is tested against a full day and both clock-change weekends.
 
-What runs is the Risk Radar scan that already exists — eight transaction-level
-detectors over the open period. This module decides WHEN, skips what it should
-not touch, and speaks only when there is something new to say.
+What runs is the Risk Radar scan that already exists. Of its detectors, the ones
+that matter here read the TRANSACTION STREAM — vendor coding, duplicates, blank
+memos, and the four written for this loop: a new payee, an account running above
+its own norm, a future-dated entry, an expense with no payee. The structural
+detectors read a month-end balance snapshot, which the current month does not
+have, so they correctly stand down. This module decides WHEN, skips what it
+should not touch, and speaks only when there is something new to say.
 
 Three things it deliberately does not do:
 
@@ -126,7 +130,7 @@ async def run_continuous_sweep(now_utc: datetime | None = None) -> dict:
                         trigger="scheduled",
                     )
                     await session.commit()
-                    await _notify_if_new(session, tenant, pe, summary)
+                    await _notify_if_new(session, tenant, pe, summary, cfg)
                 checked.append(str(tenant.id))
         except Exception as exc:  # noqa: BLE001 — one tenant must not stop the sweep
             logger.exception("continuous sweep failed for tenant %s", tenant.id)
@@ -141,12 +145,19 @@ async def run_continuous_sweep(now_utc: datetime | None = None) -> dict:
     return {"checked": len(checked), "skipped": skipped, "failed": failed}
 
 
-async def _notify_if_new(session, tenant: Tenant, pe: date, summary: dict) -> None:
+async def _notify_if_new(
+    session, tenant: Tenant, pe: date, summary: dict, cfg: AutopilotConfig
+) -> None:
     """Tell the workspace only when this check turned up something NEW.
 
     `summary["new"]` counts findings whose first_seen_at was set by this run, so
     a problem already reported yesterday stays quiet. Silence on a clean day is
     the feature: a daily "0 anomalies" is how a channel gets muted.
+
+    In-app always; email when the workspace asked for it. The email is sent
+    inline rather than through BackgroundTasks — there is no request here to
+    defer against, and `send_batch` already swallows its own failures, so a
+    Resend outage can't take the sweep down with it.
     """
     new = int(summary.get("new") or 0)
     if new <= 0:
@@ -168,12 +179,6 @@ async def _notify_if_new(session, tenant: Tenant, pe: date, summary: dict) -> No
             f"Nordavix checked {summary.get('scanned', 0):,} transactions and found "
             f"{new} new item{plural} to review."
         )
-        # In-app only. The email path takes a request's BackgroundTasks to defer
-        # the send, and a cron sweep has no request — passing None there would
-        # create the notification, commit it, and then throw on the email,
-        # leaving a half-delivered ping and a stack trace nobody reads.
-        # Emailing a daily sweep is its own decision (opt-in, frequency) rather
-        # than something to inherit from the monthly digest.
         for uid in recipients:
             notify(
                 session, tenant_id=tenant.id, recipient_user_id=uid,
@@ -184,3 +189,90 @@ async def _notify_if_new(session, tenant: Tenant, pe: date, summary: dict) -> No
         await session.commit()
     except Exception:
         logger.warning("continuous-close notification failed for %s", tenant.id, exc_info=True)
+        return
+
+    if getattr(cfg, "continuous_email", False):
+        try:
+            await _email_digest(session, tenant, pe, summary, recipients)
+        except Exception:
+            logger.warning("continuous-close digest email failed for %s", tenant.id, exc_info=True)
+
+
+# How many findings the digest names before it says "and N more". Enough that
+# the mail is useful on its own, few enough that it stays a nudge rather than a
+# report someone reads instead of opening the product.
+_DIGEST_ITEMS = 6
+
+
+async def _email_digest(
+    session, tenant: Tenant, pe: date, summary: dict, recipient_ids: list
+) -> None:
+    """One branded email per opted-in member, listing what today's check found.
+
+    The findings are looked up by the keys this run stamped as new, not by a
+    time window: `first_seen_at >= started_at` looks equivalent and quietly goes
+    wrong when two scans overlap or a clock skews.
+    """
+    from core import links
+    from core.config import settings
+    from core.email.sender import send_batch
+    from core.email.templates import render_watch_digest_email
+    from models.gl_accuracy_finding import GlAccuracyFinding
+    from modules.notifications.service import resolve_email_targets
+
+    if not settings.email_enabled:
+        return
+    targets = await resolve_email_targets(session, recipient_ids)
+    if not targets:
+        return
+
+    keys = list(summary.get("new_keys") or [])
+    items: list[dict] = []
+    if keys:
+        rows = list((await session.execute(
+            select(GlAccuracyFinding).where(
+                GlAccuracyFinding.tenant_id == tenant.id,
+                GlAccuracyFinding.period_end == pe,
+                GlAccuracyFinding.finding_key.in_(keys),
+            ),
+            execution_options={"skip_tenant_filter": True},
+        )).scalars().all())
+        rank = {"high": 0, "medium": 1, "low": 2}
+        rows.sort(key=lambda f: (rank.get(f.severity or "medium", 1), -abs(_amount(f.amount))))
+        items = [{
+            "title": f.title or f"{f.vendor}: review",
+            "detail": f.detail,
+            "severity": f.severity,
+            # Review-only flags carry a real figure too (a spike's total, a
+            # first payment) — the dollars only stop meaning "to reclassify".
+            "amount": _money(f.amount),
+        } for f in rows[:_DIGEST_ITEMS]]
+
+    subject, html, text = render_watch_digest_email(
+        period_label=pe.strftime("%B %Y"),
+        items=items,
+        new_count=int(summary.get("new") or 0),
+        scanned=int(summary.get("scanned") or 0),
+        cta_url=settings.web_url + links.risk_radar(pe),
+        workspace_name=tenant.name or None,
+    )
+    await send_batch([
+        {"from": settings.notifications_from_email, "to": [email],
+         "subject": subject, "html": html, "text": text}
+        for (_uid, email) in targets
+    ])
+
+
+def _amount(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _money(v) -> str:
+    n = abs(_amount(v))
+    if not n:
+        return ""
+    s = f"{n:,.2f}"
+    return "$" + (s[:-3] if s.endswith(".00") else s)

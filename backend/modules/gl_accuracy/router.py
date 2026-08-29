@@ -101,7 +101,10 @@ async def scan(
                   "scanned": summary["scanned"]},
     )
     await db.commit()
-    return summary
+    # `new_keys` is internal plumbing for the digest email — dedupe keys are not
+    # something the client has any use for, and shipping them makes them look
+    # like an API contract.
+    return {k: v for k, v in summary.items() if k != "new_keys"}
 
 
 @router.get("/findings")

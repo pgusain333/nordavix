@@ -43,6 +43,14 @@ class AutopilotConfig(TenantBase):
     check_hour: Mapped[int] = mapped_column(
         Integer, nullable=False, default=9, server_default="9",
     )
+    # Email the workspace when a check turns up something NEW. Off by default:
+    # a daily unattended job that starts mailing every existing workspace the
+    # morning after a deploy is how a useful feature becomes a filter rule.
+    # The per-user opt-out (users.email_notifications_enabled) still applies —
+    # this decides whether the workspace sends at all, not who receives.
+    continuous_email: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
     # Optional step toggles. Sync + agentic preparer are the core and always
     # run when enabled; these gate the AI-spend / outward-facing extras.
     run_flux: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
