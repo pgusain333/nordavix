@@ -238,10 +238,10 @@ def render_watch_digest_email(
         f"</p>"
     )
     listing = (
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-        f'class="nv-quote" style="background:#f9fafb;border-radius:10px;padding:14px 16px;">'
-        f"<tr><td>"
-        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'class="nv-quote" style="background:#f9fafb;border-radius:10px;padding:14px 16px;">'
+        "<tr><td>"
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
         + "".join(rows) +
         f"</table>{more_line}"
         f"</td></tr></table>"
