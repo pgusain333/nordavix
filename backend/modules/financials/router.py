@@ -484,15 +484,30 @@ async def _build_statement(
     """
     company = await _company_name(db, tenant_id)
     conn = None
+    from modules.recons.service import _refresh_token_if_needed
+
     if source != "nordavix" or statement_kind == "cash_flow":
+        # These paths cannot work without QuickBooks, so a missing connection
+        # is a hard 409 rather than a mystery further down.
         conn = await _qbo_connection(db, tenant_id)
         # Pre-refresh the OAuth token BEFORE any QBO calls. Subsequent
         # calls inside this function share the same SQLAlchemy session —
         # concurrent commits inside the auto-refresh path used to cause
         # intermittent "Network Error" failures on PDF export.
-        from modules.recons.service import _refresh_token_if_needed
         await _refresh_token_if_needed(conn, db)
         company = await _company_name(db, tenant_id, conn)
+    elif statement_kind == "income_statement":
+        # The snapshot-based income statement can FALL BACK to a live pull when
+        # it has no beginning snapshot to difference against, so the connection
+        # has to be ready before that decision is made. Best-effort, not a hard
+        # requirement: the snapshot path usually succeeds and must keep working
+        # for a workspace with no QuickBooks connection at all.
+        conn = (await db.execute(
+            select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+            execution_options={"skip_tenant_filter": True},
+        )).scalar_one_or_none()
+        if conn is not None:
+            await _refresh_token_if_needed(conn, db)
 
     # Period labelling — Income Statement and Cash Flow are "for a period
     # of time" (a range from period_start to period_end). Balance Sheet
@@ -616,6 +631,15 @@ async def _build_statement(
         _snapshot_path_gave_up = (
             statement_kind in ("cash_flow", "income_statement") and not rows_raw
         )
+        # Nothing to fall through TO. Say that plainly instead of letting the
+        # live block raise a 502 the reader can do nothing with.
+        if _snapshot_path_gave_up and conn is None:
+            notes.append(
+                "QuickBooks isn't connected, so this range can't be pulled live "
+                "either. Sync the month before the range start from the "
+                "Reconciliations dashboard."
+            )
+            _snapshot_path_gave_up = False
         if not _snapshot_path_gave_up:
             notes.extend(internal_notes)
             # Normalize internal dict rows to FinancialRow, applying the same
