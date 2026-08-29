@@ -232,3 +232,92 @@ async def test_the_rail_is_unaffected_by_which_period_is_selected():
         seen.add((out["monitoring_period"],
                   tuple(f["period_end"] for f in out["monitoring_recent"])))
     assert len(seen) == 1, f"the watch's month moved with the picker: {seen}"
+
+
+# ── The strip counts only what it is entitled to claim ─────────────────────
+#
+# "Checks in Aug: 14" sat under a heading reading "Continuous close · on". It
+# counted every scan of that period — including the ones a human triggered by
+# pressing the button and the ones that ran after a QuickBooks sync — so the
+# watch was taking credit for work the user had done by hand. The trigger was
+# recorded from the start for exactly this reason and simply wasn't used.
+
+class _CountingDb:
+    """Answers the two count() queries in monitoring_status and records which
+    triggers each one filtered on."""
+
+    def __init__(self, runs):
+        self.runs = runs
+        self.count_filters: list[str | None] = []
+
+    async def execute(self, stmt, **kw):
+        sql = str(stmt)
+        if "count(" not in sql.lower():
+            return _Result([self.runs[-1]] if self.runs else [])
+        params = stmt.compile().params
+        trig = next((v for k, v in params.items() if k.startswith("trigger")), None)
+        self.count_filters.append(trig)
+        matching = [r for r in self.runs if trig is None or r.trigger == trig]
+        return _Result([len(matching)])
+
+
+class _Run:
+    def __init__(self, trigger):
+        self.trigger = trigger
+        self.period_end = WATCHED
+        self.started_at = D0
+        self.finished_at = D0
+        self.ok = True
+        self.error = None
+        self.transactions_reviewed = 1847
+        self.accounts_scanned = 142
+        self.findings_new = 0
+
+
+# 1 scheduled sweep, 11 button presses, 2 post-sync passes — the shape that
+# produced "14".
+MIXED = [_Run("scheduled")] + [_Run("manual")] * 11 + [_Run("sync")] * 2
+
+
+async def test_the_unattended_count_excludes_button_presses_and_syncs():
+    db = _CountingDb(MIXED)
+    out = await service.monitoring_status(db, WATCHED)
+    assert out["unattended_checks"] == 1, "counted work the user did by hand"
+
+
+async def test_the_all_triggers_count_is_still_reported_separately():
+    """Kept, because "we looked 14 times" is true and useful — it just isn't
+    evidence of a schedule, so it can't be the number under that heading."""
+    db = _CountingDb(MIXED)
+    out = await service.monitoring_status(db, WATCHED)
+    assert out["checks_this_period"] == 14
+
+
+async def test_the_scheduled_filter_is_applied_in_sql_not_in_python():
+    """A count that filtered after the fact would still be right and would stop
+    being right the moment the table grows past the fetch."""
+    db = _CountingDb(MIXED)
+    await service.monitoring_status(db, WATCHED)
+    assert "scheduled" in db.count_filters, "no query filtered on trigger"
+    assert None in db.count_filters, "no unfiltered total query"
+
+
+async def test_a_watch_that_has_never_fired_reports_zero_not_the_manual_count():
+    """THE CASE THAT SHIPPED. Every scan so far was manual; the strip read 14
+    and implied the schedule had run 14 times."""
+    db = _CountingDb([_Run("manual")] * 14)
+    out = await service.monitoring_status(db, WATCHED)
+    assert out["unattended_checks"] == 0
+    assert out["checks_this_period"] == 14
+
+
+async def test_transactions_reviewed_is_reported_even_when_zero():
+    """The rail renders this unconditionally now: a scan that read nothing must
+    not look identical to one that read the whole ledger. A key that vanishes
+    at zero would put the old hidden-when-empty behaviour back."""
+    run = _Run("scheduled")
+    run.transactions_reviewed = 0
+    run.accounts_scanned = 0
+    out = await service.monitoring_status(_CountingDb([run]), WATCHED)
+    assert out["transactions_reviewed"] == 0
+    assert "transactions_reviewed" in out

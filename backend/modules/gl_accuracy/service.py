@@ -484,6 +484,18 @@ async def monitoring_status(db: AsyncSession, period_end: date) -> dict:
     total_runs = (await db.execute(
         select(func.count()).select_from(GlScanRun).where(GlScanRun.period_end == period_end)
     )).scalar_one()
+    # Scheduled runs ONLY. "We check these books every day" and "it ran because
+    # you pressed the button" are different claims, and the strip sits under a
+    # heading that makes the first one — so a count that quietly includes manual
+    # scans and post-sync passes is the strip taking credit for work the user
+    # did by hand. The trigger was always recorded for exactly this reason; it
+    # just wasn't being used.
+    unattended_runs = (await db.execute(
+        select(func.count()).select_from(GlScanRun).where(
+            GlScanRun.period_end == period_end,
+            GlScanRun.trigger == "scheduled",
+        )
+    )).scalar_one()
     if latest is None:
         return {"ever_scanned": False, "checks_this_period": 0}
     return {
@@ -492,6 +504,7 @@ async def monitoring_status(db: AsyncSession, period_end: date) -> dict:
         # the sweep watches the open month AND the prior unclosed one.
         "scanned_period": latest.period_end.isoformat(),
         "checks_this_period": int(total_runs or 0),
+        "unattended_checks": int(unattended_runs or 0),
         "checked_at": latest.finished_at.isoformat() if latest.finished_at else None,
         "started_at": latest.started_at.isoformat(),
         # True = completed cleanly. False = failed. None = still running.

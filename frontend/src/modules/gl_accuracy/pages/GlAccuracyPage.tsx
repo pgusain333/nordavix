@@ -453,14 +453,39 @@ function MonitoringHead({ m, scanning, enabled, reduce, periodEnd, onCheckNow, c
            status that wraps mid-sentence reads as broken. */
         <dl className="mt-2 space-y-1">
           <Stat label="Last checked" value={ago ?? "—"} strong />
-          {!!m.transactions_reviewed && (
-            <Stat label="Transactions reviewed" value={m.transactions_reviewed.toLocaleString()} />
+          {/* ALWAYS, including zero. Hidden-when-empty was the wrong call: a
+              scan that read nothing looked identical to one that read the whole
+              ledger, so "Last checked · just now" sat there as a clean bill of
+              health for a check that had opened no books at all. The count is
+              the proof; suppressing it leaves only the claim. */}
+          <Stat label="Transactions checked"
+            value={(m.transactions_reviewed ?? 0).toLocaleString()}
+            strong={!m.transactions_reviewed} />
+          {!!m.accounts_scanned && (
+            <Stat label="Accounts covered" value={m.accounts_scanned.toLocaleString()} />
           )}
-          {m.checks_this_period > 0 && (
-            <Stat label={`Checks in ${shortMonth(periodEnd)}`}
-              value={String(m.checks_this_period)} />
+          {/* Scheduled runs only — see monitoring_status. Counting the button
+              presses too made the watch look busier than it was. */}
+          {(m.unattended_checks ?? 0) > 0 && (
+            <Stat label={`Daily checks in ${shortMonth(periodEnd)}`}
+              value={String(m.unattended_checks)} />
           )}
         </dl>
+      )}
+
+      {/* A finished, successful scan that read zero transactions is the failure
+          this whole strip exists to make visible: it reports success having
+          looked at nothing. Say which of the two causes it is — no accounts to
+          read from, or accounts read and genuinely nothing posted yet. */}
+      {!failed && !inFlight && !m.transactions_reviewed && (
+        <p className="text-[11.5px] mt-2 rounded-lg px-2.5 py-2"
+          style={{ background: "var(--surface-2)", color: "var(--warn)" }}>
+          {m.accounts_scanned
+            ? <>Nothing posted to {monthLabel(periodEnd)} yet — {m.accounts_scanned} accounts
+                were open and empty.</>
+            : <>No accounts to read. Sync QuickBooks once so Nordavix knows this
+                workspace&apos;s chart of accounts, then check again.</>}
+        </p>
       )}
     </div>
   )

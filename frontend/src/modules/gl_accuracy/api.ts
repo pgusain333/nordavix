@@ -44,7 +44,13 @@ export interface GlFinding {
  *  it failed; neither may render as a clean bill of health. */
 export interface GlMonitoring {
   ever_scanned:          boolean
+  /** Every run against the period, whatever triggered it. */
   checks_this_period:    number
+  /** Runs the SCHEDULE fired — the only ones that evidence continuous close.
+   *  Manual scans and post-sync passes are real checks but they are not the
+   *  watch working, and counting them together let the strip take credit for
+   *  work the user did by hand. */
+  unattended_checks?:    number
   checked_at?:           string | null   // finished_at of the latest run
   started_at?:           string | null
   ok?:                   boolean | null
