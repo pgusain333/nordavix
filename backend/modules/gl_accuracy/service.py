@@ -490,6 +490,34 @@ async def monitoring_status(db: AsyncSession, period_end: date) -> dict:
     }
 
 
+async def watch_findings(db: AsyncSession, period_end: date, limit: int = 8) -> list[dict]:
+    """What continuous close has caught in the month it watches.
+
+    Scoped to the WATCHED period — never the one in the picker. The rail used to
+    render whatever the selected period held, so on 20 August the continuous
+    close pane listed July's close findings and the watch appeared to have
+    caught things it had never looked at.
+
+    Ordered by first_seen_at: when Nordavix first saw the problem, which
+    survives the re-scan that replaces every open finding on each run.
+    created_at would claim the whole backlog arrived at the last scan and the
+    pane would read as noise. Rows predating 080 have no first_seen_at and sort
+    last on created_at rather than jumping to the top of a "recently" list.
+    """
+    rows = (await db.execute(
+        select(GlAccuracyFinding)
+        .where(GlAccuracyFinding.period_end == period_end)
+        .order_by(
+            # Postgres sorts NULLs FIRST on DESC — without this the rows that
+            # have no first_seen_at lead the list.
+            GlAccuracyFinding.first_seen_at.desc().nulls_last(),
+            GlAccuracyFinding.created_at.desc(),
+        )
+        .limit(limit)
+    )).scalars().all()
+    return [serialize_finding(f) for f in rows]
+
+
 async def list_findings(db: AsyncSession, period_end: date) -> dict:
     rows = (await db.execute(
         select(GlAccuracyFinding).where(GlAccuracyFinding.period_end == period_end)
@@ -512,6 +540,10 @@ async def list_findings(db: AsyncSession, period_end: date) -> dict:
         # different periods, and the payload keeps them apart so the UI can too.
         "monitoring": await monitoring_status(db, _current_period()),
         "monitoring_period": _current_period().isoformat(),
+        # …and so is what the watch has caught. `items` above is the selected
+        # period's; these are the watched month's, and the two lists are only
+        # ever the same list when the close happens to be on the current month.
+        "monitoring_recent": await watch_findings(db, _current_period()),
     }
 
 

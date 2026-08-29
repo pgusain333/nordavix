@@ -68,6 +68,11 @@ export interface GlFindingsResponse {
   medium:     number
   dollars:    string
   monitoring: GlMonitoring
+  /** What the WATCH has caught, in `monitoring_period` — newest first. Never
+   *  derive this from `items`: those belong to the period being closed, and
+   *  showing them under "Recently caught" credits continuous close with finds
+   *  from a month it never looked at. */
+  monitoring_recent: GlFinding[]
 }
 
 export interface GlScanSummary {

@@ -204,12 +204,17 @@ function ContinuousSettings() {
  *  three and read as an afterthought. Top to bottom: is it watching, when did
  *  it last look, what has it caught, and the schedule.
  */
-function ContinuousRail({ m, scanning, recent, reduce, onOpen, periodEnd, onCheckNow, checking }: {
-  m?: GlMonitoring; scanning: boolean; recent: GlFinding[]
-  reduce: boolean; onOpen: (id: string) => void
+function ContinuousRail({ m, scanning, recent, reduce, periodEnd, canReview, onChanged, onCheckNow, checking }: {
+  m?: GlMonitoring; scanning: boolean
+  /** The watched month's findings, straight from the server. NOT a slice of
+   *  the page's `items`, which belong to the period being closed. */
+  recent: GlFinding[]
+  reduce: boolean
   /** The CURRENT month. Everything in this rail is about the month happening
    *  now — never the period selected for the close. */
   periodEnd: string
+  canReview: boolean
+  onChanged: () => void
   /** Run the watch's own check, against the current month. Separate from Risk
    *  Radar's Scan, which runs against the month being closed. */
   onCheckNow: () => void
@@ -232,7 +237,8 @@ function ContinuousRail({ m, scanning, recent, reduce, onOpen, periodEnd, onChec
       <style>{"@keyframes ndvx-beat{0%,100%{transform:scale(1);opacity:.45}50%{transform:scale(2.1);opacity:0}}"}</style>
       <MonitoringHead m={m} scanning={scanning} enabled={enabled} reduce={reduce}
         periodEnd={periodEnd} onCheckNow={onCheckNow} checking={checking} />
-      <RecentlyCaught recent={recent} reduce={reduce} onOpen={onOpen} />
+      <RecentlyCaught recent={recent} reduce={reduce} periodEnd={periodEnd}
+        canReview={canReview} onChanged={onChanged} />
       <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
         <ContinuousSettings />
       </div>
@@ -401,61 +407,174 @@ function Stat({ label, value, strong }: { label: string; value: string; strong?:
   )
 }
 
-/** What the watch has turned up, newest first.
+/** What THE WATCH has turned up in the month it tracks, newest first.
+ *
+ *  These are the monitored period's findings — August's, while the close is on
+ *  July — and they are NOT in the list on the left. So the rail acts on them
+ *  itself: expanding a row here opens a compact review in place rather than
+ *  reaching for a card in the other pane that isn't there.
  *
  *  Ordered by first_seen_at — when Nordavix FIRST saw it, which survives the
  *  re-scan that replaces open findings on every run. created_at would claim
  *  everything arrived at the last scan and the whole pane would read as noise.
  */
-function RecentlyCaught({ recent, reduce, onOpen }: {
-  recent: GlFinding[]; reduce: boolean; onOpen: (id: string) => void
+function RecentlyCaught({ recent, reduce, periodEnd, canReview, onChanged }: {
+  recent: GlFinding[]; reduce: boolean
+  /** The watched month. Named in the copy so a row here is never read as a
+   *  finding from the close on the left. */
+  periodEnd: string
+  canReview: boolean
+  onChanged: () => void
 }) {
+  const [openId, setOpenId] = useState<string | null>(null)
   return (
     <div>
       <div className="px-4 pt-3 pb-1.5 flex items-center gap-2">
         <History size={13} strokeWidth={1.9} style={{ color: "var(--text-muted)" }} />
         <h2 className="text-[10px] font-bold uppercase tracking-wider"
-          style={{ color: "var(--text-muted)" }}>Recently caught</h2>
+          style={{ color: "var(--text-muted)" }}>
+          Caught in {shortMonth(periodEnd)}
+        </h2>
       </div>
 
       {recent.length === 0 ? (
         <p className="px-4 pb-3 text-[11.5px]" style={{ color: "var(--text-muted)" }}>
-          Nothing caught yet for this period.
+          Nothing caught in <span className="text-theme font-medium">{monthLabel(periodEnd)}</span> yet
+          — entries posted this month have come through clean.
         </p>
       ) : (
         <ul className="pb-1">
           <AnimatePresence initial={false}>
-            {recent.map((f, i) => {
-              const when = agoLabel(f.first_seen_at)
-              const dot = f.severity === "high" ? "var(--green)"
-                : f.severity === "low" ? "var(--text-muted)" : "#8a6326"
-              return (
-                <motion.li key={f.id} layout={!reduce}
-                  initial={reduce ? false : { opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={reduce ? undefined : { opacity: 0, height: 0 }}
-                  transition={{ duration: 0.18, delay: reduce ? 0 : Math.min(i, 5) * 0.02 }}>
-                  <button onClick={() => onOpen(f.id)}
-                    className="w-full flex items-start gap-2 px-4 py-1.5 text-left transition-colors hover:bg-[var(--surface-2)]">
-                    <span className="h-1.5 w-1.5 rounded-full shrink-0 mt-1.5"
-                      style={{ background: dot }} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[12px] text-theme leading-snug line-clamp-2">
-                        {f.title}
-                      </span>
-                      <span className="block text-[10.5px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                        {/* When Nordavix first saw it — the time-to-detection
-                            story, and the reason first_seen_at exists. */}
-                        {when ? `${when} · ` : ""}{f.vendor}
-                      </span>
-                    </span>
-                  </button>
-                </motion.li>
-              )
-            })}
+            {recent.map((f, i) => (
+              <motion.li key={f.id} layout={!reduce}
+                initial={reduce ? false : { opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={reduce ? undefined : { opacity: 0, height: 0 }}
+                transition={{ duration: 0.18, delay: reduce ? 0 : Math.min(i, 5) * 0.02 }}>
+                <CaughtRow f={f} open={openId === f.id} reduce={reduce} canReview={canReview}
+                  onToggle={() => setOpenId(openId === f.id ? null : f.id)}
+                  onChanged={onChanged} />
+              </motion.li>
+            ))}
           </AnimatePresence>
         </ul>
       )}
+    </div>
+  )
+}
+
+/** One catch, reviewable inside a 360px rail.
+ *
+ *  A trimmed FindingCard: the same accept / dismiss / acknowledge semantics,
+ *  without the JE preview and the graph panel, which need a column's width.
+ *  The mutations are keyed on the finding id, so they work regardless of which
+ *  period the page is showing. */
+function CaughtRow({ f, open, reduce, canReview, onToggle, onChanged }: {
+  f: GlFinding; open: boolean; reduce: boolean; canReview: boolean
+  onToggle: () => void; onChanged: () => void
+}) {
+  const qc = useQueryClient()
+  const isOpen = f.status === "open"
+  const isFlag = f.action_kind === "flag"   // review-only: acknowledge, not a JE
+  const when = agoLabel(f.first_seen_at)
+  const dot = f.severity === "high" ? "var(--green)"
+    : f.severity === "low" ? "var(--text-muted)" : "#8a6326"
+
+  const acceptMut = useMutation({
+    mutationFn: () => glAccuracyApi.accept(f.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["adjustments"] }); onChanged() },
+  })
+  const ackMut = useMutation({
+    mutationFn: () => glAccuracyApi.acknowledge(f.id), onSuccess: onChanged,
+  })
+  const dismissMut = useMutation({
+    mutationFn: () => glAccuracyApi.dismiss(f.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["memory", "account-context"] }); onChanged() },
+  })
+  const busy = acceptMut.isPending || ackMut.isPending || dismissMut.isPending
+
+  const resolved =
+    f.status === "in_adjustments" ? "In Adjustments"
+    : f.status === "dismissed" ? "Correct as booked"
+    : f.status === "acknowledged" ? "Reviewed" : null
+
+  return (
+    <div>
+      <button onClick={onToggle}
+        className="w-full flex items-start gap-2 px-4 py-1.5 text-left transition-colors hover:bg-[var(--surface-2)]">
+        <span className="h-1.5 w-1.5 rounded-full shrink-0 mt-1.5"
+          style={{ background: dot, opacity: isOpen ? 1 : 0.45 }} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-[12px] leading-snug line-clamp-2"
+            style={{ color: isOpen ? "var(--text)" : "var(--text-muted)" }}>
+            {f.title}
+          </span>
+          <span className="block text-[10.5px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            {/* When Nordavix first saw it — the time-to-detection story, and
+                the reason first_seen_at exists. */}
+            {when ? `${when} · ` : ""}{f.vendor}
+            {/* A handled catch still belongs in the record — the watch found
+                it — but must never read as something still waiting. */}
+            {resolved ? <> · <span style={{ color: "var(--green)" }}>{resolved}</span></> : null}
+          </span>
+        </span>
+        <ChevronDown size={13} strokeWidth={2} className="shrink-0 mt-1"
+          style={{ color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "none",
+                   transition: reduce ? "none" : "transform .15s" }} />
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={reduce ? false : { height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={reduce ? undefined : { height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }} style={{ overflow: "hidden" }}>
+            <div className="mx-4 mb-2 rounded-lg px-2.5 py-2 space-y-1.5"
+              style={{ background: "var(--surface-2)" }}>
+              <div className="text-[11px] text-theme">
+                {[f.txn_type, f.txn_number ? `#${f.txn_number}` : null,
+                  f.txn_date ? formatDate(f.txn_date) : null].filter(Boolean).join(" · ") || f.vendor}
+              </div>
+              {f.posted_account_id && (
+                <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  Booked to <span style={{ color: "#9b3d37" }}>{f.posted_account_name || f.posted_account_id}</span>
+                  {" · "}<span className="tabular-nums text-theme">{fmtUsd(f.amount)}</span>
+                </div>
+              )}
+              {f.detail && (
+                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{f.detail}</p>
+              )}
+
+              {isOpen ? (
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <button onClick={() => (isFlag ? ackMut : acceptMut).mutate()} disabled={busy}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold text-white disabled:opacity-50"
+                    style={{ background: "var(--green)" }}>
+                    {acceptMut.isPending || ackMut.isPending
+                      ? <Spinner className="h-3 w-3" /> : <Check size={11} strokeWidth={2.6} />}
+                    {isFlag ? "Mark reviewed" : "Accept → Adjustments"}
+                  </button>
+                  {canReview && (
+                    <button onClick={() => dismissMut.mutate()} disabled={busy}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold disabled:opacity-50"
+                      style={{ border: "1px solid var(--border-strong)", color: "var(--text-2)" }}>
+                      <ThumbsUp size={11} strokeWidth={2} /> This is right
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  {f.status === "in_adjustments"
+                    ? "Filed as a reclass — review and post it in Adjustments."
+                    : f.status === "dismissed"
+                      ? `${f.vendor} → ${f.posted_account_name || "this account"} is correct. I won't flag the pairing again.`
+                      : "Reviewed and handled."}
+                </p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -600,16 +719,11 @@ export function GlAccuracyPage() {
   const dollars = open.filter((f) => f.action_kind !== "flag").reduce((s, f) => s + Math.abs(Number(f.amount) || 0), 0)
   const shown = items.filter((f) => filter === "all" || (f.status === "open" && f.severity === filter))
 
-  // Declared after `items` on purpose: it reads it, and a const cannot be read
-  // above its own declaration — the build catches that, the browser would not
-  // until the page rendered.
-  // The eight most recently first-seen findings drive the "Recently caught"
-  // pane. first_seen_at, not created_at — the scan replaces open findings on
-  // every run, so created_at would say everything arrived at the last scan.
-  const recentlyCaught = [...items]
-    .filter((f) => f.first_seen_at)
-    .sort((a, b) => (b.first_seen_at ?? "").localeCompare(a.first_seen_at ?? ""))
-    .slice(0, 8)
+  // "Recently caught" comes from the SERVER, scoped to the watched month —
+  // never sliced out of `items`, which is the period being CLOSED. Deriving it
+  // here is what made the rail list July's close findings under a heading that
+  // says the watch is tracking August.
+  const recentlyCaught = data?.monitoring_recent ?? []
   // Trophy only right after an explicit scan of this period returned nothing.
   const justScannedClean = scanned?.period === activePeriod && open.length === 0
 
@@ -853,8 +967,9 @@ export function GlAccuracyPage() {
 
       <aside className="w-full xl:w-[360px] xl:shrink-0 xl:sticky xl:top-5 space-y-3">
         <ContinuousRail m={data?.monitoring} scanning={false}
-          recent={recentlyCaught} reduce={reduce} onOpen={(id) => setOpenId(id)}
-          periodEnd={monitoringPeriod}
+          recent={recentlyCaught} reduce={reduce}
+          periodEnd={monitoringPeriod} canReview={canReview}
+          onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}
           onCheckNow={() => watchMut.mutate()} checking={watchMut.isPending} />
       </aside>
       </div>

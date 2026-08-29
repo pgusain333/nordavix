@@ -130,3 +130,105 @@ def test_only_a_completed_successful_scan_counts_as_having_checked(ok, finished,
 
 def test_a_failed_scan_is_not_silently_treated_as_clean():
     assert summarise(False, D0) != "checked"
+
+
+# ── The rail lists the WATCHED month, not the one in the picker ────────────
+#
+# "Recently caught" sits under a heading that says continuous close is tracking
+# the current month. It was being filled from the selected period's findings —
+# so on 20 August the pane listed JULY's close findings and credited the watch
+# with catches from a month it had never looked at. These call the real
+# `list_findings` through a recording stub so the assertion is about the query
+# the service actually issues, not a re-statement of the rule.
+
+from datetime import date  # noqa: E402
+from decimal import Decimal  # noqa: E402
+
+from models.gl_accuracy_finding import GlAccuracyFinding  # noqa: E402
+from modules.gl_accuracy import service  # noqa: E402
+
+SELECTED = date(2026, 7, 31)   # the close in progress — Risk Radar's month
+WATCHED = service._current_period()  # today's calendar month — the watch's
+
+
+def _finding(period_end: date, vendor: str) -> GlAccuracyFinding:
+    return GlAccuracyFinding(
+        period_end=period_end, finding_key=f"{vendor}:1", vendor=vendor,
+        amount=Decimal("100.00"), dominant_count=9, total_count=10, posted_count=1,
+        status="open", severity="high", kind="misclassification",
+        action_kind="reclass", confidence="high", first_seen_at=D0, created_at=D0,
+    )
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
+    def scalar_one(self):
+        return self._rows[0] if self._rows else 0
+
+
+class _RecordingDb:
+    """Answers every SELECT and remembers the period each one filtered on."""
+
+    def __init__(self):
+        self.finding_queries: list[tuple[date, bool]] = []   # (period, is_the_rails)
+
+    async def execute(self, stmt, **kw):
+        sql = str(stmt)
+        if "gl_accuracy_findings" not in sql:
+            return _Result([])                       # the scan-run lookups
+        # The rail's query is the limited one; the page's list is unbounded.
+        rails = "LIMIT" in sql.upper()
+        period = next(v for k, v in stmt.compile().params.items()
+                      if k.startswith("period_end"))
+        self.finding_queries.append((period, rails))
+        return _Result([_finding(period, "WATCH" if rails else "CLOSE")])
+
+
+async def test_the_rail_reads_the_watched_month_not_the_selected_period():
+    """THE BUG. Both lists come back in one payload; they must not be the same
+    list unless the close happens to be on the current month."""
+    db = _RecordingDb()
+    out = await service.list_findings(db, SELECTED)
+
+    assert out["monitoring_period"] == WATCHED.isoformat()
+    assert [f["period_end"] for f in out["monitoring_recent"]] == [WATCHED.isoformat()]
+    assert [f["period_end"] for f in out["items"]] == [SELECTED.isoformat()]
+
+
+async def test_the_two_lists_are_separate_queries_on_separate_periods():
+    db = _RecordingDb()
+    await service.list_findings(db, SELECTED)
+
+    by_source = dict((rails, period) for period, rails in db.finding_queries)
+    assert by_source[False] == SELECTED, "the page's list must follow the picker"
+    assert by_source[True] == WATCHED, "the rail's list must follow the watch"
+
+
+async def test_the_watch_list_is_capped():
+    """The rail has 360px. An uncapped list would push the schedule controls —
+    the way you turn the watch on — off the bottom of the card."""
+    db = _RecordingDb()
+    await service.list_findings(db, SELECTED)
+    assert any(rails for _, rails in db.finding_queries), "no limited query issued"
+
+
+async def test_the_rail_is_unaffected_by_which_period_is_selected():
+    """Changing the close period in the picker changes the left column only."""
+    seen = set()
+    for selected in (date(2026, 1, 31), date(2026, 4, 30), SELECTED):
+        db = _RecordingDb()
+        out = await service.list_findings(db, selected)
+        seen.add((out["monitoring_period"],
+                  tuple(f["period_end"] for f in out["monitoring_recent"])))
+    assert len(seen) == 1, f"the watch's month moved with the picker: {seen}"
