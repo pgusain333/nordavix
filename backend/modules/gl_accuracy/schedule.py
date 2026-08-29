@@ -47,6 +47,45 @@ def local_date_of(moment: datetime | None, timezone: str | None) -> date | None:
     return moment.astimezone(resolve_zone(timezone)).date()
 
 
+def month_end_of(d: date) -> date:
+    """Last day of the month `d` falls in."""
+    from calendar import monthrange
+    return date(d.year, d.month, monthrange(d.year, d.month)[1])
+
+
+def watch_periods(
+    *,
+    books_start: date | None,
+    closed: set[date],
+    today: date,
+    elapsed_focus: date | None,
+) -> list[date]:
+    """The months continuous close watches, newest first.
+
+    THE CURRENT, IN-PROGRESS MONTH IS THE POINT. Autopilot's focus_period_for
+    returns the oldest non-closed FULLY-ELAPSED month, which is right for a
+    monthly close — that close is about a month that is over — and wrong here.
+    Reusing it meant an entry made today, dated today, was never looked at: the
+    watch only ever saw a finished month, which is precisely what the daily
+    check exists to stop.
+
+    The prior unclosed month comes too, because late entries land there while it
+    is still open, and it is the month someone is actively closing.
+
+    Nothing before books_start, nothing already closed, and never more than two
+    periods — a daily cadence over two months is a bounded amount of QuickBooks.
+    """
+    out: list[date] = []
+    if books_start is None:
+        return out
+    current = month_end_of(today)
+    if current >= month_end_of(books_start) and current not in closed:
+        out.append(current)
+    if elapsed_focus is not None and elapsed_focus not in out and elapsed_focus not in closed:
+        out.append(elapsed_focus)
+    return out
+
+
 def is_due(
     *,
     timezone: str | None,

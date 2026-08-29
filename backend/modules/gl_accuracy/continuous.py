@@ -30,7 +30,7 @@ from models.closed_period import ClosedPeriod
 from models.gl_scan_run import GlScanRun
 from models.qbo_connection import QboConnection
 from models.tenant import Tenant
-from modules.gl_accuracy.schedule import is_due
+from modules.gl_accuracy.schedule import is_due, watch_periods
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +50,14 @@ async def _last_ok_scan_at(session, tenant_id: uuid.UUID) -> datetime | None:
     )).scalar_one_or_none()
 
 
-async def _open_period_for(session, tenant: Tenant, today: date) -> date | None:
-    """The month continuous close should watch: the oldest elapsed month that
-    is not closed. Same rule Autopilot focuses on, so the two agree about which
-    month is 'in flight'. None when there is nothing to watch."""
+async def _periods_to_watch(session, tenant: Tenant, today: date) -> list[date]:
+    """The months to check: the CURRENT, in-progress one and the prior unclosed one.
+
+    This used to borrow Autopilot's focus_period_for, which returns the oldest
+    non-closed FULLY-ELAPSED month. Right for a monthly close, wrong for a daily
+    watch — it meant an entry made today, dated today, was never looked at, and
+    the whole point of checking daily is that it is.
+    """
     from modules.autopilot.engine import focus_period_for
 
     closed = {
@@ -61,7 +65,12 @@ async def _open_period_for(session, tenant: Tenant, today: date) -> date | None:
             select(ClosedPeriod.period_end).where(ClosedPeriod.tenant_id == tenant.id)
         )).scalars().all()
     }
-    return focus_period_for(tenant, closed, today)
+    return watch_periods(
+        books_start=tenant.books_start_date,
+        closed=closed,
+        today=today,
+        elapsed_focus=focus_period_for(tenant, closed, today),
+    )
 
 
 async def run_continuous_sweep(now_utc: datetime | None = None) -> dict:
@@ -103,8 +112,8 @@ async def run_continuous_sweep(now_utc: datetime | None = None) -> dict:
                     continue
 
                 # Nothing continuous to watch in a fully closed set of books.
-                pe = await _open_period_for(session, tenant, now.date())
-                if pe is None:
+                periods = await _periods_to_watch(session, tenant, now.date())
+                if not periods:
                     skipped += 1
                     continue
 
@@ -117,13 +126,17 @@ async def run_continuous_sweep(now_utc: datetime | None = None) -> dict:
                     continue
 
                 from modules.gl_accuracy.service import scan_period
-                summary = await scan_period(
-                    conn, session, tenant_id=tenant.id, period_end=pe,
-                    trigger="scheduled",
-                )
-                await session.commit()
+                # Newest first, so the open month is scanned before the one
+                # being closed — if a tick is cut short, the current month is
+                # the one that mattered most.
+                for pe in periods:
+                    summary = await scan_period(
+                        conn, session, tenant_id=tenant.id, period_end=pe,
+                        trigger="scheduled",
+                    )
+                    await session.commit()
+                    await _notify_if_new(session, tenant, pe, summary)
                 checked.append(str(tenant.id))
-                await _notify_if_new(session, tenant, pe, summary)
         except Exception as exc:  # noqa: BLE001 — one tenant must not stop the sweep
             logger.exception("continuous sweep failed for tenant %s", tenant.id)
             failed.append({"tenant_id": str(tenant.id), "error": str(exc)[:300]})

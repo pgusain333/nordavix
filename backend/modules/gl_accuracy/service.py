@@ -64,6 +64,35 @@ def _dec(v) -> Decimal:
         return Decimal(0)
 
 
+async def _accounts_snapshot_period(
+    db: AsyncSession, tenant_id: uuid.UUID, period_end: date
+) -> date | None:
+    """Which period's snapshot describes the chart of accounts to scan.
+
+    Prefers `period_end` itself. The CURRENT, in-progress month has no snapshot —
+    nobody syncs a month end that hasn't happened yet — so it falls back to the
+    most recent EARLIER period that does. Without this, scanning the open month
+    finds zero accounts and the scan completes having looked at nothing, which
+    is the worst kind of failure: it reports success.
+
+    Only the account LIST falls back. Balances do not: a chart of accounts
+    barely moves month to month, but last month's balances are not this month's,
+    and the structural detectors (suspense, contra-balance) reading stale
+    balances would invent findings. Those simply don't run on a period with no
+    snapshot of its own.
+    """
+    return (await db.execute(
+        select(GlBalanceSnapshot.period_end)
+        .where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.period_end <= period_end,
+        )
+        .order_by(GlBalanceSnapshot.period_end.desc())
+        .limit(1),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+
+
 async def _expense_account_ids(db: AsyncSession, tenant_id: uuid.UUID, period_end: date) -> list[str]:
     rows = (await db.execute(
         select(GlBalanceSnapshot.qbo_account_id, GlBalanceSnapshot.account_type).where(
@@ -260,8 +289,17 @@ async def scan_period(
     # Radar reaches the balance sheet too. The vendor/transaction detectors still
     # run on the expense + COGS stream, where coding decisions live. We run even
     # when there are no expense accounts (the snapshots can still carry findings).
+    # Balances for THIS period only — the structural detectors compare against
+    # them, so a stale set would fabricate findings. Empty for the open month,
+    # which correctly stands those detectors down.
     snapshots = await _all_snapshots(db, tenant_id, period_end)
-    acct_ids = await _expense_account_ids(db, tenant_id, period_end)
+    # The account list may come from an earlier snapshot: the open month has
+    # none of its own, and scanning nothing is worse than scanning last month's
+    # chart of accounts.
+    accounts_pe = await _accounts_snapshot_period(db, tenant_id, period_end)
+    acct_ids = (
+        await _expense_account_ids(db, tenant_id, accounts_pe) if accounts_pe else []
+    )
     current: list[dict] = []
     history: list[dict] = []
     if acct_ids:

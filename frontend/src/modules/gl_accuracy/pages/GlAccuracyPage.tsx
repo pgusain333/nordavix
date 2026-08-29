@@ -14,7 +14,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { useNavigate } from "react-router-dom"
 import {
   ShieldCheck, Sparkles, Brain, ArrowRight, ArrowUpRight, ArrowDown, ArrowLeft,
-  Check, ThumbsUp, ChevronDown, ListChecks, ScanSearch, Settings,
+  Check, ThumbsUp, ChevronDown, ListChecks, ScanSearch, Settings, History,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
@@ -192,6 +192,113 @@ function ContinuousSettings() {
             </p>
           ) : null}
         </div>
+      )}
+    </div>
+  )
+}
+
+/** The continuous-close band — two panes on a wide screen.
+ *
+ *  LEFT is what was caught and when. RIGHT is the watch itself: whether it is
+ *  running, when it last looked, and the schedule. They answer two different
+ *  questions — "did it find anything?" and "is it actually watching?" — and a
+ *  single strip made you read one to get at the other.
+ *
+ *  The evidence pane is on the left because that is where the eye lands first
+ *  and it is the half a client cares about; the controls sit beside it rather
+ *  than above, so turning the watch on and seeing what it caught is one view.
+ *
+ *  Stacks below xl. Two 400px columns in a phone's width is not a split view,
+ *  it is two unreadable ones.
+ */
+function ContinuousBand({ m, scanning, recent, reduce, isWide, onOpen }: {
+  m?: GlMonitoring; scanning: boolean; recent: GlFinding[]
+  reduce: boolean; isWide: boolean; onOpen: (id: string) => void
+}) {
+  return (
+    <motion.div layout={!reduce}
+      transition={{ type: "spring", stiffness: 340, damping: 32 }}
+      className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4 mb-4 items-start">
+      <RecentlyCaught recent={recent} reduce={reduce} onOpen={onOpen} isWide={isWide} />
+      <div className="space-y-2">
+        <MonitoringStrip m={m} scanning={scanning} />
+        <ContinuousSettings />
+      </div>
+    </motion.div>
+  )
+}
+
+/** What the watch has turned up, newest first.
+ *
+ *  Ordered by first_seen_at — when Nordavix FIRST saw it, which survives the
+ *  re-scan that replaces open findings every run. created_at would claim
+ *  everything arrived at the last scan and the whole pane would read as noise.
+ */
+function RecentlyCaught({ recent, reduce, onOpen, isWide }: {
+  recent: GlFinding[]; reduce: boolean; onOpen: (id: string) => void; isWide: boolean
+}) {
+  return (
+    <div className="rounded-xl overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)",
+               boxShadow: "var(--card-shadow)" }}>
+      <div className="px-4 py-2.5 flex items-center gap-2"
+        style={{ borderBottom: "1px solid var(--border)" }}>
+        <History size={14} strokeWidth={1.9} style={{ color: "var(--text-muted)" }} />
+        <h2 className="text-[12px] font-semibold text-theme">Recently caught</h2>
+        {recent.length > 0 && (
+          <span className="ml-auto text-[11px]" style={{ color: "var(--text-muted)" }}>
+            newest first
+          </span>
+        )}
+      </div>
+
+      {recent.length === 0 ? (
+        <div className="px-4 py-6 flex items-center justify-center gap-2 text-[12.5px]"
+          style={{ color: "var(--text-muted)" }}>
+          <ShieldCheck size={15} strokeWidth={1.9} style={{ color: "var(--green)" }} />
+          Nothing caught yet for this period.
+        </div>
+      ) : (
+        <ul>
+          <AnimatePresence initial={false}>
+            {recent.map((f, i) => {
+              const when = agoLabel(f.first_seen_at)
+              const dot = f.severity === "high" ? "var(--green)"
+                : f.severity === "low" ? "var(--text-muted)" : "#8a6326"
+              return (
+                <motion.li key={f.id} layout={!reduce}
+                  initial={reduce ? false : { opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={reduce ? undefined : { opacity: 0, height: 0 }}
+                  transition={{ duration: 0.18, delay: reduce ? 0 : Math.min(i, 5) * 0.02 }}
+                  style={{ borderTop: i > 0 ? "1px solid var(--border)" : "none" }}>
+                  <button onClick={() => onOpen(f.id)}
+                    className="w-full flex items-center gap-2.5 px-4 py-2 text-left transition-colors hover:bg-[var(--surface-2)]">
+                    <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: dot }} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[12.5px] text-theme truncate">{f.title}</span>
+                      <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
+                        {f.vendor}{f.txn_date ? ` · ${formatDate(f.txn_date)}` : ""}
+                      </span>
+                    </span>
+                    {when && (
+                      <span className="text-[10.5px] whitespace-nowrap shrink-0"
+                        style={{ color: "var(--text-muted)" }}>
+                        {/* When Nordavix first saw it — the time-to-detection
+                            story, and the reason first_seen_at exists. */}
+                        {when}
+                      </span>
+                    )}
+                    {isWide && (
+                      <ArrowRight size={13} strokeWidth={2} className="shrink-0"
+                        style={{ color: "var(--text-muted)" }} />
+                    )}
+                  </button>
+                </motion.li>
+              )
+            })}
+          </AnimatePresence>
+        </ul>
       )}
     </div>
   )
@@ -437,8 +544,13 @@ export function GlAccuracyPage() {
   // Declared after `items` on purpose: it reads it, and a const cannot be read
   // above its own declaration — the build catches that, the browser would not
   // until the page rendered.
-  const splitOpen = isWide && !!openId
-  const selectedFinding = splitOpen ? (items.find((f) => f.id === openId) ?? null) : null
+  // The eight most recently first-seen findings drive the "Recently caught"
+  // pane. first_seen_at, not created_at — the scan replaces open findings on
+  // every run, so created_at would say everything arrived at the last scan.
+  const recentlyCaught = [...items]
+    .filter((f) => f.first_seen_at)
+    .sort((a, b) => (b.first_seen_at ?? "").localeCompare(a.first_seen_at ?? ""))
+    .slice(0, 8)
   // Trophy only right after an explicit scan of this period returned nothing.
   const justScannedClean = scanned?.period === activePeriod && open.length === 0
 
@@ -504,8 +616,9 @@ export function GlAccuracyPage() {
         </div>
       )}
 
-      <MonitoringStrip m={data?.monitoring} scanning={scanMut.isPending} />
-      <ContinuousSettings />
+      <ContinuousBand m={data?.monitoring} scanning={scanMut.isPending}
+        recent={recentlyCaught} reduce={reduce} isWide={isWide}
+        onOpen={(id) => setOpenId(id)} />
 
       {scanMut.isPending ? (
         <ScanningCard />
@@ -637,50 +750,24 @@ export function GlAccuracyPage() {
               </div>
             )
           ) : (
-            /* Split review. On a wide screen the list stays put on the left and
-               the finding under review opens beside it, so the queue never
-               reflows under the cursor and you keep your place in it — the
-               thing inline accordions get wrong. Below xl there is no room for
-               two columns, so it stays the inline list it always was. */
-            <div className="flex flex-col xl:flex-row gap-4 items-start">
-              <motion.div layout={!reduce}
-                transition={{ type: "spring", stiffness: 380, damping: 34 }}
-                className={`space-y-2 w-full min-w-0 ${
-                  splitOpen ? "xl:w-[400px] xl:shrink-0" : "xl:flex-1"
-                }`}>
-                <AnimatePresence initial={false}>
-                  {shown.map((f) => (
-                    <motion.div key={f.id} layout={!reduce}
-                      initial={reduce ? false : { opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={reduce ? undefined : { opacity: 0, x: -12, height: 0, marginBottom: 0 }}
-                      transition={{ duration: 0.18 }}>
-                      <FindingCard f={f} canReview={canReview} reduce={reduce}
-                        open={!splitOpen && openId === f.id}
-                        active={splitOpen && openId === f.id}
-                        selectable checked={selected.has(f.id)} onCheck={() => toggleSelect(f.id)}
-                        onToggle={() => setOpenId(openId === f.id ? null : f.id)}
-                        onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}
-                        onGoAdjustments={() => navigate("/app/adjustments")} />
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-              </motion.div>
-
-              <AnimatePresence initial={false} mode="wait">
-                {splitOpen && selectedFinding && (
-                  <motion.div key={selectedFinding.id}
-                    initial={reduce ? false : { opacity: 0, x: 16 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={reduce ? undefined : { opacity: 0, x: 16 }}
-                    transition={{ duration: 0.2, ease: "easeOut" }}
-                    className="hidden xl:block flex-1 min-w-0 sticky top-4">
-                    <FindingCard f={selectedFinding} open canReview={canReview} reduce={reduce}
-                      onToggle={() => setOpenId(null)}
+            /* The findings list, with rows springing in and leaving to the
+               left so accepting one reads as the item departing rather than
+               the list snapping shut. */
+            <div className="space-y-2">
+              <AnimatePresence initial={false}>
+                {shown.map((f) => (
+                  <motion.div key={f.id} layout={!reduce}
+                    initial={reduce ? false : { opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={reduce ? undefined : { opacity: 0, x: -12, height: 0, marginBottom: 0 }}
+                    transition={{ duration: 0.18 }}>
+                    <FindingCard f={f} open={openId === f.id} canReview={canReview} reduce={reduce}
+                      selectable checked={selected.has(f.id)} onCheck={() => toggleSelect(f.id)}
+                      onToggle={() => setOpenId(openId === f.id ? null : f.id)}
                       onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}
                       onGoAdjustments={() => navigate("/app/adjustments")} />
                   </motion.div>
-                )}
+                ))}
               </AnimatePresence>
             </div>
           )}
