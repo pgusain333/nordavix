@@ -197,69 +197,151 @@ function ContinuousSettings() {
   )
 }
 
-/** The continuous-close band — two panes on a wide screen.
+/** The continuous-close rail.
  *
- *  LEFT is what was caught and when. RIGHT is the watch itself: whether it is
- *  running, when it last looked, and the schedule. They answer two different
- *  questions — "did it find anything?" and "is it actually watching?" — and a
- *  single strip made you read one to get at the other.
- *
- *  The evidence pane is on the left because that is where the eye lands first
- *  and it is the half a client cares about; the controls sit beside it rather
- *  than above, so turning the watch on and seeing what it caught is one view.
- *
- *  Stacks below xl. Two 400px columns in a phone's width is not a split view,
- *  it is two unreadable ones.
+ *  One card, stacked, laid out for 360px rather than a horizontal strip
+ *  squeezed into it — the previous version wrapped its own status line onto
+ *  three and read as an afterthought. Top to bottom: is it watching, when did
+ *  it last look, what has it caught, and the schedule.
  */
-function ContinuousBand({ m, scanning, recent, reduce, isWide, onOpen }: {
+function ContinuousRail({ m, scanning, recent, reduce, onOpen }: {
   m?: GlMonitoring; scanning: boolean; recent: GlFinding[]
-  reduce: boolean; isWide: boolean; onOpen: (id: string) => void
+  reduce: boolean; onOpen: (id: string) => void
 }) {
   return (
     <motion.div layout={!reduce}
       transition={{ type: "spring", stiffness: 340, damping: 32 }}
-      className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4 mb-4 items-start">
-      <RecentlyCaught recent={recent} reduce={reduce} onOpen={onOpen} isWide={isWide} />
-      <div className="space-y-2">
-        <MonitoringStrip m={m} scanning={scanning} />
+      className="rounded-xl overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)",
+               boxShadow: "var(--card-shadow)" }}>
+      <MonitoringHead m={m} scanning={scanning} />
+      <RecentlyCaught recent={recent} reduce={reduce} onOpen={onOpen} />
+      <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
         <ContinuousSettings />
       </div>
     </motion.div>
   )
 }
 
-/** What the watch has turned up, newest first.
+/** Whether the books are being watched, and the proof.
  *
- *  Ordered by first_seen_at — when Nordavix FIRST saw it, which survives the
- *  re-scan that replaces open findings every run. created_at would claim
- *  everything arrived at the last scan and the whole pane would read as noise.
+ *  The honest form of "real-time monitoring": a clock the reader can check
+ *  beats an adjective they have to trust, and it survives a partner asking how
+ *  it works. Shown in every state, including the clean one — "we looked and
+ *  nothing is wrong" only reassures if something says it.
+ *
+ *  A scan that crashed or is still running NEVER reads as a clean bill of
+ *  health. Findings mean nothing until the check has finished.
  */
-function RecentlyCaught({ recent, reduce, onOpen, isWide }: {
-  recent: GlFinding[]; reduce: boolean; onOpen: (id: string) => void; isWide: boolean
-}) {
+function MonitoringHead({ m, scanning }: { m?: GlMonitoring; scanning: boolean }) {
+  // Re-render on a timer so "12 minutes ago" stays true between refetches. A
+  // stale clock is worse than no clock.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (!m || !m.ever_scanned) {
+    return (
+      <div className="px-4 py-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-2 mb-1">
+          <ScanSearch size={14} strokeWidth={1.9} style={{ color: "var(--text-muted)" }} />
+          <span className="text-[12.5px] font-semibold text-theme">Continuous close</span>
+        </div>
+        <p className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+          Not watching yet. Turn it on below and Nordavix checks these books
+          every day.
+        </p>
+      </div>
+    )
+  }
+
+  const inFlight = scanning || (m.ok == null && !m.checked_at)
+  const failed = m.ok === false
+  const ago = agoLabel(m.checked_at)
+  const dotColor = failed ? "var(--warn)" : "var(--green)"
+
   return (
-    <div className="rounded-xl overflow-hidden"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)",
-               boxShadow: "var(--card-shadow)" }}>
-      <div className="px-4 py-2.5 flex items-center gap-2"
-        style={{ borderBottom: "1px solid var(--border)" }}>
-        <History size={14} strokeWidth={1.9} style={{ color: "var(--text-muted)" }} />
-        <h2 className="text-[12px] font-semibold text-theme">Recently caught</h2>
-        {recent.length > 0 && (
-          <span className="ml-auto text-[11px]" style={{ color: "var(--text-muted)" }}>
-            newest first
+    <div className="px-4 py-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
+      <div className="flex items-center gap-2">
+        <span className="relative inline-flex h-2 w-2">
+          {inFlight && (
+            <span className="absolute inline-flex h-full w-full rounded-full animate-ping"
+              style={{ background: dotColor, opacity: 0.6 }} />
+          )}
+          <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: dotColor }} />
+        </span>
+        <span className="text-[12.5px] font-semibold text-theme">
+          {inFlight ? "Checking now" : failed ? "Last check didn't finish" : "Continuous close"}
+        </span>
+        {!!m.new_last_check && !inFlight && !failed && (
+          <span className="ml-auto inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+            style={{ background: "var(--green-subtle)", color: "var(--green)",
+                     border: "1px solid var(--green)" }}>
+            {m.new_last_check} new
           </span>
         )}
       </div>
 
-      {recent.length === 0 ? (
-        <div className="px-4 py-6 flex items-center justify-center gap-2 text-[12.5px]"
-          style={{ color: "var(--text-muted)" }}>
-          <ShieldCheck size={15} strokeWidth={1.9} style={{ color: "var(--green)" }} />
-          Nothing caught yet for this period.
-        </div>
+      {failed ? (
+        <p className="text-[11.5px] mt-1.5" style={{ color: "var(--warn)" }}>
+          {m.error || "The scan stopped before it finished — findings may be incomplete."}
+        </p>
+      ) : inFlight ? (
+        <p className="text-[11.5px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+          Reading this period's ledger…
+        </p>
       ) : (
-        <ul>
+        /* One fact per line. The rail has 360px, not a banner's width, and a
+           status that wraps mid-sentence reads as broken. */
+        <dl className="mt-2 space-y-1">
+          <Stat label="Last checked" value={ago ?? "—"} strong />
+          {!!m.transactions_reviewed && (
+            <Stat label="Transactions reviewed" value={m.transactions_reviewed.toLocaleString()} />
+          )}
+          {m.checks_this_period > 0 && (
+            <Stat label="Checks this period" value={String(m.checks_this_period)} />
+          )}
+        </dl>
+      )}
+    </div>
+  )
+}
+
+function Stat({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-[11.5px] truncate" style={{ color: "var(--text-muted)" }}>{label}</dt>
+      <dd className={`text-[11.5px] tabular-nums shrink-0 ${strong ? "font-semibold" : ""}`}
+        style={{ color: strong ? "var(--text)" : "var(--text-2)" }}>{value}</dd>
+    </div>
+  )
+}
+
+/** What the watch has turned up, newest first.
+ *
+ *  Ordered by first_seen_at — when Nordavix FIRST saw it, which survives the
+ *  re-scan that replaces open findings on every run. created_at would claim
+ *  everything arrived at the last scan and the whole pane would read as noise.
+ */
+function RecentlyCaught({ recent, reduce, onOpen }: {
+  recent: GlFinding[]; reduce: boolean; onOpen: (id: string) => void
+}) {
+  return (
+    <div>
+      <div className="px-4 pt-3 pb-1.5 flex items-center gap-2">
+        <History size={13} strokeWidth={1.9} style={{ color: "var(--text-muted)" }} />
+        <h2 className="text-[10px] font-bold uppercase tracking-wider"
+          style={{ color: "var(--text-muted)" }}>Recently caught</h2>
+      </div>
+
+      {recent.length === 0 ? (
+        <p className="px-4 pb-3 text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+          Nothing caught yet for this period.
+        </p>
+      ) : (
+        <ul className="pb-1">
           <AnimatePresence initial={false}>
             {recent.map((f, i) => {
               const when = agoLabel(f.first_seen_at)
@@ -270,29 +352,21 @@ function RecentlyCaught({ recent, reduce, onOpen, isWide }: {
                   initial={reduce ? false : { opacity: 0, y: -6 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={reduce ? undefined : { opacity: 0, height: 0 }}
-                  transition={{ duration: 0.18, delay: reduce ? 0 : Math.min(i, 5) * 0.02 }}
-                  style={{ borderTop: i > 0 ? "1px solid var(--border)" : "none" }}>
+                  transition={{ duration: 0.18, delay: reduce ? 0 : Math.min(i, 5) * 0.02 }}>
                   <button onClick={() => onOpen(f.id)}
-                    className="w-full flex items-center gap-2.5 px-4 py-2 text-left transition-colors hover:bg-[var(--surface-2)]">
-                    <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: dot }} />
+                    className="w-full flex items-start gap-2 px-4 py-1.5 text-left transition-colors hover:bg-[var(--surface-2)]">
+                    <span className="h-1.5 w-1.5 rounded-full shrink-0 mt-1.5"
+                      style={{ background: dot }} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[12.5px] text-theme truncate">{f.title}</span>
-                      <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
-                        {f.vendor}{f.txn_date ? ` · ${formatDate(f.txn_date)}` : ""}
+                      <span className="block text-[12px] text-theme leading-snug line-clamp-2">
+                        {f.title}
                       </span>
-                    </span>
-                    {when && (
-                      <span className="text-[10.5px] whitespace-nowrap shrink-0"
-                        style={{ color: "var(--text-muted)" }}>
+                      <span className="block text-[10.5px] mt-0.5" style={{ color: "var(--text-muted)" }}>
                         {/* When Nordavix first saw it — the time-to-detection
                             story, and the reason first_seen_at exists. */}
-                        {when}
+                        {when ? `${when} · ` : ""}{f.vendor}
                       </span>
-                    )}
-                    {isWide && (
-                      <ArrowRight size={13} strokeWidth={2} className="shrink-0"
-                        style={{ color: "var(--text-muted)" }} />
-                    )}
+                    </span>
                   </button>
                 </motion.li>
               )
@@ -319,113 +393,6 @@ function agoLabel(iso?: string | null): string | null {
   if (hrs < 24) return `${hrs} hours ago`
   const days = Math.round(hrs / 24)
   return days === 1 ? "yesterday" : `${days} days ago`
-}
-
-/** Proof the books are being watched.
- *
- *  This is the honest form of "real-time monitoring": a clock the reader can
- *  check beats an adjective they have to trust, and it survives a partner
- *  asking how it works. It renders in every state — including the clean one,
- *  because "we looked and nothing is wrong" is the whole reassurance.
- *
- *  A scan that crashed or is still running NEVER reads as a clean bill of
- *  health. The absence of findings only means something once the check
- *  finished. */
-function MonitoringStrip({ m, scanning }: { m?: GlMonitoring; scanning: boolean }) {
-  // Re-render on a timer so "12 minutes ago" stays true between refetches —
-  // a stale clock is worse than no clock.
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 30_000)
-    return () => clearInterval(id)
-  }, [])
-
-  if (!m || !m.ever_scanned) {
-    return (
-      <div className="rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2.5"
-        style={{ background: "var(--surface-2)", border: "1px dashed var(--border-strong)" }}>
-        <ScanSearch size={14} strokeWidth={1.9} style={{ color: "var(--text-muted)" }} />
-        <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-          Not checked yet — run a scan and Nordavix starts tracking this period.
-        </span>
-      </div>
-    )
-  }
-
-  const inFlight = scanning || (m.ok == null && !m.checked_at)
-  const failed   = m.ok === false
-  const ago      = agoLabel(m.checked_at)
-
-  const tone = failed
-    ? { dot: "var(--warn)", bg: "var(--warn-subtle)", border: "var(--warn-border)" }
-    : { dot: "var(--green)", bg: "var(--green-subtle)", border: "var(--green)" }
-
-  return (
-    <div className="rounded-xl px-4 py-2.5 mb-4 flex items-center gap-3 flex-wrap"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)",
-               boxShadow: "var(--card-shadow)" }}>
-      <span className="inline-flex items-center gap-2 shrink-0">
-        <span className="relative inline-flex h-2 w-2">
-          {inFlight && (
-            <span className="absolute inline-flex h-full w-full rounded-full animate-ping"
-              style={{ background: tone.dot, opacity: 0.6 }} />
-          )}
-          <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: tone.dot }} />
-        </span>
-        <span className="text-[12px] font-semibold text-theme">
-          {inFlight ? "Checking now" : failed ? "Last check didn't finish" : "Continuous close"}
-        </span>
-      </span>
-
-      {!inFlight && !failed && (
-        <>
-          <span className="text-[12px]" style={{ color: "var(--text-2)" }}>
-            Checked <strong className="text-theme">{ago ?? "—"}</strong>
-          </span>
-          {!!m.transactions_reviewed && (
-            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-              · {m.transactions_reviewed.toLocaleString()} transactions reviewed
-            </span>
-          )}
-          {m.checks_this_period > 1 && (
-            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-              · {m.checks_this_period} checks this period
-            </span>
-          )}
-          {!!m.new_last_check && (
-            <span className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide"
-              style={{ background: tone.bg, color: tone.dot, border: `1px solid ${tone.border}` }}>
-              {m.new_last_check} new
-            </span>
-          )}
-        </>
-      )}
-
-      {failed && (
-        <span className="text-[12px]" style={{ color: "var(--warn)" }}>
-          {m.error || "The scan stopped before it finished — findings below may be incomplete."}
-        </span>
-      )}
-    </div>
-  )
-}
-
-/** SSR-safe matchMedia. Returns the current value and re-renders on change, so
- *  dragging a window across the breakpoint moves the layout with it. */
-function useMatchMedia(query: string): boolean {
-  const [matches, setMatches] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false
-    return window.matchMedia(query).matches
-  })
-  useEffect(() => {
-    if (typeof window === "undefined") return
-    const mql = window.matchMedia(query)
-    const on = () => setMatches(mql.matches)
-    on()
-    mql.addEventListener("change", on)
-    return () => mql.removeEventListener("change", on)
-  }, [query])
-  return matches
 }
 
 function fmtUsd(s: string | number | null | undefined): string {
@@ -501,10 +468,6 @@ export function GlAccuracyPage() {
   const [filter, setFilter] = useState<"all" | "high" | "medium">("all")
   const [openId, setOpenId] = useState<string | null>(null)
 
-  // Two columns only where there is room for them. Below xl the page keeps the
-  // inline list it always had, so `open` and `active` are never both true and a
-  // finding is never rendered expanded twice.
-  const isWide = useMatchMedia("(min-width: 1280px)")
   // C3c — the reviewer's pre-close sweep: multi-select for bulk-accept and a
   // guided one-at-a-time walk. Accept-only by design; dismiss stays single.
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -616,9 +579,17 @@ export function GlAccuracyPage() {
         </div>
       )}
 
-      <ContinuousBand m={data?.monitoring} scanning={scanMut.isPending}
-        recent={recentlyCaught} reduce={reduce} isWide={isWide}
-        onOpen={(id) => setOpenId(id)} />
+      {/* Page split. LEFT is this month's GL accuracy review — the working
+          surface, and it gets the room. RIGHT is the continuous-close rail:
+          is it watching, when did it last look, what has it caught. Two
+          questions that belong side by side and not stacked, because the
+          answer to the second is what makes you trust the first.
+
+          The rail sticks while the findings list scrolls, so the live clock
+          stays on screen through a long review. Below xl it drops underneath
+          — a 360px rail beside a findings list needs a desk, not a phone. */}
+      <div className="flex flex-col xl:flex-row gap-5 items-start">
+      <div className="flex-1 min-w-0 w-full">
 
       {scanMut.isPending ? (
         <ScanningCard />
@@ -773,6 +744,14 @@ export function GlAccuracyPage() {
           )}
         </>
       )}
+
+      </div>
+
+      <aside className="w-full xl:w-[360px] xl:shrink-0 xl:sticky xl:top-5 space-y-3">
+        <ContinuousRail m={data?.monitoring} scanning={scanMut.isPending}
+          recent={recentlyCaught} reduce={reduce} onOpen={(id) => setOpenId(id)} />
+      </aside>
+      </div>
     </Shell>
   )
 }
@@ -1032,9 +1011,14 @@ function FirstRun({ onRun, busy, hasPeriod }: { onRun: () => void; busy: boolean
 // ── Shell / Card ───────────────────────────────────────────────────────────
 
 function Shell({ children }: { children: React.ReactNode }) {
+  // 880px was right for one reading column and is not enough for a column plus
+  // a rail — it left the rail wrapping its own status line onto three. The page
+  // has two things to show at once now, so it takes the width to show them.
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ background: "var(--bg)" }}>
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-[880px] w-full mx-auto">{children}</div>
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-[880px] xl:max-w-[1420px] w-full mx-auto">
+        {children}
+      </div>
     </div>
   )
 }
