@@ -126,6 +126,28 @@ class _PLRow:
     balance: Decimal
 
 
+def can_derive_period(
+    *, period_start: date, beg_date: date | None, period_end: date,
+) -> bool:
+    """Can this range be built from Nordavix's own snapshots?
+
+    Snapshot P&L balances are year-to-date, so a mid-year range is
+    `YTD(end) − YTD(start − 1 day)` and needs a beginning snapshot inside the
+    SAME fiscal year — December's carries last year's totals and subtracting it
+    would be arithmetic across a P&L reset.
+
+    A range starting 1 January needs none: year-to-date already IS the period.
+
+    False means the caller must fall back to a live ProfitAndLoss rather than
+    print a year-to-date figure under a range heading. Pure, so the rule is
+    tested directly instead of through a reimplementation of it — a test that
+    restates the logic passes happily while the real code is broken.
+    """
+    same_year = beg_date is not None and beg_date.year == period_end.year
+    is_jan1 = period_start.month == 1 and period_start.day == 1
+    return is_jan1 or same_year
+
+
 def _period_pl_rows(
     end_rows: list[GlBalanceSnapshot],
     beg_rows: list[GlBalanceSnapshot] | None,
@@ -477,13 +499,26 @@ async def build_income_statement(
         beg_rows, beg_date = await load_snapshot_on_or_before(
             db, tenant_id, period_start - timedelta(days=1))
         same_year = beg_date is not None and beg_date.year == period_end.year
-        is_jan1 = period_start.month == 1 and period_start.day == 1
-        if not is_jan1 and not same_year:
+        if not can_derive_period(
+            period_start=period_start, beg_date=beg_date, period_end=period_end,
+        ):
+            # REFUSE. Snapshot P&L balances are year-to-date, so a mid-year range
+            # is end − beginning; with no beginning there is nothing to subtract
+            # and this used to pass the YTD figure straight through. The number
+            # then sat under a "1–31 March" heading reading Jan-to-March, with
+            # the explanation as a note at the foot of the statement that nobody
+            # reads. A wrong figure with a footnote is still a wrong figure.
+            #
+            # Returning no rows hands the caller the decision — it falls through
+            # to the live ProfitAndLoss for the exact range, the same way cash
+            # flow already does when it has no beginning balances.
             notes.append(
-                "No snapshot before the start date — income-statement figures are "
-                "year-to-date through the end date, not the exact range. Sync the "
-                "month before the range start for exact period figures."
+                "No synced snapshot before the start date, so this range can't be "
+                "derived from Nordavix's own data — the figures below come "
+                "straight from QuickBooks instead. Sync the month before the "
+                "range start to build it from the synced snapshots."
             )
+            return [], notes
         cur = _period_pl_rows(cur, beg_rows, same_year)
         if prior:
             cstart = comparative_start or date(comparative_end.year, 1, 1)

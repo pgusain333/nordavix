@@ -608,9 +608,15 @@ async def _build_statement(
                 comparative_end=prior_pe if comparative else None,
                 comparative_start=prior_ps)
 
-        # Cash flow with no beginning snapshot → fall through to the QBO
-        # block below (note carried). All other cases return here.
-        if not (statement_kind == "cash_flow" and not rows_raw):
+        # No rows from the snapshot path → fall through to the live QBO block
+        # below, carrying the explanatory note. Cash flow has always done this
+        # when it has no beginning balances; the income statement now does the
+        # same rather than printing a year-to-date figure under a range heading.
+        # The balance sheet is point-in-time and has no equivalent gap.
+        _snapshot_path_gave_up = (
+            statement_kind in ("cash_flow", "income_statement") and not rows_raw
+        )
+        if not _snapshot_path_gave_up:
             notes.extend(internal_notes)
             # Normalize internal dict rows to FinancialRow, applying the same
             # GAAP label translator the QBO path uses for consistency.
@@ -670,6 +676,12 @@ async def _build_statement(
                             statement_kind, prior_pe)
             notes.append("Comparative period could not be loaded.")
 
+    # Say which basis this actually is. A statement that fell back from the
+    # synced snapshots to a live pull is a different document — reproducible
+    # versus current — and the reader has to be able to tell without reading a
+    # footnote. `notes` is non-empty here only when the snapshot path gave up.
+    live_subtitle = subtitle + " · Source: QuickBooks (live)"
+
     # comparative_label was computed once above and is shared by both sources.
     merged = _merge_periods(cur_rows, prior_rows)
     closed = await _is_period_closed(db, pe)
@@ -684,7 +696,7 @@ async def _build_statement(
     return StatementOut(
         statement=statement_kind,
         title=title,
-        subtitle=subtitle,
+        subtitle=live_subtitle,
         company=company,
         period_label=period_label,
         comparative_label=comparative_label,
