@@ -228,86 +228,10 @@ function ContinuousRail({ m, scanning, recent, reduce, onOpen, periodEnd }: {
       <MonitoringHead m={m} scanning={scanning} enabled={enabled} reduce={reduce}
         periodEnd={periodEnd} />
       <RecentlyCaught recent={recent} reduce={reduce} onOpen={onOpen} />
-      <WhatsChecked m={m} />
       <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
         <ContinuousSettings />
       </div>
     </motion.div>
-  )
-}
-
-/** What a check actually covers.
- *
- *  "Checked 12 minutes ago" is only reassuring if you know what was checked.
- *  Without this the user is asked to trust a green dot; with it they can see
- *  the period, the ledger volume, the account count and the eight things
- *  Nordavix looks for — and judge whether that is worth anything.
- *
- *  Collapsed by default: it is read once, on the day someone asks "what does
- *  this actually do", and then never again.
- */
-function WhatsChecked({ m }: { m?: GlMonitoring }) {
-  const [open, setOpen] = useState(false)
-  const checks = m?.checks ?? []
-  if (!checks.length) return null
-  return (
-    <div style={{ borderTop: "1px solid var(--border)" }}>
-      <button onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-4 py-2.5 text-left transition-colors hover:bg-[var(--surface-2)]">
-        <span className="text-[10px] font-bold uppercase tracking-wider"
-          style={{ color: "var(--text-muted)" }}>
-          What gets checked
-        </span>
-        <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-          ({checks.length})
-        </span>
-        <ChevronDown size={12} strokeWidth={2.2} className="ml-auto"
-          style={{ color: "var(--text-muted)",
-                   transform: open ? "rotate(180deg)" : "none",
-                   transition: "transform .15s ease" }} />
-      </button>
-
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}
-            style={{ overflow: "hidden" }}>
-            <div className="px-4 pb-3 space-y-2">
-              {(m?.scanned_period || m?.accounts_scanned) && (
-                <p className="text-[11px] leading-snug" style={{ color: "var(--text-muted)" }}>
-                  Last run covered{" "}
-                  {m?.scanned_period && (
-                    <span className="text-theme font-medium">{monthLabel(m.scanned_period)}</span>
-                  )}
-                  {m?.accounts_scanned ? (
-                    <> across <span className="text-theme font-medium">{m.accounts_scanned}</span> expense
-                    and cost-of-sales accounts</>
-                  ) : null}
-                  {m?.transactions_reviewed ? (
-                    <>, reading <span className="text-theme font-medium">
-                      {m.transactions_reviewed.toLocaleString()}</span> ledger entries</>
-                  ) : null}.
-                </p>
-              )}
-              <ul className="space-y-1">
-                {checks.map((c) => (
-                  <li key={c.key} className="flex items-start gap-1.5 text-[11px] leading-snug"
-                    style={{ color: "var(--text-2)" }}>
-                    <Check size={11} strokeWidth={2.4} className="shrink-0 mt-0.5"
-                      style={{ color: "var(--green)" }} />
-                    {c.label}
-                  </li>
-                ))}
-              </ul>
-              <p className="text-[10.5px] leading-snug pt-0.5" style={{ color: "var(--text-muted)" }}>
-                Nordavix never writes to QuickBooks — every fix is a draft you approve.
-              </p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
   )
 }
 

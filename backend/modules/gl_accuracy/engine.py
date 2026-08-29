@@ -634,20 +634,6 @@ def _detector_contra_balance(current, history, snapshots, exceptions, opts) -> l
 
 
 # Ordered list of active detectors. R4+ append here.
-# What each check looks for, in the words a preparer would use. Lives beside
-# DETECTORS so a new detector can't ship without a label — a check the user
-# can't name is one they can't trust or judge.
-DETECTOR_LABELS: dict[str, str] = {
-    KIND_MISCLASSIFICATION: "Vendor coded to an unusual account",
-    KIND_MISSING_RECURRING: "A regular charge that didn't arrive",
-    KIND_DUPLICATE:         "The same transaction entered twice",
-    KIND_LARGE_NO_MEMO:     "Large entries with no explanation",
-    KIND_ROUND_DOLLAR:      "Suspiciously round amounts",
-    KIND_SUSPENSE:          "Postings parked in suspense accounts",
-    KIND_AMOUNT_OUTLIER:    "Amounts unlike the account's history",
-    KIND_CONTRA_BALANCE:    "Balances sitting on the wrong side",
-}
-
 DETECTORS: list[dict[str, Any]] = [
     {"key": KIND_MISCLASSIFICATION, "fn": _detector_misclassification},
     {"key": KIND_MISSING_RECURRING, "fn": _detector_missing_recurring},
