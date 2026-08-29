@@ -36,6 +36,11 @@ class CloseReview(TenantBase):
     info_count:    Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cleared_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     checks_run:    Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # What THIS run changed: findings raised for the first time, and findings
+    # the previous run had open that are gone now. The only question a reviewer
+    # has after the preparer says they've fixed things.
+    new_count:      Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    resolved_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Reassurance list — human strings for the checks that PASSED ("TB balanced",
     # "all bank evidence on file"), so the UI can show what's healthy, not just
     # what's wrong.
@@ -47,6 +52,9 @@ class CloseReview(TenantBase):
     )
     signed_off_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     signed_off_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The reviewing partner's statement, printed under the signature on the memo.
+    # A signature with no words under it is a rubber stamp.
+    signoff_note:  Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
@@ -85,6 +93,15 @@ class CloseReviewFinding(TenantBase):
     # {lines:[{account,debit,credit}], amount, txn_date, flags, memo} so the UI
     # shows the entry's account breakdown. Null on findings that don't need it.
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # When this exception was FIRST raised, surviving re-runs.
+    #
+    # A re-run deletes and re-inserts every open finding, so created_at resets
+    # and a problem raised a week ago looks like it appeared on this run.
+    # Carried forward on the engine's stable key — the same identity that keeps
+    # a reviewer's decision sticky. "New since your last run" is measured from
+    # it, and so is "this has been open for three days".
+    first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # open | cleared | actioned | accepted
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open", index=True)

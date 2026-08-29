@@ -389,6 +389,21 @@ async def run_close_review(
     )).scalars().all())
     kept = [f for f in existing if f.status != "open"]
     kept_keys = {_stable_key(f.code, f.qbo_account_id, f.entity_ref, f.category) for f in kept}
+
+    # The age of a problem survives the churn. Built from ALL prior rows, not
+    # just the open ones: a finding the reviewer cleared and which the checks
+    # raise again is the same problem coming back, not a new one. Without this,
+    # `created_at` would reset on every run and everything would read as new.
+    seen_before: dict[tuple, datetime] = {}
+    prior_open_keys: set[tuple] = set()
+    for f in existing:
+        key = _stable_key(f.code, f.qbo_account_id, f.entity_ref, f.category)
+        when = f.first_seen_at or f.created_at
+        if when is not None:
+            seen_before[key] = when
+        if f.status == "open":
+            prior_open_keys.add(key)
+
     await db.execute(
         delete(CloseReviewFinding).where(
             CloseReviewFinding.review_id == review.id,
@@ -397,11 +412,19 @@ async def run_close_review(
         )
     )
 
+    now = datetime.now(UTC)
     high = review_n = info = 0
+    newly_raised = 0
+    this_run_keys: set[tuple] = set()
     for f in findings:
         key = _stable_key(f["code"], f["qbo_account_id"], f["entity_ref"], f["category"])
+        this_run_keys.add(key)
         if key in kept_keys:
             continue  # the reviewer already decided on this exact issue
+        first_seen = seen_before.get(key)
+        if first_seen is None:
+            first_seen = now
+            newly_raised += 1
         db.add(CloseReviewFinding(
             id=uuid.uuid4(), tenant_id=tenant_id, review_id=review.id, period_end=period_end,
             code=f["code"], category=f["category"], severity=f["severity"],
@@ -409,7 +432,7 @@ async def run_close_review(
             recommended_action=(f["recommended_action"] or None),
             qbo_account_id=f["qbo_account_id"], account_label=f["account_label"],
             entity_ref=f["entity_ref"], link_hint=f["link_hint"],
-            meta=f.get("meta"), status="open",
+            meta=f.get("meta"), status="open", first_seen_at=first_seen,
         ))
         if f["severity"] == "high":
             high += 1
@@ -418,10 +441,19 @@ async def run_close_review(
         else:
             info += 1
 
+    # Gone since last time: the previous run had it open and the checks no
+    # longer raise it. That is the preparer's work showing up — the one number
+    # worth reading first after they say they've fixed something. A finding the
+    # REVIEWER cleared is not counted here; that is their own decision, already
+    # visible in Resolved.
+    resolved_since = len(prior_open_keys - this_run_keys)
+
     review.high_count = high
     review.review_count = review_n
     review.info_count = info
     review.cleared_count = len(kept)   # actual resolved rows (matches router _recount)
+    review.new_count = newly_raised
+    review.resolved_count = resolved_since
     review.checks_run = checks_run
     review.passed = passed
     review.summary = summary
@@ -430,6 +462,9 @@ async def run_close_review(
     review.status = "open"            # a fresh run needs fresh sign-off
     review.signed_off_by = None
     review.signed_off_at = None
+    # …and a fresh statement. Carrying the old one forward would print a
+    # partner's words on a memo about findings they never saw.
+    review.signoff_note = None
 
     await db.commit()
     await db.refresh(review)

@@ -39,8 +39,16 @@ export interface ReviewFinding {
   link_hint:          string | null
   meta:               FindingMeta | null
   status:             FindingStatus
+  /** The reason the reviewer gave. Required to set aside a high-severity
+   *  exception — it is printed on the sign-off memo. */
   note:               string | null
   status_changed_at:  string | null
+  /** WHO decided. The id was always stored and never resolved, so the UI could
+   *  say when a finding was cleared but never by whom — the half that makes a
+   *  review defensible. */
+  status_changed_by_name: string | null
+  /** When the exception was FIRST raised, surviving re-runs. */
+  first_seen_at:      string | null
 }
 
 export interface ReviewMeta {
@@ -53,8 +61,16 @@ export interface ReviewMeta {
   cleared_count: number
   checks_run:    number
   passed:        string[]
+  /** What THIS run changed: raised for the first time, and gone since the last
+   *  run. The only question a reviewer has after the preparer says they've
+   *  fixed things. */
+  new_count:      number
+  resolved_count: number
   generated_at:  string | null
   signed_off_at: string | null
+  signed_off_by_name: string | null
+  /** The reviewing partner's statement, printed under the signature. */
+  signoff_note:  string | null
 }
 
 export interface ReviewState {
@@ -80,9 +96,32 @@ async function act(findingId: string, action: FindingAction, note?: string): Pro
   return data
 }
 
-async function signOff(periodEnd: string): Promise<ReviewState> {
-  const { data } = await apiClient.post<ReviewState>("/api/review/signoff", null, { params: { period: periodEnd } })
+async function signOff(periodEnd: string, note?: string): Promise<ReviewState> {
+  const { data } = await apiClient.post<ReviewState>(
+    "/api/review/signoff", { note: note ?? null }, { params: { period: periodEnd } },
+  )
   return data
 }
 
-export const reviewApi = { getState, run, act, signOff }
+/** Fetch the memo PDF and hand it to the browser as a download.
+ *
+ *  Goes through apiClient rather than a bare link so the request carries the
+ *  Clerk token and the workspace header — a plain <a href> would arrive
+ *  unauthenticated and 401. */
+async function downloadMemo(periodEnd: string): Promise<void> {
+  const { data } = await apiClient.get<Blob>("/api/review/memo", {
+    params: { period: periodEnd }, responseType: "blob",
+  })
+  const url = URL.createObjectURL(data)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `Close-review-memo-${periodEnd.slice(0, 7)}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  // Revoked on the next tick: revoking synchronously can beat the click in
+  // Safari and the download silently produces an empty file.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export const reviewApi = { getState, run, act, signOff, downloadMemo }
