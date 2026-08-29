@@ -204,9 +204,11 @@ function ContinuousSettings() {
  *  three and read as an afterthought. Top to bottom: is it watching, when did
  *  it last look, what has it caught, and the schedule.
  */
-function ContinuousRail({ m, scanning, recent, reduce, onOpen }: {
+function ContinuousRail({ m, scanning, recent, reduce, onOpen, periodEnd }: {
   m?: GlMonitoring; scanning: boolean; recent: GlFinding[]
   reduce: boolean; onOpen: (id: string) => void
+  /** The month on screen. Every figure in this rail is scoped to it. */
+  periodEnd: string
 }) {
   // Whether the daily watch is switched on — the dot only breathes when it is.
   const { data: autopilot } = useQuery({
@@ -223,7 +225,8 @@ function ContinuousRail({ m, scanning, recent, reduce, onOpen }: {
           on screen all day next to money, so it has to read as "alive" from
           the corner of the eye and never compete with a figure. */}
       <style>{"@keyframes ndvx-beat{0%,100%{transform:scale(1);opacity:.45}50%{transform:scale(2.1);opacity:0}}"}</style>
-      <MonitoringHead m={m} scanning={scanning} enabled={enabled} reduce={reduce} />
+      <MonitoringHead m={m} scanning={scanning} enabled={enabled} reduce={reduce}
+        periodEnd={periodEnd} />
       <RecentlyCaught recent={recent} reduce={reduce} onOpen={onOpen} />
       <WhatsChecked m={m} />
       <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
@@ -308,6 +311,14 @@ function WhatsChecked({ m }: { m?: GlMonitoring }) {
   )
 }
 
+/** "2026-08-31" → "Aug". Same hand-split reason as monthLabel. */
+function shortMonth(iso: string): string {
+  const m = iso.split("-")[1]
+  const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  return names[Number(m) - 1] ?? iso
+}
+
 /** "2026-08-31" → "August 2026". Split by hand: `new Date(iso)` reads a bare
  *  YYYY-MM-DD as UTC midnight, which is the previous month west of Greenwich. */
 function monthLabel(iso: string): string {
@@ -327,8 +338,9 @@ function monthLabel(iso: string): string {
  *  A scan that crashed or is still running NEVER reads as a clean bill of
  *  health. Findings mean nothing until the check has finished.
  */
-function MonitoringHead({ m, scanning, enabled, reduce }: {
+function MonitoringHead({ m, scanning, enabled, reduce, periodEnd }: {
   m?: GlMonitoring; scanning: boolean; enabled: boolean; reduce: boolean
+  periodEnd: string
 }) {
   // Re-render on a timer so "12 minutes ago" stays true between refetches. A
   // stale clock is worse than no clock.
@@ -346,8 +358,8 @@ function MonitoringHead({ m, scanning, enabled, reduce }: {
           <span className="text-[12.5px] font-semibold text-theme">Continuous close</span>
         </div>
         <p className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
-          Not watching yet. Turn it on below and Nordavix checks these books
-          every day.
+          Not watching <span className="text-theme font-medium">{monthLabel(periodEnd)}</span> yet.
+          Turn it on below and Nordavix checks these books every day.
         </p>
       </div>
     )
@@ -393,6 +405,21 @@ function MonitoringHead({ m, scanning, enabled, reduce }: {
         )}
       </div>
 
+      {/* WHICH MONTH. Every number under this line is scoped to one period,
+          and the rail used to imply that and never say it — "checks this
+          period" reads as a fact about a month you have to guess. */}
+      <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+        {inFlight ? "Reading " : failed ? "Was reading " : "Watching "}
+        <span className="text-theme font-medium">{monthLabel(periodEnd)}</span>
+        {/* The sweep also covers the previous unclosed month, so a scan
+            recorded against a different period would otherwise look like a
+            contradiction on screen. */}
+        {m.scanned_period && m.scanned_period !== periodEnd && (
+          <> · last run covered <span className="text-theme font-medium">
+            {monthLabel(m.scanned_period)}</span></>
+        )}
+      </p>
+
       {failed ? (
         <p className="text-[11.5px] mt-1.5" style={{ color: "var(--warn)" }}>
           {m.error || "The scan stopped before it finished — findings may be incomplete."}
@@ -410,7 +437,8 @@ function MonitoringHead({ m, scanning, enabled, reduce }: {
             <Stat label="Transactions reviewed" value={m.transactions_reviewed.toLocaleString()} />
           )}
           {m.checks_this_period > 0 && (
-            <Stat label="Checks this period" value={String(m.checks_this_period)} />
+            <Stat label={`Checks in ${shortMonth(periodEnd)}`}
+              value={String(m.checks_this_period)} />
           )}
         </dl>
       )}
@@ -858,7 +886,8 @@ export function GlAccuracyPage() {
 
       <aside className="w-full xl:w-[360px] xl:shrink-0 xl:sticky xl:top-5 space-y-3">
         <ContinuousRail m={data?.monitoring} scanning={scanMut.isPending}
-          recent={recentlyCaught} reduce={reduce} onOpen={(id) => setOpenId(id)} />
+          recent={recentlyCaught} reduce={reduce} onOpen={(id) => setOpenId(id)}
+          periodEnd={activePeriod} />
       </aside>
       </div>
     </Shell>
