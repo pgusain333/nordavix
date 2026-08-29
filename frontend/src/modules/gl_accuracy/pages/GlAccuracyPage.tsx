@@ -208,19 +208,113 @@ function ContinuousRail({ m, scanning, recent, reduce, onOpen }: {
   m?: GlMonitoring; scanning: boolean; recent: GlFinding[]
   reduce: boolean; onOpen: (id: string) => void
 }) {
+  // Whether the daily watch is switched on — the dot only breathes when it is.
+  const { data: autopilot } = useQuery({
+    queryKey: ["autopilot"], queryFn: autopilotApi.getState, staleTime: 5 * 60_000,
+  })
+  const enabled = !!autopilot?.config?.continuous_enabled
   return (
     <motion.div layout={!reduce}
       transition={{ type: "spring", stiffness: 340, damping: 32 }}
       className="rounded-xl overflow-hidden"
       style={{ background: "var(--surface)", border: "1px solid var(--border)",
                boxShadow: "var(--card-shadow)" }}>
-      <MonitoringHead m={m} scanning={scanning} />
+      {/* A slow breath, not a blink. 2.4s and a shallow opacity range: this is
+          on screen all day next to money, so it has to read as "alive" from
+          the corner of the eye and never compete with a figure. */}
+      <style>{"@keyframes ndvx-beat{0%,100%{transform:scale(1);opacity:.45}50%{transform:scale(2.1);opacity:0}}"}</style>
+      <MonitoringHead m={m} scanning={scanning} enabled={enabled} reduce={reduce} />
       <RecentlyCaught recent={recent} reduce={reduce} onOpen={onOpen} />
+      <WhatsChecked m={m} />
       <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
         <ContinuousSettings />
       </div>
     </motion.div>
   )
+}
+
+/** What a check actually covers.
+ *
+ *  "Checked 12 minutes ago" is only reassuring if you know what was checked.
+ *  Without this the user is asked to trust a green dot; with it they can see
+ *  the period, the ledger volume, the account count and the eight things
+ *  Nordavix looks for — and judge whether that is worth anything.
+ *
+ *  Collapsed by default: it is read once, on the day someone asks "what does
+ *  this actually do", and then never again.
+ */
+function WhatsChecked({ m }: { m?: GlMonitoring }) {
+  const [open, setOpen] = useState(false)
+  const checks = m?.checks ?? []
+  if (!checks.length) return null
+  return (
+    <div style={{ borderTop: "1px solid var(--border)" }}>
+      <button onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-1.5 px-4 py-2.5 text-left transition-colors hover:bg-[var(--surface-2)]">
+        <span className="text-[10px] font-bold uppercase tracking-wider"
+          style={{ color: "var(--text-muted)" }}>
+          What gets checked
+        </span>
+        <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+          ({checks.length})
+        </span>
+        <ChevronDown size={12} strokeWidth={2.2} className="ml-auto"
+          style={{ color: "var(--text-muted)",
+                   transform: open ? "rotate(180deg)" : "none",
+                   transition: "transform .15s ease" }} />
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}
+            style={{ overflow: "hidden" }}>
+            <div className="px-4 pb-3 space-y-2">
+              {(m?.scanned_period || m?.accounts_scanned) && (
+                <p className="text-[11px] leading-snug" style={{ color: "var(--text-muted)" }}>
+                  Last run covered{" "}
+                  {m?.scanned_period && (
+                    <span className="text-theme font-medium">{monthLabel(m.scanned_period)}</span>
+                  )}
+                  {m?.accounts_scanned ? (
+                    <> across <span className="text-theme font-medium">{m.accounts_scanned}</span> expense
+                    and cost-of-sales accounts</>
+                  ) : null}
+                  {m?.transactions_reviewed ? (
+                    <>, reading <span className="text-theme font-medium">
+                      {m.transactions_reviewed.toLocaleString()}</span> ledger entries</>
+                  ) : null}.
+                </p>
+              )}
+              <ul className="space-y-1">
+                {checks.map((c) => (
+                  <li key={c.key} className="flex items-start gap-1.5 text-[11px] leading-snug"
+                    style={{ color: "var(--text-2)" }}>
+                    <Check size={11} strokeWidth={2.4} className="shrink-0 mt-0.5"
+                      style={{ color: "var(--green)" }} />
+                    {c.label}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[10.5px] leading-snug pt-0.5" style={{ color: "var(--text-muted)" }}>
+                Nordavix never writes to QuickBooks — every fix is a draft you approve.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/** "2026-08-31" → "August 2026". Split by hand: `new Date(iso)` reads a bare
+ *  YYYY-MM-DD as UTC midnight, which is the previous month west of Greenwich. */
+function monthLabel(iso: string): string {
+  const [y, m] = iso.split("-")
+  const names = ["January", "February", "March", "April", "May", "June",
+                 "July", "August", "September", "October", "November", "December"]
+  return `${names[Number(m) - 1] ?? m} ${y}`
 }
 
 /** Whether the books are being watched, and the proof.
@@ -233,7 +327,9 @@ function ContinuousRail({ m, scanning, recent, reduce, onOpen }: {
  *  A scan that crashed or is still running NEVER reads as a clean bill of
  *  health. Findings mean nothing until the check has finished.
  */
-function MonitoringHead({ m, scanning }: { m?: GlMonitoring; scanning: boolean }) {
+function MonitoringHead({ m, scanning, enabled, reduce }: {
+  m?: GlMonitoring; scanning: boolean; enabled: boolean; reduce: boolean
+}) {
   // Re-render on a timer so "12 minutes ago" stays true between refetches. A
   // stale clock is worse than no clock.
   const [, setTick] = useState(0)
@@ -261,19 +357,32 @@ function MonitoringHead({ m, scanning }: { m?: GlMonitoring; scanning: boolean }
   const failed = m.ok === false
   const ago = agoLabel(m.checked_at)
   const dotColor = failed ? "var(--warn)" : "var(--green)"
+  // Alive while WATCHING, not only while a scan is in flight. A scan takes
+  // seconds a day; the other 86,000 the dot was static and the feature looked
+  // switched off. Slow and low-contrast on purpose — this sits on screen all
+  // day beside financial data and must never pull the eye off a number.
+  const beating = enabled && !failed && !inFlight
 
   return (
     <div className="px-4 py-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
       <div className="flex items-center gap-2">
         <span className="relative inline-flex h-2 w-2">
-          {inFlight && (
+          {/* A scan in flight pings fast; a live watch breathes. Both are
+              suppressed under prefers-reduced-motion — the colour and the label
+              already carry the state, the movement is decoration. */}
+          {inFlight && !reduce && (
             <span className="absolute inline-flex h-full w-full rounded-full animate-ping"
               style={{ background: dotColor, opacity: 0.6 }} />
+          )}
+          {beating && !reduce && (
+            <span className="absolute inline-flex h-full w-full rounded-full"
+              style={{ background: dotColor, animation: "ndvx-beat 2.4s ease-in-out infinite" }} />
           )}
           <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: dotColor }} />
         </span>
         <span className="text-[12.5px] font-semibold text-theme">
-          {inFlight ? "Checking now" : failed ? "Last check didn't finish" : "Continuous close"}
+          {inFlight ? "Checking now" : failed ? "Last check didn't finish"
+            : enabled ? "Continuous close · on" : "Continuous close"}
         </span>
         {!!m.new_last_check && !inFlight && !failed && (
           <span className="ml-auto inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"

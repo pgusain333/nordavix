@@ -458,10 +458,23 @@ async def monitoring_status(db: AsyncSession, period_end: date) -> dict:
     total_runs = (await db.execute(
         select(func.count()).select_from(GlScanRun).where(GlScanRun.period_end == period_end)
     )).scalar_one()
+    # What the scan actually covers, so "checked" is a claim the user can
+    # inspect rather than take on faith. A monitoring feature that won't say
+    # what it looked at is asking to be trusted for nothing.
+    from modules.gl_accuracy.engine import DETECTOR_LABELS, DETECTORS
+    checks = [
+        {"key": d["key"], "label": DETECTOR_LABELS.get(d["key"], d["key"])}
+        for d in DETECTORS
+    ]
+
     if latest is None:
-        return {"ever_scanned": False, "checks_this_period": 0}
+        return {"ever_scanned": False, "checks_this_period": 0, "checks": checks}
     return {
         "ever_scanned": True,
+        "checks": checks,
+        # The period this run covered — not necessarily the one on screen, since
+        # the sweep watches the open month AND the prior unclosed one.
+        "scanned_period": latest.period_end.isoformat(),
         "checks_this_period": int(total_runs or 0),
         "checked_at": latest.finished_at.isoformat() if latest.finished_at else None,
         "started_at": latest.started_at.isoformat(),

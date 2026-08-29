@@ -53,6 +53,12 @@ export interface GlMonitoring {
   transactions_reviewed?: number
   accounts_scanned?:     number
   new_last_check?:       number
+  /** The period the last run covered. Not necessarily the one on screen — the
+   *  sweep watches the open month AND the prior unclosed one. */
+  scanned_period?:       string | null
+  /** Every check that runs, in the words a preparer would use. Sent so the UI
+   *  can say what "checked" means instead of asking for trust. */
+  checks?:               { key: string; label: string }[]
 }
 
 export interface GlFindingsResponse {
