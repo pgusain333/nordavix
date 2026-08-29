@@ -29,6 +29,20 @@ class AutopilotConfig(TenantBase):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Day of month (1-28) the scheduled run fires for this workspace.
     run_day: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # ── Continuous close ────────────────────────────────────────────────
+    # A separate, much lighter loop from the monthly close: check the books
+    # for new anomalies once a day rather than doing everything at month end.
+    # Off by default — it polls QuickBooks on a schedule, which is a deliberate
+    # choice, not something to inherit.
+    continuous_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
+    # Hour (0-23) in the WORKSPACE's timezone. The cron ticks hourly and each
+    # workspace fires in its own window, so "9am" means 9am where the books are.
+    check_hour: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=9, server_default="9",
+    )
     # Optional step toggles. Sync + agentic preparer are the core and always
     # run when enabled; these gate the AI-spend / outward-facing extras.
     run_flux: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

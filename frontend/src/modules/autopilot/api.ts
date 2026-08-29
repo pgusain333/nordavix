@@ -9,6 +9,14 @@ export interface AutopilotConfig {
   pbc_recipient_email: string | null
   run_review: boolean
   attach_reports: boolean
+  /** Continuous close: check the books daily instead of only at month end. */
+  continuous_enabled: boolean
+  /** 0-23, in the WORKSPACE's timezone — the cron ticks hourly and each
+   *  workspace fires in its own window. */
+  check_hour: number
+  /** IANA name ("America/New_York"). Lives on the tenant; surfaced here because
+   *  check_hour is meaningless without knowing whose clock it is. */
+  timezone: string | null
   updated_at: string | null
 }
 

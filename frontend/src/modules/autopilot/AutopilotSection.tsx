@@ -178,6 +178,13 @@ export function AutopilotSection() {
         attach_reports: attachReports,
         send_pbc_requests: sendPbc,
         pbc_recipient_email: sendPbc ? pbcEmail.trim() : null,
+        // Continuous close is configured on Risk Radar, not here. PUT replaces
+        // the whole config, so these must be passed through untouched —
+        // otherwise saving an Autopilot setting silently switches off the
+        // monitoring someone turned on elsewhere.
+        continuous_enabled: state?.config?.continuous_enabled ?? false,
+        check_hour:         state?.config?.check_hour ?? 9,
+        timezone:           state?.config?.timezone ?? null,
       }),
     onSuccess: (saved) => {
       // A config save doesn't change runs/next_period/running, so the snappy

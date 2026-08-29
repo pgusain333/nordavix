@@ -14,7 +14,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { useNavigate } from "react-router-dom"
 import {
   ShieldCheck, Sparkles, Brain, ArrowRight, ArrowUpRight, ArrowDown, ArrowLeft,
-  Check, ThumbsUp, ChevronDown, ListChecks, ScanSearch,
+  Check, ThumbsUp, ChevronDown, ListChecks, ScanSearch, Settings,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { formatDate } from "@/core/lib/dates"
@@ -25,6 +25,125 @@ import { ProposedEntryCard } from "@/modules/adjustments/components/ProposedEntr
 import { RelatedPanel } from "@/modules/graph/RelatedPanel"
 import type { ProposedEntry } from "@/modules/adjustments/api"
 import { glAccuracyApi, type GlFinding, type GlMonitoring } from "@/modules/gl_accuracy/api"
+import { autopilotApi, type AutopilotState } from "@/modules/autopilot/api"
+
+/** Turn the watching on, and choose when.
+ *
+ *  Deliberately three controls, not eight. Per-detector switches are the
+ *  obvious design and the wrong one: nobody can predict which checks they need
+ *  before seeing output, and people switch things off to silence noise and then
+ *  blame the product for missing what it was told to ignore. Nordavix already
+ *  learns from a rejection — dismissing a finding writes a vendor→account
+ *  exception into Client Memory — so the tuning happens through use rather than
+ *  a preferences panel nobody revisits.
+ *
+ *  The config is Autopilot's row (one automation config per workspace); this is
+ *  just the surface for the part of it that belongs beside the findings. */
+function ContinuousSettings() {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const { data: state } = useQuery({
+    queryKey: ["autopilot"], queryFn: autopilotApi.getState, staleTime: 5 * 60_000,
+  })
+  const cfg = state?.config
+  const [hour, setHour] = useState<number | null>(null)
+  const [tz, setTz] = useState<string | null>(null)
+
+  const effHour = hour ?? cfg?.check_hour ?? 9
+  // The browser's own zone is the right default and almost always correct —
+  // asking someone to pick their timezone from a list of 400 is a worse
+  // first-run than getting it right and letting them correct it.
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+  const effTz = tz ?? cfg?.timezone ?? browserTz
+
+  const save = useMutation({
+    mutationFn: (patch: { on?: boolean; h?: number; z?: string }) => {
+      if (!cfg) throw new Error("Automation settings haven't loaded yet.")
+      return autopilotApi.saveConfig({
+        ...cfg,
+        continuous_enabled: patch.on ?? cfg.continuous_enabled,
+        check_hour:         patch.h ?? effHour,
+        timezone:           patch.z ?? effTz,
+      })
+    },
+    onSuccess: (saved) => {
+      qc.setQueryData(["autopilot"], (old: AutopilotState | undefined) =>
+        old ? { ...old, config: saved } : old)
+    },
+  })
+
+  if (!cfg) return null
+  const on = cfg.continuous_enabled
+
+  return (
+    <div className="mb-4">
+      <button onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold transition-colors"
+        style={{ color: "var(--text-muted)" }}>
+        <Settings size={12} strokeWidth={2} />
+        {on ? `Checking daily at ${String(effHour).padStart(2, "0")}:00` : "Set up daily checks"}
+        <ChevronDown size={12} strokeWidth={2.2}
+          style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease" }} />
+      </button>
+
+      {open && (
+        <div className="mt-2 rounded-xl p-3.5 space-y-3"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input type="checkbox" checked={on} className="mt-0.5"
+              onChange={(e) => save.mutate({ on: e.target.checked })} />
+            <span className="min-w-0">
+              <span className="block text-[13px] font-semibold text-theme">
+                Check these books every day
+              </span>
+              <span className="block text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+                Nordavix runs the same checks once a day on the open period and tells
+                you only when something new turns up. Nothing is written to QuickBooks.
+              </span>
+            </span>
+          </label>
+
+          {on && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <label className="block">
+                <span className="block text-[10px] font-bold uppercase tracking-wider mb-1"
+                  style={{ color: "var(--text-muted)" }}>Check at</span>
+                <select value={effHour}
+                  onChange={(e) => { const h = Number(e.target.value); setHour(h); save.mutate({ h }) }}
+                  className="w-full rounded-lg px-2 py-1.5 text-[12.5px] outline-none"
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="block text-[10px] font-bold uppercase tracking-wider mb-1"
+                  style={{ color: "var(--text-muted)" }}>Timezone</span>
+                <input value={effTz}
+                  onChange={(e) => setTz(e.target.value)}
+                  onBlur={(e) => save.mutate({ z: e.target.value.trim() || browserTz })}
+                  spellCheck={false}
+                  className="w-full rounded-lg px-2 py-1.5 text-[12.5px] outline-none"
+                  style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }} />
+                <span className="block text-[10.5px] mt-1" style={{ color: "var(--text-muted)" }}>
+                  Detected {browserTz}
+                </span>
+              </label>
+            </div>
+          )}
+
+          {save.error ? (
+            <p className="text-[11.5px]" style={{ color: "var(--danger)" }}>
+              {(save.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+                ?? "Couldn't save that."}
+            </p>
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /** "12 minutes ago" from an ISO stamp. Coarse on purpose: a clock that claims
  *  seconds invites someone to check it against theirs. */
@@ -305,6 +424,7 @@ export function GlAccuracyPage() {
       )}
 
       <MonitoringStrip m={data?.monitoring} scanning={scanMut.isPending} />
+      <ContinuousSettings />
 
       {scanMut.isPending ? (
         <ScanningCard />

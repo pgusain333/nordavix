@@ -54,12 +54,18 @@ def _run_is_live(run: AutopilotRun, now: datetime) -> bool:
 router = APIRouter()
 
 
-def _serialize_config(c: AutopilotConfig | None) -> dict | None:
+def _serialize_config(c: AutopilotConfig | None, timezone: str | None = None) -> dict | None:
     if c is None:
         return None
     return {
         "enabled":             c.enabled,
         "run_day":             c.run_day,
+        # ── Continuous close ──
+        "continuous_enabled":  c.continuous_enabled,
+        "check_hour":          c.check_hour,
+        # Lives on the tenant, surfaced here because it is meaningless without
+        # check_hour beside it — "9am" needs to know whose 9am.
+        "timezone":            timezone,
         "run_flux":            c.run_flux,
         "send_pbc_requests":   c.send_pbc_requests,
         "pbc_recipient_email": c.pbc_recipient_email,
@@ -103,7 +109,7 @@ async def get_autopilot(
     focus = focus_period_for(tenant, closed, date.today()) if tenant else None
 
     return {
-        "config": _serialize_config(config),
+        "config": _serialize_config(config, tenant.timezone if tenant else None),
         "runs":   [_serialize_run(r) for r in runs],
         "next_period": focus.isoformat() if focus else None,
         "next_period_label": focus.strftime("%b %Y") if focus else None,
@@ -114,6 +120,12 @@ async def get_autopilot(
 class ConfigBody(BaseModel):
     enabled: bool
     run_day: int = Field(ge=1, le=28, default=1)
+    # ── Continuous close ──
+    continuous_enabled: bool = False
+    check_hour: int = Field(ge=0, le=23, default=9)
+    # IANA name, e.g. "America/New_York". Validated server-side; an offset would
+    # be wrong twice a year.
+    timezone: str | None = Field(default=None, max_length=64)
     run_flux: bool = True
     send_pbc_requests: bool = False
     pbc_recipient_email: str | None = Field(default=None, max_length=255)
@@ -144,7 +156,30 @@ async def put_config(
     config.pbc_recipient_email = (body.pbc_recipient_email or "").strip().lower() or None
     config.run_review          = body.run_review
     config.attach_reports      = body.attach_reports
+    config.continuous_enabled  = body.continuous_enabled
+    config.check_hour          = body.check_hour
     config.updated_by          = user.id
+
+    # The timezone lives on the tenant. Rejected rather than silently coerced:
+    # a workspace that thinks it is checking at 9am local and is actually on UTC
+    # is the exact failure this feature cannot afford.
+    if body.timezone is not None:
+        tz = body.timezone.strip()
+        if tz:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+            try:
+                ZoneInfo(tz)
+            except (ZoneInfoNotFoundError, ValueError, KeyError):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{tz}' isn't a recognised timezone. Use an IANA name like America/New_York.",
+                )
+        tenant_row = (await db.execute(
+            select(Tenant).where(Tenant.id == tenant_id),
+            execution_options={"skip_tenant_filter": True},
+        )).scalar_one_or_none()
+        if tenant_row is not None:
+            tenant_row.timezone = tz or None
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
         action="autopilot.config_updated", entity_type="workspace", entity_id=None,
@@ -152,10 +187,11 @@ async def put_config(
             f"Autopilot {'enabled' if body.enabled else 'disabled'} — "
             f"day {body.run_day}, flux {'on' if body.run_flux else 'off'}, "
             f"client evidence emails {'ON to ' + (config.pbc_recipient_email or '') if body.send_pbc_requests else 'off'}"
+            + f"; continuous close {'on at ' + str(body.check_hour) + ':00' if body.continuous_enabled else 'off'}"
         )},
     )
     await db.commit()
-    return _serialize_config(config)
+    return _serialize_config(config, body.timezone)
 
 
 async def _run_in_background(tenant_id: uuid.UUID, period_end: date, user_id: uuid.UUID) -> None:

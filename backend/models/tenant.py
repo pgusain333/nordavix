@@ -38,6 +38,10 @@ class Tenant(TimestampMixin, Base):
     # period_end = books_start_date - 1 day on AccountReviewStatus.
     # Null until onboarding is complete. Locked after seeding (admin only).
     books_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # IANA name ("America/New_York"), never a UTC offset — an offset is wrong
+    # twice a year, and a monitoring feature that drifts an hour every March is
+    # worse than one that never claimed a time. NULL = UTC.
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     books_seeded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Soft-delete lifecycle ───────────────────────────────────────────────

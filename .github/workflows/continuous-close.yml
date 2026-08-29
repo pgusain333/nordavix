@@ -1,0 +1,46 @@
+name: Continuous Close
+
+# Hourly tick. Every workspace with continuous close enabled fires in its OWN
+# hour, on its own clock, at most once a day — so this runs 24 times a day and
+# mostly does nothing, which is the point. A fixed UTC hour would mean "check
+# my books at 9am" was 9am in Virginia for a firm in Mumbai.
+#
+# All the logic lives in the backend: the due check (timezone, chosen hour,
+# once-a-day guard, both clock-change weekends), skipping closed periods and
+# demo workspaces, and notifying only when something NEW was found. This just
+# pings the internal endpoint.
+#
+# If INTERNAL_TASK_SECRET isn't set as a repo Actions secret, this logs a note
+# and exits green (never red-X's).
+
+on:
+  schedule:
+    # Ten past the hour, every hour. Offset from :00 so it doesn't queue behind
+    # the crowd of on-the-hour workflows GitHub schedules best-effort.
+    - cron: "10 * * * *"
+  workflow_dispatch: {}      # manual runs from the Actions tab still work
+
+# A slow hour must never stack on the next one: the sweep is idempotent, but
+# two in flight would double the QuickBooks load for no benefit.
+concurrency:
+  group: continuous-close
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger continuous-close sweep
+        env:
+          INTERNAL_TASK_SECRET: ${{ secrets.INTERNAL_TASK_SECRET }}
+        run: |
+          if [ -z "$INTERNAL_TASK_SECRET" ]; then
+            echo "INTERNAL_TASK_SECRET not set — add it under Settings -> Secrets"
+            echo "and variables -> Actions to enable continuous close. Skipping."
+            exit 0
+          fi
+          # The endpoint queues the sweep and returns immediately, so this is a
+          # short call regardless of how many workspaces are due.
+          curl -fsS -X POST "https://nordavix-api.fly.dev/api/internal/run-continuous-scan" \
+            -H "X-Internal-Secret: $INTERNAL_TASK_SECRET" \
+            --max-time 60

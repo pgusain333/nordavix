@@ -87,6 +87,29 @@ async def run_reengagement_endpoint(
     return summary
 
 
+@router.post("/run-continuous-scan")
+async def run_continuous_scan(
+    background_tasks: BackgroundTasks,
+    x_internal_secret: str | None = Header(default=None),
+) -> dict:
+    """Hourly tick for continuous close.
+
+    Every workspace with it enabled fires in its OWN hour on its own clock, at
+    most once a day — so this is called every hour and mostly does nothing,
+    which is the point: a fixed UTC hour would mean "9am" was 9am in Virginia
+    for everyone.
+
+    Runs in the BACKGROUND. The scan pulls a month of GL plus a trailing window
+    per workspace, and the monthly sweep already learned that doing that inline
+    blows past the cron's curl timeout once a few workspaces are due.
+    """
+    _require_internal_secret(x_internal_secret)
+    from modules.gl_accuracy.continuous import run_continuous_sweep
+
+    background_tasks.add_task(run_continuous_sweep)
+    return {"queued": True}
+
+
 async def _run_autopilot_sweep() -> dict:
     """The actual daily sweep — runs in the BACKGROUND (the synchronous version
     blew past the cron's curl timeout when several workspaces were due). Opens
