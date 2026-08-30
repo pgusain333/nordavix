@@ -760,6 +760,12 @@ function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
   // below every cap, saying "held at 44" over a 40 describes an
   // intervention that never happened.
   const capped = ms.score_capped === true
+  // The band the strictest gate rules out, named exactly as the gauge names it.
+  // `caps_to` is optional on the type because an older cached payload predates
+  // it — fall back to the boundary rather than guessing the harsher label.
+  const cap0 = ms.score_caps?.[0]
+  const capBand = (cap0?.caps_to ?? (cap0 && cap0.cap >= 45 ? "watch" : "at_risk")) === "watch"
+    ? "“Watch”" : "“At risk”"
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -767,28 +773,31 @@ function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
           the reason the number is not what the components add up to. */}
       {capped && (
         <div className="px-4 py-3" style={{ background: "#f7eeec", borderBottom: "1px solid var(--border)" }}>
-          {/* ONE sentence, about the constraint that actually decided the
-              number. The first pass printed a line per cap, each repeating
-              "(the measures alone scored 52)", so a reader met two different
-              "Capped at" figures and had to work out that the lower one won.
-              The caps arrive strictest-first; the rest are true and already
-              answered by the score, so they are a footnote, not a headline. */}
-          {/* Lead with the RULE, not the number. "Capped at 39" invited "why
-              39?", and the only honest answer was "because it is below 45" —
-              a hand-picked figure explaining itself with another one. The
-              ceiling is the top of the band the condition caps into, so the
-              sentence that matters is which band, and the number follows from
-              it. */}
+          {/* In the reader's words, not the model's.
+
+              Three passes to get here. "Capped at 39" invited "why 39?".
+              "Cannot be rated above, ceiling 44" swapped one piece of jargon
+              for two — "ceiling" is an internal concept, and "cannot be rated"
+              is passive and sounds like a credit agency without ever saying who
+              is doing the rating. What a reader can act on is the band name
+              already on the gauge beside it: this month can't score better than
+              that, here is why, and here is how the number got there.
+
+              Only the strictest cap gets a sentence; the rest are true and
+              already answered by the score, so they are a footnote. */}
           <p className="text-[12.5px]" style={{ color: "#9b3d37" }}>
             <span className="font-semibold">
-              Cannot be rated above {ms.score_caps![0].caps_to === "watch" ? "“watch”" : "“at risk”"}
+              This month can&apos;t score better than {capBand}
             </span>
             {" — "}{ms.score_caps![0].reason}
           </p>
-          <p className="text-[11.5px] mt-1.5" style={{ color: "#9b3d37", opacity: 0.85 }}>
-            The measures came to {ms.score_raw}; the ceiling for that band is{" "}
-            {ms.score_ceiling ?? ms.score_caps![0].cap}, and scaled beneath it they give {ms.score}.
-          </p>
+          {ms.score_raw != null && (
+            <p className="text-[11.5px] mt-1.5" style={{ color: "#9b3d37", opacity: 0.85 }}>
+              The five measures on their own came to {ms.score_raw} out of 100.
+              Kept within {capBand}, that works out to{" "}
+              <span className="font-semibold">{ms.score}</span> — the score shown above.
+            </p>
+          )}
           {ms.score_caps!.length > 1 && (
             <p className="text-[11.5px] mt-1.5" style={{ color: "#9b3d37", opacity: 0.85 }}>
               Also flagged: {ms.score_caps!.slice(1).map((c) => c.reason.split(".")[0].toLowerCase()).join("; ")}.
