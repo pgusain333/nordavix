@@ -57,6 +57,36 @@ function typeMeta(t: string) {
   return TYPE_META[t] ?? { icon: Network, tint: "#5C6660", bg: "rgba(92,102,96,0.12)" }
 }
 
+/** What the panel is showing you, in the language of the thing you're looking at.
+ *
+ *  The copy used to read "How this account connects across your close" on every
+ *  surface — including a journal entry, a flux variance and a Risk Radar
+ *  finding, none of which are accounts. The panel's whole job is to say where a
+ *  number came from, and it was misdescribing three of the four places it
+ *  appeared. */
+const SUBTITLE: Record<string, string> = {
+  account:
+    "How this account connects across your close — its schedule, findings, and adjusting entries.",
+  reconciliation:
+    "Everything behind this reconciliation — what supports the subledger, and what explains the difference.",
+  journal_entry:
+    "What this entry touches, and what it was raised to fix.",
+  flux_variance:
+    "What explains this movement — the entries booked against it and the account it sits on.",
+  finding:
+    "Where this was raised, and what has been done about it.",
+  schedule:
+    "What this schedule feeds — the reconciliation it supports and the account it lands in.",
+  task:
+    "What this task is about, and what has to clear before it can close.",
+  memo:
+    "What this note documents.",
+  evidence:
+    "What this document supports.",
+  period:
+    "What this month is made of.",
+}
+
 const STATUS_CHIP: Record<string, { label: string; color: string; bg: string }> = {
   open:            { label: "Open",           color: "#8a6326", bg: "rgba(150,112,47,0.13)" },
   accepted:        { label: "Accepted",       color: "var(--green)", bg: "var(--green-subtle)" },
@@ -118,7 +148,7 @@ export function RelatedPanel({ nodeType, nodeId, periodEnd }: Props) {
             )}
           </div>
           <p className="text-[12px] mt-0.5 leading-snug" style={{ color: "var(--text-muted)" }}>
-            How this account connects across your close — its schedule, findings, and adjusting entries.
+            {SUBTITLE[nodeType] ?? "What this connects to across your close."}
           </p>
           {typeCounts.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -141,7 +171,7 @@ export function RelatedPanel({ nodeType, nodeId, periodEnd }: Props) {
 
       {/* ── Groups ─────────────────────────────────────────────────── */}
       {total === 0 ? (
-        <RelatedEmpty />
+        <RelatedEmpty nodeType={nodeType} />
       ) : (
         <div className="space-y-3.5">
           {data!.groups.map((group, gi) => (
@@ -227,7 +257,24 @@ function RelatedRow({ item, first }: { item: RelatedItem; first: boolean }) {
 
 // ── Empty + loading ──────────────────────────────────────────────────
 
-function RelatedEmpty() {
+/** Empty is the common first state, so it has to teach rather than shrug —
+ *  and in the language of whatever is being looked at. */
+const EMPTY_HINT: Record<string, string> = {
+  account:
+    "As you reconcile this account, accept adjusting entries and run AI checks, Nordavix links the related work here — so the full story behind the balance is one glance away.",
+  reconciliation:
+    "Attach a statement, let a schedule feed the subledger, or accept an adjusting entry, and each one is linked here as part of this reconciliation's story.",
+  journal_entry:
+    "Once this entry is accepted, Nordavix links it to the accounts it touches and the finding or variance it was raised to fix.",
+  flux_variance:
+    "Book an adjusting entry against this movement, or add commentary, and the work explaining it collects here.",
+  finding:
+    "Accept this finding into Adjustments, or note it, and the entry and account it touches are linked here.",
+  schedule:
+    "Once this schedule feeds a reconciliation, the account and period it lands in are linked here.",
+}
+
+function RelatedEmpty({ nodeType }: { nodeType: string }) {
   return (
     <div className="rounded-2xl px-6 py-10 text-center" style={{ background: "var(--surface-2)", border: "1px dashed var(--border-strong)" }}>
       <div className="h-12 w-12 mx-auto rounded-xl flex items-center justify-center mb-3"
@@ -236,8 +283,8 @@ function RelatedEmpty() {
       </div>
       <p className="text-sm font-semibold text-theme mb-1">No connections yet</p>
       <p className="text-xs max-w-xs mx-auto leading-relaxed" style={{ color: "var(--text-muted)" }}>
-        As you reconcile this account, accept adjusting entries, and run AI checks, Nordavix
-        links the related work here — so the full story behind the balance is one glance away.
+        {EMPTY_HINT[nodeType]
+          ?? "As the close progresses, Nordavix links the related work here."}
       </p>
     </div>
   )

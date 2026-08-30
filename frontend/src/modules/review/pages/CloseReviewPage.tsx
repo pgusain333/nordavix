@@ -23,6 +23,7 @@ import { SkeletonPage } from "@/core/ui/Skeleton"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { formatDate, formatDateTime, toISODate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
+import { RelatedPanel } from "@/modules/graph/RelatedPanel"
 import { reviewApi, type ReviewFinding, type ReviewState, type Severity } from "../api"
 
 const SEVERITY_META: Record<Severity, { label: string; bg: string; fg: string; border: string; icon: LucideIcon }> = {
@@ -447,7 +448,7 @@ export function CloseReviewPage() {
                         </h3>
                         <div className="space-y-2.5">
                           {grouped[sev].map((f) => (
-                            <FindingCard key={f.id} f={f} canReview={canReview} busy={actM.isPending}
+                            <FindingCard key={f.id} f={f} canReview={canReview} busy={actM.isPending} periodEnd={period}
                               onAct={(action) => askReason(f, action)}
                               onNavigate={(p) => navigate(p)} />
                           ))}
@@ -475,7 +476,7 @@ export function CloseReviewPage() {
                     </div>
                     <div className="lg:sticky lg:top-0 self-start">
                       {selectedFinding ? (
-                        <FindingCard f={selectedFinding} canReview={canReview} busy={actM.isPending}
+                        <FindingCard f={selectedFinding} canReview={canReview} busy={actM.isPending} periodEnd={period}
                           onAct={(action) => askReason(selectedFinding, action)}
                           onNavigate={(p) => navigate(p)} />
                       ) : (
@@ -664,11 +665,13 @@ function FindingRow({ f, selected, onSelect }: {
 }
 
 function FindingCard({
-  f, canReview, busy, onAct, onNavigate,
+  f, canReview, busy, periodEnd, onAct, onNavigate,
 }: {
   f: ReviewFinding
   canReview: boolean
   busy: boolean
+  /** The period under review — seeds the account's graph panel below. */
+  periodEnd: string
   onAct: (action: "clear" | "accept") => void
   onNavigate: (path: string) => void
 }) {
@@ -790,6 +793,19 @@ function FindingCard({
               style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
               Accept
             </button>
+          </div>
+        )}
+
+        {/* The account's whole story, from the reviewer's seat.
+            "What is actually going on with this account" is the question every
+            exception raises, and answering it meant leaving the page for
+            Reconciliations and finding the row by hand. Seeded on the account
+            with the period, which folds in the reconciliation node too — so the
+            schedule feeding it, the entries booked against it and the Risk
+            Radar findings on it all arrive together. */}
+        {f.qbo_account_id && (
+          <div style={{ borderTop: "1px solid var(--border)", marginTop: 14, paddingTop: 14 }}>
+            <RelatedPanel nodeType="account" nodeId={f.qbo_account_id} periodEnd={periodEnd} />
           </div>
         )}
       </div>
