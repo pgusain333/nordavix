@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useOrganization } from "@clerk/clerk-react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { formatDateTime, toISODate } from "@/core/lib/dates"
 import {
   TrendingUp, TrendingDown, Wallet, ReceiptText, ArrowDownToLine,
@@ -722,6 +722,10 @@ function OverallHealthPill({ data }: { data: InsightsOverview }) {
  */
 function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
   const [open, setOpen] = useState(false)
+  // Anyone asking for reduced motion gets the panel instantly. The global CSS
+  // rule collapses transitions, not framer-motion's animations, so it has to
+  // be honoured here explicitly.
+  const reduce = useReducedMotion()
   const lines = ms.score_lines ?? []
   if (!lines.length) {
     // TWO different states, and conflating them put "not enough synced data"
@@ -770,8 +774,10 @@ function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
               The caps arrive strictest-first; the rest are true and already
               answered by the score, so they are a footnote, not a headline. */}
           <p className="text-[12.5px]" style={{ color: "#9b3d37" }}>
-            <span className="font-semibold">Held at {ms.score_caps![0].cap} of 100</span>
-            {ms.score_raw != null ? ` — the measures alone came to ${ms.score_raw}.` : " —"}{" "}
+            <span className="font-semibold">Capped — ceiling {ms.score_ceiling ?? ms.score_caps![0].cap} of 100.</span>
+            {ms.score_raw != null
+              ? ` The measures came to ${ms.score_raw}; scaled beneath the ceiling they give ${ms.score}.`
+              : ""}{" "}
             {ms.score_caps![0].reason}
           </p>
           {ms.score_caps!.length > 1 && (
@@ -794,8 +800,24 @@ function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
           style={{ color: "var(--text-muted)",
                    transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
       </button>
+      {/* Height + opacity, not a conditional pop. The panel is a disclosure the
+          reader chose to open, and content appearing instantly under their
+          cursor reads as a jump rather than a reveal. Collapsed a touch faster
+          than it opens — leaving should not cost as long as arriving. */}
+      <AnimatePresence initial={false}>
       {open && (
-        <div style={{ borderTop: "1px solid var(--border)" }}>
+        <motion.div
+          key="score-breakdown"
+          initial={reduce ? false : { height: 0, opacity: 0 }}
+          animate={{ height: "auto", opacity: 1,
+                     transition: reduce ? { duration: 0 } : {
+                       height: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
+                       opacity: { duration: 0.18, delay: 0.04 } } }}
+          exit={reduce ? { opacity: 0 } : {
+            height: 0, opacity: 0,
+            transition: { height: { duration: 0.16, ease: "easeIn" },
+                          opacity: { duration: 0.1 } } }}
+          style={{ overflow: "hidden", borderTop: "1px solid var(--border)" }}>
           {lines.map((l) => (
             <div key={l.key} className="px-4 py-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
               <div className="flex items-baseline gap-2 flex-wrap">
@@ -818,8 +840,9 @@ function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
               rescaled over what was actually measured.
             </p>
           )}
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   )
 }

@@ -598,7 +598,25 @@ def health_score(
     # Strictest first, so the binding constraint is the one the reader meets.
     # Everything after it is true and already answered by the number.
     caps.sort(key=lambda c: c["cap"])
-    score = min([raw, *[c["cap"] for c in caps]]) if caps else raw
+
+    # A ceiling, not an eraser.
+    #
+    # `min(raw, cap)` flattened every capped period to the cap itself, so March,
+    # April and May all read exactly 39 while being materially different months
+    # — the gate answered the question and then discarded everything else. A
+    # rating notched down for one condition still ranks within the band it lands
+    # in, and so should this.
+    #
+    # The measures are scaled into the TOP HALF of the capped range, so a
+    # capped period still moves with the business: at a ceiling of 39, poor
+    # components land near 20 and strong ones near 39. `min` keeps it a
+    # ceiling — a period already scoring below it is not lifted up to meet it.
+    if caps:
+        ceiling = caps[0]["cap"]
+        scaled = round(ceiling / 2 + (ceiling / 2) * raw / 100)
+        score = min(raw, scaled)
+    else:
+        score = raw
     band = "strong" if score >= 70 else "watch" if score >= 45 else "at_risk"
 
     # The headline states the binding constraint, so it can never contradict
@@ -622,10 +640,13 @@ def health_score(
         "score": score, "band": band, "headline": headline,
         "measured": len(lines), "of": 5, "lines": lines, "caps": caps,
         # Did a cap actually REDUCE the score, or did the components already
-        # land below it? A gate can fire and change nothing, and announcing
-        # "held at 44" over a score of 40 describes an intervention that never
-        # happened. Only a binding cap is worth a sentence.
+        # land below it? A gate can fire and change nothing, and announcing a
+        # ceiling over a score that never reached it describes an intervention
+        # that did not happen. Only a binding cap is worth a sentence.
         "capped": score < raw,
+        # The ceiling that bound, for the sentence that explains the two
+        # numbers. None when nothing bound.
+        "ceiling": caps[0]["cap"] if (caps and score < raw) else None,
         # Kept so the UI can say "82 capped to 39", which is the sentence that
         # makes the number defensible rather than mysterious.
         "raw_score": raw,
@@ -700,6 +721,10 @@ _MISSING_STAMP = object()
 #          month labels without the year they now need.
 #   4 → 5: recommendations and management-summary lines carry an `action`, and
 #          the summary lines became {text, action} objects rather than strings.
+#   7 → 8: a capped health score is scaled into the band beneath its ceiling
+#          instead of flattened onto it — three overdrawn months all read
+#          exactly 39, so the gate answered the question and discarded every
+#          other measure.
 #   6 → 7: the health score is gated and rescaled — a negative cash balance
 #          caps it instead of being outvoted, unmeasured components are excluded
 #          rather than given half marks (an empty workspace used to score 73 and
@@ -709,7 +734,7 @@ _MISSING_STAMP = object()
 #          March plotted January through March as "Mar". Cached payloads hold
 #          the inflated point — a wrong figure, not merely a stale one — and the
 #          y-axis was scaled to it, so every other month on the chart read flat.
-INSIGHTS_PAYLOAD_VERSION = 7
+INSIGHTS_PAYLOAD_VERSION = 8
 
 
 def control_account_figures(
@@ -1524,6 +1549,7 @@ def _build_advisory(payload: dict) -> None:
         "score_caps":  scoring["caps"],
         "score_raw":   scoring["raw_score"],
         "score_capped": scoring.get("capped", False),
+        "score_ceiling": scoring.get("ceiling"),
         "score_measured": scoring["measured"],
         "score_of":       scoring["of"],
         "priorities":  priorities or [item("Maintain the close cadence and keep the cash forecast current.")],

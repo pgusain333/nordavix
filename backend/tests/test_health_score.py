@@ -243,15 +243,17 @@ def test_the_binding_cap_comes_first():
 
 
 def test_a_cap_that_changed_nothing_is_not_reported_as_binding():
-    """CAUGHT BY THIS FILE. A gate can fire while the components already sit
-    below it — here four measures score 40 against a strictest cap of 44. The
-    banner said "Held at 44 of 100 — the measures alone came to 40", which
-    describes an intervention that never happened and contradicts the gauge."""
-    r = score(cash=8_000, runway_months=1.2, current_ratio=0.6,
-              net_margin_pct=-9, operating_cash_flow=-4_000)
+    """A ceiling is not a floor. A period already scoring below where the
+    scaling would put it is left alone, and the banner must not claim an
+    intervention that did not happen — it once said "Held at 44 of 100" over a
+    score of 40, contradicting the gauge beside it."""
+    r = score(cash=200, runway_months=1.0, current_ratio=0.2,
+              net_margin_pct=-80, operating_cash_flow=-50_000,
+              dso_days=250, ar_over_60_pct=98)
     assert r["caps"], "the gates should still have fired"
-    assert r["score"] == r["raw_score"], "nothing should have been capped here"
+    assert r["score"] == r["raw_score"], f'{r["score"]} vs raw {r["raw_score"]}'
     assert r["capped"] is False
+    assert r["ceiling"] is None
 
 
 def test_a_cap_that_did_bind_says_so():
@@ -260,7 +262,87 @@ def test_a_cap_that_did_bind_says_so():
     assert r["score"] < r["raw_score"]
 
 
-def test_the_score_is_the_strictest_cap_whatever_the_order_they_fire_in():
+def test_the_strictest_ceiling_is_the_one_that_applies():
+    """Several gates can fire; the tightest governs, and the score lands under
+    it rather than under the most lenient one."""
     r = score(cash=-100, runway_months=None, current_ratio=0.4,
               net_margin_pct=-30, operating_cash_flow=-90_000)
-    assert r["score"] == min([r["raw_score"], *[c["cap"] for c in r["caps"]]])
+    strictest = min(c["cap"] for c in r["caps"])
+    assert r["score"] <= strictest
+    assert r["ceiling"] in (strictest, None)
+
+
+# ── A ceiling must not erase the ranking beneath it ────────────────────────
+#
+# REPORTED: March, April and May all read exactly 39. `min(raw, cap)` flattened
+# every capped period onto the cap, so the gate answered the question and then
+# discarded everything else — three materially different months scored
+# identically. A rating notched down for one condition still ranks within the
+# band it lands in.
+
+def _overdrawn(nm, cr, dso):
+    return health_score(cash=-21_200, runway_months=None, operating_cash_flow=-5_000,
+                        net_margin_pct=nm, current_ratio=cr, dso_days=dso,
+                        ar_over_60_pct=10)
+
+
+def test_capped_periods_still_rank_against_each_other():
+    """THE BUG. All three are overdrawn and all three are at risk — and a good
+    month under a bad condition is still a better month."""
+    march = _overdrawn(22, 2.1, 24)
+    april = _overdrawn(4, 1.1, 55)
+    may = _overdrawn(-12, 0.7, 80)
+    assert march["score"] > april["score"] > may["score"], \
+        f'{march["score"]} / {april["score"]} / {may["score"]}'
+
+
+def test_every_capped_period_stays_in_the_band_the_gate_put_it_in():
+    """Ranking within the band must never climb out of it."""
+    for nm in range(-40, 60, 7):
+        r = _overdrawn(nm, 2.0, 20)
+        assert r["score"] <= 39
+        assert r["band"] == "at_risk"
+
+
+def test_the_ceiling_bounds_even_a_flawless_rest_of_business():
+    """Everything else perfect, the bank overdrawn: the score stays under the
+    ceiling — and cannot even reach it, because the component the gate is about
+    scores zero. The gate and the measure agree rather than double-counting."""
+    r = health_score(cash=-1, runway_months=None, operating_cash_flow=90_000,
+                     net_margin_pct=60, current_ratio=5, dso_days=5,
+                     ar_over_60_pct=0)
+    assert r["score"] < 39
+    assert r["band"] == "at_risk"
+    assert band_of("cash", r)["points"] == 0
+
+
+def test_a_ceiling_never_lifts_a_period_that_was_already_worse():
+    """It is a ceiling, not a floor. A period scoring below the cap on its own
+    measures must not be raised up to meet it."""
+    r = health_score(cash=-1, runway_months=None, operating_cash_flow=-1,
+                     net_margin_pct=-90, current_ratio=0.1, dso_days=200,
+                     ar_over_60_pct=95)
+    assert r["score"] <= r["raw_score"]
+
+
+def test_the_scaled_score_moves_monotonically_with_the_measures():
+    """No cliff: improving a component can never lower the score."""
+    prev = -1
+    for nm in range(-40, 80, 4):
+        s = _overdrawn(nm, 2.0, 20)["score"]
+        assert s >= prev, f"score fell from {prev} to {s} as margin improved"
+        prev = s
+
+
+def test_the_two_numbers_are_both_reported():
+    """The panel says "the measures came to X; scaled beneath the ceiling they
+    give Y" — both have to be there for that sentence to be true."""
+    r = _overdrawn(22, 2.1, 24)
+    assert r["raw_score"] > r["score"]
+    assert r["ceiling"] == 39
+    assert r["capped"] is True
+
+
+def test_an_uncapped_period_reports_no_ceiling():
+    r = score()
+    assert r["ceiling"] is None and r["capped"] is False

@@ -95,6 +95,9 @@ export interface ManagementSummary {
    *  components already sit below it, and announcing a cap that changed
    *  nothing contradicts the gauge beside it. */
   score_capped?:   boolean
+  /** The ceiling that bound. The measures are scaled into the band beneath
+   *  it rather than flattened onto it, so capped periods still rank. */
+  score_ceiling?:  number | null
   score_measured?: number
   score_of?:       number
   priorities:  SummaryItem[]
