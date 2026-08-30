@@ -459,6 +459,28 @@ def month_activity(
 LIVE_CACHE_TTL_SECONDS = 15 * 60
 
 
+# The band boundaries, in one place. Everything else about the score is
+# derived from them, including the ceilings the gates impose.
+STRONG_MIN = 70
+WATCH_MIN = 45
+
+# What a gate actually means: "this condition means the business cannot be
+# rated better than X". The ceiling is then the top of that band, not a number
+# somebody chose — 39 and 44 and 54 and 59 were four hand-picked figures where
+# only two thresholds exist, and "why 39?" had no answer beyond "it is below
+# 45". A CPA can defend "an overdraft cannot be rated above at-risk". Nobody
+# can defend 39.
+_BAND_CEILING = {
+    "watch":   STRONG_MIN - 1,   # cannot be rated strong
+    "at_risk": WATCH_MIN - 1,    # cannot be rated better than at risk
+}
+
+
+def band_for(score: int) -> str:
+    """The one place a number becomes a word."""
+    return "strong" if score >= STRONG_MIN else "watch" if score >= WATCH_MIN else "at_risk"
+
+
 def health_score(
     *,
     cash: float | None,
@@ -571,29 +593,32 @@ def health_score(
 
     # ── Caps: conditions a good average must not be allowed to outvote ──
     caps: list[dict] = []
+
+    def gate(rule: str, caps_to: str, reason: str) -> None:
+        caps.append({"rule": rule, "caps_to": caps_to,
+                     "cap": _BAND_CEILING[caps_to], "reason": reason})
+
     if cash is not None and cash < 0:
-        caps.append({"rule": "negative_cash", "cap": 39,
-                     "reason": "The cash balance is negative. A business that cannot "
-                               "fund itself today is not in good health, whatever the "
-                               "margins say."})
+        gate("negative_cash", "at_risk",
+             "The cash balance is negative. A business that cannot fund itself "
+             "today is not in good health, whatever the margins say.")
     # Suppressed when the balance is already negative: a negative balance IS
     # zero runway, so reporting both states one fact twice and leaves the
     # reader deciding which of two "capped at" numbers applies.
     if (runway_months is not None and runway_months < 3
             and not (cash is not None and cash < 0)):
-        caps.append({"rule": "short_runway", "cap": 44,
-                     "reason": f"Under three months of runway ({runway_months:.1f}). "
-                               f"This is a going-concern question, not a metric."})
+        gate("short_runway", "at_risk",
+             f"Under three months of runway ({runway_months:.1f}). This is a "
+             f"going-concern question, not a metric.")
     if current_ratio is not None and current_ratio < 1.0:
-        caps.append({"rule": "working_capital_deficiency", "cap": 59,
-                     "reason": f"Current ratio {current_ratio:.2f}× — current liabilities "
-                               f"exceed current assets, so near-term obligations depend "
-                               f"on new money."})
+        gate("working_capital_deficiency", "watch",
+             f"Current ratio {current_ratio:.2f}× — current liabilities exceed "
+             f"current assets, so near-term obligations depend on new money.")
     if (net_margin_pct is not None and net_margin_pct < 0
             and operating_cash_flow is not None and operating_cash_flow < 0):
-        caps.append({"rule": "loss_and_burn", "cap": 54,
-                     "reason": "Loss-making and cash-consuming in the same period — the "
-                               "loss is being funded from the balance sheet."})
+        gate("loss_and_burn", "watch",
+             "Loss-making and cash-consuming in the same period — the loss is "
+             "being funded from the balance sheet.")
 
     # Strictest first, so the binding constraint is the one the reader meets.
     # Everything after it is true and already answered by the number.
@@ -617,7 +642,7 @@ def health_score(
         score = min(raw, scaled)
     else:
         score = raw
-    band = "strong" if score >= 70 else "watch" if score >= 45 else "at_risk"
+    band = band_for(score)
 
     # The headline states the binding constraint, so it can never contradict
     # the components. "Financially healthy — deploy surplus" over an overdraft
@@ -721,6 +746,9 @@ _MISSING_STAMP = object()
 #          month labels without the year they now need.
 #   4 → 5: recommendations and management-summary lines carry an `action`, and
 #          the summary lines became {text, action} objects rather than strings.
+#   8 → 9: the score's cap ceilings are derived from the band boundaries
+#          instead of hand-picked (39/44/54/59 became "cannot be rated above
+#          at risk / watch"), and each cap says which band it rules out.
 #   7 → 8: a capped health score is scaled into the band beneath its ceiling
 #          instead of flattened onto it — three overdrawn months all read
 #          exactly 39, so the gate answered the question and discarded every
@@ -734,7 +762,7 @@ _MISSING_STAMP = object()
 #          March plotted January through March as "Mar". Cached payloads hold
 #          the inflated point — a wrong figure, not merely a stale one — and the
 #          y-axis was scaled to it, so every other month on the chart read flat.
-INSIGHTS_PAYLOAD_VERSION = 8
+INSIGHTS_PAYLOAD_VERSION = 9
 
 
 def control_account_figures(

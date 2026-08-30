@@ -77,6 +77,10 @@ export interface ScoreLine {
  *  not a quarter of an opinion, it is the opinion. */
 export interface ScoreCap {
   rule:   string
+  /** The band this condition means the business cannot be rated better than.
+   *  The ceiling is derived from it, so there are two thresholds in the whole
+   *  model rather than four hand-picked numbers. */
+  caps_to?: "watch" | "at_risk"
   cap:    number
   reason: string
 }

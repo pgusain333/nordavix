@@ -773,12 +773,21 @@ function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
               "Capped at" figures and had to work out that the lower one won.
               The caps arrive strictest-first; the rest are true and already
               answered by the score, so they are a footnote, not a headline. */}
+          {/* Lead with the RULE, not the number. "Capped at 39" invited "why
+              39?", and the only honest answer was "because it is below 45" —
+              a hand-picked figure explaining itself with another one. The
+              ceiling is the top of the band the condition caps into, so the
+              sentence that matters is which band, and the number follows from
+              it. */}
           <p className="text-[12.5px]" style={{ color: "#9b3d37" }}>
-            <span className="font-semibold">Capped — ceiling {ms.score_ceiling ?? ms.score_caps![0].cap} of 100.</span>
-            {ms.score_raw != null
-              ? ` The measures came to ${ms.score_raw}; scaled beneath the ceiling they give ${ms.score}.`
-              : ""}{" "}
-            {ms.score_caps![0].reason}
+            <span className="font-semibold">
+              Cannot be rated above {ms.score_caps![0].caps_to === "watch" ? "“watch”" : "“at risk”"}
+            </span>
+            {" — "}{ms.score_caps![0].reason}
+          </p>
+          <p className="text-[11.5px] mt-1.5" style={{ color: "#9b3d37", opacity: 0.85 }}>
+            The measures came to {ms.score_raw}; the ceiling for that band is{" "}
+            {ms.score_ceiling ?? ms.score_caps![0].cap}, and scaled beneath it they give {ms.score}.
           </p>
           {ms.score_caps!.length > 1 && (
             <p className="text-[11.5px] mt-1.5" style={{ color: "#9b3d37", opacity: 0.85 }}>

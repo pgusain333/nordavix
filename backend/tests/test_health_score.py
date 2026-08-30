@@ -114,20 +114,26 @@ def test_under_three_months_runway_caps_the_score():
     assert "going-concern" in r["caps"][0]["reason"]
 
 
-def test_a_working_capital_deficiency_caps_at_watch():
+def test_a_working_capital_deficiency_cannot_be_rated_strong():
     """Current liabilities above current assets means near-term obligations
-    depend on new money. That is not 'strong', whatever the margin is."""
+    depend on new money. That is not 'strong', whatever the margin is.
+
+    Asserted as a BAND, not a number. The ceilings used to be four hand-picked
+    figures — 39, 44, 54, 59 — and "why 39?" had no answer beyond "it is below
+    45". Each gate now names the band it caps into and the ceiling follows, so
+    the test asserts the claim rather than the arithmetic behind it."""
     r = score(current_ratio=0.8)
-    assert r["score"] <= 59
     assert r["band"] != "strong"
+    assert r["caps"][0]["caps_to"] == "watch"
 
 
-def test_losing_money_and_burning_cash_together_caps_the_score():
+def test_losing_money_and_burning_cash_together_cannot_be_rated_strong():
     """Either alone is a metric; both at once is the balance sheet funding the
     profit and loss."""
     r = score(net_margin_pct=-8, operating_cash_flow=-30_000, runway_months=9)
-    assert r["score"] <= 54
-    assert any(c["rule"] == "loss_and_burn" for c in r["caps"])
+    assert r["band"] != "strong"
+    gate = next(c for c in r["caps"] if c["rule"] == "loss_and_burn")
+    assert gate["caps_to"] == "watch"
 
 
 def test_a_loss_alone_does_not_trigger_the_burn_cap():
@@ -335,14 +341,51 @@ def test_the_scaled_score_moves_monotonically_with_the_measures():
 
 
 def test_the_two_numbers_are_both_reported():
-    """The panel says "the measures came to X; scaled beneath the ceiling they
-    give Y" — both have to be there for that sentence to be true."""
+    """The panel says "the measures came to X; the ceiling for that band is Z,
+    and scaled beneath it they give Y" — all three have to be there."""
+    from modules.insights.service import WATCH_MIN
     r = _overdrawn(22, 2.1, 24)
     assert r["raw_score"] > r["score"]
-    assert r["ceiling"] == 39
     assert r["capped"] is True
+    # Derived from the band boundary, not chosen: the top of "at risk".
+    assert r["ceiling"] == WATCH_MIN - 1
 
 
 def test_an_uncapped_period_reports_no_ceiling():
     r = score()
     assert r["ceiling"] is None and r["capped"] is False
+
+
+# ── The ceilings are derived, not chosen ───────────────────────────────────
+
+def test_every_ceiling_is_the_top_of_the_band_it_caps_into():
+    """"Why 39?" had no answer beyond "it is below 45". Now a gate says which
+    band a condition rules out and the number follows from the same two
+    thresholds the bands themselves use — so there is nowhere left for a
+    hand-picked figure to hide."""
+    from modules.insights.service import STRONG_MIN, WATCH_MIN, band_for
+    cases = [
+        score(cash=-1, runway_months=None),
+        score(cash=5_000, runway_months=1),
+        score(current_ratio=0.8),
+        score(net_margin_pct=-8, operating_cash_flow=-30_000, runway_months=9),
+    ]
+    tops = {"watch": STRONG_MIN - 1, "at_risk": WATCH_MIN - 1}
+    for r in cases:
+        for c in r["caps"]:
+            assert c["cap"] == tops[c["caps_to"]], c
+            # And the ceiling really is the top of that band.
+            assert band_for(c["cap"]) == c["caps_to"]
+            assert band_for(c["cap"] + 1) != c["caps_to"]
+
+
+def test_a_gate_actually_holds_the_band_it_names():
+    """The claim is "cannot be rated better than X". It has to be true even
+    when every other measure is perfect."""
+    perfect = dict(operating_cash_flow=90_000, net_margin_pct=60,
+                   current_ratio=5, dso_days=5, ar_over_60_pct=0)
+    r = health_score(cash=-1, runway_months=None, **perfect)
+    assert r["band"] == "at_risk"
+    r2 = health_score(cash=50_000, runway_months=20,
+                      **{**perfect, "current_ratio": 0.8})
+    assert r2["band"] in ("watch", "at_risk")
