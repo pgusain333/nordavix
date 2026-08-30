@@ -272,31 +272,34 @@ IST = "Asia/Kolkata"
 
 
 def test_before_the_hour_the_check_is_due_today():
-    """07:30 IST, checking at 10:00 IST — today, two and a half hours out."""
+    """07:30 IST, checking at 10:00 IST. The answer is when it will RUN — the
+    first cron tick at or after 10:00 IST, which is 10:40."""
     due = next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=None,
                       now_utc=utc(2026, 8, 30, 2))          # 07:30 IST
-    assert due == utc(2026, 8, 30, 4, 30)                    # 10:00 IST
+    assert due == utc(2026, 8, 30, 5, 10)                    # 10:40 IST
 
 
-def test_inside_the_window_it_is_due_now():
-    """The catch-up window is open and nothing has run — so it is not 'later',
-    it is overdue, and the rail must not imply a wait."""
+def test_inside_the_window_the_answer_is_the_next_tick_not_now():
+    """THE BUG THIS FIXES. The window is open, so the check is eligible — but
+    the sweep is driven by an hourly cron and will not run until the next tick.
+    Returning `now` made the rail say "due now" for a check forty minutes away,
+    which reads as "this second" and makes a working feature look broken."""
     now = utc(2026, 8, 30, 6)                                # 11:30 IST
     assert next_due_at(timezone=IST, check_hour=10,
-                       last_ok_scan_at=None, now_utc=now) == now
+                       last_ok_scan_at=None, now_utc=now) == utc(2026, 8, 30, 6, 10)
 
 
 def test_after_the_window_it_rolls_to_tomorrow():
     due = next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=None,
                       now_utc=utc(2026, 8, 30, 12))          # 17:30 IST
-    assert due == utc(2026, 8, 31, 4, 30)                    # 10:00 IST tomorrow
+    assert due == utc(2026, 8, 31, 5, 10)                    # 10:40 IST tomorrow
 
 
 def test_having_run_today_pushes_it_to_tomorrow():
     ran = utc(2026, 8, 30, 4, 30)
     due = next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=ran,
                       now_utc=utc(2026, 8, 30, 5))
-    assert due == utc(2026, 8, 31, 4, 30)
+    assert due == utc(2026, 8, 31, 5, 10)
 
 
 def test_an_unset_timezone_reads_the_hour_as_utc():
@@ -306,7 +309,7 @@ def test_an_unset_timezone_reads_the_hour_as_utc():
     indistinguishable from broken and much harder to diagnose."""
     due = next_due_at(timezone=None, check_hour=10, last_ok_scan_at=None,
                       now_utc=utc(2026, 8, 30, 2))
-    assert due == utc(2026, 8, 30, 10)                       # 15:30 IST
+    assert due == utc(2026, 8, 30, 10, 10)                   # 15:40 IST
     # …and with the zone set, the same settings fire five and a half hours earlier.
     assert next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=None,
                        now_utc=utc(2026, 8, 30, 2)) < due
@@ -324,3 +327,25 @@ def test_the_next_time_is_always_in_the_future_or_now():
         now = utc(2026, 8, 30, h)
         due = next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=None, now_utc=now)
         assert due is not None and due >= now, f"{h}:00Z -> {due}"
+
+
+def test_the_answer_is_always_a_moment_the_cron_actually_ticks():
+    """The rail quotes this time to the user. A time nothing acts on is worse
+    than no time — it invites exactly the "it said 11:00 and nothing happened"
+    that this whole line of work started from."""
+    from modules.gl_accuracy.schedule import SWEEP_MINUTE
+    for h in range(24):
+        for tz in (IST, NY, None):
+            due = next_due_at(timezone=tz, check_hour=11, last_ok_scan_at=None,
+                              now_utc=utc(2026, 8, 30, h))
+            assert due is not None and due.minute == SWEEP_MINUTE, f"{h}Z {tz} -> {due}"
+
+
+def test_the_run_time_is_never_more_than_an_hour_after_the_chosen_hour():
+    """Waiting for a tick is fine; waiting two is a schedule nobody chose."""
+    for h in range(24):
+        now = utc(2026, 8, 30, h)
+        due = next_due_at(timezone=IST, check_hour=11, last_ok_scan_at=None, now_utc=now)
+        local = local_now(due, IST)
+        # Either the chosen hour, or the catch-up window it legitimately lands in.
+        assert 11 <= local.hour <= 11 + 3, f"{h}Z -> {local}"

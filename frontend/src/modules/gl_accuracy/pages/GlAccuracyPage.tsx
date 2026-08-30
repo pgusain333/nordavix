@@ -182,6 +182,11 @@ function ContinuousSettings() {
               <span className="block text-[11.5px]" style={{ color: "var(--text-muted)" }}>
                 Nordavix runs the same checks once a day on the open period and tells
                 you only when something new turns up. Nothing is written to QuickBooks.
+                {/* The granularity, said once and plainly. The sweep is hourly,
+                    so "11:00" means "the first sweep at or after 11:00" — and
+                    someone watching the clock at 11:05 deserves to know that
+                    rather than conclude it's broken. */}
+                {" "}Checks run hourly, so it starts within an hour of the time you pick.
               </span>
             </span>
           </label>
@@ -508,16 +513,25 @@ function MonitoringHead({ m, sched, scanning, enabled, reduce, periodEnd, onChec
   )
 }
 
-/** "in 4 hours" / "due now" / "tomorrow 10:00" — from a UTC instant. */
+/** When the next check will actually run, from a UTC instant.
+ *
+ *  Approximate on purpose. The server returns the cron tick the check will
+ *  land on, and GitHub's scheduled workflows are best-effort — they run late
+ *  under load. A precise-looking "in 24 min" would be a promise nothing keeps;
+ *  "~24 min" is the honest shape of the same fact.
+ *
+ *  It used to say "due now" the moment the chosen hour arrived, for a check
+ *  that would run up to an hour later. Technically true, read by everyone as
+ *  "this second", and it made a working feature look broken. */
 function dueLabel(iso: string): string {
   const t = new Date(iso).getTime()
   if (Number.isNaN(t)) return "—"
   const mins = Math.round((t - Date.now()) / 60000)
-  if (mins <= 1) return "due now"
-  if (mins < 60) return `in ${mins} min`
+  if (mins <= 1) return "any moment"
+  if (mins < 60) return `~${mins} min`
   const hrs = Math.round(mins / 60)
-  if (hrs < 24) return hrs === 1 ? "in 1 hour" : `in ${hrs} hours`
-  return `in ${Math.round(hrs / 24)} days`
+  if (hrs < 24) return hrs === 1 ? "~1 hour" : `~${hrs} hours`
+  return `~${Math.round(hrs / 24)} days`
 }
 
 /**

@@ -98,6 +98,19 @@ def watch_periods(
 CATCH_UP_HOURS = 3
 
 
+# The minute past each hour the sweep's cron fires, from
+# .github/workflows/continuous-close.yml ("10 * * * *"). Duplicated here on
+# purpose: the schedule the user is shown has to be the schedule that actually
+# runs, and the alternative is a rail that quotes a time nothing acts on.
+SWEEP_MINUTE = 10
+
+
+def next_tick_at(after: datetime) -> datetime:
+    """The next hourly cron tick at or after `after`."""
+    t = after.replace(minute=SWEEP_MINUTE, second=0, microsecond=0)
+    return t if t >= after else t + timedelta(hours=1)
+
+
 def next_due_at(
     *,
     timezone: str | None,
@@ -105,22 +118,27 @@ def next_due_at(
     last_ok_scan_at: datetime | None,
     now_utc: datetime,
 ) -> datetime | None:
-    """When this workspace will next be checked, as a UTC instant.
+    """When this workspace will next actually be CHECKED, as a UTC instant.
 
     Exists because "continuous close · on" was the only thing the rail could
     say, and it kept saying it while the sweep skipped the workspace for any of
     five reasons nobody could see. A time you can hold a clock up to is the
-    difference between a claim and a fact — the same reason the strip shows
-    "last checked" rather than the word "monitoring".
+    difference between a claim and a fact.
 
-    None when the hour is out of range; `now_utc` itself when the workspace is
-    due right now and simply hasn't been ticked yet.
+    Returns when the check will RUN, not when it becomes eligible, and those are
+    different by up to an hour. The sweep is driven by an hourly cron; a
+    workspace whose chosen hour has just arrived waits for the next tick. The
+    first version returned the eligible moment, so the rail said "due now" at
+    11:00 for a check that would run at 11:40 — technically true, and read by
+    everyone as "this second", which makes a working feature look broken.
+
+    None when the hour is out of range.
     """
     if check_hour is None or not (0 <= int(check_hour) <= 23):
         return None
     if is_due(timezone=timezone, check_hour=check_hour,
               last_ok_scan_at=last_ok_scan_at, now_utc=now_utc):
-        return now_utc
+        return next_tick_at(now_utc)
 
     zone = resolve_zone(timezone)
     here = local_now(now_utc, timezone)
@@ -135,7 +153,7 @@ def next_due_at(
     local_target = datetime(
         target_day.year, target_day.month, target_day.day, hour, tzinfo=zone
     )
-    return local_target.astimezone(UTC)
+    return next_tick_at(local_target.astimezone(UTC))
 
 
 def is_due(
