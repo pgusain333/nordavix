@@ -22,7 +22,7 @@ import {
   ArrowUpFromLine, LineChart as LineIcon, Sparkles, AlertTriangle,
   Play, Info, Lightbulb, MousePointerClick,
   Target, Eye, ShieldCheck, CheckCircle2,
-  CalendarClock, Scale, Gauge, RefreshCw, ChevronRight,
+  CalendarClock, Scale, Gauge, RefreshCw, ChevronRight, ChevronDown,
 } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -30,7 +30,7 @@ import { PageHeader } from "@/core/ui/PageHeader"
 import { usePublishSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import {
   insightsApi, type InsightsOverview, type KpiRow, type RiskLevel, type HistoryPoint,
-  type Advisory, type InsightAction, type SummaryItem,
+  type Advisory, type InsightAction, type SummaryItem, type ManagementSummary,
 } from "@/modules/insights/api"
 
 // ── Period helpers ───────────────────────────────────────────────────────────
@@ -106,8 +106,9 @@ function railMeta(id: SectionId, data: InsightsOverview): { headline: string; st
     case "overview": {
       const ms = data.management_summary
       return {
-        headline: ms ? `Health ${ms.score}/100` : "Executive digest",
-        status: ms ? (ms.health === "strong" ? "green" : ms.health === "watch" ? "amber" : "red") : "neutral",
+        headline: ms?.score != null ? `Health ${ms.score}/100` : "Executive digest",
+        status: ms?.health === "strong" ? "green" : ms?.health === "watch" ? "amber"
+          : ms?.health === "at_risk" ? "red" : "neutral",
       }
     }
     case "recommendations": {
@@ -695,7 +696,9 @@ function RailItem({ section, active, onSelect, data }: {
 /** Compact overall-health chip atop the rail (from the management summary). */
 function OverallHealthPill({ data }: { data: InsightsOverview }) {
   const ms = data.management_summary
-  if (!ms) return null
+  // No score is a real state now: fewer than two components could be measured,
+  // and a number built on one of them would be a guess wearing a gauge.
+  if (!ms || ms.score == null) return null
   const tone = ms.health === "strong" ? { fg: "#3e8f66", bg: "#eaf4ee" }
     : ms.health === "watch" ? { fg: "#8a6326", bg: "#f4eddf" }
     : { fg: "#9b3d37", bg: "#f7eeec" }
@@ -705,6 +708,88 @@ function OverallHealthPill({ data }: { data: InsightsOverview }) {
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.fg }} />
       {ms.score}
     </span>
+  )
+}
+
+/**
+ * Where the score came from — the part that makes it defensible.
+ *
+ * A gauge reading 89 is a claim. A partner asked to stand behind it needs the
+ * components, the band each fell in, and anything that overrode the average.
+ * That last part is why this exists: a negative cash balance used to be
+ * outvoted by four healthy measures and the page said "deploy surplus".
+ * Now the cap is stated, with the number it replaced.
+ */
+function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
+  const [open, setOpen] = useState(false)
+  const lines = ms.score_lines ?? []
+  if (!lines.length) {
+    // Fewer than two measurable components. Say which, rather than showing a
+    // confident number built on almost nothing.
+    return (
+      <div className="rounded-xl px-4 py-3 text-[12px]"
+        style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+        Not enough synced data to score this period yet — sync the month from
+        QuickBooks and the health score appears with its workings.
+      </div>
+    )
+  }
+  const capped = (ms.score_caps?.length ?? 0) > 0
+  return (
+    <div className="rounded-xl overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      {/* A cap is the most important sentence on the page when it fires: it is
+          the reason the number is not what the components add up to. */}
+      {capped && (
+        <div className="px-4 py-3" style={{ background: "#f7eeec", borderBottom: "1px solid var(--border)" }}>
+          {ms.score_caps!.map((c) => (
+            <p key={c.rule} className="text-[12.5px]" style={{ color: "#9b3d37" }}>
+              <span className="font-semibold">Capped at {c.cap}</span>
+              {ms.score_raw != null ? ` (the measures alone scored ${ms.score_raw})` : ""} — {c.reason}
+            </p>
+          ))}
+        </div>
+      )}
+      <button onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-left">
+        <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+          How this score is built
+        </span>
+        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+          · scored on {ms.score_measured ?? lines.length} of {ms.score_of ?? 5} measures
+        </span>
+        <span className="flex-1" />
+        <ChevronDown size={14} strokeWidth={2}
+          style={{ color: "var(--text-muted)",
+                   transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+      </button>
+      {open && (
+        <div style={{ borderTop: "1px solid var(--border)" }}>
+          {lines.map((l) => (
+            <div key={l.key} className="px-4 py-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-[13px] font-semibold" style={{ color: "var(--text)" }}>{l.label}</span>
+                <span className="text-[13px] tabular-nums" style={{ color: "var(--text-2)" }}>{l.value}</span>
+                <span className="text-[10.5px] px-1.5 py-0.5 rounded"
+                  style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>{l.band}</span>
+                <span className="flex-1" />
+                <span className="text-[13px] font-semibold tabular-nums" style={{ color: "var(--text)" }}>
+                  {l.points}<span style={{ color: "var(--text-muted)" }}>/{l.max_points}</span>
+                </span>
+              </div>
+              <p className="text-[11.5px] mt-1" style={{ color: "var(--text-muted)" }}>{l.basis}</p>
+            </div>
+          ))}
+          {(ms.score_measured ?? lines.length) < (ms.score_of ?? 5) && (
+            <p className="px-4 py-2.5 text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+              {(ms.score_of ?? 5) - (ms.score_measured ?? lines.length)} measure(s) could not be
+              read for this period and were excluded rather than assumed — the score is
+              rescaled over what was actually measured.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -784,17 +869,23 @@ function SectionBody({ id, data, onJumpToMonth, onSection }: {
       return (
         <div className="space-y-5">
           {data.management_summary && (
-            <div className="flex flex-col sm:flex-row items-center sm:items-center gap-5">
-              <HealthGauge score={data.management_summary.score} health={data.management_summary.health} />
-              <div className="min-w-0 text-center sm:text-left">
-                <p className="text-[15px] font-semibold leading-snug" style={{ color: "var(--text)" }}>
-                  {data.management_summary.headline}
-                </p>
-                <p className="text-[12px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-                  {data.custom_range ? "Selected window" : "Latest closed month"} · {data.period_label}
-                </p>
+            <>
+              <div className="flex flex-col sm:flex-row items-center sm:items-center gap-5">
+                {data.management_summary.score != null && data.management_summary.health && (
+                  <HealthGauge score={data.management_summary.score}
+                    health={data.management_summary.health} />
+                )}
+                <div className="min-w-0 text-center sm:text-left">
+                  <p className="text-[15px] font-semibold leading-snug" style={{ color: "var(--text)" }}>
+                    {data.management_summary.headline}
+                  </p>
+                  <p className="text-[12px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+                    {data.custom_range ? "Selected window" : "Latest closed month"} · {data.period_label}
+                  </p>
+                </div>
               </div>
-            </div>
+              <ScoreBreakdown ms={data.management_summary} />
+            </>
           )}
           <HeroKpis data={data} />
           <ManagementSummary data={data} embedded onSection={onSection} />
@@ -1086,7 +1177,7 @@ function ManagementSummary({ data, embedded = false, onSection }: {
             <h2 className="text-sm font-bold text-theme">Management summary</h2>
             <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
               style={{ background: tone.bg, color: tone.fg }}>
-              {tone.label} · {ms.score}/100
+              {tone.label}{ms.score != null ? ` · ${ms.score}/100` : ""}
             </span>
           </div>
           {!embedded && (

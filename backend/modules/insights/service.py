@@ -459,6 +459,167 @@ def month_activity(
 LIVE_CACHE_TTL_SECONDS = 15 * 60
 
 
+def health_score(
+    *,
+    cash: float | None,
+    runway_months: float | None,
+    operating_cash_flow: float | None,
+    net_margin_pct: float | None,
+    current_ratio: float | None,
+    dso_days: float | None,
+    ar_over_60_pct: float | None,
+) -> dict:
+    """The financial-health score, with the reasoning it was built from.
+
+    Rewritten after a workspace with a NEGATIVE cash balance scored 89/100 and
+    was told to "deploy surplus deliberately". Three things were wrong, and all
+    three are the same mistake — treating a score as an average when a CPA reads
+    it as a judgement.
+
+    1. NO GATES. It was a pure weighted sum, so a single fatal condition could
+       be outvoted by four healthy ones. An overdrawn bank account is not a
+       quarter of an opinion; it is the opinion. Credit and going-concern work
+       has always been dominated by its worst indicator, and the score now caps
+       rather than averages.
+
+    2. AN UNMEASURED COMPONENT SCORED HALF MARKS. Every unknown awarded ~12 of
+       25, so a workspace with no data at all scored 73 — "STRONG" — on the
+       strength of knowing nothing about it. Unknowns are now EXCLUDED and the
+       result is rescaled over what was actually measurable, with the count
+       reported. Below two measures there is no score at all.
+
+    3. A POSITIVE OPERATING CASH FLOW EARNED FULL MARKS ON CASH regardless of
+       the balance. That is how "operations fund themselves" appeared over an
+       overdraft: the month's flow was fine, the position was not, and only the
+       flow was scored.
+
+    Auditable by construction: every line carries the value it read, the band it
+    fell in, the points it earned out of the points available, and the basis in
+    a sentence. A partner asked to defend an 89 can read where all 89 came from,
+    and a test can assert each band rather than the total.
+    """
+    lines: list[dict] = []
+
+    def line(key, label, value, band, points, max_points, basis):
+        lines.append({
+            "key": key, "label": label, "value": value, "band": band,
+            "points": points, "max_points": max_points, "basis": basis,
+        })
+
+    # ── Cash position (25) — balance FIRST, then the cushion it buys ────
+    if cash is not None and cash < 0:
+        line("cash", "Cash position", _money_str(Decimal(str(cash))), "overdrawn", 0, 25,
+             "The combined bank and cash balance is negative. Nothing else in "
+             "this score can offset an overdrawn position.")
+    elif runway_months is not None:
+        r = runway_months
+        pts, band = ((25, "12+ months") if r >= 12 else (18, "6–12 months")
+                     if r >= 6 else (10, "3–6 months") if r >= 3 else (3, "under 3 months"))
+        line("cash", "Cash runway", f"{r:.1f} months", band, pts, 25,
+             f"Cash on hand covers about {r:.1f} months at the current operating burn.")
+    elif cash is not None and (operating_cash_flow or 0) >= 0:
+        # Good, but not the same as a demonstrated cushion: one month of
+        # covering your own costs is one month of evidence, not twelve.
+        line("cash", "Cash position", _money_str(Decimal(str(cash))), "self-funding", 22, 25,
+             "Operations covered their own costs this period, so there is no burn "
+             "rate to measure a cushion against.")
+    # else: unmeasurable — excluded from the denominator entirely.
+
+    # ── Solvency (20) ──────────────────────────────────────────────────
+    if current_ratio is not None:
+        pts, band = ((20, "1.5× or better") if current_ratio >= 1.5
+                     else (12, "1.0–1.5×") if current_ratio >= 1.0
+                     else (4, "below 1.0×"))
+        line("solvency", "Current ratio", f"{current_ratio:.2f}×", band, pts, 20,
+             "Current assets against current liabilities — whether near-term "
+             "obligations can be met without new funding.")
+
+    # ── Profitability (25) ─────────────────────────────────────────────
+    if net_margin_pct is not None:
+        nm = net_margin_pct
+        pts, band = ((25, "15% or better") if nm >= 15 else (18, "5–15%") if nm >= 5
+                     else (10, "0–5%") if nm >= 0 else (3, "loss-making"))
+        line("profitability", "Net margin", f"{nm:.1f}%", band, pts, 25,
+             "Net income as a share of revenue for the period.")
+
+    # ── Collections (15) ───────────────────────────────────────────────
+    if dso_days is not None:
+        pts, band = ((15, "30 days or fewer") if dso_days <= 30
+                     else (10, "30–60 days") if dso_days <= 60 else (4, "over 60 days"))
+        line("collections", "Days sales outstanding", f"{dso_days:.0f} days", band, pts, 15,
+             "How long revenue sits in receivables before it becomes cash.")
+
+    # ── Receivable quality (15) ────────────────────────────────────────
+    if ar_over_60_pct is not None:
+        pts, band = ((15, "10% or less") if ar_over_60_pct <= 10
+                     else (9, "10–25%") if ar_over_60_pct <= 25 else (3, "over 25%"))
+        line("ar_quality", "Receivables over 60 days", f"{ar_over_60_pct:.0f}%", band, pts, 15,
+             "The share of the ledger that is ageing — the part most likely to "
+             "need a provision.")
+
+    # Fewer than two measures is not a score, it is a guess with a number on it.
+    if len(lines) < 2:
+        return {
+            "score": None, "band": None, "headline": None,
+            "measured": len(lines), "of": 5, "lines": lines, "caps": [],
+            "raw_score": None,
+        }
+
+    earned = sum(x["points"] for x in lines)
+    possible = sum(x["max_points"] for x in lines)
+    raw = round(100 * earned / possible)
+
+    # ── Caps: conditions a good average must not be allowed to outvote ──
+    caps: list[dict] = []
+    if cash is not None and cash < 0:
+        caps.append({"rule": "negative_cash", "cap": 39,
+                     "reason": "The cash balance is negative. A business that cannot "
+                               "fund itself today is not in good health, whatever the "
+                               "margins say."})
+    if runway_months is not None and runway_months < 3:
+        caps.append({"rule": "short_runway", "cap": 44,
+                     "reason": f"Under three months of runway ({runway_months:.1f}). "
+                               f"This is a going-concern question, not a metric."})
+    if current_ratio is not None and current_ratio < 1.0:
+        caps.append({"rule": "working_capital_deficiency", "cap": 59,
+                     "reason": f"Current ratio {current_ratio:.2f}× — current liabilities "
+                               f"exceed current assets, so near-term obligations depend "
+                               f"on new money."})
+    if (net_margin_pct is not None and net_margin_pct < 0
+            and operating_cash_flow is not None and operating_cash_flow < 0):
+        caps.append({"rule": "loss_and_burn", "cap": 54,
+                     "reason": "Loss-making and cash-consuming in the same period — the "
+                               "loss is being funded from the balance sheet."})
+
+    score = min([raw, *[c["cap"] for c in caps]]) if caps else raw
+    band = "strong" if score >= 70 else "watch" if score >= 45 else "at_risk"
+
+    # The headline states the binding constraint, so it can never contradict
+    # the components. "Financially healthy — deploy surplus" over an overdraft
+    # was the whole complaint.
+    if caps:
+        headline = {
+            "negative_cash": "Cash is negative — restoring the bank position comes before anything else.",
+            "short_runway": "Cash is the priority — under three months of runway at the current burn.",
+            "working_capital_deficiency": "Near-term obligations exceed near-term assets — working capital needs attention.",
+            "loss_and_burn": "Losses are being funded from the balance sheet — profitability is the priority.",
+        }[caps[0]["rule"]]
+    elif band == "strong":
+        headline = "Financially healthy — protect the position and deploy surplus deliberately."
+    elif band == "watch":
+        headline = "Generally stable with a few areas to tighten this month."
+    else:
+        headline = "Several measures are below where they should be — work the list below."
+
+    return {
+        "score": score, "band": band, "headline": headline,
+        "measured": len(lines), "of": 5, "lines": lines, "caps": caps,
+        # Kept so the UI can say "82 capped to 39", which is the sentence that
+        # makes the number defensible rather than mysterious.
+        "raw_score": raw,
+    }
+
+
 def cache_is_fresh(
     payload: dict | None,
     current_synced_at_iso: str | None,
@@ -527,12 +688,16 @@ _MISSING_STAMP = object()
 #          month labels without the year they now need.
 #   4 → 5: recommendations and management-summary lines carry an `action`, and
 #          the summary lines became {text, action} objects rather than strings.
+#   6 → 7: the health score is gated and rescaled — a negative cash balance
+#          caps it instead of being outvoted, unmeasured components are excluded
+#          rather than given half marks (an empty workspace used to score 73 and
+#          read STRONG), and the payload carries the per-component workings.
 #   5 → 6: the books-start month on the history charts is that month's own P&L,
 #          pulled live, instead of its fiscal year-to-date. Books starting in
 #          March plotted January through March as "Mar". Cached payloads hold
 #          the inflated point — a wrong figure, not merely a stale one — and the
 #          y-axis was scaled to it, so every other month on the chart read flat.
-INSIGHTS_PAYLOAD_VERSION = 6
+INSIGHTS_PAYLOAD_VERSION = 7
 
 
 def control_account_figures(
@@ -1273,29 +1438,23 @@ def _build_advisory(payload: dict) -> None:
     }
 
     # ── Management summary (composite health) ──
-    score = 0
-    if runway is None and op_cf >= 0:
-        score += 25
-    elif runway is not None:
-        score += 25 if runway >= 12 else 15 if runway >= 6 else 5
-    if nm is None:
-        score += 12
-    else:
-        score += 25 if nm >= 15 else 18 if nm >= 5 else 10 if nm >= 0 else 3
-    score += 12 if dso is None else (15 if dso <= 30 else 10 if dso <= 60 else 4)
-    score += 12 if cur_r is None else (20 if cur_r >= 1.5 else 12 if cur_r >= 1.0 else 4)
-    score += 12 if ar_over60 is None else (15 if ar_over60 <= 10 else 9 if ar_over60 <= 25 else 3)
-    score = min(100, score)
-    health = "strong" if score >= 70 else "watch" if score >= 45 else "at_risk"
-
-    if runway is not None and runway < 6:
-        headline = f"Cash is the priority — about {runway:.1f} months of runway at the current operating burn."
-    elif nm is not None and nm < 0:
-        headline = "Profitability is the priority — the business is running at a net loss this period."
-    elif health == "strong":
-        headline = "Financially healthy — protect the position and deploy surplus deliberately."
-    else:
-        headline = "Generally stable with a few areas to tighten this month."
+    # Scored by a pure, gated, auditable function — see health_score(). It
+    # replaced a weighted sum in which a negative cash balance still scored 89
+    # and read "deploy surplus deliberately".
+    scoring = health_score(
+        cash=cash,
+        runway_months=runway,
+        operating_cash_flow=op_cf,
+        net_margin_pct=nm,
+        current_ratio=cur_r,
+        dso_days=dso,
+        ar_over_60_pct=ar_over60,
+    )
+    score = scoring["score"]
+    health = scoring["band"]
+    headline = scoring["headline"] or (
+        "Not enough synced data yet to score this period's financial health."
+    )
 
     # Every summary line is {text, action}. They were bare strings, so the
     # sharpest reading in the product — "AR concentration in 60+ days (36%)" —
@@ -1305,7 +1464,10 @@ def _build_advisory(payload: dict) -> None:
         return {"text": text, "action": action}
 
     strengths: list[dict] = []
-    if runway is None and op_cf >= 0: strengths.append(item("Operations are cash-generative."))
+    # Guarded on the BALANCE, not just the flow: "operations fund themselves"
+    # printed over a negative bank position was the same error as the score.
+    if runway is None and op_cf >= 0 and cash > 0:
+        strengths.append(item("Operations are cash-generative."))
     if runway is not None and runway >= 12: strengths.append(item(f"Strong runway ({runway:.0f}+ months)."))
     if nm is not None and nm >= 10: strengths.append(item(f"Healthy net margin ({nm:.0f}%)."))
     if cur_r is not None and cur_r >= 1.5: strengths.append(item(f"Solid liquidity (current ratio {cur_r:.2f}×)."))
@@ -1341,7 +1503,16 @@ def _build_advisory(payload: dict) -> None:
     payload["management_summary"] = {
         "headline":    headline,
         "health":      health,            # strong | watch | at_risk
-        "score":       score,             # 0–100
+        "score":       score,             # 0–100, or None when unscoreable
+        # The reasoning behind the number, so it can be audited rather than
+        # trusted: every component with the value it read, the band it fell in
+        # and the points it earned, plus any cap that overrode the average and
+        # why. A partner asked to defend an 89 can now read where it came from.
+        "score_lines": scoring["lines"],
+        "score_caps":  scoring["caps"],
+        "score_raw":   scoring["raw_score"],
+        "score_measured": scoring["measured"],
+        "score_of":       scoring["of"],
         "priorities":  priorities or [item("Maintain the close cadence and keep the cash forecast current.")],
         "strengths":   strengths or [item("Books are synced and current.")],
         "watch_items": watch_items or [item("Nothing flagged for active monitoring this period.")],

@@ -62,10 +62,37 @@ export interface SummaryItem {
   action: InsightAction | null
 }
 
+/** One component of the health score, with the reasoning behind its points. */
+export interface ScoreLine {
+  key:        string
+  label:      string
+  value:      string
+  band:       string
+  points:     number
+  max_points: number
+  basis:      string
+}
+
+/** A condition that overrode the weighted average — an overdrawn balance is
+ *  not a quarter of an opinion, it is the opinion. */
+export interface ScoreCap {
+  rule:   string
+  cap:    number
+  reason: string
+}
+
 export interface ManagementSummary {
   headline:    string
-  health:      "strong" | "watch" | "at_risk"
-  score:       number          // 0–100
+  /** Null when fewer than two components could be measured — a score built on
+   *  one number is a guess with a number on it. */
+  health:      "strong" | "watch" | "at_risk" | null
+  score:       number | null   // 0–100
+  /** The audit trail: what was measured, what it earned, what capped it. */
+  score_lines?:    ScoreLine[]
+  score_caps?:     ScoreCap[]
+  score_raw?:      number | null
+  score_measured?: number
+  score_of?:       number
   priorities:  SummaryItem[]
   strengths:   SummaryItem[]
   watch_items: SummaryItem[]

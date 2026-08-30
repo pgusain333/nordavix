@@ -1,0 +1,212 @@
+"""The financial-health score, from a CPA's side of the desk.
+
+REPORTED: a workspace with a NEGATIVE cash balance scored 89/100, was labelled
+STRONG, and was advised to "deploy surplus deliberately". Three faults, all the
+same mistake — building a judgement as an average.
+
+  * No gates. A weighted sum lets four healthy measures outvote one fatal one.
+    An overdrawn bank account is not a quarter of an opinion.
+  * Unknowns scored half marks, so a workspace with no data at all scored 73
+    and read STRONG on the strength of knowing nothing about it.
+  * Cash was scored on the period's FLOW while ignoring the POSITION, which is
+    how "operations fund themselves" printed over an overdraft.
+
+These pin each band, each cap, and the arithmetic that ties them together — so
+the number can be defended line by line rather than trusted.
+"""
+import pytest
+
+from modules.insights.service import health_score
+
+HEALTHY = dict(
+    cash=250_000, runway_months=18, operating_cash_flow=40_000,
+    net_margin_pct=22, current_ratio=2.1, dso_days=24, ar_over_60_pct=4,
+)
+
+
+def score(**over):
+    return health_score(**{**HEALTHY, **over})
+
+
+def band_of(key, result):
+    return next(x for x in result["lines"] if x["key"] == key)
+
+
+# ── The reported case ──────────────────────────────────────────────────────
+
+def test_a_negative_cash_balance_cannot_read_as_healthy():
+    """THE BUG. Every other measure strong, the bank overdrawn, and the page
+    said 89/STRONG/'deploy surplus'."""
+    r = score(cash=-21_200, runway_months=None)
+    assert r["band"] == "at_risk"
+    assert r["score"] < 45
+    assert "negative" in r["headline"].lower()
+
+
+def test_the_cap_is_shown_alongside_what_it_replaced():
+    """A number that disagrees with its own components has to explain itself,
+    or it just looks broken."""
+    r = score(cash=-21_200, runway_months=None)
+    assert r["raw_score"] > r["score"], "the cap did not actually bind"
+    assert [c["rule"] for c in r["caps"]] == ["negative_cash"]
+    assert "cannot fund itself" in r["caps"][0]["reason"]
+
+
+def test_a_negative_balance_scores_nothing_on_the_cash_component():
+    """Not partial credit. There is no reading of an overdraft that earns
+    points toward financial health."""
+    line = band_of("cash", score(cash=-1, runway_months=None))
+    assert line["points"] == 0
+    assert line["band"] == "overdrawn"
+
+
+def test_positive_operating_cash_flow_does_not_rescue_a_negative_balance():
+    """The exact confusion behind the 'Cash-gen · operations fund themselves'
+    tile: the month's FLOW was fine and the POSITION was not, and only the flow
+    was being scored."""
+    flowing = score(cash=-21_200, runway_months=None, operating_cash_flow=50_000)
+    assert band_of("cash", flowing)["points"] == 0
+    assert flowing["band"] == "at_risk"
+
+
+# ── Unknowns are excluded, never averaged ──────────────────────────────────
+
+def test_a_workspace_with_no_data_gets_no_score():
+    """It used to score 73 — STRONG — for having nothing in it."""
+    r = health_score(cash=None, runway_months=None, operating_cash_flow=None,
+                     net_margin_pct=None, current_ratio=None,
+                     dso_days=None, ar_over_60_pct=None)
+    assert r["score"] is None and r["band"] is None
+    assert r["measured"] == 0
+
+
+def test_one_measurable_component_is_not_a_score():
+    """A number resting on a single input is a guess with a gauge around it."""
+    r = health_score(cash=None, runway_months=None, operating_cash_flow=None,
+                     net_margin_pct=30, current_ratio=None,
+                     dso_days=None, ar_over_60_pct=None)
+    assert r["score"] is None
+    assert r["measured"] == 1
+
+
+def test_a_partial_read_is_rescaled_not_penalised():
+    """Two strong measures out of five is still strong — the missing three are
+    unknown, not bad, and must not drag the result down either."""
+    r = health_score(cash=None, runway_months=None, operating_cash_flow=None,
+                     net_margin_pct=22, current_ratio=2.1,
+                     dso_days=None, ar_over_60_pct=None)
+    assert r["measured"] == 2
+    assert r["score"] == 100      # 25/25 + 20/20
+    assert r["band"] == "strong"
+
+
+def test_the_count_of_measures_is_reported():
+    """So the reader knows how much of the picture the number covers."""
+    r = score()
+    assert r["measured"] == 5 and r["of"] == 5
+
+
+# ── Gates a good average must not outvote ──────────────────────────────────
+
+def test_under_three_months_runway_caps_the_score():
+    r = score(cash=10_000, runway_months=1.5)
+    assert r["score"] <= 44 and r["band"] == "at_risk"
+    assert "going-concern" in r["caps"][0]["reason"]
+
+
+def test_a_working_capital_deficiency_caps_at_watch():
+    """Current liabilities above current assets means near-term obligations
+    depend on new money. That is not 'strong', whatever the margin is."""
+    r = score(current_ratio=0.8)
+    assert r["score"] <= 59
+    assert r["band"] != "strong"
+
+
+def test_losing_money_and_burning_cash_together_caps_the_score():
+    """Either alone is a metric; both at once is the balance sheet funding the
+    profit and loss."""
+    r = score(net_margin_pct=-8, operating_cash_flow=-30_000, runway_months=9)
+    assert r["score"] <= 54
+    assert any(c["rule"] == "loss_and_burn" for c in r["caps"])
+
+
+def test_a_loss_alone_does_not_trigger_the_burn_cap():
+    """A loss funded by non-cash charges — depreciation, amortisation — is not
+    the same thing, and flagging it as such would cry wolf on every asset-heavy
+    client."""
+    r = score(net_margin_pct=-8, operating_cash_flow=15_000)
+    assert not any(c["rule"] == "loss_and_burn" for c in r["caps"])
+
+
+def test_the_strictest_cap_wins_when_several_apply():
+    r = score(cash=-5_000, runway_months=1.0, current_ratio=0.5)
+    assert r["score"] <= 39
+
+
+# ── The headline can never contradict the components ───────────────────────
+
+def test_the_headline_states_the_binding_constraint():
+    """'Financially healthy — deploy surplus' over an overdraft was the whole
+    complaint. When a cap binds, it is what the headline is about."""
+    assert "negative" in score(cash=-1, runway_months=None)["headline"].lower()
+    assert "runway" in score(cash=5_000, runway_months=1)["headline"].lower()
+
+
+def test_a_genuinely_healthy_business_still_reads_healthy():
+    """The gates must not make the score unable to say anything good."""
+    r = score()
+    assert r["band"] == "strong" and r["score"] >= 70
+    assert r["caps"] == []
+    assert "healthy" in r["headline"].lower()
+
+
+# ── Auditability ───────────────────────────────────────────────────────────
+
+def test_every_line_carries_its_value_band_and_basis():
+    """The point of the rewrite: a partner asked to defend the number can read
+    where each point came from."""
+    for line in score()["lines"]:
+        assert line["value"], f"{line['key']} has no value shown"
+        assert line["band"], f"{line['key']} has no band"
+        assert len(line["basis"]) > 30, f"{line['key']}: basis too thin to defend"
+        assert 0 <= line["points"] <= line["max_points"]
+
+
+def test_the_score_equals_its_own_arithmetic():
+    """No hidden adjustment between the components and the total."""
+    r = score()
+    earned = sum(x["points"] for x in r["lines"])
+    possible = sum(x["max_points"] for x in r["lines"])
+    assert r["raw_score"] == round(100 * earned / possible)
+    assert r["score"] == r["raw_score"]      # nothing capped here
+
+
+@pytest.mark.parametrize("kwargs,expected", [
+    (dict(runway_months=24), "12+ months"),
+    (dict(runway_months=8), "6–12 months"),
+    (dict(runway_months=4), "3–6 months"),
+    (dict(runway_months=1), "under 3 months"),
+])
+def test_runway_bands(kwargs, expected):
+    assert band_of("cash", score(**kwargs))["band"] == expected
+
+
+@pytest.mark.parametrize("nm,expected", [
+    (20, "15% or better"), (9, "5–15%"), (2, "0–5%"), (-4, "loss-making"),
+])
+def test_net_margin_bands(nm, expected):
+    assert band_of("profitability", score(net_margin_pct=nm))["band"] == expected
+
+
+def test_the_score_never_leaves_its_range():
+    """Across the corners, including every gate firing at once."""
+    for cash in (-100_000, 0, 500_000):
+        for rw in (None, 0.5, 30):
+            for nm in (-50, 0, 90):
+                for cr in (0.1, 1.0, 9.0):
+                    r = health_score(
+                        cash=cash, runway_months=rw, operating_cash_flow=-1,
+                        net_margin_pct=nm, current_ratio=cr,
+                        dso_days=45, ar_over_60_pct=15,
+                    )
+                    assert r["score"] is None or 0 <= r["score"] <= 100
