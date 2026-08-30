@@ -77,9 +77,16 @@ export interface GlSchedule {
   local_now?:     string
   next_due_at?:   string | null
   last_scheduled_at?: string | null
+  /** The last scheduled run in the WORKSPACE's clock ("Sat 15:42"), so it can
+   *  be compared against the hour that was chosen. "20 hours ago" is
+   *  unarguable and says nothing about whether the schedule is honoured. */
+  last_scheduled_local?: string | null
   /** Whether the SCHEDULE has ever completed a check. A manual scan doesn't
    *  count — conflating them is what hid this. */
   ever_ran_on_schedule?: boolean
+  /** The schedule was edited after that run, so it happened under different
+   *  settings and won't line up with the hour now shown. */
+  changed_since_last_run?: boolean
   /** Why it cannot run at all: demo workspace, no QuickBooks, no books start
    *  date, or the watched month is closed. Null when nothing blocks it. */
   blocked?:       string | null

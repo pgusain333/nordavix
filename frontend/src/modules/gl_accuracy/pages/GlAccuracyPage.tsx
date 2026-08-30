@@ -466,7 +466,20 @@ function MonitoringHead({ m, sched, scanning, enabled, reduce, periodEnd, onChec
         /* One fact per line. The rail has 360px, not a banner's width, and a
            status that wraps mid-sentence reads as broken. */
         <dl className="mt-2 space-y-1">
-          <Stat label="Last checked" value={ago ?? "—"} strong />
+          {/* The clock time as well as the elapsed one. "20 hours ago" is
+              unarguable and says nothing about whether the schedule is being
+              honoured — you cannot compare it to "checking daily at 12:00"
+              without doing the subtraction yourself, and the reader who does
+              it wrong concludes the feature is broken.
+
+              Not `strong` any more either: for a DAILY check, a last run most
+              of a day old is the normal state, and emphasising it made the
+              routine look like the alarming part. The next run is the
+              reassuring fact, so that is the one now carrying weight. */}
+          <Stat label="Last checked"
+            value={sched?.last_scheduled_local && ago
+              ? `${ago} · ${sched.last_scheduled_local}`
+              : (ago ?? "—")} />
           {/* ALWAYS, including zero. Hidden-when-empty was the wrong call: a
               scan that read nothing looked identical to one that read the whole
               ledger, so "Last checked · just now" sat there as a clean bill of
@@ -488,7 +501,7 @@ function MonitoringHead({ m, sched, scanning, enabled, reduce, periodEnd, onChec
               can hold a clock up to is a fact — and it is the only way to tell
               "it is working" from "it has been inert for a week". */}
           {sched?.enabled && !sched.blocked && sched.next_due_at && (
-            <Stat label="Next check" value={dueLabel(sched.next_due_at)} />
+            <Stat label="Next check" value={dueLabel(sched.next_due_at)} strong />
           )}
         </dl>
       )}
@@ -565,6 +578,20 @@ function ScheduleNotice({ sched }: { sched?: GlSchedule | null }) {
         style={{ background: "var(--surface-2)", color: "var(--warn)" }}>
         <span className="font-semibold">No timezone set</span> — {h}:00 is being read
         as {h}:00 UTC, not your local time. Set it under the schedule below.
+      </p>
+    )
+  }
+
+  // The last run happened under different settings, so it will not line up
+  // with the hour on screen — and a time that contradicts the schedule with no
+  // explanation is read as a fault. Says so once, then stops after the next run.
+  if (sched.changed_since_last_run && sched.ever_ran_on_schedule) {
+    return (
+      <p className="text-[11.5px] mt-2 rounded-lg px-2.5 py-2"
+        style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+        The last check ran <span className="font-semibold">before you changed the
+        schedule</span>, so it won&apos;t match the time above. The next one uses the
+        new setting.
       </p>
     )
   }

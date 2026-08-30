@@ -321,3 +321,45 @@ async def test_transactions_reviewed_is_reported_even_when_zero():
     out = await service.monitoring_status(_CountingDb([run]), WATCHED)
     assert out["transactions_reviewed"] == 0
     assert "transactions_reviewed" in out
+
+
+# ── The rail must not contradict the schedule without saying why ───────────
+#
+# "Last checked 20 hours ago" above "checking daily at 12:00" reads as a fault
+# whenever the last run predates a schedule edit — the two times cannot line up,
+# and nothing said so. The comparison is against the config's own updated_at.
+
+def changed_since_last_run(last_scheduled, config_updated_at) -> bool:
+    """The rule, as schedule_health applies it."""
+    return bool(last_scheduled is not None and config_updated_at is not None
+                and config_updated_at > last_scheduled)
+
+
+def test_editing_the_schedule_after_a_run_is_flagged():
+    """THE REPORTED CONFUSION. The check ran at 16:00 under the old settings;
+    the hour was then changed to 12:00. The rail showed both and explained
+    neither."""
+    ran = datetime(2026, 8, 29, 10, 40, tzinfo=UTC)
+    edited = datetime(2026, 8, 30, 6, 5, tzinfo=UTC)
+    assert changed_since_last_run(ran, edited) is True
+
+
+def test_an_untouched_schedule_is_not_flagged():
+    """The normal case: the config predates the run, so the times agree and the
+    notice would be noise."""
+    edited = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+    ran = datetime(2026, 8, 29, 10, 40, tzinfo=UTC)
+    assert changed_since_last_run(ran, edited) is False
+
+
+def test_nothing_to_compare_before_the_first_run():
+    """A workspace that has never run on schedule gets the never-ran notice
+    instead — this one must not pre-empt it."""
+    assert changed_since_last_run(None, datetime(2026, 8, 30, 6, tzinfo=UTC)) is False
+
+
+def test_the_notice_stops_after_the_next_run():
+    """It explains one stale comparison, not a permanent state."""
+    edited = datetime(2026, 8, 30, 6, 5, tzinfo=UTC)
+    ran_after = datetime(2026, 8, 30, 6, 40, tzinfo=UTC)
+    assert changed_since_last_run(ran_after, edited) is False

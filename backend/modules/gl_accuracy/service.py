@@ -604,7 +604,21 @@ async def schedule_health(db: AsyncSession, tenant_id: uuid.UUID, period_end: da
         "local_now": local_now(now, tz).strftime("%H:%M"),
         "next_due_at": nxt.isoformat() if nxt else None,
         "last_scheduled_at": last_scheduled.isoformat() if last_scheduled else None,
+        # The last run in the WORKSPACE's own clock, so it can be compared to
+        # the hour that was chosen. "20 hours ago" is unarguable and tells you
+        # nothing about whether the schedule is being honoured.
+        "last_scheduled_local": (
+            local_now(last_scheduled, tz).strftime("%a %H:%M") if last_scheduled else None
+        ),
         "ever_ran_on_schedule": last_scheduled is not None,
+        # True when the schedule was edited AFTER the last run — so that run
+        # happened under different settings and cannot be expected to line up
+        # with the hour now displayed. Without this the rail shows a time that
+        # contradicts the schedule and offers no reason.
+        "changed_since_last_run": bool(
+            last_scheduled is not None and cfg.updated_at is not None
+            and cfg.updated_at > last_scheduled
+        ),
         "blocked": blocked,
     }
 
