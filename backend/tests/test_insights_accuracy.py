@@ -394,3 +394,72 @@ if __name__ == "__main__":
     test_the_section_view_agrees_with_the_hero_tile()
     test_compute_stamps_the_payload()
     print("INSIGHTS_ACCURACY_OK")
+
+
+# ── A custom window's cache has to age out ─────────────────────────────────
+#
+# THE HOLE. A custom window's profit and loss is a LIVE QuickBooks call, and the
+# staleness check compares only `PeriodSync.synced_at` — a stamp about snapshot
+# data that has nothing to do with a live pull. So a custom-window payload could
+# never go stale: post entries in QuickBooks, reload the same window, and the
+# number computed the first time came back indefinitely, under a "Synced …"
+# label that referred to the compute rather than the data.
+
+from datetime import UTC as _UTC  # noqa: E402
+from datetime import datetime as _dt  # noqa: E402
+from datetime import timedelta as _td  # noqa: E402
+
+SYNC = "2026-04-02T09:15:00+00:00"
+
+
+def _live_payload():
+    from modules.insights.service import INSIGHTS_PAYLOAD_VERSION
+    return {"payload_version": INSIGHTS_PAYLOAD_VERSION, "source_synced_at": SYNC}
+
+
+def test_a_month_payload_still_rides_the_sync_stamp():
+    """Month mode reads snapshots, so the stamp is exactly right for it and
+    strictly better than a clock — nothing here may weaken that."""
+    from modules.insights.service import cache_is_fresh
+    assert cache_is_fresh(_live_payload(), SYNC) is True
+
+
+def test_a_fresh_custom_window_is_served_from_cache():
+    """The point of the cache: flicking between windows stays instant."""
+    from modules.insights.service import cache_is_fresh
+    now = _dt(2026, 4, 2, 12, 0, tzinfo=_UTC)
+    assert cache_is_fresh(_live_payload(), SYNC, live_sourced=True,
+                          computed_at=now - _td(minutes=5), now=now) is True
+
+
+def test_a_stale_custom_window_is_recomputed():
+    """Twenty minutes on, the live figures are re-pulled rather than asserted."""
+    from modules.insights.service import cache_is_fresh
+    now = _dt(2026, 4, 2, 12, 0, tzinfo=_UTC)
+    assert cache_is_fresh(_live_payload(), SYNC, live_sourced=True,
+                          computed_at=now - _td(minutes=20), now=now) is False
+
+
+def test_the_sync_stamp_alone_cannot_keep_a_custom_window_alive():
+    """The bug, stated directly: an unchanged sync stamp used to mean fresh
+    forever. It no longer does for a live-sourced payload."""
+    from modules.insights.service import cache_is_fresh
+    now = _dt(2026, 4, 3, 9, 0, tzinfo=_UTC)
+    computed_yesterday = _dt(2026, 4, 2, 9, 0, tzinfo=_UTC)
+    assert cache_is_fresh(_live_payload(), SYNC) is True            # month mode
+    assert cache_is_fresh(_live_payload(), SYNC, live_sourced=True,
+                          computed_at=computed_yesterday, now=now) is False
+
+
+def test_an_unknown_age_is_not_a_fresh_one():
+    """No computed_at means the age can't be established. Refuse rather than
+    assume — assuming is how the original bug read."""
+    from modules.insights.service import cache_is_fresh
+    assert cache_is_fresh(_live_payload(), SYNC, live_sourced=True,
+                          computed_at=None) is False
+
+
+def test_the_ttl_is_short_enough_to_matter():
+    """A day-long TTL would be the same bug with extra steps."""
+    from modules.insights.service import LIVE_CACHE_TTL_SECONDS
+    assert 60 <= LIVE_CACHE_TTL_SECONDS <= 60 * 60

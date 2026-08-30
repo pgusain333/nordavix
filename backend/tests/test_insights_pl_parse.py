@@ -180,7 +180,7 @@ def test_sections_that_tie_out_produce_no_warning():
     assert pl_reconciliation_warning(_totals(
         revenue="493400", cogs="55000", opex="155000",
         other_income="1200", other_expense="4600", net_income="280000",
-    )) is None
+    ), net_income_found=True) is None
 
 
 def test_a_lost_expense_section_is_caught():
@@ -188,25 +188,48 @@ def test_a_lost_expense_section_is_caught():
     figure overshoots QuickBooks' own net income by the whole section."""
     warn = pl_reconciliation_warning(_totals(
         revenue="493400", cogs="55000", opex="0", net_income="283400",
-    ))
+    ), net_income_found=True)
     assert warn and "didn't add up" in warn
 
 
 def test_rounding_across_sections_is_tolerated():
     assert pl_reconciliation_warning(_totals(
         revenue="100000", cogs="0", opex="0", net_income="100000.75",
-    )) is None
+    ), net_income_found=True) is None
 
 
 def test_a_drift_beyond_rounding_is_reported():
     assert pl_reconciliation_warning(_totals(
         revenue="100000", cogs="0", opex="0", net_income="99000",
-    )) is not None
+    ), net_income_found=True) is not None
 
 
-def test_no_net_income_section_means_nothing_to_check_against():
-    """Absence of a check is not a failed check."""
-    assert pl_reconciliation_warning(_totals(revenue="100000", opex="40000")) is None
+def test_a_missing_net_income_line_is_reported_not_ignored():
+    """THE HOLE THIS CLOSES. The check skipped whenever net income was zero,
+    which conflated "the month broke even" with "the net income line was never
+    found". So the one case it exists for — a parse that lost sections — turned
+    the guard off: lose Net Income along with COGS and the page renders a
+    confident 100% margin and says nothing."""
+    warn = pl_reconciliation_warning(
+        _totals(revenue="100000", opex="40000"), net_income_found=False)
+    assert warn and "could not be cross-checked" in warn
+
+
+def test_a_genuine_break_even_month_is_still_checked():
+    """Net income of exactly zero is a fact, and it has to tie like any other:
+    revenue 100k against costs of 100k reconciles, 40k does not."""
+    assert pl_reconciliation_warning(
+        _totals(revenue="100000", opex="100000", net_income="0"),
+        net_income_found=True) is None
+    assert pl_reconciliation_warning(
+        _totals(revenue="100000", opex="40000", net_income="0"),
+        net_income_found=True) is not None
+
+
+def test_an_empty_parse_does_not_cry_wolf():
+    """Nothing parsed at all is an empty report, not a partial one. The page
+    renders zeros, which reads as "no data" on its own."""
+    assert pl_reconciliation_warning(_totals(), net_income_found=False) is None
 
 
 @pytest.mark.parametrize("field", ["revenue", "cogs", "opex", "other_income", "other_expense"])
@@ -216,7 +239,7 @@ def test_dropping_any_single_section_is_caught(field):
                    other_income="1200", other_expense="4600", net_income="280000")
     broken = dict(full)
     broken[field] = D(0)
-    assert pl_reconciliation_warning(broken) is not None
+    assert pl_reconciliation_warning(broken, net_income_found=True) is not None
 
 
 # ── Two cases the mutation run showed were unguarded ────────────────────────

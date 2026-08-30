@@ -16,7 +16,7 @@ from __future__ import annotations
 import calendar
 import logging
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -435,7 +435,29 @@ def month_activity(
     return ytd_current - ytd_prior
 
 
-def cache_is_fresh(payload: dict | None, current_synced_at_iso: str | None) -> bool:
+# How long a CUSTOM-WINDOW payload may be served from cache.
+#
+# A custom window's profit-and-loss is a live QuickBooks call, so its figures
+# have no relationship to `PeriodSync.synced_at` — the only thing the staleness
+# check compares. That meant a custom-window payload could never go stale: post
+# entries in QuickBooks, reload the window, and Nordavix served the number it
+# computed the first time, indefinitely, with a "Synced …" label that referred
+# to the compute rather than the data.
+#
+# Fifteen minutes keeps a rapid revisit instant while bounding how wrong the
+# page can be. Month-mode payloads keep the exact sync-stamp rule, which is
+# strictly better than a clock where it applies.
+LIVE_CACHE_TTL_SECONDS = 15 * 60
+
+
+def cache_is_fresh(
+    payload: dict | None,
+    current_synced_at_iso: str | None,
+    *,
+    live_sourced: bool = False,
+    computed_at: datetime | None = None,
+    now: datetime | None = None,
+) -> bool:
     """Does a cached Insights payload still describe the data it was built from?
 
     The payload is cached in `insights_snapshots` and NOTHING used to
@@ -464,7 +486,17 @@ def cache_is_fresh(payload: dict | None, current_synced_at_iso: str | None) -> b
     stamped = payload.get("source_synced_at", _MISSING_STAMP)
     if stamped is _MISSING_STAMP:
         return False
-    return stamped == current_synced_at_iso
+    if stamped != current_synced_at_iso:
+        return False
+    if live_sourced:
+        # The sync stamp says nothing about live-pulled figures, so it cannot
+        # be the only guard on them. Without a computed_at to age against,
+        # refuse rather than assume — an unknown age is not a fresh one.
+        if computed_at is None:
+            return False
+        age = (now or datetime.now(UTC)) - computed_at
+        return age.total_seconds() <= LIVE_CACHE_TTL_SECONDS
+    return True
 
 
 _MISSING_STAMP = object()
@@ -690,11 +722,15 @@ def _parse_pl_summary(report: dict) -> dict:
     return {
         **totals,
         "expense_by_account": expense_by_account,
-        "parse_warning": pl_reconciliation_warning(totals),
+        "parse_warning": pl_reconciliation_warning(
+            totals, net_income_found="net_income" in seen,
+        ),
     }
 
 
-def pl_reconciliation_warning(totals: dict[str, Decimal]) -> str | None:
+def pl_reconciliation_warning(
+    totals: dict[str, Decimal], *, net_income_found: bool,
+) -> str | None:
     """Do the parsed P&L sections tie to QuickBooks' own Net Income?
 
     revenue − cogs − opex + other income − other expense should equal net
@@ -702,14 +738,29 @@ def pl_reconciliation_warning(totals: dict[str, Decimal]) -> str | None:
     figure downstream — gross margin, net margin, operating income — is built on
     it. Saying so beats rendering 89% as a fact.
 
-    A missing Net Income section means QBO gave us nothing to check against, not
-    that the parse is wrong; that is not a warning.
+    `net_income_found` is the difference between "the net income line is zero"
+    and "there was no net income line". The check used to skip on a zero total,
+    which conflated them — so the one case it exists for, a parse that lost a
+    section, disabled the very guard meant to catch it: lose Net Income along
+    with COGS and the page renders a confident 100% margin and no warning. A
+    genuine break-even month is now checked like any other, and a missing line
+    says the figures could not be cross-checked at all.
 
     Pure, so the reconciliation rule is testable without a QBO round trip.
     """
+    if not net_income_found:
+        # Nothing parsed at all is an empty report, not a partial one — a period
+        # with no activity, or a blank response. The page renders zeros, which
+        # reads as "no data" on its own; warning there would cry wolf. The
+        # warning is for a PARTIAL parse: sections found, net income missing.
+        if all(v == ZERO for v in totals.values()):
+            return None
+        return (
+            "QuickBooks' profit and loss had no net income line, so the figures on "
+            "this page could not be cross-checked against it. Treat the margins as "
+            "indicative."
+        )
     net = totals.get("net_income", ZERO)
-    if net == ZERO:
-        return None
     derived = (
         totals.get("revenue", ZERO)
         - totals.get("cogs", ZERO)

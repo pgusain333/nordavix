@@ -80,13 +80,22 @@ async def get_overview(
             )).scalar_one_or_none()
             current_iso = current_sync.isoformat() if current_sync else None
             payload = dict(saved.payload)
-            if cache_is_fresh(payload, current_iso):
+            # A custom window's P&L is a LIVE QuickBooks pull, so the period's
+            # sync stamp — the only thing the staleness check compares — says
+            # nothing about whether those figures are still true. Such a payload
+            # could never go stale: post entries in QuickBooks, reload the same
+            # window, and the first computed number came back indefinitely.
+            # Age it out instead.
+            if cache_is_fresh(payload, current_iso,
+                              live_sourced=ps is not None,
+                              computed_at=saved.computed_at):
                 payload["saved_at"] = saved.computed_at.isoformat()
                 return payload
             logger.info(
-                "Insights cache stale for %s (computed against %s, period now synced %s)"
-                " — recomputing",
-                pe, payload.get("source_synced_at"), current_iso,
+                "Insights cache stale for %s%s (computed against %s at %s, period now "
+                "synced %s) — recomputing",
+                pe, f" [from {ps}]" if ps else "",
+                payload.get("source_synced_at"), saved.computed_at, current_iso,
             )
 
     # Compute (this is the expensive path: snapshot read + live QBO aging) and
