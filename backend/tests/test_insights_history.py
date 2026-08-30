@@ -274,11 +274,26 @@ def test_a_nonsense_ceiling_still_returns_one_month(cap):
 
 # ── The books-start month needs no prior ────────────────────────────────────
 
-def test_the_books_start_month_uses_its_ytd_because_nothing_precedes_it():
-    """Every other module begins at books_start too, so no earlier month exists
-    or is coming — this is a boundary like January, not missing data."""
+def test_the_books_start_month_is_not_its_year_to_date():
+    """REPORTED FROM THE CHART. The books-start month was treated as a boundary
+    like January and given its raw year-to-date. It isn't one: nothing precedes
+    it in NORDAVIX, which says nothing about what QuickBooks reports. Books
+    starting in March give a March year-to-date carrying January and February,
+    so the chart drew a quarter as a month — at the far-left point, with the
+    y-axis scaled to it.
+
+    None, so the caller substitutes that month's real P&L or leaves a gap."""
     assert month_activity(
         pe=date(2026, 7, 31), ytd_current=D("140000"),
+        prior_pe=None, ytd_prior=None, is_first_period=True,
+    ) is None
+
+
+def test_a_books_start_month_in_january_is_still_its_own_year_to_date():
+    """January is a genuine boundary on a calendar fiscal year — its
+    year-to-date IS the month, whether or not the books start there."""
+    assert month_activity(
+        pe=date(2026, 1, 31), ytd_current=D("140000"),
         prior_pe=None, ytd_prior=None, is_first_period=True,
     ) == D("140000")
 
@@ -321,3 +336,27 @@ def _prior(d: date) -> date:
     y, m = (d.year - 1, 12) if d.month == 1 else (d.year, d.month - 1)
     import calendar
     return date(y, m, calendar.monthrange(y, m)[1])
+
+
+# ── The cache version has to track its own changelog ───────────────────────
+
+def test_the_payload_version_matches_the_highest_documented_bump():
+    """The constant and the comment above it are one thing in two places.
+
+    Every corrected figure in this module reaches users only if the version is
+    bumped — a cached payload with the old arithmetic is served forever
+    otherwise. Documenting a bump and forgetting the constant leaves the fix
+    shipped and invisible, which is indistinguishable from not shipping it.
+    """
+    import inspect
+    import re
+
+    from modules.insights import service
+
+    src = inspect.getsource(service)
+    documented = [int(m) for m in re.findall(r"^#\s+\d+ → (\d+):", src, re.M)]
+    assert documented, "the version changelog comment is gone or reformatted"
+    assert max(documented) == service.INSIGHTS_PAYLOAD_VERSION, (
+        f"INSIGHTS_PAYLOAD_VERSION is {service.INSIGHTS_PAYLOAD_VERSION} but the "
+        f"changelog documents a bump to {max(documented)}"
+    )

@@ -410,26 +410,35 @@ def month_activity(
       * The preceding month never synced, so its YTD read as 0 and this month
         absorbed the whole year before it.
 
-    None means "not knowable", which the caller renders as a gap. Two months
-    need no prior:
+    None means "not knowable", which the caller renders as a gap — or replaces
+    with a figure only it can get. ONE month needs no prior: January, whose
+    year-to-date IS the month.
 
-      * January, whose year-to-date IS the month.
-      * `is_first_period` — the tenant's books-start month. Nothing precedes it
-        anywhere in Nordavix (recons, close periods and schedules all begin
-        there), so there is no earlier month to subtract and none is coming.
+    The books-start month is NOT such a month, and treating it as one was a
+    bug reported from the charts. `is_first_period` says nothing precedes it in
+    Nordavix — true, and irrelevant to what QuickBooks reports. Books starting
+    in March give a March year-to-date that includes January and February,
+    because the QuickBooks file has them even when Nordavix does not. The chart
+    plotted a quarter as a month, at the far-left point where a reader is least
+    able to catch it, and the y-axis scaled to it.
 
-    The books-start caveat, stated plainly: when the books start mid-year AND
-    the QuickBooks file carries activity earlier in the same fiscal year, that
-    first month's year-to-date includes the pre-books part and reads high. Only
-    that one point is affected — every later month is a difference of two
-    year-to-dates, so the pre-books portion cancels out.
+    So the flag now only records WHICH month is the first, and the answer is
+    None unless the month stands on its own. The caller pulls that one month's
+    real profit and loss from QuickBooks and substitutes it — a live call for a
+    single point, which is worth it for the one figure snapshots cannot derive.
+    A failed pull leaves a gap, which is the honest fallback: a hole invites a
+    question, an inflated bar answers one wrongly.
 
     Pure, because it decides whether a chart states a figure or leaves a hole.
     """
     if ytd_current is None:
         return None
-    if pe.month == 1 or is_first_period:
+    # January's year-to-date IS January, on a calendar fiscal year.
+    if pe.month == 1:
         return ytd_current
+    if is_first_period:
+        # Nothing to subtract, and the year-to-date is not this month's.
+        return None
     if prior_pe is None or ytd_prior is None:
         return None
     return ytd_current - ytd_prior
@@ -518,7 +527,12 @@ _MISSING_STAMP = object()
 #          month labels without the year they now need.
 #   4 → 5: recommendations and management-summary lines carry an `action`, and
 #          the summary lines became {text, action} objects rather than strings.
-INSIGHTS_PAYLOAD_VERSION = 5
+#   5 → 6: the books-start month on the history charts is that month's own P&L,
+#          pulled live, instead of its fiscal year-to-date. Books starting in
+#          March plotted January through March as "Mar". Cached payloads hold
+#          the inflated point — a wrong figure, not merely a stale one — and the
+#          y-axis was scaled to it, so every other month on the chart read flat.
+INSIGHTS_PAYLOAD_VERSION = 6
 
 
 def control_account_figures(
@@ -1433,6 +1447,37 @@ async def compute_overview(
     # last calendar-month snapshot — which is the wrong length AND often
     # doesn't exist for custom ranges, so the UI showed "First period —
     # no prior comparison available" even when QBO had the data.
+    # The oldest point on every chart is the books-start month, and it is the
+    # one month whose activity snapshots cannot derive: nothing precedes it to
+    # subtract, and its year-to-date carries whatever the QuickBooks file holds
+    # earlier in the same fiscal year. Books starting in March plotted January
+    # through March as "Mar" — a quarter drawn as a month, at the far-left point
+    # where it is hardest to catch, with the y-axis scaled to it.
+    #
+    # One live call for one point. January needs none (its year-to-date IS the
+    # month), and neither does a books-start month with no earlier snapshot gap
+    # to worry about — but the check is cheap and the wrong answer is not.
+    first_month_pl: dict | None = None
+    if (first_period is not None and first_period.month != 1
+            and first_period in history_ends):
+        first_month_pl, _fm_err = await _fetch_pl_summary(
+            qbo_conn, db, first_period.replace(day=1), first_period,
+        )
+        if first_month_pl is not None and first_month_pl.get("parse_warning"):
+            # An untrustworthy parse is worse here than no figure: this is the
+            # point the reader is least able to sanity-check.
+            logger.warning(
+                "Insights: books-start month P&L did not reconcile for %s — %s",
+                first_period, first_month_pl["parse_warning"],
+            )
+            first_month_pl = None
+        elif first_month_pl is None:
+            logger.info(
+                "Insights: could not pull the books-start month (%s) from "
+                "QuickBooks — charting it as a gap rather than its year-to-date.",
+                first_period,
+            )
+
     custom_pl: dict | None = None
     custom_pl_prior: dict | None = None
     custom_pl_error: str | None = None
@@ -1905,6 +1950,26 @@ async def compute_overview(
     # Pre-compute per-period monthly P&L so the history sparkline is consistent
     # and we don't recompute the same diffs four times per row.
     def per_period_pl(p: date) -> dict:
+        # The books-start month comes from its own live P&L when we could get
+        # one: it is the single point snapshots cannot derive, and it used to be
+        # charted as a year-to-date. Everything else is a difference of two
+        # year-to-dates, where any pre-books portion cancels out.
+        if first_month_pl is not None and p == first_period:
+            rev  = first_month_pl["revenue"]
+            cogs = first_month_pl["cogs"]
+            opex = first_month_pl["opex"]
+            oi   = first_month_pl["other_income"]
+            oe   = first_month_pl["other_expense"]
+            gp   = rev - cogs
+            ni   = (gp - opex) + (oi - oe)
+            return {
+                "period":   p.isoformat(),
+                "label":    _pt_label(p),
+                "revenue":  _to_money(rev),
+                "gp":       _to_money(gp),
+                "ni":       _to_money(ni),
+                "has_data": True,
+            }
         # month_opt, not monthly_metric: a month that cannot be derived must
         # reach the chart as a gap, not as a zero the reader takes for a fact.
         rev_opt = month_opt(p, revenue_at)
