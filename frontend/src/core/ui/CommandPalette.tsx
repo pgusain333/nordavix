@@ -1,21 +1,31 @@
 /**
- * CommandPalette — ⌘K / Ctrl-K global navigator + quick actions.
+ * CommandPalette — ⌘K / Ctrl-K, and the one place that can find anything.
  *
  * Opens on ⌘K (or Ctrl-K), or when any control dispatches the
  * `nordavix:open-command-palette` window event (so the LeftNav search box and
  * the mobile top-bar button can open it too). Keyboard-first: type to filter,
  * ↑/↓ to move, Enter to run, Esc to close. Theme-aware; mounted once in the
  * app shell.
+ *
+ * It searches the WORKSPACE, not just this file's list of destinations. For a
+ * long time every entry here ended in `navigate(...)` and there was no search
+ * endpoint behind it at all, so in a workspace holding thousands of accounts,
+ * findings and entries, typing "AWS" returned a list of page names. Commands
+ * still rank first — they're instant and local, and someone typing "settings"
+ * wants the page — with matching data underneath as it arrives.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate, type NavigateFunction } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   Search, LayoutDashboard, CheckSquare, Plug, ClipboardList, BarChart3,
   ArrowLeftRight, Scale, Lightbulb, BookOpen, Users, Settings, LifeBuoy,
   Building2, Rocket, CalendarCheck2, FileDown, Gauge, Layers, ListTree,
-  PlayCircle, Receipt, type LucideIcon,
+  PlayCircle, Receipt, ShieldCheck, FileCheck2, CalendarDays, Wallet,
+  type LucideIcon,
 } from "lucide-react"
+import { searchApi, type SearchHit } from "@/core/api/search"
 
 export const CMDK_EVENT = "nordavix:open-command-palette"
 
@@ -84,6 +94,13 @@ const ALLOCATION_COMMANDS: Command[] = [
   { id: "alloc-act-close",   group: "Actions", label: "Switch to month-end close", icon: LayoutDashboard, keywords: "product switch recons flux", run: (n) => n("/app") },
 ]
 
+function GroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider"
+      style={{ color: "var(--text-muted)" }}>{children}</p>
+  )
+}
+
 function score(cmd: Command, q: string): number {
   if (!q) return 1
   const needle = q.toLowerCase()
@@ -99,6 +116,23 @@ function score(cmd: Command, q: string): number {
   return 0
 }
 
+/** What each kind of hit looks like in the list. The icon is the fastest
+ *  signal of "which part of the product am I about to land in". */
+const HIT_META: Record<SearchHit["type"], { icon: LucideIcon; group: string }> = {
+  account:    { icon: Scale,         group: "Accounts" },
+  finding:    { icon: ShieldCheck,   group: "Risk Radar" },
+  review:     { icon: FileCheck2,    group: "Close Review" },
+  task:       { icon: CheckSquare,   group: "Tasks" },
+  adjustment: { icon: Wallet,        group: "Adjustments" },
+  schedule:   { icon: ClipboardList, group: "Schedules" },
+  period:     { icon: CalendarDays,  group: "Periods" },
+}
+
+/** Wait this long after the last keystroke before asking the server.
+ *  Short enough to feel immediate while typing an account number, long enough
+ *  that a five-letter word is one request rather than five. */
+const DEBOUNCE_MS = 180
+
 export function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState("")
@@ -106,6 +140,30 @@ export function CommandPalette() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Debounced copy of the query, so every keystroke doesn't become a request.
+  const [debounced, setDebounced] = useState("")
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q), DEBOUNCE_MS)
+    return () => clearTimeout(t)
+  }, [q])
+
+  // Data search. Allocate has its own product with its own tables, so the
+  // workspace search only runs in the close app rather than returning
+  // reconciliation accounts to someone looking at cost pools.
+  const inCloseApp = !pathname.startsWith("/allocation")
+  const enabled = open && inCloseApp && debounced.trim().length >= 2
+  const { data: found, isFetching } = useQuery({
+    queryKey: ["search", debounced],
+    queryFn: ({ signal }) => searchApi.query(debounced.trim(), signal),
+    enabled,
+    // Results are cheap to re-fetch and stale ones are actively misleading —
+    // a finding cleared a minute ago should not still be offered.
+    staleTime: 15_000,
+    gcTime: 60_000,
+    placeholderData: (prev) => prev,
+  })
+  const hits: SearchHit[] = enabled ? (found?.results ?? []) : []
   // Which product's destinations to offer. Follows the path rather than a
   // remembered preference: what you're looking at is what you mean.
   const commands = pathname.startsWith("/allocation") ? ALLOCATION_COMMANDS : COMMANDS
@@ -136,7 +194,7 @@ export function CommandPalette() {
     }
   }, [open])
 
-  const results = useMemo(
+  const matchedCommands = useMemo(
     () => commands
       .map((c) => ({ c, s: score(c, q) }))
       .filter((x) => x.s > 0)
@@ -145,20 +203,37 @@ export function CommandPalette() {
     [q, commands],
   )
 
-  useEffect(() => { if (active >= results.length) setActive(0) }, [results.length, active])
+  /** Commands and workspace hits as ONE navigable list.
+   *
+   *  Commands first: they resolve locally and instantly, and someone typing
+   *  "settings" means the page. Data follows as it arrives — and because the
+   *  keyboard index runs across both, ↓↓↓ walks from a destination into a real
+   *  account without the reader having to notice there are two lists. */
+  type Row =
+    | { kind: "cmd"; key: string; cmd: Command }
+    | { kind: "hit"; key: string; hit: SearchHit }
+  const rows: Row[] = useMemo(() => [
+    ...matchedCommands.map((c) => ({ kind: "cmd" as const, key: `c:${c.id}`, cmd: c })),
+    ...hits.map((h) => ({ kind: "hit" as const, key: `h:${h.type}:${h.id}`, hit: h })),
+  ], [matchedCommands, hits])
 
-  function run(cmd: Command) {
+  useEffect(() => { if (active >= rows.length) setActive(0) }, [rows.length, active])
+
+  function run(row: Row) {
     setOpen(false)
-    cmd.run(navigate)
+    if (row.kind === "cmd") row.cmd.run(navigate)
+    else navigate(row.hit.link)
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, results.length - 1)) }
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, rows.length - 1)) }
     else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)) }
-    else if (e.key === "Enter") { e.preventDefault(); const c = results[active]; if (c) run(c) }
+    else if (e.key === "Enter") { e.preventDefault(); const r = rows[active]; if (r) run(r) }
     else if (e.key === "Escape") { setOpen(false) }
   }
 
+  const typing = q.trim().length > 0
+  const tooShort = typing && q.trim().length < 2
   let lastGroup = ""
 
   return (
@@ -188,41 +263,90 @@ export function CommandPalette() {
                 value={q}
                 onChange={(e) => { setQ(e.target.value); setActive(0) }}
                 onKeyDown={onKeyDown}
-                placeholder="Jump to… or type a command"
+                placeholder={inCloseApp
+                  ? "Search accounts, findings, entries…  or type a command"
+                  : "Jump to… or type a command"}
                 className="flex-1 bg-transparent outline-none py-3 text-sm"
                 style={{ color: "var(--text)" }}
               />
+              {/* A quiet pulse while the workspace query is in flight. Never a
+                  spinner that replaces the list: the commands are already
+                  usable and yanking them away to show a loader would make a
+                  fast palette feel slow. */}
+              {isFetching && (
+                <span className="h-1.5 w-1.5 rounded-full shrink-0"
+                  style={{ background: "var(--green)", animation: "ndvx-cmdk-pulse 1s ease-in-out infinite" }} />
+              )}
               <kbd className="text-[10px] px-1.5 py-0.5 rounded"
                 style={{ background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>esc</kbd>
             </div>
+            <style>{"@keyframes ndvx-cmdk-pulse{0%,100%{opacity:.25}50%{opacity:1}}"}</style>
 
             {/* Results */}
             <div className="max-h-[50vh] overflow-y-auto py-1.5">
-              {results.length === 0 && (
-                <p className="px-4 py-6 text-center text-sm" style={{ color: "var(--text-muted)" }}>No matches.</p>
+              {rows.length === 0 && (
+                <p className="px-4 py-6 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                  {tooShort
+                    ? "Keep typing — two characters or more."
+                    : isFetching ? "Searching…" : "No matches."}
+                </p>
               )}
-              {results.map((c, i) => {
-                const Icon = c.icon
-                const showGroup = c.group !== lastGroup
-                lastGroup = c.group
+              {rows.map((row, i) => {
                 const isActive = i === active
+                if (row.kind === "cmd") {
+                  const c = row.cmd
+                  const Icon = c.icon
+                  const showGroup = c.group !== lastGroup
+                  lastGroup = c.group
+                  return (
+                    <div key={row.key}>
+                      {showGroup && <GroupLabel>{c.group}</GroupLabel>}
+                      <button
+                        onMouseEnter={() => setActive(i)}
+                        onClick={() => run(row)}
+                        className="w-full flex items-center gap-3 px-4 py-2 text-left transition-colors"
+                        style={{ background: isActive ? "var(--green-subtle)" : "transparent" }}
+                      >
+                        <Icon size={15} strokeWidth={1.8}
+                          style={{ color: isActive ? "var(--green)" : "var(--text-muted)" }} className="shrink-0" />
+                        <span className="flex-1 min-w-0 truncate">
+                          <span className="text-sm" style={{ color: "var(--text)" }}>{c.label}</span>
+                          {c.hint && <span className="text-[11px] ml-2" style={{ color: "var(--text-muted)" }}>{c.hint}</span>}
+                        </span>
+                      </button>
+                    </div>
+                  )
+                }
+                const h = row.hit
+                const meta = HIT_META[h.type] ?? HIT_META.account
+                const Icon = meta.icon
+                // One header for the whole data section rather than one per
+                // type: results are ranked by relevance across types, so
+                // per-type headers would flip back and forth down the list.
+                const showGroup = lastGroup !== "__data"
+                lastGroup = "__data"
                 return (
-                  <div key={c.id}>
-                    {showGroup && (
-                      <p className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider"
-                        style={{ color: "var(--text-muted)" }}>{c.group}</p>
-                    )}
+                  <div key={row.key}>
+                    {showGroup && <GroupLabel>In this workspace</GroupLabel>}
                     <button
                       onMouseEnter={() => setActive(i)}
-                      onClick={() => run(c)}
+                      onClick={() => run(row)}
                       className="w-full flex items-center gap-3 px-4 py-2 text-left transition-colors"
                       style={{ background: isActive ? "var(--green-subtle)" : "transparent" }}
                     >
                       <Icon size={15} strokeWidth={1.8}
                         style={{ color: isActive ? "var(--green)" : "var(--text-muted)" }} className="shrink-0" />
-                      <span className="flex-1 min-w-0 truncate">
-                        <span className="text-sm" style={{ color: "var(--text)" }}>{c.label}</span>
-                        {c.hint && <span className="text-[11px] ml-2" style={{ color: "var(--text-muted)" }}>{c.hint}</span>}
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-sm truncate" style={{ color: "var(--text)" }}>{h.label}</span>
+                        {h.sublabel && (
+                          <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
+                            {h.sublabel}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-[9.5px] font-bold uppercase tracking-wider shrink-0 rounded px-1.5 py-0.5"
+                        style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+                        {meta.group}
                       </span>
                     </button>
                   </div>

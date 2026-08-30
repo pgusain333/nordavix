@@ -41,6 +41,7 @@ from modules.qbo.router import qbo_router
 from modules.recons.router import router as recons_router
 from modules.review.router import router as review_router
 from modules.schedules.router import router as schedules_router
+from modules.search.router import router as search_router
 from modules.tasks.router import router as tasks_router
 from modules.workpapers.router import router as workpapers_router
 from modules.workspace.router import router as workspace_router
@@ -185,6 +186,7 @@ app.include_router(advisory_router,       prefix="/api/advisory",     tags=["adv
 app.include_router(memory_router,         prefix="/api/memory",       tags=["memory"])
 app.include_router(workpapers_router,      prefix="/api/workpapers",   tags=["workpapers"])
 app.include_router(close_workflow_router,  prefix="/api/close",        tags=["close"])
+app.include_router(search_router,          prefix="/api/search",       tags=["search"])
 app.include_router(gl_accuracy_router,      prefix="/api/gl-accuracy",  tags=["gl-accuracy"])
 app.include_router(graph_router,            prefix="/api/graph",        tags=["graph"])
 

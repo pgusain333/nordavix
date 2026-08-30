@@ -18,6 +18,7 @@ import {
 import { PageHeader } from "@/core/ui/PageHeader"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Spinner } from "@/core/ui/components"
+import { SkeletonBlock, SkeletonCard } from "@/core/ui/Skeleton"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { formatDate, toISODate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
@@ -112,10 +113,16 @@ export function AdvisoryPage() {
               <h2 className="text-base font-bold text-theme">KPIs vs. targets</h2>
             </div>
             {kpisLoading ? (
-              <div className="rounded-2xl p-6 flex items-center gap-3"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-                <Spinner className="h-5 w-5" />
-                <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading KPI trends…</span>
+              /* A grid of KPI cards is what arrives — show that, not a dot. */
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="rounded-2xl px-4 py-4"
+                    style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                    <SkeletonBlock width="52%" height={11} />
+                    <div className="mt-2.5"><SkeletonBlock width="38%" height={24} /></div>
+                    <div className="mt-3"><SkeletonBlock width="100%" height={8} /></div>
+                  </div>
+                ))}
               </div>
             ) : (kpiData?.kpis.some((k) => k.current !== null) ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -142,11 +149,7 @@ export function AdvisoryPage() {
               <h2 className="text-base font-bold text-theme">Tracked recommendations</h2>
             </div>
             {recsLoading ? (
-              <div className="rounded-2xl p-6 flex items-center gap-3"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-                <Spinner className="h-5 w-5" />
-                <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</span>
-              </div>
+              <SkeletonCard rows={3} columns={["8%", "62%", "18%"]} header={false} />
             ) : recs.length === 0 ? (
               <div className="rounded-2xl px-4 py-8 text-center"
                 style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>

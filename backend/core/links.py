@@ -87,3 +87,15 @@ def tasks() -> str:
     """The task list. No period: TasksPage owns its own year/period filters and
     does not read the shared param, so adding one would be a lie in the URL."""
     return "/app/tasks"
+
+
+def adjustments() -> str:
+    """The adjustments queue. No period, for the same reason as tasks(): the
+    page keeps its period in local state and defaults to the most recent one,
+    so a ?period= in the link would be ignored — and a URL that claims to open
+    a specific month and doesn't is worse than one that never promised."""
+    return "/app/adjustments"
+
+
+def close_review(period: date | str | None = None) -> str:
+    return f"/app/review?period={_iso(period)}" if period else "/app/review"

@@ -27,6 +27,7 @@ import {
   Timer, TrendingUp, AlertTriangle, Brain, ScanSearch, type LucideIcon,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { SkeletonPage } from "@/core/ui/Skeleton"
 import { formatDate } from "@/core/lib/dates"
 import { writeSelectedPeriod, useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { workspaceApi, type WorkspaceMember } from "@/modules/workspace/api"
@@ -212,8 +213,9 @@ export function CloseWorkflowPage() {
       )}
 
       {periodsLoading ? (
-        <Card><div className="p-6 flex items-center gap-3"><Spinner className="h-5 w-5" />
-          <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</span></div></Card>
+        /* The checklist's shape while it loads, so the page doesn't collapse
+           to a dot and then jump back open. */
+        <SkeletonPage stats={0} cards={1} rows={7} columns={["6%", "56%", "20%"]} />
       ) : !booksReady ? (
         <Card><div className="px-6 py-10 text-center">
           <p className="text-sm font-semibold text-theme mb-1">Books aren't set up yet</p>

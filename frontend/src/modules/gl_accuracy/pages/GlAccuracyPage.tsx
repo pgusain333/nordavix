@@ -17,6 +17,7 @@ import {
   Check, ThumbsUp, ChevronDown, ListChecks, ScanSearch, Settings, History, RefreshCw,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { SkeletonPage } from "@/core/ui/Skeleton"
 import { formatDate } from "@/core/lib/dates"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { TZ_GROUPS, browserZone, isListedZone, timeInZone, zoneLabel } from "@/core/lib/timezones"
@@ -906,8 +907,9 @@ export function GlAccuracyPage() {
       {scanMut.isPending ? (
         <ScanningCard />
       ) : isLoading && !data ? (
-        <Card><div className="p-6 flex items-center gap-3"><Spinner className="h-5 w-5" />
-          <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading…</span></div></Card>
+        /* The reassurance strip, then the findings list — the shape the page
+           is about to take, so nothing moves when it arrives. */
+        <SkeletonPage stats={3} cards={1} rows={5} columns={["6%", "18%", "44%", "16%"]} />
       ) : justScannedClean ? (
         <AllClearTrophy total={scanned?.total ?? 0} reduce={reduce} />
       ) : items.length === 0 ? (

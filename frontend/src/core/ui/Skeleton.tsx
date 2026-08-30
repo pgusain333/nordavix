@@ -85,3 +85,69 @@ export function SkeletonTable({
     </div>
   )
 }
+
+/**
+ * SkeletonCard — one card-shaped placeholder, the app's most common container.
+ */
+export function SkeletonCard({
+  rows = 4,
+  columns = ["24%", "38%", "18%", "14%"],
+  header = true,
+}: { rows?: number; columns?: string[]; header?: boolean }) {
+  return (
+    <div className="rounded-xl overflow-hidden"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      {header && (
+        <div className="px-4 py-3 flex items-center gap-3"
+          style={{ borderBottom: "1px solid var(--border)" }}>
+          <SkeletonBlock width={140} height={13} />
+          <span className="flex-1" />
+          <SkeletonBlock width={72} height={13} />
+        </div>
+      )}
+      <div className="py-2">
+        <SkeletonTable rows={rows} columns={columns} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * SkeletonPage — the whole page shape: a stat strip, then a card of rows.
+ *
+ * Exists because adoption is the hard part. The primitives above have been in
+ * the repo since early on and most pages still showed a centred spinner — a
+ * spinner is one line and hand-assembling a page skeleton is twenty, so the
+ * spinner kept winning. This is the one line.
+ *
+ * Why it matters: a spinner says *wait* and gives no clue what is coming; a
+ * skeleton says *here it comes* and shows the shape, so the same 600ms reads
+ * as roughly half as long. In a data-heavy tool that perceived speed is most
+ * of what "premium" means.
+ */
+export function SkeletonPage({
+  stats = 4,
+  cards = 1,
+  rows = 5,
+  columns,
+}: { stats?: number; cards?: number; rows?: number; columns?: string[] }) {
+  return (
+    <div className="space-y-4" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading</span>
+      {stats > 0 && (
+        <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${stats}, minmax(0,1fr))` }}>
+          {Array.from({ length: stats }).map((_, i) => (
+            <div key={i} className="rounded-xl px-4 py-3.5"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <SkeletonBlock width="55%" height={10} />
+              <div className="mt-2"><SkeletonBlock width="42%" height={22} /></div>
+            </div>
+          ))}
+        </div>
+      )}
+      {Array.from({ length: cards }).map((_, i) => (
+        <SkeletonCard key={i} rows={rows} columns={columns} />
+      ))}
+    </div>
+  )
+}

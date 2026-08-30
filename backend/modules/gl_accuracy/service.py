@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import links
@@ -282,8 +282,60 @@ async def scan_period(
         started_at=datetime.now(UTC),
     )
     db.add(run)
-    await db.flush()
+    # COMMITTED, not just flushed. The docstring above has always claimed a scan
+    # that dies mid-pull "leaves ok = NULL rather than vanishing" — and that was
+    # only true if the caller happened not to roll back. A flushed row disappears
+    # with the transaction, taking the evidence that we ever looked with it.
+    await db.commit()
+    run_id = run.id
 
+    try:
+        return await _scan_body(
+            conn, db, tenant_id=tenant_id, period_end=period_end,
+            lookback_months=lookback_months, run=run,
+        )
+    except Exception as exc:  # noqa: BLE001 — recorded, then re-raised
+        await _mark_scan_failed(db, tenant_id, run_id, exc)
+        raise
+
+
+async def _mark_scan_failed(
+    db: AsyncSession, tenant_id: uuid.UUID, run_id: uuid.UUID, exc: Exception
+) -> None:
+    """Write the failure onto the run row, so the strip can say what went wrong.
+
+    `error` was declared on the model, returned by monitoring_status and
+    rendered by the rail — and written by nothing. So a crashed scan left
+    ok = NULL and no message, which the UI reads as still-in-flight: the strip
+    said "Checking now" forever rather than "Last check didn't finish". The
+    failure branch it was built for was unreachable.
+
+    The session is in a failed transaction by the time we get here, so this
+    rolls back first and writes on a clean one. Best-effort: if even this
+    fails, the original exception is what matters and must not be masked.
+    """
+    try:
+        await db.rollback()
+        await db.execute(
+            update(GlScanRun)
+            .where(GlScanRun.id == run_id, GlScanRun.tenant_id == tenant_id)
+            .values(ok=False, finished_at=datetime.now(UTC), error=str(exc)[:2000])
+        )
+        await db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("could not record the GL scan failure for run %s", run_id)
+
+
+async def _scan_body(
+    conn: QboConnection,
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    period_end: date,
+    lookback_months: int,
+    run: GlScanRun,
+) -> dict:
+    """The scan itself. Split out so scan_period can fence it — see above."""
     period_start = period_end.replace(day=1)
     hist_start = _shift_months(period_start, lookback_months)
     hist_end = period_start - timedelta(days=1)

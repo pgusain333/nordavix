@@ -44,6 +44,7 @@ import {
   RefreshCw,
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
+import { SkeletonCard } from "@/core/ui/Skeleton"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { PageHeader } from "@/core/ui/PageHeader"
 import { toISODate, formatDate } from "@/core/lib/dates"
@@ -671,7 +672,10 @@ export function FinancialsPage() {
                       comparativeBasis={comparativeBasis}
                     />
                   ) : isLoading ? (
-                    <div className="py-16 flex items-center justify-center"><Spinner /></div>
+                    /* Shaped like a statement — a column of captions with a
+                       figure on the right — so the page keeps its geometry
+                       while the numbers land instead of collapsing to a dot. */
+                    <SkeletonCard rows={9} columns={["58%", "22%"]} />
                   ) : error ? (
                     <div className="rounded-2xl p-10 text-center"
                       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>

@@ -19,6 +19,7 @@ import {
 import { PageHeader } from "@/core/ui/PageHeader"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Spinner } from "@/core/ui/components"
+import { SkeletonPage } from "@/core/ui/Skeleton"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
 import { formatDate, formatDateTime, toISODate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
@@ -277,11 +278,9 @@ export function CloseReviewPage() {
           )}
 
           {isLoading ? (
-            <div className="rounded-2xl p-6 flex items-center gap-3"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              <Spinner className="h-5 w-5" />
-              <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading review…</span>
-            </div>
+            /* The page's own shape — four counts, then the exception list —
+               so the layout doesn't jump when the data lands. */
+            <SkeletonPage stats={4} cards={1} rows={6} columns={["8%", "52%", "22%"]} />
           ) : isError ? (
             <div className="rounded-2xl px-6 py-10 text-center"
               style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
