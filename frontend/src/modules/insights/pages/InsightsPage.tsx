@@ -724,8 +724,26 @@ function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
   const [open, setOpen] = useState(false)
   const lines = ms.score_lines ?? []
   if (!lines.length) {
-    // Fewer than two measurable components. Say which, rather than showing a
-    // confident number built on almost nothing.
+    // TWO different states, and conflating them put "not enough synced data"
+    // directly beneath a confident 89 — a contradiction the reader has no way
+    // to resolve.
+    //
+    // A score with no workings is not an unscoreable period. It is a summary
+    // computed before the workings existed, served from cache while the API
+    // catches up. The number it carries is the OLD arithmetic — the one that
+    // scored an overdrawn business 89 — so saying nothing would leave it
+    // standing as fact.
+    if (ms.score != null) {
+      return (
+        <div className="rounded-xl px-4 py-3 text-[12px]"
+          style={{ background: "#f4eddf", color: "#8a6326" }}>
+          This score was computed by an earlier version and has no workings to
+          show. Press <span className="font-semibold">Sync</span> to recompute it —
+          the scoring has since changed, so the number above may move.
+        </div>
+      )
+    }
+    // Genuinely unscoreable: fewer than two components could be measured.
     return (
       <div className="rounded-xl px-4 py-3 text-[12px]"
         style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
@@ -734,7 +752,10 @@ function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
       </div>
     )
   }
-  const capped = (ms.score_caps?.length ?? 0) > 0
+  // A gate FIRING is not a gate BINDING. When the components already score
+  // below every cap, saying "held at 44" over a 40 describes an
+  // intervention that never happened.
+  const capped = ms.score_capped === true
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -742,12 +763,22 @@ function ScoreBreakdown({ ms }: { ms: ManagementSummary }) {
           the reason the number is not what the components add up to. */}
       {capped && (
         <div className="px-4 py-3" style={{ background: "#f7eeec", borderBottom: "1px solid var(--border)" }}>
-          {ms.score_caps!.map((c) => (
-            <p key={c.rule} className="text-[12.5px]" style={{ color: "#9b3d37" }}>
-              <span className="font-semibold">Capped at {c.cap}</span>
-              {ms.score_raw != null ? ` (the measures alone scored ${ms.score_raw})` : ""} — {c.reason}
+          {/* ONE sentence, about the constraint that actually decided the
+              number. The first pass printed a line per cap, each repeating
+              "(the measures alone scored 52)", so a reader met two different
+              "Capped at" figures and had to work out that the lower one won.
+              The caps arrive strictest-first; the rest are true and already
+              answered by the score, so they are a footnote, not a headline. */}
+          <p className="text-[12.5px]" style={{ color: "#9b3d37" }}>
+            <span className="font-semibold">Held at {ms.score_caps![0].cap} of 100</span>
+            {ms.score_raw != null ? ` — the measures alone came to ${ms.score_raw}.` : " —"}{" "}
+            {ms.score_caps![0].reason}
+          </p>
+          {ms.score_caps!.length > 1 && (
+            <p className="text-[11.5px] mt-1.5" style={{ color: "#9b3d37", opacity: 0.85 }}>
+              Also flagged: {ms.score_caps!.slice(1).map((c) => c.reason.split(".")[0].toLowerCase()).join("; ")}.
             </p>
-          ))}
+          )}
         </div>
       )}
       <button onClick={() => setOpen((v) => !v)}

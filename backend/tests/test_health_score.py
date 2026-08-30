@@ -210,3 +210,57 @@ def test_the_score_never_leaves_its_range():
                         dso_days=45, ar_over_60_pct=15,
                     )
                     assert r["score"] is None or 0 <= r["score"] <= 100
+
+
+# ── One finding, stated once ───────────────────────────────────────────────
+#
+# The screen showed "Capped at 39 (the measures alone scored 52)" directly above
+# "Capped at 44 (the measures alone scored 52)". Two numbers, the same
+# parenthetical twice, and the reader left to work out that the lower one won —
+# for what is one underlying fact: a negative balance IS zero runway.
+
+def test_a_negative_balance_does_not_also_report_short_runway():
+    """Same fact, once. Cash below zero already means the runway is gone."""
+    r = score(cash=-21_200, runway_months=0.0)
+    rules = [c["rule"] for c in r["caps"]]
+    assert rules == ["negative_cash"], rules
+
+
+def test_short_runway_is_still_reported_on_its_own():
+    """Suppression is scoped to the redundancy — a thin runway with cash still
+    in the bank is a distinct finding and must survive."""
+    r = score(cash=8_000, runway_months=1.2)
+    assert [c["rule"] for c in r["caps"]] == ["short_runway"]
+
+
+def test_the_binding_cap_comes_first():
+    """The UI leads with caps[0] and treats the rest as a footnote, so the
+    strictest has to be the one it meets."""
+    r = score(cash=8_000, runway_months=1.2, current_ratio=0.6,
+              net_margin_pct=-9, operating_cash_flow=-4_000)
+    assert len(r["caps"]) > 1
+    assert r["caps"][0]["cap"] == min(c["cap"] for c in r["caps"])
+
+
+def test_a_cap_that_changed_nothing_is_not_reported_as_binding():
+    """CAUGHT BY THIS FILE. A gate can fire while the components already sit
+    below it — here four measures score 40 against a strictest cap of 44. The
+    banner said "Held at 44 of 100 — the measures alone came to 40", which
+    describes an intervention that never happened and contradicts the gauge."""
+    r = score(cash=8_000, runway_months=1.2, current_ratio=0.6,
+              net_margin_pct=-9, operating_cash_flow=-4_000)
+    assert r["caps"], "the gates should still have fired"
+    assert r["score"] == r["raw_score"], "nothing should have been capped here"
+    assert r["capped"] is False
+
+
+def test_a_cap_that_did_bind_says_so():
+    r = score(cash=-21_200, runway_months=None)
+    assert r["capped"] is True
+    assert r["score"] < r["raw_score"]
+
+
+def test_the_score_is_the_strictest_cap_whatever_the_order_they_fire_in():
+    r = score(cash=-100, runway_months=None, current_ratio=0.4,
+              net_margin_pct=-30, operating_cash_flow=-90_000)
+    assert r["score"] == min([r["raw_score"], *[c["cap"] for c in r["caps"]]])

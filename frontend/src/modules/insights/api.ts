@@ -91,6 +91,10 @@ export interface ManagementSummary {
   score_lines?:    ScoreLine[]
   score_caps?:     ScoreCap[]
   score_raw?:      number | null
+  /** Whether a cap actually REDUCED the score. A gate can fire while the
+   *  components already sit below it, and announcing a cap that changed
+   *  nothing contradicts the gauge beside it. */
+  score_capped?:   boolean
   score_measured?: number
   score_of?:       number
   priorities:  SummaryItem[]

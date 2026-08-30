@@ -576,7 +576,11 @@ def health_score(
                      "reason": "The cash balance is negative. A business that cannot "
                                "fund itself today is not in good health, whatever the "
                                "margins say."})
-    if runway_months is not None and runway_months < 3:
+    # Suppressed when the balance is already negative: a negative balance IS
+    # zero runway, so reporting both states one fact twice and leaves the
+    # reader deciding which of two "capped at" numbers applies.
+    if (runway_months is not None and runway_months < 3
+            and not (cash is not None and cash < 0)):
         caps.append({"rule": "short_runway", "cap": 44,
                      "reason": f"Under three months of runway ({runway_months:.1f}). "
                                f"This is a going-concern question, not a metric."})
@@ -591,6 +595,9 @@ def health_score(
                      "reason": "Loss-making and cash-consuming in the same period — the "
                                "loss is being funded from the balance sheet."})
 
+    # Strictest first, so the binding constraint is the one the reader meets.
+    # Everything after it is true and already answered by the number.
+    caps.sort(key=lambda c: c["cap"])
     score = min([raw, *[c["cap"] for c in caps]]) if caps else raw
     band = "strong" if score >= 70 else "watch" if score >= 45 else "at_risk"
 
@@ -614,6 +621,11 @@ def health_score(
     return {
         "score": score, "band": band, "headline": headline,
         "measured": len(lines), "of": 5, "lines": lines, "caps": caps,
+        # Did a cap actually REDUCE the score, or did the components already
+        # land below it? A gate can fire and change nothing, and announcing
+        # "held at 44" over a score of 40 describes an intervention that never
+        # happened. Only a binding cap is worth a sentence.
+        "capped": score < raw,
         # Kept so the UI can say "82 capped to 39", which is the sentence that
         # makes the number defensible rather than mysterious.
         "raw_score": raw,
@@ -1511,6 +1523,7 @@ def _build_advisory(payload: dict) -> None:
         "score_lines": scoring["lines"],
         "score_caps":  scoring["caps"],
         "score_raw":   scoring["raw_score"],
+        "score_capped": scoring.get("capped", False),
         "score_measured": scoring["measured"],
         "score_of":       scoring["of"],
         "priorities":  priorities or [item("Maintain the close cadence and keep the cash forecast current.")],
