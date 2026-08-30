@@ -17,7 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.account import Account
 from models.trial_balance import TrialBalance
 from models.variance import Variance
-from modules.memory.service import active_expectation_facts_map, evaluate_expectation
+from modules.memory.service import (
+    active_expectation_fact_ids,
+    active_expectation_facts_map,
+    evaluate_expectation,
+    record_application,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -440,6 +445,10 @@ async def create_accounts_and_variances(
     except Exception:
         logger.warning("flux: expectation facts unavailable; using run-rate only", exc_info=True)
         exp_facts = {}
+    # Accounts whose confirmed expectation actually explained the movement.
+    # Collected here and written once at the end, so the reuse figure counts
+    # facts that DID something rather than facts that were loaded.
+    fired_expectations: set[str] = set()
 
     for ad in account_dicts:
         account = Account(
@@ -486,6 +495,11 @@ async def create_accounts_and_variances(
                 expected = ev["expected_value"]
                 basis = ev["basis"]
                 pre_explained = ev["pre_explained"]
+                # The expectation MATCHED — it explained this account's movement.
+                # Recorded here rather than where the map is loaded, because the
+                # map is fetched for every account and a fact that never matched
+                # has not been reused by any honest reading of the word.
+                fired_expectations.add(key)
         if expected is None:
             expected, basis = _expected_from_history(hist.get(key, []))
         if expected is not None:
@@ -512,6 +526,21 @@ async def create_accounts_and_variances(
         variances_created += 1
         if is_material:
             material_count += 1
+
+    # One write for the whole build. Best-effort: a statistic must never be the
+    # reason a close fails to produce its flux.
+    if fired_expectations:
+        try:
+            ids = await active_expectation_fact_ids(session)
+            for key in fired_expectations:
+                fact_id = ids.get(key)
+                if fact_id is not None:
+                    await record_application(
+                        session, fact_id=fact_id,
+                        period_end=trial_balance.period_current, surface="flux",
+                    )
+        except Exception:
+            logger.debug("flux: could not record expectation reuse", exc_info=True)
 
     return accounts_created, variances_created, material_count
 

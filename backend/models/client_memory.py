@@ -24,7 +24,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Date, DateTime, Integer, String, func
+from sqlalchemy import Date, DateTime, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -96,4 +96,40 @@ class ClientMemoryFact(TenantBase):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ClientMemoryApplication(TenantBase):
+    """One occasion on which a learned fact actually DID something.
+
+    Client Memory applies its facts all over the product — a confirmed pairing
+    stops Risk Radar re-flagging a vendor, an expectation explains a variance,
+    an offset convention pre-fills an entry — and left no trace, so the product
+    could not say how much of a close it had done from memory. That number is
+    the whole argument for it compounding, so it has to be measured rather than
+    inferred.
+
+    NOT the same as `ClientMemoryFact.last_seen_at`, which records when a fact
+    was last WRITTEN. And not the same as a fact being fetched: the classifier
+    pulls every active exception into a candidate set on every scan, and a fact
+    that sat in that set unused has not been reused by any honest reading.
+    A row here means the fact changed an outcome for this period.
+
+    Migration: 084_memory_applications.py.
+    """
+    __tablename__ = "client_memory_applications"
+    __table_args__ = (
+        # A re-scan applies the same fact to the same period again; it must not
+        # count twice. Writes are upserts that do nothing on conflict.
+        UniqueConstraint("tenant_id", "fact_id", "period_end",
+                         name="uq_memory_application_fact_period"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    fact_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    # risk_radar | flux | adjustments | schedules | recons
+    surface: Mapped[str] = mapped_column(String(30), nullable=False)
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

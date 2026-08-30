@@ -240,18 +240,65 @@ async def distill_offset_swap(
     return existing
 
 
+# ── Recording that a fact actually did something ─────────────────────────────
+
+async def record_application(
+    db: AsyncSession, *, fact_id, period_end: date, surface: str,
+) -> None:
+    """Note that a learned fact changed an outcome for this period.
+
+    Idempotent by construction — a re-scan applies the same fact again and must
+    not inflate the count, so this is an INSERT ... ON CONFLICT DO NOTHING
+    against the (tenant, fact, period) unique key.
+
+    Best-effort and silent on failure: memory is an assistive layer, and a
+    bookkeeping write for a statistic must never be the thing that fails a
+    scan, a flux build, or an entry the user is waiting on.
+    """
+    if fact_id is None or period_end is None:
+        return
+    try:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from core.db.base import current_tenant_id
+        from models.client_memory import ClientMemoryApplication
+
+        tenant_id = current_tenant_id.get()
+        if tenant_id is None:
+            return
+        await db.execute(
+            pg_insert(ClientMemoryApplication)
+            .values(id=uuid.uuid4(), tenant_id=tenant_id, fact_id=fact_id,
+                    period_end=period_end, surface=surface[:30])
+            .on_conflict_do_nothing(constraint="uq_memory_application_fact_period")
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("could not record memory application for %s", fact_id, exc_info=True)
+
+
 async def active_offset_fact(
-    db: AsyncSession, *, source: str, source_ref: str
+    db: AsyncSession, *, source: str, source_ref: str,
+    applied_for: date | None = None,
 ) -> ClientMemoryFact | None:
     """The confirmed offset convention for an account, if any. Used by the
-    recon AI prompt (apply step). Only `active` facts are ever applied."""
+    recon AI prompt (apply step). Only `active` facts are ever applied.
+
+    `applied_for` records the use. Safe to log on return here, unlike the
+    set-returning lookups: this fetches ONE fact for ONE account and every
+    caller uses what it gets, so returning it and applying it are the same
+    event.
+    """
     fact_key = f"{source}:offset:{source_ref}"
-    return (await db.execute(
+    fact = (await db.execute(
         select(ClientMemoryFact).where(
             ClientMemoryFact.fact_key == fact_key,
             ClientMemoryFact.status == "active",
         )
     )).scalar_one_or_none()
+    if fact is not None and applied_for is not None:
+        await record_application(db, fact_id=fact.id, period_end=applied_for,
+                                 surface="adjustments")
+    return fact
 
 
 # ── Vendor schedule defaults (Slice 2) ────────────────────────────────────────
@@ -475,20 +522,26 @@ async def distill_schedule_default(
 
 
 async def active_schedule_default(
-    db: AsyncSession, *, schedule_type: str, vendor: str | None
+    db: AsyncSession, *, schedule_type: str, vendor: str | None,
+    applied_for: date | None = None,
 ) -> ClientMemoryFact | None:
     """The confirmed vendor setup for pre-filling a new schedule item, if any.
-    Only `active` facts apply (confirm-first)."""
+    Only `active` facts apply (confirm-first). `applied_for` records the use —
+    one fact, one vendor, used by every caller that gets one."""
     vk = _vendor_key(vendor)
     if not vk:
         return None
     fact_key = f"{schedule_type[:10]}:vendor:{vk}"
-    return (await db.execute(
+    fact = (await db.execute(
         select(ClientMemoryFact).where(
             ClientMemoryFact.fact_key == fact_key,
             ClientMemoryFact.status == "active",
         )
     )).scalar_one_or_none()
+    if fact is not None and applied_for is not None:
+        await record_application(db, fact_id=fact.id, period_end=applied_for,
+                                 surface="schedules")
+    return fact
 
 
 # ── Variance expectations (Slice 2 — captured judgment on flux) ────────────────
@@ -811,6 +864,51 @@ async def upsert_expectation_fact(
         existing.last_seen_at = now
     await db.flush()
     return existing
+
+
+async def active_expectation_fact_ids(db: AsyncSession) -> dict[str, uuid.UUID]:
+    """account_key → fact id, for the same facts as active_expectation_facts_map.
+
+    A sibling rather than a change to that map's shape: the flux build reads the
+    VALUES on every account and only needs an id on the few that actually
+    matched, so widening the hot map would cost every caller for the benefit of
+    a statistic.
+    """
+    facts = (await db.execute(
+        select(ClientMemoryFact).where(
+            ClientMemoryFact.kind == "variance_expectation",
+            ClientMemoryFact.status == "active",
+        )
+    )).scalars().all()
+    out: dict[str, uuid.UUID] = {}
+    for f in facts:
+        key = (f.fact_key or "").removeprefix(_EXPECTATION_PREFIX)
+        if key:
+            out[key] = f.id
+    return out
+
+
+async def active_classification_exception_ids(db: AsyncSession) -> dict[tuple[str, str], uuid.UUID]:
+    """(vendor_norm, account_id) → fact id, mirroring
+    active_classification_exceptions.
+
+    Same reason for the split: the scanner needs a fast membership set, and the
+    id is only wanted for the handful of pairs that provably suppressed a flag.
+    """
+    facts = (await db.execute(
+        select(ClientMemoryFact).where(
+            ClientMemoryFact.kind == "gl_accuracy_exception",
+            ClientMemoryFact.status == "active",
+        )
+    )).scalars().all()
+    out: dict[tuple[str, str], uuid.UUID] = {}
+    for f in facts:
+        v = f.value or {}
+        vn = str(v.get("vendor_norm") or "").strip()
+        acct = str(v.get("account_id") or "").strip()
+        if vn and acct:
+            out[(vn, acct)] = f.id
+    return out
 
 
 async def active_expectation_facts_map(db: AsyncSession) -> dict[str, dict[str, Any]]:

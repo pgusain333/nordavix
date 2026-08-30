@@ -116,4 +116,42 @@ async function scheduleDefault(
   return data
 }
 
-export const memoryApi = { listFacts, confirmFact, dismissFact, getEvidence, scheduleDefault, getAccountContext }
+/** What the client's memory brings to a close being opened. */
+export interface CloseBriefKind {
+  kind:     string
+  label:    string
+  count:    number
+  examples: string[]
+}
+
+export interface CloseBriefReview {
+  fact_id:    string
+  kind:       string
+  title:      string
+  /** Phrased as a question — the product knows the fact stopped being needed,
+   *  not that it is wrong, and that has innocent explanations. */
+  reason:     string
+  last_fired: string | null
+}
+
+export interface CloseBrief {
+  period_end:         string
+  prior_period_end:   string | null
+  /** Active facts carried into this close. */
+  carried:            number
+  by_kind:            CloseBriefKind[]
+  /** Facts that actually FIRED in the previous close — not facts that were
+   *  loaded. The number that says the product compounds, so it is measured
+   *  rather than inferred. */
+  reused_last_period: number
+  needs_review:       CloseBriefReview[]
+}
+
+async function closeBrief(periodEnd: string, priorPeriodEnd?: string): Promise<CloseBrief> {
+  const { data } = await apiClient.get<CloseBrief>("/api/memory/brief", {
+    params: { period_end: periodEnd, prior_period_end: priorPeriodEnd },
+  })
+  return data
+}
+
+export const memoryApi = { listFacts, confirmFact, dismissFact, getEvidence, scheduleDefault, getAccountContext, closeBrief }

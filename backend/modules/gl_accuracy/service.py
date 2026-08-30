@@ -255,6 +255,53 @@ async def _replace_open_findings(
     return inserted, newly_seen, newly_seen_keys
 
 
+async def _record_suppressions(
+    db: AsyncSession, current: list[dict], history: list[dict],
+    exceptions: set, opts: dict, period_end: date,
+) -> None:
+    """Note which confirmed pairings actually stopped a flag this period.
+
+    A fact being FETCHED is not a fact being USED. Every active exception is
+    pulled into the candidate set on every scan, and one that sat there
+    unmatched has not been reused by any honest reading — counting the set
+    would turn the reuse figure into a count of stored rows, which is exactly
+    the claim it is supposed to substantiate.
+
+    So the detector is run a second time with NO exceptions and the results
+    diffed: what appears only in that run is precisely what the exceptions
+    suppressed. It is a pure in-memory pass over transactions already loaded,
+    and it is the only way to say "fired" and mean it.
+
+    Best-effort throughout — a statistic must never fail a scan.
+    """
+    if not exceptions or not current:
+        return
+    try:
+        from modules.gl_accuracy.engine import _norm_vendor, detect_misclassifications
+        from modules.memory.service import (
+            active_classification_exception_ids,
+            record_application,
+        )
+
+        unsuppressed = detect_misclassifications(
+            current, history, exceptions=set(), opts=opts,
+        )
+        suppressed = {
+            (_norm_vendor(f.get("vendor")), str(f.get("posted_account_id") or ""))
+            for f in unsuppressed
+        } & exceptions
+        if not suppressed:
+            return
+        ids = await active_classification_exception_ids(db)
+        for pair in suppressed:
+            fact_id = ids.get(pair)
+            if fact_id is not None:
+                await record_application(db, fact_id=fact_id, period_end=period_end,
+                                         surface="risk_radar")
+    except Exception:  # noqa: BLE001
+        logger.debug("could not record memory suppressions for %s", period_end, exc_info=True)
+
+
 async def scan_period(
     conn: QboConnection,
     db: AsyncSession,
@@ -364,10 +411,12 @@ async def _scan_body(
     exceptions = await active_classification_exceptions(db)
     # The engine is pure and cannot ask what day it is; the future-dated
     # detector needs to know and stands down without it rather than guessing.
+    opts = {"today": date.today()}
     flags = run_detectors(
         current, history, snapshots=snapshots, exceptions=exceptions,
-        opts={"today": date.today()},
+        opts=opts,
     )
+    await _record_suppressions(db, current, history, exceptions, opts, period_end)
     _inserted, newly_seen, new_keys = await _replace_open_findings(
         db, tenant_id, period_end, flags
     )

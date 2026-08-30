@@ -47,6 +47,39 @@ async def _load(db: AsyncSession, fact_id: str) -> ClientMemoryFact:
     return row
 
 
+@router.get("/brief")
+async def close_brief_endpoint(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="YYYY-MM-DD — the close being opened"),
+    prior_period_end: str | None = Query(
+        default=None,
+        description="YYYY-MM-DD — what 'held last month' is measured against",
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """What this client's memory brings to the close being opened.
+
+    Read-only, any member: it returns what the workspace already taught the
+    product about itself.
+    """
+    from datetime import date as _date
+
+    from modules.memory.brief import close_brief
+
+    def _parse(v: str | None) -> _date | None:
+        if not v:
+            return None
+        try:
+            return _date.fromisoformat(v)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="dates must be YYYY-MM-DD")
+
+    pe = _parse(period_end)
+    if pe is None:
+        raise HTTPException(status_code=422, detail="period_end is required")
+    return await close_brief(db, pe, _parse(prior_period_end))
+
+
 @router.get("/facts")
 async def list_facts(
     tenant_id: CurrentTenantId,

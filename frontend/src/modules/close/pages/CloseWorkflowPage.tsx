@@ -28,6 +28,7 @@ import {
 } from "lucide-react"
 import { Button, Spinner } from "@/core/ui/components"
 import { SkeletonPage } from "@/core/ui/Skeleton"
+import { CloseBriefCard } from "@/modules/memory/CloseBriefCard"
 import { formatDate } from "@/core/lib/dates"
 import { writeSelectedPeriod, useSelectedPeriodDefault } from "@/core/hooks/useSelectedPeriod"
 import { workspaceApi, type WorkspaceMember } from "@/modules/workspace/api"
@@ -129,6 +130,15 @@ export function CloseWorkflowPage() {
   // effect below fills it from the backend's focus period as before.
   const seededPeriod = useSelectedPeriodDefault("")
   const [period, setPeriod] = useState<string>(seededPeriod)
+  // The close immediately before the one on screen — what "held last month" is
+  // measured against. Taken from the period list rather than by subtracting a
+  // month: the list is what the close workflow considers a period, and a gap
+  // in it is real (a workspace that started mid-year, a month never opened).
+  const priorPeriod = useMemo(() => {
+    const all = periodsResp?.periods?.map((p) => p.period_end) ?? []
+    const earlier = all.filter((p) => p < period).sort()
+    return earlier.length ? earlier[earlier.length - 1] : undefined
+  }, [periodsResp, period])
   useEffect(() => {
     if (!period && periodsResp) {
       setPeriod(periodsResp.focus || periodsResp.periods[0]?.period_end || "")
@@ -210,6 +220,14 @@ export function CloseWorkflowPage() {
           style={{ background: "var(--danger-subtle)", color: "var(--danger)", border: "1px solid var(--danger-border)" }}>
           {actionErr}
         </div>
+      )}
+
+      {/* What the client's memory brings to this close, before the checklist.
+          Every learned convention in Nordavix fires reactively, mid-task — so
+          this is the one place the accumulated judgement is visible as an
+          asset rather than as an absence of friction somewhere else. */}
+      {!periodsLoading && booksReady && period && (
+        <CloseBriefCard periodEnd={period} priorPeriodEnd={priorPeriod} />
       )}
 
       {periodsLoading ? (

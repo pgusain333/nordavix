@@ -9,7 +9,11 @@ from models.assistant_conversation import AssistantMessage, AssistantThread
 from models.audit_log import AuditLog
 from models.autopilot import AutopilotConfig, AutopilotRun
 from models.bank_statement import BankStatement
-from models.client_memory import ClientMemoryFact, ClientMemorySignal
+from models.client_memory import (
+    ClientMemoryApplication,
+    ClientMemoryFact,
+    ClientMemorySignal,
+)
 from models.close_review import CloseReview, CloseReviewFinding
 from models.close_step import CloseStepInstance, CloseTemplateStep
 from models.closed_period import ClosedPeriod
@@ -81,6 +85,7 @@ __all__ = [
     "TrackedRecommendation",
     "AuditLog",
     "BankStatement",
+    "ClientMemoryApplication",
     "ClientMemoryFact",
     "ClientMemorySignal",
     "CloseReview",
