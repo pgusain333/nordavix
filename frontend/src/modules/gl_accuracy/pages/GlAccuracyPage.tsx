@@ -26,7 +26,7 @@ import { workspaceApi } from "@/modules/workspace/api"
 import { ProposedEntryCard } from "@/modules/adjustments/components/ProposedEntryCard"
 import { RelatedPanel } from "@/modules/graph/RelatedPanel"
 import type { ProposedEntry } from "@/modules/adjustments/api"
-import { glAccuracyApi, type GlFinding, type GlMonitoring } from "@/modules/gl_accuracy/api"
+import { glAccuracyApi, type GlFinding, type GlMonitoring, type GlSchedule } from "@/modules/gl_accuracy/api"
 import { autopilotApi, type AutopilotState } from "@/modules/autopilot/api"
 
 /** Turn the watching on, and choose when.
@@ -274,8 +274,11 @@ function ContinuousSettings() {
  *  three and read as an afterthought. Top to bottom: is it watching, when did
  *  it last look, what has it caught, and the schedule.
  */
-function ContinuousRail({ m, scanning, recent, reduce, periodEnd, canReview, onChanged, onCheckNow, checking }: {
-  m?: GlMonitoring; scanning: boolean
+function ContinuousRail({ m, sched, scanning, recent, reduce, periodEnd, canReview, onChanged, onCheckNow, checking }: {
+  m?: GlMonitoring
+  /** The daily check's own state — can it run, and when next. */
+  sched?: GlSchedule | null
+  scanning: boolean
   /** The watched month's findings, straight from the server. NOT a slice of
    *  the page's `items`, which belong to the period being closed. */
   recent: GlFinding[]
@@ -305,7 +308,7 @@ function ContinuousRail({ m, scanning, recent, reduce, periodEnd, canReview, onC
           on screen all day next to money, so it has to read as "alive" from
           the corner of the eye and never compete with a figure. */}
       <style>{"@keyframes ndvx-beat{0%,100%{transform:scale(1);opacity:.45}50%{transform:scale(2.1);opacity:0}}"}</style>
-      <MonitoringHead m={m} scanning={scanning} enabled={enabled} reduce={reduce}
+      <MonitoringHead m={m} sched={sched} scanning={scanning} enabled={enabled} reduce={reduce}
         periodEnd={periodEnd} onCheckNow={onCheckNow} checking={checking} />
       <RecentlyCaught recent={recent} reduce={reduce} periodEnd={periodEnd}
         canReview={canReview} onChanged={onChanged} />
@@ -343,8 +346,9 @@ function monthLabel(iso: string): string {
  *  A scan that crashed or is still running NEVER reads as a clean bill of
  *  health. Findings mean nothing until the check has finished.
  */
-function MonitoringHead({ m, scanning, enabled, reduce, periodEnd, onCheckNow, checking }: {
-  m?: GlMonitoring; scanning: boolean; enabled: boolean; reduce: boolean
+function MonitoringHead({ m, sched, scanning, enabled, reduce, periodEnd, onCheckNow, checking }: {
+  m?: GlMonitoring; sched?: GlSchedule | null
+  scanning: boolean; enabled: boolean; reduce: boolean
   periodEnd: string; onCheckNow: () => void; checking: boolean
 }) {
   // Re-render on a timer so "12 minutes ago" stays true between refetches. A
@@ -366,6 +370,10 @@ function MonitoringHead({ m, scanning, enabled, reduce, periodEnd, onCheckNow, c
           Not watching <span className="text-theme font-medium">{monthLabel(periodEnd)}</span> yet.
           Turn it on below and Nordavix checks these books every day.
         </p>
+        {/* The branch that needs the diagnosis MOST: switched on, never fired,
+            and until now the page's only explanation was "not watching yet" —
+            which reads as "you haven't set it up" to someone who just did. */}
+        <ScheduleNotice sched={sched} />
         {/* Without this the first proof it works is tomorrow morning. */}
         <button onClick={onCheckNow} disabled={checking}
           className="mt-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-[var(--surface-2)] disabled:opacity-50"
@@ -471,8 +479,16 @@ function MonitoringHead({ m, scanning, enabled, reduce, periodEnd, onCheckNow, c
             <Stat label={`Daily checks in ${shortMonth(periodEnd)}`}
               value={String(m.unattended_checks)} />
           )}
+          {/* The fact the strip could never state. "On" is a claim; a time you
+              can hold a clock up to is a fact — and it is the only way to tell
+              "it is working" from "it has been inert for a week". */}
+          {sched?.enabled && !sched.blocked && sched.next_due_at && (
+            <Stat label="Next check" value={dueLabel(sched.next_due_at)} />
+          )}
         </dl>
       )}
+
+      <ScheduleNotice sched={sched} />
 
       {/* A finished, successful scan that read zero transactions is the failure
           this whole strip exists to make visible: it reports success having
@@ -490,6 +506,69 @@ function MonitoringHead({ m, scanning, enabled, reduce, periodEnd, onCheckNow, c
       )}
     </div>
   )
+}
+
+/** "in 4 hours" / "due now" / "tomorrow 10:00" — from a UTC instant. */
+function dueLabel(iso: string): string {
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return "—"
+  const mins = Math.round((t - Date.now()) / 60000)
+  if (mins <= 1) return "due now"
+  if (mins < 60) return `in ${mins} min`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return hrs === 1 ? "in 1 hour" : `in ${hrs} hours`
+  return `in ${Math.round(hrs / 24)} days`
+}
+
+/**
+ * Why the daily check isn't running — the thing the rail could never say.
+ *
+ * The sweep skips a workspace for five reasons (demo tenant, soft-deleted, no
+ * QuickBooks, no books start date, the watched month already closed) and the
+ * strip said "Continuous close · on" through every one of them. A sixth isn't
+ * a skip and is the likeliest of all: the workspace timezone was never set, so
+ * a 10:00 check is read as 10:00 UTC — half past three in the afternoon in
+ * India. It runs; just not when anyone expected, which is indistinguishable
+ * from broken and much harder to diagnose.
+ */
+function ScheduleNotice({ sched }: { sched?: GlSchedule | null }) {
+  if (!sched?.enabled) return null
+
+  if (sched.blocked) {
+    return (
+      <p className="text-[11.5px] mt-2 rounded-lg px-2.5 py-2"
+        style={{ background: "var(--surface-2)", color: "var(--warn)" }}>
+        <span className="font-semibold">The daily check isn&apos;t running.</span>{" "}
+        {sched.blocked}
+      </p>
+    )
+  }
+
+  if (sched.timezone_is_default && sched.check_hour != null) {
+    const h = String(sched.check_hour).padStart(2, "0")
+    return (
+      <p className="text-[11.5px] mt-2 rounded-lg px-2.5 py-2"
+        style={{ background: "var(--surface-2)", color: "var(--warn)" }}>
+        <span className="font-semibold">No timezone set</span> — {h}:00 is being read
+        as {h}:00 UTC, not your local time. Set it under the schedule below.
+      </p>
+    )
+  }
+
+  if (!sched.ever_ran_on_schedule) {
+    return (
+      <p className="text-[11.5px] mt-2 rounded-lg px-2.5 py-2"
+        style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>
+        The daily check hasn&apos;t run yet — it fires at{" "}
+        <span className="font-semibold">
+          {String(sched.check_hour ?? 9).padStart(2, "0")}:00 {sched.timezone}
+        </span>
+        {sched.local_now ? ` (it's ${sched.local_now} there now).` : "."}{" "}
+        Manual checks don&apos;t count toward it.
+      </p>
+    )
+  }
+  return null
 }
 
 function Stat({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
@@ -1062,7 +1141,7 @@ export function GlAccuracyPage() {
       </div>
 
       <aside className="w-full xl:w-[360px] xl:shrink-0 xl:sticky xl:top-5 space-y-3">
-        <ContinuousRail m={data?.monitoring} scanning={false}
+        <ContinuousRail m={data?.monitoring} sched={data?.schedule} scanning={false}
           recent={recentlyCaught} reduce={reduce}
           periodEnd={monitoringPeriod} canReview={canReview}
           onChanged={() => qc.invalidateQueries({ queryKey: ["gl-accuracy", "findings", activePeriod] })}

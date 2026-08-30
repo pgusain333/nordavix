@@ -518,6 +518,97 @@ def _current_period() -> date:
     return date(today.year, today.month, monthrange(today.year, today.month)[1])
 
 
+async def schedule_health(db: AsyncSession, tenant_id: uuid.UUID, period_end: date) -> dict:
+    """Can the daily check actually run, and when is it next due?
+
+    The rail could only ever say "continuous close · on". Meanwhile the sweep
+    skips a workspace for any of FIVE reasons — it's the demo tenant, it's
+    soft-deleted, QuickBooks isn't connected, the books have no start date, or
+    the month being watched is already closed — and every one of them is
+    invisible. So the honest state of the feature and the state the UI showed
+    could disagree indefinitely, which is exactly how "I set it for 10am and
+    nothing happened" becomes unanswerable.
+
+    The sixth reason isn't a skip at all and is the likeliest: the workspace
+    timezone was never set, so a 10:00 check is read as 10:00 UTC. In India
+    that is half past three in the afternoon. Reported as a warning rather than
+    a block, because the check does run — just not when anyone expected.
+    """
+    from models.autopilot import AutopilotConfig
+    from models.closed_period import ClosedPeriod
+    from models.qbo_connection import QboConnection
+    from models.tenant import Tenant
+    from modules.gl_accuracy.schedule import (
+        DEFAULT_TZ,
+        local_now,
+        next_due_at,
+        watch_periods,
+    )
+
+    cfg = (await db.execute(select(AutopilotConfig))).scalar_one_or_none()
+    tenant = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if cfg is None or tenant is None:
+        return {"enabled": False}
+
+    enabled = bool(cfg.continuous_enabled)
+    tz = (tenant.timezone or "").strip() or None
+    now = datetime.now(UTC)
+
+    # The same conditions the sweep applies, in the order it applies them.
+    blocked: str | None = None
+    if tenant.is_demo:
+        blocked = ("This is the read-only sample company — the daily check never "
+                   "runs on it. Connect a real workspace to use continuous close.")
+    elif tenant.books_start_date is None:
+        blocked = ("The books have no start date yet, so there is no month to "
+                   "watch. Set it under Setup and the check starts tomorrow.")
+    else:
+        closed = {r for r in (await db.execute(
+            select(ClosedPeriod.period_end).where(ClosedPeriod.tenant_id == tenant_id),
+            execution_options={"skip_tenant_filter": True},
+        )).scalars().all()}
+        if not watch_periods(books_start=tenant.books_start_date,
+                             closed=closed, today=now.date()):
+            blocked = (f"{period_end.strftime('%B')} is already closed — there is "
+                       f"nothing in progress to watch this month.")
+        else:
+            conn = (await db.execute(
+                select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+                execution_options={"skip_tenant_filter": True},
+            )).scalar_one_or_none()
+            if conn is None:
+                blocked = "QuickBooks isn't connected, so there is nothing to read."
+
+    # When the SCHEDULE itself last completed — not any scan. A manual check
+    # does not mean the daily one is working, and conflating them is what hid
+    # this for as long as it did.
+    last_scheduled = (await db.execute(
+        select(GlScanRun.finished_at)
+        .where(GlScanRun.tenant_id == tenant_id, GlScanRun.ok.is_(True),
+               GlScanRun.trigger == "scheduled")
+        .order_by(GlScanRun.finished_at.desc()).limit(1)
+    )).scalar_one_or_none()
+
+    nxt = next_due_at(timezone=tz, check_hour=cfg.check_hour,
+                      last_ok_scan_at=last_scheduled, now_utc=now)
+    return {
+        "enabled": enabled,
+        "check_hour": cfg.check_hour,
+        "timezone": tz or DEFAULT_TZ,
+        # The warning that matters: an hour was chosen and no zone was, so the
+        # hour is being read as UTC.
+        "timezone_is_default": tz is None,
+        "local_now": local_now(now, tz).strftime("%H:%M"),
+        "next_due_at": nxt.isoformat() if nxt else None,
+        "last_scheduled_at": last_scheduled.isoformat() if last_scheduled else None,
+        "ever_ran_on_schedule": last_scheduled is not None,
+        "blocked": blocked,
+    }
+
+
 async def monitoring_status(db: AsyncSession, period_end: date) -> dict:
     """What the "we are watching" strip renders.
 
@@ -597,7 +688,8 @@ async def watch_findings(db: AsyncSession, period_end: date, limit: int = 8) -> 
     return [serialize_finding(f) for f in rows]
 
 
-async def list_findings(db: AsyncSession, period_end: date) -> dict:
+async def list_findings(db: AsyncSession, period_end: date,
+                        tenant_id: uuid.UUID | None = None) -> dict:
     rows = (await db.execute(
         select(GlAccuracyFinding).where(GlAccuracyFinding.period_end == period_end)
     )).scalars().all()
@@ -623,6 +715,11 @@ async def list_findings(db: AsyncSession, period_end: date) -> dict:
         # period's; these are the watched month's, and the two lists are only
         # ever the same list when the close happens to be on the current month.
         "monitoring_recent": await watch_findings(db, _current_period()),
+        # Whether the daily check CAN run, and when it next will. The rail
+        # could only say "on" while the sweep skipped the workspace for any
+        # of five invisible reasons.
+        "schedule": (await schedule_health(db, tenant_id, _current_period())
+                     if tenant_id else None),
     }
 
 

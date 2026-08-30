@@ -257,3 +257,70 @@ def test_the_books_start_month_itself_is_watched():
 ])
 def test_month_end_of(d, expected):
     assert month_end_of(d) == expected
+
+
+# ── When the next check is due ─────────────────────────────────────────────
+#
+# The rail could only ever say "continuous close · on", while the sweep skipped
+# a workspace for five invisible reasons. "On" is a claim; a time you can hold
+# a clock up to is a fact, and it is the only way to tell a watch that is
+# working from one that has been inert for a week.
+
+from modules.gl_accuracy.schedule import next_due_at  # noqa: E402
+
+IST = "Asia/Kolkata"
+
+
+def test_before_the_hour_the_check_is_due_today():
+    """07:30 IST, checking at 10:00 IST — today, two and a half hours out."""
+    due = next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=None,
+                      now_utc=utc(2026, 8, 30, 2))          # 07:30 IST
+    assert due == utc(2026, 8, 30, 4, 30)                    # 10:00 IST
+
+
+def test_inside_the_window_it_is_due_now():
+    """The catch-up window is open and nothing has run — so it is not 'later',
+    it is overdue, and the rail must not imply a wait."""
+    now = utc(2026, 8, 30, 6)                                # 11:30 IST
+    assert next_due_at(timezone=IST, check_hour=10,
+                       last_ok_scan_at=None, now_utc=now) == now
+
+
+def test_after_the_window_it_rolls_to_tomorrow():
+    due = next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=None,
+                      now_utc=utc(2026, 8, 30, 12))          # 17:30 IST
+    assert due == utc(2026, 8, 31, 4, 30)                    # 10:00 IST tomorrow
+
+
+def test_having_run_today_pushes_it_to_tomorrow():
+    ran = utc(2026, 8, 30, 4, 30)
+    due = next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=ran,
+                      now_utc=utc(2026, 8, 30, 5))
+    assert due == utc(2026, 8, 31, 4, 30)
+
+
+def test_an_unset_timezone_reads_the_hour_as_utc():
+    """THE BUG THIS EXISTS TO MAKE VISIBLE. A workspace in India sets 10:00,
+    never sets a zone, and the check fires at 10:00 UTC — half past three in
+    the afternoon. It runs; just not when anyone expected, which is
+    indistinguishable from broken and much harder to diagnose."""
+    due = next_due_at(timezone=None, check_hour=10, last_ok_scan_at=None,
+                      now_utc=utc(2026, 8, 30, 2))
+    assert due == utc(2026, 8, 30, 10)                       # 15:30 IST
+    # …and with the zone set, the same settings fire five and a half hours earlier.
+    assert next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=None,
+                       now_utc=utc(2026, 8, 30, 2)) < due
+
+
+def test_an_out_of_range_hour_has_no_next_time():
+    assert next_due_at(timezone=IST, check_hour=99,
+                       last_ok_scan_at=None, now_utc=utc(2026, 8, 30, 2)) is None
+
+
+def test_the_next_time_is_always_in_the_future_or_now():
+    """Across a whole day, the answer is never in the past — a rail saying
+    'next check in -3 hours' is worse than saying nothing."""
+    for h in range(24):
+        now = utc(2026, 8, 30, h)
+        due = next_due_at(timezone=IST, check_hour=10, last_ok_scan_at=None, now_utc=now)
+        assert due is not None and due >= now, f"{h}:00Z -> {due}"

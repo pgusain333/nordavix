@@ -116,7 +116,7 @@ async def findings(
 ) -> dict:
     """Findings for the period (open first) + the reassurance-strip summary."""
     pe = _parse_period(period_end)
-    return await service.list_findings(db, pe)
+    return await service.list_findings(db, pe, tenant_id)
 
 
 @router.post("/findings/{finding_id}/accept")

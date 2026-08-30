@@ -10,7 +10,7 @@ test that runs a whole day, or a DST weekend, an hour at a time.
 """
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # What a workspace with no timezone set runs on. Every existing workspace is
@@ -96,6 +96,46 @@ def watch_periods(
 # claim is that it checks every day. Bounded rather than open-ended so a
 # workspace whose scans keep failing retries a few times, not fifteen.
 CATCH_UP_HOURS = 3
+
+
+def next_due_at(
+    *,
+    timezone: str | None,
+    check_hour: int,
+    last_ok_scan_at: datetime | None,
+    now_utc: datetime,
+) -> datetime | None:
+    """When this workspace will next be checked, as a UTC instant.
+
+    Exists because "continuous close · on" was the only thing the rail could
+    say, and it kept saying it while the sweep skipped the workspace for any of
+    five reasons nobody could see. A time you can hold a clock up to is the
+    difference between a claim and a fact — the same reason the strip shows
+    "last checked" rather than the word "monitoring".
+
+    None when the hour is out of range; `now_utc` itself when the workspace is
+    due right now and simply hasn't been ticked yet.
+    """
+    if check_hour is None or not (0 <= int(check_hour) <= 23):
+        return None
+    if is_due(timezone=timezone, check_hour=check_hour,
+              last_ok_scan_at=last_ok_scan_at, now_utc=now_utc):
+        return now_utc
+
+    zone = resolve_zone(timezone)
+    here = local_now(now_utc, timezone)
+    hour = int(check_hour)
+    ran_today = local_date_of(last_ok_scan_at, timezone) == here.date()
+
+    # Today still, if the hour hasn't come round and nothing has run yet.
+    if not ran_today and here.hour < hour:
+        target_day = here.date()
+    else:
+        target_day = here.date() + timedelta(days=1)
+    local_target = datetime(
+        target_day.year, target_day.month, target_day.day, hour, tzinfo=zone
+    )
+    return local_target.astimezone(UTC)
 
 
 def is_due(

@@ -64,6 +64,27 @@ export interface GlMonitoring {
   scanned_period?:       string | null
 }
 
+/** The daily check's own state — separate from what the last scan found. */
+export interface GlSchedule {
+  enabled:        boolean
+  check_hour?:    number
+  /** The zone the hour is read in. "UTC" when the workspace never set one. */
+  timezone?:      string
+  /** True when no workspace timezone is set, so the chosen hour is being read
+   *  as UTC. The commonest reason a check "didn't run at my time" — it ran,
+   *  just five and a half hours later. */
+  timezone_is_default?: boolean
+  local_now?:     string
+  next_due_at?:   string | null
+  last_scheduled_at?: string | null
+  /** Whether the SCHEDULE has ever completed a check. A manual scan doesn't
+   *  count — conflating them is what hid this. */
+  ever_ran_on_schedule?: boolean
+  /** Why it cannot run at all: demo workspace, no QuickBooks, no books start
+   *  date, or the watched month is closed. Null when nothing blocks it. */
+  blocked?:       string | null
+}
+
 export interface GlFindingsResponse {
   /** The month CONTINUOUS CLOSE tracks — always the current one, never the
    *  period the user selected. Risk Radar checks the month being closed. */
@@ -74,6 +95,10 @@ export interface GlFindingsResponse {
   medium:     number
   dollars:    string
   monitoring: GlMonitoring
+  /** Whether the daily check CAN run, and when it next will. The rail could
+   *  only ever say "on", while the sweep skipped the workspace for any of five
+   *  reasons none of which were visible. */
+  schedule?: GlSchedule | null
   /** What the WATCH has caught, in `monitoring_period` — newest first. Never
    *  derive this from `items`: those belong to the period being closed, and
    *  showing them under "Recently caught" credits continuous close with finds
