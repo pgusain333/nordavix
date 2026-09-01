@@ -24,6 +24,7 @@ anyone reconstructing it from memory.
 import logging
 import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from sqlalchemy import select
@@ -45,6 +46,7 @@ from models.variance import Variance
 from modules.adjustments.service import (
     VALID_SOURCES,
     VALID_STATUSES,
+    baseline_disposition,
     blocks_self_approval,
     build_qbo_je_csv,
     close_only,
@@ -566,15 +568,76 @@ async def period_net_effect(
         for a in accounts if a.get("qbo_account_id")
     }
 
+    def _eff(r):
+        return net_effect(r.lines, type_by_account=type_by_account)
+
     def _roll(subset):
-        return combine_effects([
-            net_effect(r.lines, type_by_account=type_by_account) for r in subset
-        ])
+        return combine_effects([_eff(r) for r in subset])
 
     booked = [r for r in rows if r.status in ("accepted", "posted")]
     passed = [r for r in rows if r.status == "dismissed"]
+
+    from modules.financials.internal import statement_totals
+    baseline = await statement_totals(db, tenant_id, pe)
+
+    # ── Which booked entries are NOT already in that baseline ────────────
+    # The snapshot is a read of QuickBooks. An entry the user has posted there
+    # is in it, and applying the entry again on top would double-count — the
+    # exact shape of bug this module keeps producing: a figure that looks
+    # authoritative while its basis is silently different.
+    #
+    # Decidable in two of three cases, and the third is reported rather than
+    # guessed: never-confirmed entries are not in QBO and are applied; entries
+    # confirmed posted before the snapshot was captured are in it and are not;
+    # entries confirmed AFTER the capture are in QuickBooks but possibly not in
+    # this read, so the baseline is stale and the UI says so.
+    captured = baseline.get("captured_at") if baseline else None
+    apply_to_baseline, already_in, stale = [], 0, 0
+    for r in booked:
+        d = baseline_disposition(
+            posted_confirmed_at=r.posted_confirmed_at, captured_at=captured,
+        )
+        if d == "apply":
+            apply_to_baseline.append(r)
+        elif d == "already_in":
+            already_in += 1
+        else:
+            stale += 1
+
+    applied = combine_effects([_eff(r) for r in apply_to_baseline])
+    adjusted = None
+    if baseline is not None:
+        adjusted = {
+            k: str(Decimal(str(baseline[k])) + Decimal(applied[k]))
+            for k in ("revenue", "cogs", "gross_profit", "opex", "net_income",
+                      "assets", "liabilities_equity")
+        }
+
+    # Which entries move each line — the click target in the rail.
+    contributors: dict[str, list[str]] = {}
+    for line in ("revenue", "cogs", "gross_profit", "opex", "net_income",
+                 "assets", "liabilities_equity"):
+        contributors[line] = [
+            str(r.id) for r in apply_to_baseline
+            if Decimal(_eff(r)[line]) != Decimal("0")
+        ]
+
     return {
         "period_end": pe.isoformat(),
+        "baseline": (
+            {**{k: str(v) for k, v in baseline.items() if k not in ("captured_at", "pl_basis")},
+             "captured_at": captured.isoformat() if captured else None,
+             # P&L rows in the snapshot are YEAR TO DATE, not the month — the
+             # trial balance behind them starts at 1 January. The rail has to
+             # say so; a monthly label over a YTD number is the whole bug.
+             "pl_basis": baseline["pl_basis"]}
+            if baseline else None
+        ),
+        "adjusted": adjusted,
+        "applied": {"count": len(apply_to_baseline), **applied},
+        "already_in_baseline": already_in,
+        "baseline_stale_count": stale,
+        "contributors": contributors,
         "booked": {"count": len(booked), **_roll(booked)},
         "passed": {
             "count": len(passed),

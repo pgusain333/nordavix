@@ -21,6 +21,7 @@ import { workspaceApi } from "@/modules/workspace/api"
 import { adjustmentsApi, type AdjustmentStatus, type CheckPostedResult, type ProposedEntry, type ProposedEntryList } from "../api"
 import { ProposedEntryCard } from "../components/ProposedEntryCard"
 import { EntryTrace } from "../components/EntryTrace"
+import { StatementRail } from "../components/StatementRail"
 import { patchAdjustments } from "../optimistic"
 
 const SOURCE_META: Record<string, { label: string; hint: string }> = {
@@ -78,6 +79,9 @@ export function AdjustmentsPage() {
   const qc = useQueryClient()
   const reduce = useReducedMotion()
   const [status, setStatus] = useState<AdjustmentStatus | "all">("open")
+  // Entry ids behind the statement line the reviewer clicked in the rail. The
+  // traceability chain, pointed at the number they actually sign.
+  const [traced, setTraced] = useState<string[]>([])
 
   const { data: me } = useQuery({
     queryKey: ["workspace-me"],
@@ -230,7 +234,7 @@ export function AdjustmentsPage() {
         subtitle="AI-drafted journal entries to review, then copy into QuickBooks. Nordavix never posts for you."
       />
 
-      <div className="flex-1 px-4 sm:px-8 py-5 max-w-5xl w-full mx-auto space-y-5">
+      <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
         {/* Period + batch actions (Save → CSV) */}
         {all.length > 0 && (
           <div className="rounded-xl p-3 flex items-center gap-3 flex-wrap"
@@ -324,9 +328,6 @@ export function AdjustmentsPage() {
             )}
           </div>
         )}
-
-        {/* What this period's adjustments do to the statements */}
-        {period && <NetEffectStrip periodEnd={period} reduce={reduce} />}
 
         {/* Posting-check result — opens under the batch bar rather than
             shoving the queue down in one frame. */}
@@ -447,6 +448,14 @@ export function AdjustmentsPage() {
           </AnimatePresence>
         </div>
 
+        {/* The split. The queue is a list and reads narrow; what it adds up to
+            is a table and belongs beside it, not below — a reviewer approving a
+            batch is asking one question, and the answer should be in view while
+            they work. Stacks under lg, where a sticky rail would just eat the
+            screen. */}
+        <div className="grid gap-4 items-start lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-5">
+
         {/* Body — the three states cross-fade rather than cutting, so landing
             data and emptying a filter both read as one movement.
             popLayout, not "wait": waiting unmounts the old body BEFORE the new
@@ -504,7 +513,8 @@ export function AdjustmentsPage() {
                       <AnimatePresence initial={false}>
                         {group.map((e, i) => (
                           <motion.div key={e.id} {...rowMotion(reduce, i)}>
-                            <EntryRow entry={e} canReview={canReview} canEdit={canEdit} reduce={reduce} />
+                            <EntryRow entry={e} canReview={canReview} canEdit={canEdit}
+                              reduce={reduce} traced={traced.includes(e.id)} />
                           </motion.div>
                         ))}
                       </AnimatePresence>
@@ -516,142 +526,19 @@ export function AdjustmentsPage() {
           </motion.div>
         )}
         </AnimatePresence>
+        </div>
+
+        {/* Sticky only where there's room to be sticky. */}
+        {period && (
+          <div className="min-w-0 lg:sticky lg:top-4">
+            <StatementRail periodEnd={period} onTrace={setTraced} />
+          </div>
+        )}
+        </div>
       </div>
     </div>
   )
 }
-
-// ── What the period's adjustments do to the financial statements ─────────────
-//
-// Two halves that answer different questions. BOOKED is the difference between
-// the general ledger and the financials you will hand over — the first thing a
-// reviewer asks of an approved batch and, until now, a figure nobody could see
-// without re-adding the entries by hand.
-//
-// PASSED is the uncorrected-difference schedule an auditor keeps on paper. Each
-// item was immaterial on its own — that is why it was passed — so the only way
-// to know whether they matter is to total them. Three at $340, $290 and $410
-// are $1,040, and no close product has ever added them up.
-function NetEffectStrip({ periodEnd, reduce }: { periodEnd: string; reduce: boolean | null }) {
-  const { data } = useQuery({
-    queryKey: ["adjustments", "net-effect", periodEnd],
-    queryFn:  () => adjustmentsApi.netEffect(periodEnd),
-    staleTime: 15_000,
-  })
-  const { booked, passed } = data ?? { booked: null, passed: null }
-  const show = !!booked && !!passed && (booked.count > 0 || passed.count > 0)
-
-  const n = (s: string) => parseFloat(s) || 0
-  const money = (s: string) => {
-    const v = n(s)
-    return `${v < 0 ? "−" : v > 0 ? "+" : ""}$${Math.abs(v).toLocaleString(undefined, {
-      minimumFractionDigits: 2, maximumFractionDigits: 2,
-    })}`
-  }
-  const moves: [string, string][] = !booked ? [] : ([
-    ["Net income", booked.net_income],
-    ["Assets", booked.assets],
-    ["Liabilities & equity", booked.liabilities_equity],
-  ] as [string, string][]).filter(([, v]) => n(v) !== 0)
-
-  // The strip opens once there is something to say, and every figure inside it
-  // is keyed on its own value — approve an entry and the number it moves rolls
-  // over in place instead of being repainted.
-  return (
-    <AnimatePresence initial={false}>
-    {show && booked && passed && (
-    <motion.div key="net-effect"
-      initial={reduce ? false : { height: 0, opacity: 0 }}
-      animate={{ height: "auto", opacity: 1 }}
-      exit={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
-      transition={{ duration: MOTION.DEFAULT, ease: EASE.OUT }}
-      style={{ overflow: "hidden" }}>
-    <motion.div layout={!reduce} className="rounded-xl px-3.5 py-3"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-      <div className="flex items-baseline gap-2 flex-wrap">
-        <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-          Booked
-        </span>
-        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-          {booked.count} {booked.count === 1 ? "entry" : "entries"}
-        </span>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 ml-auto">
-          {moves.length === 0 ? (
-            <span className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
-              No net movement
-            </span>
-          ) : moves.map(([label, v]) => (
-            <span key={label} className="text-[11.5px]">
-              <span style={{ color: "var(--text-muted)" }}>{label}</span>{" "}
-              <AnimatePresence mode="popLayout" initial={false}>
-                <motion.span key={v} className="font-semibold tabular-nums text-theme inline-block"
-                  initial={reduce ? false : { y: -6, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  exit={reduce ? { opacity: 0 } : { y: 6, opacity: 0 }}
-                  transition={{ duration: MOTION.FAST, ease: EASE.OUT }}>
-                  {money(v)}
-                </motion.span>
-              </AnimatePresence>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* The style below carries overflow:hidden as well as the colour —
-          revealMotion sets it, and a bare style prop after the spread would
-          silently drop it, letting the text spill out mid-collapse. */}
-      <AnimatePresence initial={false}>
-      {!booked.complete && (
-        <motion.p key="booked-partial" {...revealMotion(reduce)}
-          className="text-[10.5px] mt-1.5 flex items-start gap-1.5"
-          style={{ overflow: "hidden", color: "#8a6326" }}>
-          <AlertCircle size={11} strokeWidth={2} className="shrink-0 mt-0.5" />
-          {booked.unclassified_lines} line{booked.unclassified_lines === 1 ? "" : "s"} couldn't
-          be matched to an account in this period's chart, so this is part of the movement,
-          not all of it.
-        </motion.p>
-      )}
-      </AnimatePresence>
-
-      <AnimatePresence initial={false}>
-      {passed.count > 0 && (
-        <motion.div key="passed" {...revealMotion(reduce)}>
-        <div className="mt-2.5 pt-2.5" style={{ borderTop: "1px solid var(--border)" }}>
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-              Passed
-            </span>
-            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              {passed.count} not booked
-            </span>
-            <span className="text-[11.5px] ml-auto">
-              <span style={{ color: "var(--text-muted)" }}>Would have moved net income</span>{" "}
-              <span className="font-semibold tabular-nums text-theme">{money(passed.net_income)}</span>
-            </span>
-          </div>
-          {!passed.complete && (
-            <p className="text-[10.5px] mt-1" style={{ color: "#8a6326" }}>
-              {passed.unclassified_lines} line{passed.unclassified_lines === 1 ? "" : "s"} here
-              couldn't be classified, so the real total is larger than this.
-            </p>
-          )}
-          {passed.without_reason > 0 && (
-            <p className="text-[10.5px] mt-1" style={{ color: "#8a6326" }}>
-              {passed.without_reason} of these {passed.without_reason === 1 ? "has" : "have"} no
-              recorded reason — they were passed before Nordavix asked for one.
-            </p>
-          )}
-        </div>
-        </motion.div>
-      )}
-      </AnimatePresence>
-    </motion.div>
-    </motion.div>
-    )}
-    </AnimatePresence>
-  )
-}
-
 
 // ── One queue row: the entry card + a lazy provenance disclosure ─────────────
 //
@@ -659,15 +546,24 @@ function NetEffectStrip({ periodEnd, reduce }: { periodEnd: string; reduce: bool
 // "Related" graph panel gated on accepted/posted, which meant the two entries a
 // reviewer most needs to account for — an open draft and one that was passed —
 // were the two that could explain nothing about themselves.
-function EntryRow({ entry, canReview, canEdit, reduce }: {
+function EntryRow({ entry, canReview, canEdit, reduce, traced }: {
   entry:     ProposedEntry
   canReview: boolean
   canEdit:   boolean
   reduce:    boolean | null
+  /** This entry moves the statement line selected in the rail. */
+  traced?:   boolean
 }) {
   const [showTrail, setShowTrail] = useState(false)
   return (
-    <div>
+    <div className="rounded-xl"
+      style={{
+        // The link back from a figure to the entries behind it. A ring rather
+        // than a colour change, so it reads as "these ones" without implying
+        // anything about their status.
+        boxShadow: traced ? "0 0 0 2px var(--green)" : "none",
+        transition: reduce ? "none" : "box-shadow .18s",
+      }}>
       <div className="flex items-center gap-1.5 mb-1 text-[10px] uppercase tracking-wide"
         style={{ color: "var(--text-muted)" }}>
         <span>Period {formatDate(entry.period_end)}</span>

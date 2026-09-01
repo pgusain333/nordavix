@@ -359,6 +359,55 @@ def _compute_net_income(rows: list[GlBalanceSnapshot]) -> Decimal:
     return income + other_inc - cogs - expense - other_exp
 
 
+async def statement_totals(
+    db: AsyncSession, tenant_id: uuid.UUID, period_end: date,
+) -> dict | None:
+    """The period's statement lines as single figures, presented-positive.
+
+    One roll-up of the GL snapshot, built from the same type sets, the same
+    `_signed_for_display` flip and the same `_compute_net_income` the statements
+    themselves use — so a caller cannot show a total that disagrees with the
+    Income Statement two clicks away. That is the whole reason this lives here
+    rather than in the module that wanted it.
+
+    IMPORTANT — the P&L figures are YEAR TO DATE, not the month. The snapshot's
+    trial balance is pulled with start_date = 1 January of the period_end's
+    year (see core/gl_snapshot), so P&L rows carry YTD activity while balance
+    sheet rows are point-in-time. Callers must label it as such. Presenting
+    these as a month would be a figure that looks authoritative while its basis
+    is silently different.
+
+    Returns None when the period has no snapshot — an empty statement and an
+    unsynced one are not the same answer.
+    """
+    rows = await _load_snapshot(db, tenant_id, period_end)
+    if not rows:
+        return None
+
+    revenue      = _presented_sum(rows, _INCOME_TYPES)
+    other_income = _presented_sum(rows, _OTHER_INCOME_TYPES)
+    cogs         = _presented_sum(rows, _COGS_TYPES)
+    opex         = _presented_sum(rows, _EXPENSE_TYPES)
+    other_exp    = _presented_sum(rows, _OTHER_EXPENSE_TYPES)
+    captured = [r.captured_at for r in rows if getattr(r, "captured_at", None)]
+
+    return {
+        "revenue":            revenue,
+        "other_income":       other_income,
+        "cogs":               cogs,
+        "gross_profit":       revenue - cogs,
+        "opex":               opex,
+        "other_expense":      other_exp,
+        "net_income":         _compute_net_income(rows),
+        "assets":             _presented_sum(rows, _ASSET_TYPES),
+        "liabilities_equity": (_presented_sum(rows, _LIABILITY_TYPES)
+                               + _presented_sum(rows, _EQUITY_TYPES)),
+        # What the caller is standing on, so the UI can say which read this was.
+        "captured_at":        max(captured) if captured else None,
+        "pl_basis":           "ytd",
+    }
+
+
 # ── Statement integrity (Phase 2 trust sweep) ─────────────────────────────────
 _FIN_TOLERANCE = Decimal("1.00")
 

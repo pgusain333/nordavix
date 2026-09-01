@@ -64,6 +64,10 @@ export interface ProposedEntry {
  *  account, or one missing from the period's chart). The totals are then a
  *  partial view and must not be presented as the whole story. */
 export interface NetEffect {
+  revenue:            string
+  cogs:               string
+  gross_profit:       string
+  opex:               string
   net_income:         string
   assets:             string
   liabilities_equity: string
@@ -72,8 +76,36 @@ export interface NetEffect {
   complete:           boolean
 }
 
+/** The statement lines the rail shows, in reading order. */
+export const EFFECT_LINES = [
+  "revenue", "cogs", "gross_profit", "opex", "net_income",
+  "assets", "liabilities_equity",
+] as const
+export type EffectLine = (typeof EFFECT_LINES)[number]
+
+/** The GL as last read from QuickBooks. `pl_basis` is "ytd" — the trial
+ *  balance behind the snapshot starts at 1 January, so the P&L figures are
+ *  year to date and the UI must say so. The balance sheet is point-in-time. */
+export type StatementTotals = Record<EffectLine, string> & {
+  captured_at: string | null
+  pl_basis:    "ytd"
+}
+
 export interface PeriodNetEffect {
   period_end: string
+  /** null when the period has never been synced — an unsynced period and an
+   *  empty one are different answers. */
+  baseline:   StatementTotals | null
+  adjusted:   Record<EffectLine, string> | null
+  /** Only the entries not already inside the baseline. */
+  applied:    NetEffect & { count: number }
+  /** Booked, confirmed in QBO before the snapshot — already in the baseline. */
+  already_in_baseline:  number
+  /** Confirmed posted AFTER the snapshot: in QuickBooks but possibly not in
+   *  this read. Neither applying nor skipping is right, so it's reported. */
+  baseline_stale_count: number
+  /** line → the entry ids that move it. The rail's click target. */
+  contributors: Record<EffectLine, string[]>
   booked: NetEffect & { count: number }
   /** The passed-adjustments schedule: what was considered and not booked.
    *  Individually immaterial, which is exactly why the total matters. */

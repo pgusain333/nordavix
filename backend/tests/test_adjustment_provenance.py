@@ -16,12 +16,14 @@ of it was missing or misfiled:
 Pure functions, tested here without a database, so each can be argued with.
 """
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
 from core.graph.schema import validate_edge
 from modules.adjustments.service import (
+    baseline_disposition,
     blocks_self_approval,
     combine_effects,
     entry_subject,
@@ -237,6 +239,94 @@ def test_an_untouched_ai_draft_is_approvable_by_anyone():
 def test_an_admin_bypasses_it():
     """Master access for solo firms, mirroring the recon subledger control."""
     assert blocks_self_approval(prepared_by=ALICE, user_id=ALICE, role="admin") is False
+
+
+# ── Is it already inside the baseline we're adding it to? ─────────────────
+
+SNAP = datetime(2026, 9, 1, 6, 4, tzinfo=UTC)
+
+
+def test_an_entry_never_seen_in_quickbooks_is_applied():
+    assert baseline_disposition(posted_confirmed_at=None, captured_at=SNAP) == "apply"
+
+
+def test_an_entry_posted_before_the_snapshot_is_already_in_it():
+    """THE DOUBLE-COUNT. The snapshot is a read of QuickBooks; an entry booked
+    there before that read is part of it, and adding it again would overstate
+    the movement while looking entirely authoritative."""
+    earlier = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+    assert baseline_disposition(posted_confirmed_at=earlier, captured_at=SNAP) == "already_in"
+
+
+def test_an_entry_confirmed_after_the_snapshot_is_reported_not_guessed():
+    """It is in QuickBooks but possibly not in THIS read, and nothing here can
+    tell. Applying it may double-count; skipping it may understate. The honest
+    answer is neither number — it is 'your baseline is stale, re-sync'."""
+    later = datetime(2026, 9, 2, 11, 0, tzinfo=UTC)
+    assert baseline_disposition(posted_confirmed_at=later, captured_at=SNAP) == "stale"
+
+
+def test_an_undated_snapshot_cannot_clear_a_posted_entry():
+    """No capture time means the baseline can't be dated, which is the same
+    uncertainty — so it reports rather than assuming the entry is in or out."""
+    assert baseline_disposition(
+        posted_confirmed_at=SNAP, captured_at=None) == "stale"
+
+
+def test_an_undated_snapshot_still_applies_unposted_entries():
+    """Only the posted ones are ambiguous. A draft nobody has booked is not in
+    any read of QuickBooks, dated or otherwise."""
+    assert baseline_disposition(posted_confirmed_at=None, captured_at=None) == "apply"
+
+
+def test_a_snapshot_taken_at_the_same_instant_counts_as_containing_it():
+    assert baseline_disposition(posted_confirmed_at=SNAP, captured_at=SNAP) == "already_in"
+
+
+# ── The statement lines the rail adds onto a real balance ─────────────────
+
+def test_each_statement_line_moves_on_its_own():
+    """The rail adds these straight onto figures from financials/internal, so
+    they have to be presented-positive in the same way: revenue up on a credit,
+    cost up on a debit."""
+    e = effect(line(SALES, credit="1000.00"), line(AR, debit="1000.00"))
+    assert D(e["revenue"]) == D("1000.00")
+    assert D(e["assets"]) == D("1000.00")
+
+    c = net_effect([line("9", debit="600.00"), line(AP, credit="600.00")],
+                   type_by_account={**TYPES, "9": "Cost of Goods Sold"})
+    assert D(c["cogs"]) == D("600.00")
+    assert D(c["gross_profit"]) == D("-600.00")
+
+
+def test_net_income_is_derived_from_the_lines_above_it():
+    """Not accumulated separately. A statement whose total disagrees with the
+    lines it foots is the failure this rail exists to prevent."""
+    e = net_effect(
+        [line(SALES, credit="900.00"), line("9", debit="400.00"), line(RENT, debit="100.00"),
+         line(AR, debit="500.00"), line(AP, credit="100.00")],
+        type_by_account={**TYPES, "9": "Cost of Goods Sold"},
+    )
+    assert D(e["net_income"]) == D(e["revenue"]) - D(e["cogs"]) - D(e["opex"])
+    assert D(e["net_income"]) == D("400.00")
+
+
+def test_the_balance_sheet_still_ties_with_the_finer_lines():
+    e = net_effect(
+        [line(SALES, credit="900.00"), line("9", debit="400.00"), line(RENT, debit="100.00"),
+         line(AR, debit="500.00"), line(AP, credit="100.00")],
+        type_by_account={**TYPES, "9": "Cost of Goods Sold"},
+    )
+    assert D(e["assets"]) == D(e["liabilities_equity"]) + D(e["net_income"])
+
+
+def test_gross_profit_rolls_up_across_a_batch():
+    a = effect(line(SALES, credit="500.00"), line(AR, debit="500.00"))
+    b = net_effect([line("9", debit="200.00"), line(AP, credit="200.00")],
+                   type_by_account={**TYPES, "9": "Cost of Goods Sold"})
+    t = combine_effects([a, b])
+    assert D(t["gross_profit"]) == D("300.00")
+    assert D(t["net_income"]) == D("300.00")
 
 
 def test_the_control_reads_the_preparer_not_the_last_toucher():

@@ -291,6 +291,37 @@ async def replace_open_proposals(
 # ── Knowledge graph: keep an entry's edges in sync with its lifecycle ──────
 
 
+def baseline_disposition(*, posted_confirmed_at, captured_at) -> str:
+    """Is this entry already inside the GL snapshot we're adding it to?
+
+    The baseline is a read of QuickBooks. An entry the user has posted there is
+    part of that read, and applying it again on top double-counts — the same
+    shape of defect this module keeps producing: a figure that looks
+    authoritative while its basis is silently different.
+
+    Three answers, and the third is the point:
+
+      "apply"       never confirmed in QuickBooks, so it cannot be in the
+                    snapshot. Add it.
+      "already_in"  confirmed posted before the snapshot was captured, so the
+                    snapshot contains it. Adding it would double-count.
+      "stale"       confirmed posted AFTER this snapshot was captured. The entry
+                    is in QuickBooks but possibly not in this read, and there is
+                    no way to tell from here. Neither applying nor skipping is
+                    right, so it is REPORTED — the honest answer is "re-sync",
+                    not a number picked between two wrong ones.
+
+    A missing capture time means we cannot date the baseline at all, which is
+    the same uncertainty, so a confirmed entry against an undated snapshot is
+    stale rather than assumed either way.
+    """
+    if posted_confirmed_at is None:
+        return "apply"
+    if captured_at is not None and captured_at >= posted_confirmed_at:
+        return "already_in"
+    return "stale"
+
+
 def blocks_self_approval(*, prepared_by, user_id, role: str) -> bool:
     """Would approving this be the same person signing off their own work?
 
@@ -406,9 +437,10 @@ async def sync_entry_graph(db: AsyncSession, entry: ProposedEntry) -> None:
 # QBO's account_type vocabulary, grouped by where the account lands. The P&L
 # sets match modules/insights/service (INCOME_TYPES … OTHER_EXPENSE_TYPES); the
 # balance-sheet split is stated here because no other module needs it.
-_PL_TYPES = frozenset({
-    "Income", "Other Income", "Cost of Goods Sold", "Expense", "Other Expense",
-})
+_INCOME_TYPES = frozenset({"Income", "Other Income"})
+_COGS_TYPES = frozenset({"Cost of Goods Sold"})
+_OPEX_TYPES = frozenset({"Expense", "Other Expense"})
+_PL_TYPES = _INCOME_TYPES | _COGS_TYPES | _OPEX_TYPES
 _ASSET_TYPES = frozenset({
     "Bank", "Accounts Receivable", "Other Current Asset", "Fixed Asset", "Other Asset",
 })
@@ -439,7 +471,7 @@ def net_effect(lines, *, type_by_account: dict[str, str]) -> dict:
     a confident total that doesn't describe the entry. `complete` is the caller's
     signal that the figures may be read as the whole story.
     """
-    net_income = assets = liab_equity = cash = ZERO
+    revenue = cogs = opex = assets = liab_equity = cash = ZERO
     unclassified = 0
 
     for ln in lines or []:
@@ -452,8 +484,14 @@ def net_effect(lines, *, type_by_account: dict[str, str]) -> dict:
         if atype is None:
             unclassified += 1
             continue
-        if atype in _PL_TYPES:
-            net_income += credit - debit
+        # Presented-positive throughout, matching financials/internal so these
+        # deltas can be added straight onto a statement figure.
+        if atype in _INCOME_TYPES:
+            revenue += credit - debit
+        elif atype in _COGS_TYPES:
+            cogs += debit - credit
+        elif atype in _OPEX_TYPES:
+            opex += debit - credit
         elif atype in _ASSET_TYPES:
             assets += debit - credit
             if atype in _CASH_TYPES:
@@ -464,7 +502,13 @@ def net_effect(lines, *, type_by_account: dict[str, str]) -> dict:
             unclassified += 1
 
     return {
-        "net_income": str(net_income),
+        "revenue": str(revenue),
+        "cogs": str(cogs),
+        "gross_profit": str(revenue - cogs),
+        "opex": str(opex),
+        # Derived from the three lines above rather than accumulated separately,
+        # so the statement cannot foot to something the net income disagrees with.
+        "net_income": str(revenue - cogs - opex),
         "assets": str(assets),
         "liabilities_equity": str(liab_equity),
         "cash": str(cash),
@@ -473,10 +517,15 @@ def net_effect(lines, *, type_by_account: dict[str, str]) -> dict:
     }
 
 
+# The statement lines the rail shows, and which are summed vs derived.
+EFFECT_LINES = ("revenue", "cogs", "gross_profit", "opex", "net_income",
+                "assets", "liabilities_equity", "cash")
+
+
 def combine_effects(effects: list[dict]) -> dict:
     """Roll per-entry net effects into one. A batch is only `complete` when
     every entry in it was."""
-    total = {"net_income": ZERO, "assets": ZERO, "liabilities_equity": ZERO, "cash": ZERO}
+    total = dict.fromkeys(EFFECT_LINES, ZERO)
     unclassified = 0
     for e in effects:
         for k in total:
