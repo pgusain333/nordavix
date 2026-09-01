@@ -26,7 +26,7 @@ from core.auth.dependencies import CurrentTenantId
 from core.db.session import get_db
 from models.insights_snapshot import InsightsSnapshot
 from models.period_sync import PeriodSync
-from modules.insights.service import cache_is_fresh, compute_overview
+from modules.insights.service import cache_is_fresh, compute_overview, window_is_perishable
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -86,8 +86,14 @@ async def get_overview(
             # could never go stale: post entries in QuickBooks, reload the same
             # window, and the first computed number came back indefinitely.
             # Age it out instead.
+            # Ask about the WINDOW, not about whether a period_start arrived.
+            # `ps is not None` was a stand-in for "custom range" until the page
+            # began sending period_start on every view — after which every
+            # ordinary month expired in fifteen minutes and recomputed itself
+            # live, five sequential QuickBooks calls deep, on essentially every
+            # visit. A finished calendar month is not a custom range.
             if cache_is_fresh(payload, current_iso,
-                              live_sourced=ps is not None,
+                              live_sourced=window_is_perishable(ps, pe),
                               computed_at=saved.computed_at):
                 payload["saved_at"] = saved.computed_at.isoformat()
                 return payload

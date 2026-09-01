@@ -13,6 +13,7 @@ Sign conventions (matching the rest of Nordavix):
 """
 from __future__ import annotations
 
+import asyncio
 import calendar
 import logging
 from collections import defaultdict
@@ -676,6 +677,45 @@ def health_score(
         # makes the number defensible rather than mysterious.
         "raw_score": raw,
     }
+
+
+def window_is_perishable(
+    period_start: date | None, period_end: date, today: date | None = None,
+) -> bool:
+    """Does this window's answer keep moving after we compute it?
+
+    The guard behind the short live cache, and it has to be asked about the
+    WINDOW rather than about whether a period_start was sent. That distinction
+    was lost and cost the module its cache: `live_sourced` was set from
+    `period_start is not None` as a stand-in for "the user picked a custom
+    range", and then the page started sending period_start on every view —
+    correctly, so a month's P&L comes from a real ranged QBO call instead of
+    fragile snapshot differencing. From that point every ordinary month looked
+    like a custom range, expired after fifteen minutes, and recomputed itself
+    live on essentially every visit.
+
+    Two things genuinely keep moving:
+
+      * a window that hasn't closed yet. The current month changes daily, so a
+        figure computed this morning is not the same figure this afternoon.
+      * an arbitrary range. A 10-day or cross-month window is not described by
+        the period sync stamp at all.
+
+    A finished calendar month is neither. Its underlying data changes only when
+    the books change, and the books changing is exactly what the sync stamp
+    already detects — so it can be cached on that stamp like any other view.
+    """
+    today = today or datetime.now(UTC).date()
+    if period_end >= today:
+        return True                      # the window hasn't finished
+    if period_start is None:
+        return False                     # a plain month view
+    last_day = calendar.monthrange(period_end.year, period_end.month)[1]
+    is_whole_month = (
+        period_start == date(period_end.year, period_end.month, 1)
+        and period_end.day == last_day
+    )
+    return not is_whole_month
 
 
 def cache_is_fresh(
@@ -2373,8 +2413,14 @@ async def compute_overview(
     else:
         dso_days = None
 
-    # Live aging detail (best effort)
-    ar_rows, ar_bucket_totals, ar_err = await _fetch_aging(qbo_conn, db, period_end, "AgedReceivables")
+    # Live aging detail (best effort). Receivables and payables are two
+    # independent QuickBooks reports and used to be awaited one after the
+    # other, ninety lines apart — thirty seconds of timeout each, in series,
+    # for two calls that never needed to wait for one another.
+    (ar_rows, ar_bucket_totals, ar_err), _ap_aging = await asyncio.gather(
+        _fetch_aging(qbo_conn, db, period_end, "AgedReceivables"),
+        _fetch_aging(qbo_conn, db, period_end, "AgedPayables"),
+    )
     aging_summary: list[dict] = []
     aging_over_60_pct: float | None = None
     if ar_bucket_totals:
@@ -2467,7 +2513,7 @@ async def compute_overview(
     else:
         dpo_days = None
 
-    ap_rows, ap_bucket_totals, ap_err = await _fetch_aging(qbo_conn, db, period_end, "AgedPayables")
+    ap_rows, ap_bucket_totals, ap_err = _ap_aging   # fetched alongside AR above
     ap_aging_summary: list[dict] = []
     ap_aging_over_60_pct: float | None = None
     if ap_bucket_totals:
