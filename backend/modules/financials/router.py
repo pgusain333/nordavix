@@ -953,7 +953,9 @@ async def export_executive_report(
         if aud == "internal":
             try:
                 from modules.advisory.service import persist_exec_recommendations
-                await persist_exec_recommendations(db, tenant_id, pe, data.ai.recommendations)
+                # The structured specs, not the derived title strings — the
+                # kpi_key and expected impact are the whole point of tracking.
+                await persist_exec_recommendations(db, tenant_id, pe, data.ai.recommendation_specs)
             except Exception:
                 logger.warning("Could not persist exec recommendations for tenant=%s period=%s", tenant_id, pe)
                 # A failed flush (e.g. read-only demo tenant) leaves the session

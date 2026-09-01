@@ -32,9 +32,97 @@ KPI_CATALOG: list[dict] = [
     {"key": "net_income",       "label": "Net income",             "section": "profitability", "field": "net_income",       "unit": "$",      "higher_better": True},
     {"key": "dso",              "label": "Days sales outstanding", "section": "receivables",   "field": "dso_days",         "unit": "days",   "higher_better": False},
 ]
-_VALID_KEYS = {k["key"] for k in KPI_CATALOG}
+KPI_BY_KEY = {k["key"]: k for k in KPI_CATALOG}
+_VALID_KEYS = set(KPI_BY_KEY)
 _COMPARATORS = {"gte", "lte", "between"}
 _REC_STATUSES = {"open", "in_progress", "done", "dismissed"}
+_PRIORITIES = {"high", "medium", "low"}
+
+# How far a metric must move off its baseline before the movement is called
+# anything. Relative, because these KPIs are not in the same units — two
+# percent of a current ratio and two percent of cash are different sizes of
+# fact, and a fixed threshold would call one noisy and the other frozen.
+MOVE_TOLERANCE = 0.02
+
+
+def grade_progress(
+    *, baseline: float | None, current: float | None,
+    target: float | None, higher_better: bool,
+) -> str:
+    """Has the metric this advice was meant to move actually moved?
+
+    The whole point of the module, and the one thing it could not previously
+    say. Five answers, and the boring ones matter most:
+
+      "achieved"   the target was set and the metric has reached it.
+      "working"    moving the right way by more than MOVE_TOLERANCE.
+      "worsening"  moving the wrong way by more than that. Advice that made
+                   things worse is the most valuable row on the page and it is
+                   never going to be shown if the grader rounds it to "flat".
+      "flat"       inside the tolerance. Not a failure — most advice takes a
+                   period or two — but not progress either, and it says so.
+      "unknown"    no baseline or no current reading. Recommendations written
+                   before the metric was ever captured land here, and honestly
+                   reporting that is better than grading against a number
+                   nobody set.
+
+    `higher_better` comes from KPI_CATALOG, so direction is a property of the
+    metric rather than a guess: rising DSO is worse, rising runway is better,
+    and the caller never has to know which.
+
+    Pure, so the judgement can be argued with instead of trusted.
+    """
+    if baseline is None or current is None:
+        return "unknown"
+
+    if target is not None:
+        reached = current >= target if higher_better else current <= target
+        if reached:
+            return "achieved"
+
+    delta = current - baseline
+    improvement = delta if higher_better else -delta
+    # Scale the tolerance to the baseline. A baseline at (or near) zero has no
+    # meaningful percentage, so any real movement counts.
+    floor = abs(baseline) * MOVE_TOLERANCE
+    if floor == 0:
+        return "working" if improvement > 0 else "worsening" if improvement < 0 else "flat"
+    if improvement > floor:
+        return "working"
+    if improvement < -floor:
+        return "worsening"
+    return "flat"
+
+
+def progress_for(rec, series: list[dict]) -> dict:
+    """A recommendation's grade, plus the readings behind it.
+
+    `series` is the KPI's own history from kpi_overview — the same points the
+    chart draws, so the grade and the line can never tell different stories.
+    Only readings AT OR AFTER the baseline count: a recommendation cannot claim
+    credit for a month that happened before anyone gave the advice.
+    """
+    spec = KPI_BY_KEY.get(rec.kpi_key or "")
+    if spec is None:
+        return {"grade": "unlinked", "since": [], "current": None}
+
+    baseline_day = rec.baseline_at.date() if rec.baseline_at else rec.period_end
+    since = [p for p in series if date.fromisoformat(p["period"]) >= baseline_day]
+    current = since[-1]["value"] if since else None
+    baseline = float(rec.baseline_value) if rec.baseline_value is not None else None
+    target = float(rec.target_value) if rec.target_value is not None else None
+
+    return {
+        "grade": grade_progress(
+            baseline=baseline, current=current, target=target,
+            higher_better=spec["higher_better"],
+        ),
+        "since": since,
+        "current": current,
+        "unit": spec["unit"],
+        "kpi_label": spec["label"],
+        "higher_better": spec["higher_better"],
+    }
 
 
 def _num(v) -> float | None:
@@ -211,6 +299,14 @@ def serialize_rec(r: TrackedRecommendation) -> dict:
         "title":         r.title,
         "detail":        r.detail,
         "kpi_key":       r.kpi_key,
+        "kpi_label":     (KPI_BY_KEY.get(r.kpi_key or "") or {}).get("label"),
+        "baseline_value": float(r.baseline_value) if r.baseline_value is not None else None,
+        "baseline_at":   r.baseline_at.isoformat() if r.baseline_at else None,
+        "target_value":  float(r.target_value) if r.target_value is not None else None,
+        "due_date":      r.due_date.isoformat() if r.due_date else None,
+        "expected_impact": float(r.expected_impact) if r.expected_impact is not None else None,
+        "impact_note":   r.impact_note,
+        "owner":         r.owner,
         "status":        r.status,
         "client_action": r.client_action,
         "outcome_note":  r.outcome_note,
@@ -219,17 +315,126 @@ def serialize_rec(r: TrackedRecommendation) -> dict:
     }
 
 
-async def list_recommendations(db, *, status: str | None = None) -> list[dict]:
+async def list_recommendations(
+    db, *, status: str | None = None, period_end: date | None = None,
+) -> list[dict]:
+    """Every recommendation, each carrying its own grade.
+
+    The grade is computed here rather than stored, from the same KPI series the
+    trend chart draws — so a recommendation's verdict and the line above it can
+    never disagree. One kpi_overview call feeds all of them.
+    """
     q = select(TrackedRecommendation).order_by(
         desc(TrackedRecommendation.period_end), desc(TrackedRecommendation.created_at),
     )
     if status:
         q = q.where(TrackedRecommendation.status == status)
-    return [serialize_rec(r) for r in (await db.execute(q)).scalars().all()]
+    rows = list((await db.execute(q)).scalars().all())
+    if not rows:
+        return []
+
+    latest = period_end or max(r.period_end for r in rows)
+    overview = await kpi_overview(db, None, latest, n=24)
+    series_by_key = {k["key"]: k["series"] for k in overview["kpis"]}
+
+    return [
+        {**serialize_rec(r), "progress": progress_for(r, series_by_key.get(r.kpi_key or "", []))}
+        for r in rows
+    ]
+
+
+async def create_recommendation(
+    db, tenant_id, *, period_end: date, title: str, detail: str | None,
+    kpi_key: str | None, priority: str, target_value: float | None,
+    due_date: date | None, expected_impact: float | None,
+    impact_note: str | None, owner: str | None,
+) -> TrackedRecommendation:
+    """Advice a human is giving — the path that did not exist.
+
+    `source` declared three values and only exec_report_ai was reachable, so
+    the module could hold what the AI said in a monthly report and nothing a
+    partner noticed in a meeting. That is backwards: the best advice in the
+    building is in someone's head.
+
+    The baseline is captured HERE, at the moment of advising, by reading the
+    metric's current value. That reading is what every later grade is measured
+    from, so it has to be taken now — not reconstructed afterwards from a
+    series that may since have been re-synced.
+    """
+    if kpi_key and kpi_key not in _VALID_KEYS:
+        raise ValueError("Unknown KPI.")
+    if priority not in _PRIORITIES:
+        raise ValueError("priority must be high, medium or low.")
+    title = (title or "").strip()
+    if not title:
+        raise ValueError("A recommendation needs a title.")
+
+    baseline = await _current_kpi_value(db, kpi_key, period_end) if kpi_key else None
+    rec = TrackedRecommendation(
+        id=uuid.uuid4(), tenant_id=tenant_id, period_end=period_end,
+        source="manual", priority=priority, title=title[:300],
+        detail=(detail or None), kpi_key=kpi_key or None,
+        baseline_value=baseline,
+        baseline_at=datetime.now(UTC) if baseline is not None else None,
+        target_value=target_value, due_date=due_date,
+        expected_impact=expected_impact, impact_note=(impact_note or None)[:300] if impact_note else None,
+        owner=(owner or None), status="open",
+    )
+    db.add(rec)
+    await db.flush()
+    await db.refresh(rec)
+    return rec
+
+
+async def _current_kpi_value(db, kpi_key: str, period_end: date) -> float | None:
+    """The metric's latest reading at the moment advice is given."""
+    if kpi_key not in _VALID_KEYS:
+        return None
+    overview = await kpi_overview(db, None, period_end, n=2)
+    for k in overview["kpis"]:
+        if k["key"] == kpi_key:
+            return k["current"]
+    return None
+
+
+async def scorecard(db, period_end: date) -> dict:
+    """What the firm's advice has been worth.
+
+    The argument for an advisory fee, assembled from the client's own numbers
+    rather than asserted. Counts only what can be counted: a recommendation
+    with no metric attached is reported as unlinked instead of being quietly
+    dropped from the denominator, because a scorecard that omits its own
+    ungradable rows flatters itself.
+    """
+    recs = await list_recommendations(db, period_end=period_end)
+    grades: dict[str, int] = {}
+    impact_realised = 0.0
+    for r in recs:
+        g = r["progress"]["grade"]
+        grades[g] = grades.get(g, 0) + 1
+        if g in ("achieved", "working") and r.get("expected_impact"):
+            impact_realised += float(r["expected_impact"])
+
+    acted_on = sum(1 for r in recs if r["status"] in ("in_progress", "done"))
+    graded = sum(v for k, v in grades.items() if k in ("achieved", "working", "flat", "worsening"))
+    return {
+        "period_end": period_end.isoformat(),
+        "total": len(recs),
+        "acted_on": acted_on,
+        "graded": graded,
+        "unlinked": grades.get("unlinked", 0) + grades.get("unknown", 0),
+        "by_grade": grades,
+        # The money attached to advice that is landing. Deliberately NOT
+        # "value delivered": these are the impacts the firm estimated when it
+        # advised, on the items that are moving — an expectation being met, not
+        # a measured saving. The label has to say that.
+        "impact_in_motion": round(impact_realised, 2),
+    }
 
 
 async def update_recommendation(db, rec_id, *, status=None, client_action=None,
-                                outcome_note=None, user_id) -> dict | None:
+                                outcome_note=None, priority=None, owner=None,
+                                target_value=None, due_date=None, user_id) -> dict | None:
     r = (await db.execute(
         select(TrackedRecommendation).where(TrackedRecommendation.id == rec_id)
     )).scalar_one_or_none()
@@ -241,6 +446,18 @@ async def update_recommendation(db, rec_id, *, status=None, client_action=None,
         r.status = status
         r.status_changed_by = user_id
         r.status_changed_at = datetime.now(UTC)
+    # Priority was hardcoded "medium" on every row and nothing could change it,
+    # so the page told every reader "medium priority" forever.
+    if priority is not None:
+        if priority not in _PRIORITIES:
+            raise ValueError("priority must be high, medium or low.")
+        r.priority = priority
+    if owner is not None:
+        r.owner = (owner.strip()[:120] or None)
+    if target_value is not None:
+        r.target_value = target_value
+    if due_date is not None:
+        r.due_date = due_date
     if client_action is not None:
         r.client_action = (client_action[:2000] or None)
     if outcome_note is not None:
@@ -250,10 +467,51 @@ async def update_recommendation(db, rec_id, *, status=None, client_action=None,
     return serialize_rec(r)
 
 
-async def persist_exec_recommendations(db, tenant_id, period_end, recs: list[str]) -> int:
+def normalize_rec_spec(raw) -> dict | None:
+    """One AI recommendation, whatever shape it arrived in.
+
+    The model is now asked for objects — a title, the metric it moves, a
+    priority, the money it is worth. It used to be asked for a sentence, and
+    plenty of sentences are already cached, so both shapes have to parse or a
+    contract change would silently blank a month of advice.
+
+    A kpi_key outside KPI_CATALOG is DROPPED rather than stored. The point of
+    constraining the model to the catalog is that the link can be trusted; a
+    key nothing can resolve would grade against nothing while looking linked.
+    """
+    if isinstance(raw, str):
+        title = raw.strip()
+        return {"title": title[:300]} if title else None
+    if not isinstance(raw, dict):
+        return None
+    title = str(raw.get("title") or "").strip()
+    if not title:
+        return None
+
+    key = str(raw.get("kpi_key") or "").strip()
+    priority = str(raw.get("priority") or "").strip().lower()
+    impact = _num(raw.get("expected_impact"))
+    return {
+        "title": title[:300],
+        "detail": (str(raw.get("detail")).strip() or None) if raw.get("detail") else None,
+        "kpi_key": key if key in _VALID_KEYS else None,
+        "priority": priority if priority in _PRIORITIES else "medium",
+        "expected_impact": impact,
+        "impact_note": (str(raw.get("impact_note")).strip()[:300] or None)
+                       if raw.get("impact_note") else None,
+    }
+
+
+async def persist_exec_recommendations(db, tenant_id, period_end, recs: list) -> int:
     """Upsert one TrackedRecommendation per AI exec-report recommendation, keyed
     on (tenant, period_end, title) so regenerating the report never duplicates
-    and never clobbers a row's status/notes."""
+    and never clobbers a row's status/notes.
+
+    Accepts the structured specs the model now returns, or bare strings from an
+    older cached narrative. Where a spec names a KPI, the metric's value is read
+    NOW and stored as the baseline — that reading is what every later grade is
+    measured against, so it has to be taken at the moment of advising.
+    """
     existing = {
         r.title for r in (await db.execute(
             select(TrackedRecommendation).where(
@@ -262,14 +520,29 @@ async def persist_exec_recommendations(db, tenant_id, period_end, recs: list[str
             )
         )).scalars().all()
     }
+    specs = [s for s in (normalize_rec_spec(r) for r in (recs or [])) if s]
+    # One overview for the whole batch rather than one read per recommendation.
+    baselines: dict[str, float | None] = {}
+    keys = {s["kpi_key"] for s in specs if s.get("kpi_key")}
+    if keys:
+        overview = await kpi_overview(db, tenant_id, period_end, n=2)
+        baselines = {k["key"]: k["current"] for k in overview["kpis"]}
+
     added = 0
-    for rec in recs or []:
-        title = (rec or "").strip()[:300]
-        if not title or title in existing:
+    now = datetime.now(UTC)
+    for spec in specs:
+        title = spec["title"]
+        if title in existing:
             continue
+        key = spec.get("kpi_key")
+        base = baselines.get(key) if key else None
         db.add(TrackedRecommendation(
             id=uuid.uuid4(), tenant_id=tenant_id, period_end=period_end,
-            source="exec_report_ai", priority="medium", title=title, status="open",
+            source="exec_report_ai", priority=spec.get("priority") or "medium",
+            title=title, detail=spec.get("detail"), kpi_key=key,
+            baseline_value=base, baseline_at=now if base is not None else None,
+            expected_impact=spec.get("expected_impact"),
+            impact_note=spec.get("impact_note"), status="open",
         ))
         existing.add(title)
         added += 1

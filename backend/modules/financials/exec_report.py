@@ -56,6 +56,7 @@ from core.ai.client import generate_narrative
 from models.closed_period import ClosedPeriod
 from models.trial_balance import TrialBalance
 from models.user import User
+from modules.advisory.service import normalize_rec_spec
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +66,26 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AIReportNarrative:
-    """Structured output from the single Claude call."""
+    """Structured output from the single Claude call.
+
+    `recommendation_specs` carries the real recommendation: a title, the KPI it
+    is meant to move (constrained to the advisory catalog, so the link can be
+    trusted), a priority, and what it is worth. Advisory grades itself off
+    those fields — asked for a bare sentence, the model returns a sentence, and
+    a sentence cannot be measured.
+
+    `recommendations` stays a list of strings for the PDF, DERIVED from the
+    specs rather than parsed alongside them, so the two can never disagree.
+    """
     executive_summary: str
     key_highlights: list[str]
     risks: list[str]
-    recommendations: list[str]
+    recommendation_specs: list[dict]
     outlook: str
+
+    @property
+    def recommendations(self) -> list[str]:
+        return [s["title"] for s in self.recommendation_specs if s.get("title")]
 
 
 @dataclass
@@ -319,12 +334,27 @@ You return ONE JSON object with this exact shape and nothing else:
   "executive_summary": "2-4 sentence overview of the period suitable to read aloud at a board meeting",
   "key_highlights": ["3-6 specific, fact-based bullets about the period"],
   "risks": ["2-4 specific risks visible in the data, ordered by severity"],
-  "recommendations": ["3-5 concrete actions the company should take, ordered by impact"],
+  "recommendations": [
+    {
+      "title": "one concrete action, <= 20 words, imperative — 'Tighten collections on the five slowest payers'",
+      "detail": "1-2 sentences: the numbers behind it and what doing it looks like",
+      "kpi_key": "the metric it moves, EXACTLY one of: runway_months, cash_balance, current_ratio, gross_margin_pct, net_margin_pct, revenue, net_income, dso — or null if none fits",
+      "priority": "high | medium | low",
+      "expected_impact": 38000,
+      "impact_note": "what that number is, e.g. 'cash released by returning collections to 41 days'"
+    }
+  ],
   "outlook": "2-3 sentence forward-looking statement based on the trends in the data"
 }
 
-Each bullet is one sentence, ≤ 35 words. No markdown. No leading dash or number.
+Highlights and risks are one sentence each, ≤ 35 words. No markdown. No leading dash or number.
 Do not invent numbers — only cite what's in the data.
+
+Recommendations are graded later against the metric named in kpi_key, so:
+  • use ONLY a kpi_key from the list, or null — never invent one;
+  • set expected_impact only when the data supports a figure, else null;
+  • priority reflects impact and urgency, not politeness. Not everything is medium.
+
 """
 
 
@@ -344,12 +374,27 @@ You return ONE JSON object with this exact shape and nothing else:
   "executive_summary": "2-4 warm, plain-English sentences a busy owner reads in 15 seconds",
   "key_highlights": ["3-6 plain-English wins or facts about the month"],
   "risks": ["2-4 things to keep an eye on, everyday language, most important first"],
-  "recommendations": ["3-5 concrete, doable next steps, most impactful first"],
+  "recommendations": [
+    {
+      "title": "one doable next step in plain English, <= 20 words",
+      "detail": "1-2 warm sentences: what to do and why it matters, using real numbers",
+      "kpi_key": "the metric it moves, EXACTLY one of: runway_months, cash_balance, current_ratio, gross_margin_pct, net_margin_pct, revenue, net_income, dso — or null if none fits",
+      "priority": "high | medium | low",
+      "expected_impact": 38000,
+      "impact_note": "what that dollar figure is, in plain words"
+    }
+  ],
   "outlook": "2-3 plain-English sentences on what the next month or two could look like"
 }
 
-Each bullet is one sentence, ≤ 30 words. No markdown. No leading dash or number.
+Highlights and risks are one sentence each, ≤ 30 words. No markdown. No leading dash or number.
 Use real numbers from the data but round to what an owner cares about. Do not invent numbers.
+
+Recommendations are graded later against the metric named in kpi_key, so:
+  • use ONLY a kpi_key from the list, or null — never invent one;
+  • set expected_impact only when the data supports a figure, else null;
+  • priority reflects impact and urgency, not politeness. Not everything is medium.
+
 """
 
 
@@ -530,10 +575,12 @@ def _fallback_narrative(
             f"{recons.flagged_count} reconciliation(s) require manual follow-up."
             if recons.flagged_count > 0 else "No critical risks flagged by the system.",
         ],
-        recommendations=[
-            "Review the financial statements and reconciliation flagged items.",
-            "Re-run the executive report later for AI-generated insights.",
-            "Confirm cash burn rate and runway with management.",
+        recommendation_specs=[
+            {"title": t, "priority": "medium"} for t in (
+                "Review the financial statements and reconciliation flagged items.",
+                "Re-run the executive report later for AI-generated insights.",
+                "Confirm cash burn rate and runway with management.",
+            )
         ],
         outlook=(
             "Forward outlook unavailable in fallback mode. "
@@ -581,7 +628,14 @@ def generate_ai_commentary(
             executive_summary=str(parsed.get("executive_summary") or "").strip(),
             key_highlights=[str(x).strip() for x in (parsed.get("key_highlights") or []) if str(x).strip()],
             risks=[str(x).strip() for x in (parsed.get("risks") or []) if str(x).strip()],
-            recommendations=[str(x).strip() for x in (parsed.get("recommendations") or []) if str(x).strip()],
+            # Normalised in the advisory module, which owns the KPI catalog the
+            # kpi_key is validated against. Tolerates the old bare-string shape
+            # so a cached narrative doesn't come back blank.
+            recommendation_specs=[
+                s for s in (
+                    normalize_rec_spec(x) for x in (parsed.get("recommendations") or [])
+                ) if s
+            ],
             outlook=str(parsed.get("outlook") or "").strip(),
         )
     except Exception:

@@ -64,11 +64,6 @@ _KNOWN_GAPS: dict[str, str] = {
         "POST and DELETE and no edit endpoint. Either build editing or drop the "
         "column; leaving it implies an audit trail that isn't kept."
     ),
-    "TrackedRecommendation.kpi_key": (
-        "which KPI an advisory recommendation is about. service.py builds the "
-        "row without it, so recommendations can never be tied back to the "
-        "metric that prompted them."
-    ),
     # ── Nordavix Allocate (§471(c)) ────────────────────────────────────
     "AllocRun.eligible": (
         "whether the client passed the §448(c) test when this run was computed. "

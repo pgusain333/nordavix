@@ -8,25 +8,28 @@
  *
  * KPI values come from cached insights snapshots (no live QuickBooks calls).
  */
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   Target, TrendingUp, TrendingDown, Minus, CheckCircle2, AlertTriangle,
-  Lightbulb, ChevronDown, FileText, type LucideIcon,
+  Lightbulb, FileText, type LucideIcon,
 } from "lucide-react"
 
 import { PageHeader } from "@/core/ui/PageHeader"
+import { AdviceCard } from "../components/AdviceCard"
+import { AdvisoryScorecard } from "../components/AdvisoryScorecard"
+import { NewAdviceForm } from "../components/NewAdviceForm"
 import { DatePicker } from "@/core/ui/DatePicker"
 import { Spinner } from "@/core/ui/components"
 import { SkeletonBlock, SkeletonCard } from "@/core/ui/Skeleton"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
-import { formatDate, toISODate } from "@/core/lib/dates"
+import { toISODate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import { financialsApi } from "@/modules/financials/api"
 import { closeApi } from "@/modules/close/api"
 import {
   advisoryApi, formatKpi,
-  type Comparator, type Kpi, type RecStatus, type TrackedRec,
+  type Comparator, type Kpi,
 } from "../api"
 
 function defaultPeriod(): string {
@@ -45,16 +48,6 @@ function monthLabel(period: string): string {
 const COMPARATOR_LABEL: Record<Comparator, string> = {
   gte: "At least", lte: "At most", between: "Between",
 }
-const REC_STATUS_LABEL: Record<RecStatus, string> = {
-  open: "Open", in_progress: "In progress", done: "Done", dismissed: "Dismissed",
-}
-const REC_STATUS_META: Record<RecStatus, { bg: string; fg: string }> = {
-  open:        { bg: "var(--warn-subtle)",     fg: "var(--warn)" },
-  in_progress: { bg: "var(--info-subtle)",     fg: "var(--info)" },
-  done:        { bg: "var(--positive-subtle)", fg: "var(--positive)" },
-  dismissed:   { bg: "var(--surface-2)",       fg: "var(--text-muted)" },
-}
-
 export function AdvisoryPage() {
   const qc = useQueryClient()
   // Default to the month being closed — shared with the dashboard + every
@@ -70,8 +63,8 @@ export function AdvisoryPage() {
     staleTime: 60_000,
   })
   const { data: recs = [], isLoading: recsLoading } = useQuery({
-    queryKey: ["advisory-recs"],
-    queryFn:  () => advisoryApi.getRecommendations(),
+    queryKey: ["advisory-recs", period],
+    queryFn:  () => advisoryApi.getRecommendations(undefined, period),
     staleTime: 60_000,
   })
 
@@ -104,7 +97,7 @@ export function AdvisoryPage() {
       />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 space-y-6">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5">
 
           {/* ── KPIs vs targets ──────────────────────────────────── */}
           <section>
@@ -142,11 +135,21 @@ export function AdvisoryPage() {
             ))}
           </section>
 
-          {/* ── Tracked recommendations ──────────────────────────── */}
-          <section>
+          {/* ── The advice ledger, beside what it has been worth ──
+              The KPI strip stays full width above: it's the shared context both
+              columns read from. Below it, the advice is a list and the
+              scorecard is a summary, so the summary sits where a summary
+              belongs — in view while you work the list, not under it. */}
+          <div className="grid gap-4 items-start mt-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+          <section className="min-w-0">
             <div className="flex items-center gap-2 mb-3">
               <Lightbulb size={16} strokeWidth={1.9} style={{ color: "var(--green)" }} />
-              <h2 className="text-base font-bold text-theme">Tracked recommendations</h2>
+              <h2 className="text-base font-bold text-theme">Advice, and whether it worked</h2>
+              <div className="flex-1" />
+              {canEdit && (
+                <NewAdviceForm periodEnd={period}
+                  onCreated={() => qc.invalidateQueries({ queryKey: ["advisory-recs"] })} />
+              )}
             </div>
             {recsLoading ? (
               <SkeletonCard rows={3} columns={["8%", "62%", "18%"]} header={false} />
@@ -180,14 +183,19 @@ export function AdvisoryPage() {
                 {genError && <p className="text-[12px] mt-2" style={{ color: "var(--danger)" }}>{genError}</p>}
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {recs.map((r) => (
-                  <RecRow key={r.id} rec={r} canEdit={canEdit}
+                  <AdviceCard key={r.id} rec={r} canEdit={canEdit}
                     onSaved={() => qc.invalidateQueries({ queryKey: ["advisory-recs"] })} />
                 ))}
               </div>
             )}
           </section>
+
+          <aside className="min-w-0 lg:sticky lg:top-4 space-y-3">
+            <AdvisoryScorecard periodEnd={period} />
+          </aside>
+          </div>
         </div>
       </div>
     </div>
@@ -340,93 +348,6 @@ function TargetEditor({ kpi, onClose, onSaved }: { kpi: Kpi; onClose: () => void
           </button>
         )}
       </div>
-    </div>
-  )
-}
-
-// ── Recommendation row ────────────────────────────────────────────────────────
-
-function RecRow({ rec, canEdit, onSaved }: { rec: TrackedRec; canEdit: boolean; onSaved: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [action, setAction] = useState(rec.client_action ?? "")
-  const [outcome, setOutcome] = useState(rec.outcome_note ?? "")
-  useEffect(() => { setAction(rec.client_action ?? ""); setOutcome(rec.outcome_note ?? "") }, [rec.id, rec.client_action, rec.outcome_note])
-
-  const meta = REC_STATUS_META[rec.status]
-  const setStatus = useMutation({
-    mutationFn: (status: RecStatus) => advisoryApi.updateRecommendation(rec.id, { status }),
-    onSuccess: onSaved,
-  })
-  const saveNotes = useMutation({
-    mutationFn: () => advisoryApi.updateRecommendation(rec.id, { client_action: action, outcome_note: outcome }),
-    onSuccess: () => { onSaved(); setOpen(false) },
-  })
-
-  return (
-    <div className="rounded-xl" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-      <div className="flex items-start gap-3 p-3.5">
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>{rec.title}</p>
-          <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px]" style={{ color: "var(--text-muted)" }}>
-            <span>{rec.period_label}</span>
-            <span>·</span>
-            <span className="capitalize">{rec.priority} priority</span>
-            {rec.client_action && (<><span>·</span><span style={{ color: "var(--positive)" }}>has outcome</span></>)}
-          </div>
-        </div>
-        {canEdit ? (
-          <select value={rec.status} onChange={(e) => setStatus.mutate(e.target.value as RecStatus)}
-            aria-label={`Status of ${rec.title}`}
-            className="rounded-md px-2 py-1 text-[11px] font-semibold outline-none shrink-0"
-            style={{ background: meta.bg, color: meta.fg, border: "1px solid var(--border)" }}>
-            <option value="open">Open</option>
-            <option value="in_progress">In progress</option>
-            <option value="done">Done</option>
-            <option value="dismissed">Dismissed</option>
-          </select>
-        ) : (
-          <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider shrink-0"
-            style={{ background: meta.bg, color: meta.fg }}>{REC_STATUS_LABEL[rec.status]}</span>
-        )}
-        <button onClick={() => setOpen((o) => !o)} aria-label="Toggle outcome notes"
-          className="shrink-0 mt-0.5" style={{ color: "var(--text-muted)" }}>
-          <ChevronDown size={16} strokeWidth={2} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.12s ease-out" }} />
-        </button>
-      </div>
-
-      {open && (
-        <div className="px-3.5 pb-3.5 pt-1 space-y-2" style={{ borderTop: "1px solid var(--border)" }}>
-          {rec.detail && <p className="text-[12px]" style={{ color: "var(--text-2)" }}>{rec.detail}</p>}
-          <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>What the client did</label>
-            <textarea value={action} onChange={(e) => setAction(e.target.value)} rows={2} disabled={!canEdit}
-              placeholder="e.g. Tightened collections; offered 2/10 net 30 terms"
-              className="w-full rounded-md px-2.5 py-1.5 text-[13px] outline-none resize-y disabled:opacity-60"
-              style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
-          </div>
-          <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>Outcome</label>
-            <textarea value={outcome} onChange={(e) => setOutcome(e.target.value)} rows={2} disabled={!canEdit}
-              placeholder="e.g. DSO fell from 52 to 41 days over the next two months"
-              className="w-full rounded-md px-2.5 py-1.5 text-[13px] outline-none resize-y disabled:opacity-60"
-              style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", color: "var(--text)" }} />
-          </div>
-          {canEdit && (
-            <div className="flex items-center gap-2">
-              <button onClick={() => saveNotes.mutate()} disabled={saveNotes.isPending}
-                className="rounded-md px-3 py-1 text-[12px] font-semibold text-white disabled:opacity-50"
-                style={{ background: "var(--green)" }}>
-                {saveNotes.isPending ? "Saving…" : "Save"}
-              </button>
-              {rec.status_changed_at && (
-                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                  Updated {formatDate(rec.status_changed_at)}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }

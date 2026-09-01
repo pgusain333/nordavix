@@ -1164,11 +1164,15 @@ if __name__ == "__main__":  # pragma: no cover — local smoke
                 "DSO at 42 days with 12% of AR over 60 days, concentrated in two enterprise accounts.",
                 "Suspense account contains two unreconciled wire transfers from March — material risk if reclassified incorrectly.",
             ],
-            recommendations=[
-                "Prioritize collection on the two large AR accounts over 60 days before quarter-end.",
-                "Reconcile the suspense account this week — material risk if classified incorrectly.",
-                "Review marketing ROI before extending the Q2 push into Q3.",
-                "Re-forecast Q3 cash on the assumption sales hiring continues at current pace.",
+            recommendation_specs=[
+                {"title": "Prioritize collection on the two large AR accounts over 60 days before quarter-end.",
+                 "kpi_key": "dso", "priority": "high", "expected_impact": 38000},
+                {"title": "Reconcile the suspense account this week — material risk if classified incorrectly.",
+                 "priority": "high"},
+                {"title": "Review marketing ROI before extending the Q2 push into Q3.",
+                 "kpi_key": "net_margin_pct", "priority": "medium"},
+                {"title": "Re-forecast Q3 cash on the assumption sales hiring continues at current pace.",
+                 "kpi_key": "runway_months", "priority": "medium"},
             ],
             outlook="Trajectory remains positive on top-line and margin, but Q3 cash management warrants close attention. "
                     "Recommend monthly board update on cash burn through Q3.",

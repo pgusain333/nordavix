@@ -98,15 +98,79 @@ async def remove_target(
 async def get_recommendations(
     tenant_id: CurrentTenantId,
     status: str | None = Query(None),
+    period: str | None = Query(None, description="Grade against this period end"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return {"items": await svc.list_recommendations(db, status=status)}
+    return {"items": await svc.list_recommendations(
+        db, status=status, period_end=_parse_period(period) if period else None,
+    )}
+
+
+@router.get("/scorecard")
+async def get_scorecard(
+    tenant_id: CurrentTenantId,
+    period: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """What the firm's advice has been worth — the case for the advisory fee,
+    assembled from the client's own numbers rather than asserted."""
+    return await svc.scorecard(db, _parse_period(period))
+
+
+class NewRecBody(BaseModel):
+    period_end: str
+    title: str
+    detail: str | None = None
+    kpi_key: str | None = None
+    priority: str = "medium"
+    target_value: float | None = None
+    due_date: str | None = None
+    expected_impact: float | None = None
+    impact_note: str | None = None
+    owner: str | None = None
+
+
+@router.post("/recommendations")
+async def create_recommendation(
+    body: NewRecBody,
+    tenant_id: CurrentTenantId,
+    user: User = Depends(require_role("reviewer")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Advice a human is giving. This path did not exist — `source` declared a
+    'manual' value nothing could reach, so the module could hold what the AI
+    said in a monthly report and nothing a partner noticed in a meeting."""
+    try:
+        rec = await svc.create_recommendation(
+            db, tenant_id,
+            period_end=_parse_period(body.period_end),
+            title=body.title, detail=body.detail, kpi_key=body.kpi_key,
+            priority=body.priority, target_value=body.target_value,
+            due_date=_parse_period(body.due_date) if body.due_date else None,
+            expected_impact=body.expected_impact, impact_note=body.impact_note,
+            owner=body.owner,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="advisory.recommendation_created",
+        entity_type="tracked_recommendation", entity_id=rec.id,
+        metadata={"summary": f"Advised '{rec.title[:80]}'", "kpi_key": rec.kpi_key},
+    )
+    await db.commit()
+    await db.refresh(rec)
+    return svc.serialize_rec(rec)
 
 
 class RecBody(BaseModel):
     status: str | None = None
     client_action: str | None = None
     outcome_note: str | None = None
+    priority: str | None = None
+    owner: str | None = None
+    due_date: str | None = None
+    target_value: float | None = None
 
 
 @router.post("/recommendations/{rec_id}")
@@ -120,7 +184,10 @@ async def patch_recommendation(
     try:
         r = await svc.update_recommendation(
             db, rec_id, status=body.status, client_action=body.client_action,
-            outcome_note=body.outcome_note, user_id=user.id,
+            outcome_note=body.outcome_note, priority=body.priority,
+            owner=body.owner, target_value=body.target_value,
+            due_date=_parse_period(body.due_date) if body.due_date else None,
+            user_id=user.id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
