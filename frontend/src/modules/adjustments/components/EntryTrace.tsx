@@ -18,10 +18,12 @@
  * as what it WOULD do rather than what it did.
  */
 import { useQuery } from "@tanstack/react-query"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import {
   ArrowRight, Brain, CheckCircle2, FileWarning, Link2, Sparkles, User as UserIcon,
 } from "lucide-react"
 
+import { MOTION, EASE } from "@/core/motion"
 import { adjustmentsApi, type EntryTrace as Trace } from "../api"
 
 const money = (s: string) => {
@@ -40,37 +42,58 @@ const SOURCE_WORD: Record<string, string> = {
   assistant:   "a conversation with the AI",
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/** One answer in the trail. The sections arrive in order — origin, then basis,
+ *  then who decided — because that is the order the story is read in, and a
+ *  panel whose parts land together reads as a table rather than a trail.
+ *
+ *  The stagger runs on every mount, which is every time the disclosure opens.
+ *  A "first time only" ref was tempting and wrong twice over: the panel
+ *  unmounts when it closes, so the ref would have to outlive it, and mutating
+ *  one during render makes StrictMode's double-invoke swallow the animation in
+ *  dev but not in production — a difference you'd only find by looking. */
+function Section({ title, index, reduce, children }: {
+  title:    string
+  index:    number
+  reduce:   boolean | null
+  children: React.ReactNode
+}) {
   return (
-    <div className="px-3.5 py-2.5" style={{ borderTop: "1px solid var(--border)" }}>
+    <motion.div
+      initial={reduce ? false : { opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: MOTION.DEFAULT, ease: EASE.OUT, delay: reduce ? 0 : index * 0.045 }}
+      className="px-3.5 py-2.5" style={{ borderTop: "1px solid var(--border)" }}>
       <p className="text-[9.5px] font-bold uppercase tracking-wider mb-1.5"
         style={{ color: "var(--text-muted)" }}>
         {title}
       </p>
       {children}
-    </div>
+    </motion.div>
   )
 }
 
 export function EntryTrace({ entryId }: { entryId: string }) {
+  const reduce = useReducedMotion()
   const { data, isLoading, isError } = useQuery({
     queryKey: ["adjustments", "trace", entryId],
     queryFn:  () => adjustmentsApi.trace(entryId),
     staleTime: 60_000,
   })
 
-  if (isLoading) {
+  if (isLoading || isError || !data) {
     return (
-      <p className="px-3.5 py-3 text-[11px]" style={{ color: "var(--text-muted)" }}>
-        Tracing…
-      </p>
-    )
-  }
-  if (isError || !data) {
-    return (
-      <p className="px-3.5 py-3 text-[11px]" style={{ color: "var(--text-muted)" }}>
-        Couldn't load the trail for this entry.
-      </p>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.p key={isLoading ? "loading" : "error"}
+          initial={reduce ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          transition={{ duration: MOTION.FAST, ease: EASE.OUT }}
+          className="px-3.5 py-3 text-[11px] rounded-xl"
+          style={{
+            color: "var(--text-muted)",
+            background: "var(--surface)", border: "1px solid var(--border)",
+          }}>
+          {isLoading ? "Tracing…" : "Couldn't load the trail for this entry."}
+        </motion.p>
+      </AnimatePresence>
     )
   }
 
@@ -87,7 +110,7 @@ export function EntryTrace({ entryId }: { entryId: string }) {
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
 
       {/* ── Origin ── */}
-      <Section title="Where it came from">
+      <Section title="Where it came from" index={0} reduce={reduce}>
         <p className="text-[12px] text-theme">
           Drafted by {t.origin.drafted_by} from {SOURCE_WORD[t.origin.source] ?? t.origin.source}
           {t.origin.subject && (
@@ -107,7 +130,7 @@ export function EntryTrace({ entryId }: { entryId: string }) {
       </Section>
 
       {/* ── Basis ── */}
-      <Section title="What it's made of">
+      <Section title="What it's made of" index={1} reduce={reduce}>
         <div className="space-y-0.5">
           {t.basis.lines.map((ln, i) => {
             const isCredit = (parseFloat(ln.credit) || 0) > 0
@@ -142,7 +165,7 @@ export function EntryTrace({ entryId }: { entryId: string }) {
       </Section>
 
       {/* ── Decisions ── */}
-      <Section title="Who decided what">
+      <Section title="Who decided what" index={2} reduce={reduce}>
         {t.decisions.length === 0 ? (
           <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
             Nobody has acted on this yet.
@@ -186,7 +209,7 @@ export function EntryTrace({ entryId }: { entryId: string }) {
 
       {/* ── Support ── */}
       {t.support.memory_fact && (
-        <Section title="What justifies it">
+        <Section title="What justifies it" index={3} reduce={reduce}>
           <p className="text-[11.5px] flex items-start gap-1.5">
             <Brain size={12} strokeWidth={2} className="shrink-0 mt-0.5" style={{ color: "var(--green)" }} />
             <span>
@@ -200,7 +223,8 @@ export function EntryTrace({ entryId }: { entryId: string }) {
       )}
 
       {/* ── Effect ── */}
-      <Section title={eff.applied ? "What it changed" : "What it would change"}>
+      <Section title={eff.applied ? "What it changed" : "What it would change"}
+        index={4} reduce={reduce}>
         {moved.length === 0 ? (
           <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
             No net movement in the statements.

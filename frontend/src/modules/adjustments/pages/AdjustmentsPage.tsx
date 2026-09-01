@@ -10,8 +10,10 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { CheckCheck, FileText, Save, Download, Lock, RefreshCw, CheckCircle2, AlertCircle, Network, ChevronDown } from "lucide-react"
 
+import { MOTION, EASE } from "@/core/motion"
 import { SkeletonTable } from "@/core/ui/Skeleton"
 import { PageHeader } from "@/core/ui/PageHeader"
 import { formatDate } from "@/core/lib/dates"
@@ -48,8 +50,33 @@ const STATUS_TABS: { key: AdjustmentStatus | "all"; label: string }[] = [
   { key: "all",       label: "All" },
 ]
 
+/** A card leaving the queue, and its neighbours closing the gap. Shared by the
+ *  groups and the rows so a whole section and a single entry exit on the same
+ *  beat — the stagger is capped so a long list still clears promptly. */
+function rowMotion(reduce: boolean | null, i = 0) {
+  return {
+    layout: !reduce,
+    initial: reduce ? false : { opacity: 0, y: -6 },
+    animate: { opacity: 1, y: 0 },
+    exit: reduce ? undefined : { opacity: 0, height: 0, marginTop: 0 },
+    transition: { duration: MOTION.DEFAULT, ease: EASE.OUT, delay: reduce ? 0 : Math.min(i, 5) * 0.02 },
+  } as const
+}
+
+/** A section that opens and closes in place — disclosures, banners, the strip. */
+function revealMotion(reduce: boolean | null) {
+  return {
+    initial: reduce ? false : { height: 0, opacity: 0 },
+    animate: { height: "auto", opacity: 1 },
+    exit: reduce ? { opacity: 0 } : { height: 0, opacity: 0 },
+    transition: { duration: MOTION.DEFAULT, ease: EASE.OUT },
+    style: { overflow: "hidden" as const },
+  }
+}
+
 export function AdjustmentsPage() {
   const qc = useQueryClient()
+  const reduce = useReducedMotion()
   const [status, setStatus] = useState<AdjustmentStatus | "all">("open")
 
   const { data: me } = useQuery({
@@ -227,15 +254,27 @@ export function AdjustmentsPage() {
 
             {period && (
               <>
-                <p className="text-[11px] min-w-0" style={{ color: "var(--text-muted)" }}>
-                  {hasOpen
-                    ? "Approve every entry, then Save to lock the batch."
-                    : allSaved
-                      ? `Saved · ${savedCount} entr${savedCount === 1 ? "y" : "ies"} locked. Download the CSV and import it in QuickBooks.`
-                      : readyToSave
-                        ? "All approved — Save to lock the batch and unlock the CSV."
-                        : "No approved entries yet."}
-                </p>
+                {/* The batch walks through four states as you work. Crossfading
+                    the sentence — rather than swapping the text under the
+                    cursor — is what makes approving the last entry read as
+                    progress instead of a flicker. */}
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.p
+                    key={hasOpen ? "open" : allSaved ? "saved" : readyToSave ? "ready" : "none"}
+                    initial={reduce ? false : { opacity: 0, y: 3 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={reduce ? { opacity: 0 } : { opacity: 0, y: -3 }}
+                    transition={{ duration: MOTION.FAST, ease: EASE.OUT }}
+                    className="text-[11px] min-w-0" style={{ color: "var(--text-muted)" }}>
+                    {hasOpen
+                      ? "Approve every entry, then Save to lock the batch."
+                      : allSaved
+                        ? `Saved · ${savedCount} entr${savedCount === 1 ? "y" : "ies"} locked. Download the CSV and import it in QuickBooks.`
+                        : readyToSave
+                          ? "All approved — Save to lock the batch and unlock the CSV."
+                          : "No approved entries yet."}
+                  </motion.p>
+                </AnimatePresence>
 
                 <div className="ml-auto flex items-center gap-2">
                   {canReview && (
@@ -287,10 +326,13 @@ export function AdjustmentsPage() {
         )}
 
         {/* What this period's adjustments do to the statements */}
-        {period && <NetEffectStrip periodEnd={period} />}
+        {period && <NetEffectStrip periodEnd={period} reduce={reduce} />}
 
-        {/* Posting-check result */}
+        {/* Posting-check result — opens under the batch bar rather than
+            shoving the queue down in one frame. */}
+        <AnimatePresence initial={false}>
         {period && checkResult && checkResult.period_end === period && (
+          <motion.div key="check" {...revealMotion(reduce)}>
           <div className="rounded-xl p-3"
             style={{
               background: checkResult.all_posted ? "var(--green-subtle)" : "rgba(199, 154, 82, 0.08)",
@@ -332,51 +374,101 @@ export function AdjustmentsPage() {
               </div>
             </div>
           </div>
+          </motion.div>
         )}
+        </AnimatePresence>
 
         {/* Status tabs + batch approve */}
         <div className="flex items-center gap-2 flex-wrap">
           {STATUS_TABS.map((t) => {
             const active = status === t.key
+            const n = counts[t.key] ?? 0
             return (
               <button
                 key={t.key}
                 onClick={() => setStatus(t.key)}
-                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all"
+                className="relative inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
                 style={{
-                  background: active ? "var(--green-subtle)" : "var(--surface)",
+                  background: "var(--surface)",
                   color:      active ? "var(--green)" : "var(--text-muted)",
                   border:     `1px solid ${active ? "transparent" : "var(--border)"}`,
+                  transition: reduce ? "none" : "color .18s",
                 }}
               >
-                {t.label}
-                <span className="text-[10px] opacity-70 tabular-nums">{counts[t.key] ?? 0}</span>
+                {/* One pill, shared across all five tabs — framer moves it
+                    between them instead of painting a new one, so the
+                    selection travels with the click. */}
+                {active && (
+                  <motion.span
+                    layoutId={reduce ? undefined : "adjustments-tab-pill"}
+                    className="absolute inset-0 rounded-full"
+                    style={{ background: "var(--green-subtle)" }}
+                    transition={{ duration: MOTION.DEFAULT, ease: EASE.OUT }}
+                  />
+                )}
+                <span className="relative">{t.label}</span>
+                {/* The count changes the moment you approve something. Rolling
+                    the new number in makes the tab you didn't click visibly
+                    respond to what you did. */}
+                <span className="relative text-[10px] opacity-70 tabular-nums overflow-hidden inline-block"
+                  style={{ minWidth: `${String(n).length * 0.6}em` }}>
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    <motion.span key={n} className="inline-block"
+                      initial={reduce ? false : { y: -8, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      exit={reduce ? { opacity: 0 } : { y: 8, opacity: 0 }}
+                      transition={{ duration: MOTION.FAST, ease: EASE.OUT }}>
+                      {n}
+                    </motion.span>
+                  </AnimatePresence>
+                </span>
               </button>
             )
           })}
 
-          {canReview && openVisible.length > 0 && (
-            <button
-              onClick={() => batchApprove.mutate()}
-              disabled={batchApprove.isPending}
-              className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
-              style={{ background: "var(--green)", color: "white" }}
-            >
-              <CheckCheck size={13} strokeWidth={2.4} />
-              {batchApprove.isPending ? "Approving…" : `Approve all (${openVisible.length})`}
-            </button>
-          )}
+          <AnimatePresence initial={false}>
+            {canReview && openVisible.length > 0 && (
+              <motion.button
+                key="approve-all"
+                initial={reduce ? false : { opacity: 0, scale: 0.94 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.94 }}
+                whileTap={reduce ? undefined : { scale: 0.97 }}
+                transition={{ duration: MOTION.FAST, ease: EASE.OUT }}
+                onClick={() => batchApprove.mutate()}
+                disabled={batchApprove.isPending}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
+                style={{ background: "var(--green)", color: "white" }}
+              >
+                <CheckCheck size={13} strokeWidth={2.4} />
+                {batchApprove.isPending ? "Approving…" : `Approve all (${openVisible.length})`}
+              </motion.button>
+            )}
+          </AnimatePresence>
         </div>
 
-        {/* Body */}
+        {/* Body — the three states cross-fade rather than cutting, so landing
+            data and emptying a filter both read as one movement.
+            popLayout, not "wait": waiting unmounts the old body BEFORE the new
+            one arrives, so switching tabs collapsed the page to nothing for a
+            frame and then re-expanded. popLayout takes the outgoing view out
+            of flow and lets the incoming one hold the height straight away. */}
+        <AnimatePresence mode="popLayout" initial={false}>
         {isLoading ? (
           /* Structured skeleton — keeps the queue's shape while data lands. */
-          <div className="rounded-xl overflow-hidden px-4 py-3"
+          <motion.div key="loading"
+            initial={reduce ? false : { opacity: 0 }} animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }} transition={{ duration: MOTION.FAST, ease: EASE.OUT }}
+            className="rounded-xl overflow-hidden px-4 py-3"
             style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <SkeletonTable rows={5} />
-          </div>
+          </motion.div>
         ) : visible.length === 0 ? (
-          <div className="rounded-xl p-12 text-center"
+          <motion.div key="empty"
+            initial={reduce ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, y: -6 }}
+            transition={{ duration: MOTION.DEFAULT, ease: EASE.OUT }}
+            className="rounded-xl p-12 text-center"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--card-shadow)" }}>
             <FileText size={26} strokeWidth={1.5} style={{ color: "var(--text-muted)" }} className="mx-auto mb-3" />
             <p className="text-base font-semibold text-theme mb-1">
@@ -386,29 +478,44 @@ export function AdjustmentsPage() {
               Proposed entries appear as you reconcile bank accounts and run AI on reconciliations
               and flux variances. They'll show up here and inline on each surface.
             </p>
-          </div>
+          </motion.div>
         ) : (
-          renderOrder.map((src) => {
-            const group = grouped[src] ?? []
-            if (group.length === 0) return null
-            const meta = SOURCE_META[src] ?? FALLBACK_META
-            return (
-              <div key={src} className="space-y-2.5">
-                <div className="flex items-baseline gap-2">
-                  <h2 className="text-sm font-semibold text-theme">{meta.label}</h2>
-                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    {group.length} {group.length === 1 ? "entry" : "entries"} · {meta.hint}
-                  </span>
-                </div>
-                <div className="space-y-3">
-                  {group.map((e) => (
-                    <EntryRow key={e.id} entry={e} canReview={canReview} canEdit={canEdit} />
-                  ))}
-                </div>
-              </div>
-            )
-          })
+          /* Keyed on the filter so switching tabs is one crossfade, while
+             WITHIN a tab the inner keys are entry ids — approving a card
+             animates just that card out and slides its neighbours up. */
+          <motion.div key={`list-${status}-${period}`}
+            initial={reduce ? false : { opacity: 0 }} animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }} transition={{ duration: MOTION.FAST, ease: EASE.OUT }}
+            className="space-y-5">
+            <AnimatePresence initial={false}>
+              {renderOrder.map((src, gi) => {
+                const group = grouped[src] ?? []
+                if (group.length === 0) return null
+                const meta = SOURCE_META[src] ?? FALLBACK_META
+                return (
+                  <motion.div key={src} {...rowMotion(reduce, gi)} className="space-y-2.5">
+                    <div className="flex items-baseline gap-2">
+                      <h2 className="text-sm font-semibold text-theme">{meta.label}</h2>
+                      <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                        {group.length} {group.length === 1 ? "entry" : "entries"} · {meta.hint}
+                      </span>
+                    </div>
+                    <div className="space-y-3">
+                      <AnimatePresence initial={false}>
+                        {group.map((e, i) => (
+                          <motion.div key={e.id} {...rowMotion(reduce, i)}>
+                            <EntryRow entry={e} canReview={canReview} canEdit={canEdit} reduce={reduce} />
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  </motion.div>
+                )
+              })}
+            </AnimatePresence>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
     </div>
   )
@@ -425,15 +532,14 @@ export function AdjustmentsPage() {
 // item was immaterial on its own — that is why it was passed — so the only way
 // to know whether they matter is to total them. Three at $340, $290 and $410
 // are $1,040, and no close product has ever added them up.
-function NetEffectStrip({ periodEnd }: { periodEnd: string }) {
+function NetEffectStrip({ periodEnd, reduce }: { periodEnd: string; reduce: boolean | null }) {
   const { data } = useQuery({
     queryKey: ["adjustments", "net-effect", periodEnd],
     queryFn:  () => adjustmentsApi.netEffect(periodEnd),
     staleTime: 15_000,
   })
-  if (!data) return null
-  const { booked, passed } = data
-  if (booked.count === 0 && passed.count === 0) return null
+  const { booked, passed } = data ?? { booked: null, passed: null }
+  const show = !!booked && !!passed && (booked.count > 0 || passed.count > 0)
 
   const n = (s: string) => parseFloat(s) || 0
   const money = (s: string) => {
@@ -442,14 +548,25 @@ function NetEffectStrip({ periodEnd }: { periodEnd: string }) {
       minimumFractionDigits: 2, maximumFractionDigits: 2,
     })}`
   }
-  const moves: [string, string][] = ([
+  const moves: [string, string][] = !booked ? [] : ([
     ["Net income", booked.net_income],
     ["Assets", booked.assets],
     ["Liabilities & equity", booked.liabilities_equity],
   ] as [string, string][]).filter(([, v]) => n(v) !== 0)
 
+  // The strip opens once there is something to say, and every figure inside it
+  // is keyed on its own value — approve an entry and the number it moves rolls
+  // over in place instead of being repainted.
   return (
-    <div className="rounded-xl px-3.5 py-3"
+    <AnimatePresence initial={false}>
+    {show && booked && passed && (
+    <motion.div key="net-effect"
+      initial={reduce ? false : { height: 0, opacity: 0 }}
+      animate={{ height: "auto", opacity: 1 }}
+      exit={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
+      transition={{ duration: MOTION.DEFAULT, ease: EASE.OUT }}
+      style={{ overflow: "hidden" }}>
+    <motion.div layout={!reduce} className="rounded-xl px-3.5 py-3"
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
@@ -466,22 +583,39 @@ function NetEffectStrip({ periodEnd }: { periodEnd: string }) {
           ) : moves.map(([label, v]) => (
             <span key={label} className="text-[11.5px]">
               <span style={{ color: "var(--text-muted)" }}>{label}</span>{" "}
-              <span className="font-semibold tabular-nums text-theme">{money(v)}</span>
+              <AnimatePresence mode="popLayout" initial={false}>
+                <motion.span key={v} className="font-semibold tabular-nums text-theme inline-block"
+                  initial={reduce ? false : { y: -6, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={reduce ? { opacity: 0 } : { y: 6, opacity: 0 }}
+                  transition={{ duration: MOTION.FAST, ease: EASE.OUT }}>
+                  {money(v)}
+                </motion.span>
+              </AnimatePresence>
             </span>
           ))}
         </div>
       </div>
 
+      {/* The style below carries overflow:hidden as well as the colour —
+          revealMotion sets it, and a bare style prop after the spread would
+          silently drop it, letting the text spill out mid-collapse. */}
+      <AnimatePresence initial={false}>
       {!booked.complete && (
-        <p className="text-[10.5px] mt-1.5 flex items-start gap-1.5" style={{ color: "#8a6326" }}>
+        <motion.p key="booked-partial" {...revealMotion(reduce)}
+          className="text-[10.5px] mt-1.5 flex items-start gap-1.5"
+          style={{ overflow: "hidden", color: "#8a6326" }}>
           <AlertCircle size={11} strokeWidth={2} className="shrink-0 mt-0.5" />
           {booked.unclassified_lines} line{booked.unclassified_lines === 1 ? "" : "s"} couldn't
           be matched to an account in this period's chart, so this is part of the movement,
           not all of it.
-        </p>
+        </motion.p>
       )}
+      </AnimatePresence>
 
+      <AnimatePresence initial={false}>
       {passed.count > 0 && (
+        <motion.div key="passed" {...revealMotion(reduce)}>
         <div className="mt-2.5 pt-2.5" style={{ borderTop: "1px solid var(--border)" }}>
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
@@ -508,8 +642,13 @@ function NetEffectStrip({ periodEnd }: { periodEnd: string }) {
             </p>
           )}
         </div>
+        </motion.div>
       )}
-    </div>
+      </AnimatePresence>
+    </motion.div>
+    </motion.div>
+    )}
+    </AnimatePresence>
   )
 }
 
@@ -520,10 +659,11 @@ function NetEffectStrip({ periodEnd }: { periodEnd: string }) {
 // "Related" graph panel gated on accepted/posted, which meant the two entries a
 // reviewer most needs to account for — an open draft and one that was passed —
 // were the two that could explain nothing about themselves.
-function EntryRow({ entry, canReview, canEdit }: {
+function EntryRow({ entry, canReview, canEdit, reduce }: {
   entry:     ProposedEntry
   canReview: boolean
   canEdit:   boolean
+  reduce:    boolean | null
 }) {
   const [showTrail, setShowTrail] = useState(false)
   return (
@@ -548,13 +688,35 @@ function EntryRow({ entry, canReview, canEdit }: {
         <Network size={12} strokeWidth={2} />
         {showTrail ? "Hide trail" : "Where this came from"}
         <ChevronDown size={12} strokeWidth={2}
-          style={{ transform: showTrail ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+          style={{
+            transform: showTrail ? "rotate(180deg)" : "none",
+            transition: reduce ? "none" : `transform ${MOTION.DEFAULT}s ${EASE.OUT}`,
+          }} />
       </button>
-      {showTrail && (
-        <div className="mt-2">
-          <EntryTrace entryId={entry.id} />
-        </div>
-      )}
+      {/* The trail opens in place. Height AND opacity, with opacity trailing
+          slightly, so the panel isn't legible before it has finished sizing. */}
+      <AnimatePresence initial={false}>
+        {showTrail && (
+          <motion.div key="trail"
+            initial={reduce ? false : { height: 0, opacity: 0 }}
+            animate={{
+              height: "auto", opacity: 1,
+              transition: reduce ? { duration: 0 } : {
+                height:  { duration: MOTION.SLOW, ease: EASE.OUT },
+                opacity: { duration: MOTION.DEFAULT, delay: 0.05 },
+              },
+            }}
+            exit={reduce ? { opacity: 0 } : {
+              height: 0, opacity: 0,
+              transition: { height: { duration: MOTION.DEFAULT, ease: EASE.OUT }, opacity: { duration: MOTION.FAST } },
+            }}
+            style={{ overflow: "hidden" }}>
+            <div className="mt-2">
+              <EntryTrace entryId={entry.id} />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

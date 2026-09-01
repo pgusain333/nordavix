@@ -20,8 +20,10 @@
  */
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { Check, Copy, Lock, RotateCcw, Sparkles, ThumbsDown } from "lucide-react"
 
+import { MOTION, EASE } from "@/core/motion"
 import {
   adjustmentsApi,
   formatJeForClipboard,
@@ -31,6 +33,20 @@ import {
   type ProposedEntryList,
 } from "../api"
 import { optimisticAdjust, patchAdjustments } from "../optimistic"
+
+/** A review action: appears and leaves with the state that warrants it, and
+ *  gives under the press. Shared so Approve, Reopen and Don't-book move
+ *  identically — three buttons on one row with three different feels is what
+ *  makes an interface feel assembled rather than designed. */
+function actionMotion(reduce: boolean | null) {
+  return {
+    initial: reduce ? false : { opacity: 0, scale: 0.94 },
+    animate: { opacity: 1, scale: 1 },
+    exit: reduce ? { opacity: 0 } : { opacity: 0, scale: 0.94 },
+    whileTap: reduce ? undefined : { scale: 0.96 },
+    transition: { duration: MOTION.FAST, ease: EASE.OUT },
+  } as const
+}
 
 function money(s: string): string {
   const n = parseFloat(s) || 0
@@ -78,6 +94,7 @@ interface Props {
 
 export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview }: Props) {
   const qc = useQueryClient()
+  const reduce = useReducedMotion()
   const [copied, setCopied] = useState(false)
 
   // Approve → Approved tab; Dismiss → Dismissed. Both patch the shared cache
@@ -321,36 +338,66 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
       )}
 
       {/* Why it wasn't booked — the record, once the decision is made. */}
+      <AnimatePresence initial={false}>
       {entry.status === "dismissed" && entry.dismiss_reason && (
-        <div className="px-3 py-2" style={{ borderTop: "1px solid var(--border)" }}>
-          <p className="text-[10px] leading-snug" style={{ color: "var(--text-2)" }}>
-            <span className="font-semibold">Not booked — </span>{entry.dismiss_reason}
-          </p>
-        </div>
+        <motion.div key="reason"
+          initial={reduce ? false : { height: 0, opacity: 0 }}
+          animate={{ height: "auto", opacity: 1 }}
+          exit={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
+          transition={{ duration: MOTION.DEFAULT, ease: EASE.OUT }}
+          style={{ overflow: "hidden" }}>
+          <div className="px-3 py-2" style={{ borderTop: "1px solid var(--border)" }}>
+            <p className="text-[10px] leading-snug" style={{ color: "var(--text-2)" }}>
+              <span className="font-semibold">Not booked — </span>{entry.dismiss_reason}
+            </p>
+          </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Asking why, before it's gone. Inline rather than a modal: the entry
-          being judged stays on screen while the reason is written. */}
+          being judged stays on screen while the reason is written, and the
+          panel grows out of the card rather than appearing on top of it. */}
+      <AnimatePresence initial={false}>
       {dismissing && !preview && (
+        <motion.div key="why"
+          initial={reduce ? false : { height: 0, opacity: 0 }}
+          animate={{
+            height: "auto", opacity: 1,
+            transition: reduce ? { duration: 0 } : {
+              height:  { duration: MOTION.DEFAULT, ease: EASE.OUT },
+              opacity: { duration: MOTION.FAST, delay: 0.04 },
+            },
+          }}
+          exit={reduce ? { opacity: 0 } : {
+            height: 0, opacity: 0,
+            transition: { height: { duration: MOTION.FAST, ease: EASE.OUT }, opacity: { duration: 0.08 } },
+          }}
+          style={{ overflow: "hidden" }}>
         <div className="px-3 py-2.5" style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
           <p className="text-[10.5px] font-semibold mb-1.5" style={{ color: "var(--text)" }}>
             Why isn't this being booked?
           </p>
           <div className="flex flex-wrap gap-1 mb-1.5">
-            {DISMISS_REASONS.map((r) => (
-              <button
+            {DISMISS_REASONS.map((r, i) => (
+              <motion.button
                 key={r}
                 type="button"
+                initial={reduce ? false : { opacity: 0, y: -3 }}
+                animate={{ opacity: 1, y: 0 }}
+                whileTap={reduce ? undefined : { scale: 0.95 }}
+                transition={{ duration: MOTION.FAST, ease: EASE.OUT, delay: reduce ? 0 : i * 0.025 }}
                 onClick={() => setReason(r)}
-                className="rounded-full px-2 py-0.5 text-[10px] transition-colors"
+                className="rounded-full px-2 py-0.5 text-[10px]"
                 style={{
                   background: reason === r ? "var(--green-subtle)" : "var(--surface)",
                   color:      reason === r ? "var(--green)" : "var(--text-muted)",
                   border:     `1px solid ${reason === r ? "transparent" : "var(--border)"}`,
+                  transition: reduce ? "none" : "background .12s, color .12s, border-color .12s",
                 }}
               >
                 {r}
-              </button>
+              </motion.button>
             ))}
           </div>
           <input
@@ -393,7 +440,9 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
             </p>
           )}
         </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Actions — suppressed in preview (the host owns the actions) */}
       {!preview && (
@@ -410,9 +459,15 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
 
         <div className="flex-1" />
 
+        {/* Every action gives way slightly under the press — the cheapest
+            possible signal that the click landed, before the card animates
+            out of the queue. */}
+        <AnimatePresence initial={false} mode="popLayout">
         {showReopen && (
-          <button
+          <motion.button
+            key="reopen"
             type="button"
+            {...actionMotion(reduce)}
             onClick={() => reopenMut.mutate()}
             disabled={busy}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50"
@@ -421,11 +476,13 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
           >
             <RotateCcw size={12} strokeWidth={2} />
             Reopen
-          </button>
+          </motion.button>
         )}
-        {showDismiss && (
-          <button
+        {showDismiss && !dismissing && (
+          <motion.button
+            key="dismiss"
             type="button"
+            {...actionMotion(reduce)}
             onClick={() => setDismissing(true)}
             disabled={busy}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50"
@@ -433,11 +490,13 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
           >
             <ThumbsDown size={12} strokeWidth={2} />
             Don't book
-          </button>
+          </motion.button>
         )}
         {showApprove && (
-          <button
+          <motion.button
+            key="approve"
             type="button"
+            {...actionMotion(reduce)}
             onClick={() => acceptMut.mutate()}
             disabled={busy}
             className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors disabled:opacity-50"
@@ -445,8 +504,9 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
           >
             <Check size={12} strokeWidth={2.6} />
             Approve
-          </button>
+          </motion.button>
         )}
+        </AnimatePresence>
       </div>
       )}
     </div>
