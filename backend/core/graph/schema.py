@@ -23,6 +23,11 @@ dual-write producers and any reader):
 
 Extending the graph = add a node type here and/or a RelationSpec (with its
 inverse). Keep it small and deliberate.
+
+Edges record what was DECIDED, not only what survived: a journal entry that was
+drafted and dismissed keeps its edges as `considered_for` rather than losing
+them. Deleting the rejected half would make the graph a record of outcomes
+instead of a record of judgement.
 """
 from dataclasses import dataclass
 
@@ -68,6 +73,18 @@ RELATIONS: dict[str, RelationSpec] = {
     ),
     "explained_by": RelationSpec(
         "explains", _t("reconciliation", "flux_variance", "finding"), _t("journal_entry"), "explained by"
+    ),
+    # A journal entry was DRAFTED for something and then not booked. The same
+    # endpoints as `explains`, deliberately: the difference is the outcome, not
+    # the subject. Kept rather than deleted because a graph that records only
+    # what survived cannot answer "what did we consider and reject?" — which is
+    # the question a reviewer, an examiner and the passed-adjustments schedule
+    # all ask. See modules/adjustments/service.sync_entry_graph.
+    "considered_for": RelationSpec(
+        "considered", _t("journal_entry"), _t("reconciliation", "flux_variance", "finding"), "was considered for"
+    ),
+    "considered": RelationSpec(
+        "considered_for", _t("reconciliation", "flux_variance", "finding"), _t("journal_entry"), "considered"
     ),
     # A journal entry touches an account.
     "affects": RelationSpec("affected_by", _t("journal_entry"), _t("account"), "affects"),

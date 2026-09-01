@@ -291,26 +291,84 @@ async def replace_open_proposals(
 # ── Knowledge graph: keep an entry's edges in sync with its lifecycle ──────
 
 
-async def sync_entry_graph(db: AsyncSession, entry: ProposedEntry, *, present: bool) -> None:
-    """Mirror an entry's *committed* state into the accounting knowledge graph.
+def blocks_self_approval(*, prepared_by, user_id, role: str) -> bool:
+    """Would approving this be the same person signing off their own work?
 
-    present=True (accepted / posted): the journal entry ``explains`` its
-    reconciliation (or, for flux, its variance) and ``affects`` each account it
-    touches. present=False (open / dismissed): those edges are removed. Keyed on
-    the entry id; accepted entries are sticky, so unlike open drafts these edges
-    don't churn. Best-effort — a graph failure never breaks the lifecycle
-    transition that called it.
+    Segregation of duties, as a rule that can be argued with rather than a
+    condition buried in a transition. Three ways it says no:
+
+      * Nobody prepared it. An untouched AI draft has no maker, and the control
+        exists to separate two humans — not to stop a reviewer approving the
+        machine's work, which would leave a solo firm unable to close.
+      * A different person prepared it. The normal path.
+      * The user is an admin. Master access for solo firms, mirroring the recon
+        subledger control.
+    """
+    if prepared_by is None or role == "admin":
+        return False
+    return prepared_by == user_id
+
+
+def entry_subject(entry: ProposedEntry):
+    """The close object this entry was drafted ABOUT, as a graph node.
+
+    ``source_ref`` means something different per producer, and the graph target
+    has to follow it. This used to be a two-branch guess — flux, else a
+    reconciliation — which quietly wrote a dangling edge for two of the five
+    producers: gl_accuracy's source_ref is a FINDING id and the assistant's is a
+    conversation thread id, and both were being pointed at a reconciliation node
+    that does not exist.
+
+    Returns None when the origin is not a close object the graph models. An
+    assistant-drafted entry is real and reviewable; it just has no subject to
+    link to, and inventing one is worse than leaving it out.
+    """
+    from core.graph import Node
+
+    ref = str(entry.source_ref or "")
+    if not ref:
+        return None
+    if entry.source == "flux":
+        return Node("flux_variance", ref)              # Variance.id
+    if entry.source == "gl_accuracy":
+        return Node("finding", ref)                    # GlAccuracyFinding.id
+    if entry.source in ("bank", "recon"):
+        # Reconciliation nodes are keyed (account, period) — see core/graph.
+        return Node("reconciliation", f"{ref}:{entry.period_end.isoformat()}")
+    return None                                        # assistant, and anything new
+
+
+async def sync_entry_graph(db: AsyncSession, entry: ProposedEntry) -> None:
+    """Mirror an entry's *committed decision* into the accounting knowledge graph.
+
+    Derived from ``entry.status`` rather than a flag the caller passes, so the
+    edges can never disagree with the row they describe:
+
+      accepted / posted  ``explains`` its subject, ``affects`` every account it
+                         touches — the entry is part of the books.
+      dismissed          ``considered_for`` its subject, and NO ``affects``
+                         edges. It was weighed against that reconciliation and
+                         rejected, so the first is true and the second is not.
+      open               no edges. Nothing has been decided, and open drafts are
+                         deleted and reinserted wholesale by
+                         replace_open_proposals — edges keyed on a churning id
+                         are the exact mistake the graph was built to avoid.
+
+    Dismissed entries used to be unlinked, which made the graph a record of
+    outcomes rather than of judgement: it could not answer "what did we consider
+    and not book?" — the question behind every passed-adjustments schedule.
+
+    Idempotent: clears both possible subject relations before writing, so any
+    transition lands on the right shape. Best-effort — a graph failure never
+    breaks the lifecycle transition that called it.
     """
     try:
         from core.db.base import tenant_scope
         from core.graph import Node, link, unlink
 
         je = Node("journal_entry", str(entry.id))
-        if entry.source == "flux":
-            rel, target = "explains", Node("flux_variance", str(entry.source_ref))
-        else:
-            rel = "explains"
-            target = Node("reconciliation", f"{entry.source_ref}:{entry.period_end.isoformat()}")
+        subject = entry_subject(entry)
+        actor = entry.approved_by or entry.prepared_by or entry.status_changed_by
 
         accounts: list[str] = []
         seen: set[str] = set()
@@ -320,18 +378,115 @@ async def sync_entry_graph(db: AsyncSession, entry: ProposedEntry, *, present: b
                 seen.add(qid)
                 accounts.append(str(qid))
 
+        booked = entry.status in ("accepted", "posted")
+        rejected = entry.status == "dismissed"
+
         with tenant_scope(entry.tenant_id):
-            if present:
-                await link(db, je, rel, target, origin="system", created_by=entry.status_changed_by)
-                for qid in accounts:
-                    await link(db, je, "affects", Node("account", qid),
-                               origin="system", created_by=entry.status_changed_by)
-            else:
-                await unlink(db, je, rel, target)
-                for qid in accounts:
-                    await unlink(db, je, "affects", Node("account", qid))
+            if subject is not None:
+                # Clear whichever verb no longer applies before writing.
+                await unlink(db, je, "explains", subject)
+                await unlink(db, je, "considered_for", subject)
+                if booked:
+                    await link(db, je, "explains", subject, origin="system", created_by=actor)
+                elif rejected:
+                    await link(db, je, "considered_for", subject, origin="system", created_by=actor)
+
+            for qid in accounts:
+                acct = Node("account", qid)
+                if booked:
+                    await link(db, je, "affects", acct, origin="system", created_by=actor)
+                else:
+                    await unlink(db, je, "affects", acct)
     except Exception:
         logger.exception("graph edge sync failed for proposed entry %s (non-fatal)", entry.id)
+
+
+# ── What an adjustment DOES to the financial statements ───────────────────
+
+# QBO's account_type vocabulary, grouped by where the account lands. The P&L
+# sets match modules/insights/service (INCOME_TYPES … OTHER_EXPENSE_TYPES); the
+# balance-sheet split is stated here because no other module needs it.
+_PL_TYPES = frozenset({
+    "Income", "Other Income", "Cost of Goods Sold", "Expense", "Other Expense",
+})
+_ASSET_TYPES = frozenset({
+    "Bank", "Accounts Receivable", "Other Current Asset", "Fixed Asset", "Other Asset",
+})
+_LIAB_EQUITY_TYPES = frozenset({
+    "Accounts Payable", "Credit Card", "Other Current Liability",
+    "Long Term Liability", "Equity",
+})
+_CASH_TYPES = frozenset({"Bank"})
+
+
+def net_effect(lines, *, type_by_account: dict[str, str]) -> dict:
+    """What these journal-entry lines do to the financial statements.
+
+    The first question any reviewer asks of an approved batch — "what does this
+    do to net income?" — answered from the lines themselves. Derived, never
+    stored: a saved total is a second source of truth that drifts away from the
+    lines it claims to summarise.
+
+    Signs. Every P&L account contributes ``credit - debit`` to net income, and
+    that is one rule, not two: a credit to Income raises revenue and a credit to
+    an Expense account reduces expense, and both raise net income by the same
+    arithmetic. Assets are debit-natural (``debit - credit``); liabilities and
+    equity are credit-natural (``credit - debit``).
+
+    Unmapped lines are COUNTED, never dropped. A line with no account id (a
+    placeholder the preparer hasn't filled in) or an account missing from the
+    period's chart cannot be classified, and silently omitting it would produce
+    a confident total that doesn't describe the entry. `complete` is the caller's
+    signal that the figures may be read as the whole story.
+    """
+    net_income = assets = liab_equity = cash = ZERO
+    unclassified = 0
+
+    for ln in lines or []:
+        debit = _q(ln.get("debit"))
+        credit = _q(ln.get("credit"))
+        if debit == ZERO and credit == ZERO:
+            continue
+        qid = ln.get("account_qbo_id")
+        atype = type_by_account.get(str(qid)) if qid else None
+        if atype is None:
+            unclassified += 1
+            continue
+        if atype in _PL_TYPES:
+            net_income += credit - debit
+        elif atype in _ASSET_TYPES:
+            assets += debit - credit
+            if atype in _CASH_TYPES:
+                cash += debit - credit
+        elif atype in _LIAB_EQUITY_TYPES:
+            liab_equity += credit - debit
+        else:
+            unclassified += 1
+
+    return {
+        "net_income": str(net_income),
+        "assets": str(assets),
+        "liabilities_equity": str(liab_equity),
+        "cash": str(cash),
+        "unclassified_lines": unclassified,
+        "complete": unclassified == 0,
+    }
+
+
+def combine_effects(effects: list[dict]) -> dict:
+    """Roll per-entry net effects into one. A batch is only `complete` when
+    every entry in it was."""
+    total = {"net_income": ZERO, "assets": ZERO, "liabilities_equity": ZERO, "cash": ZERO}
+    unclassified = 0
+    for e in effects:
+        for k in total:
+            total[k] += _q(e.get(k))
+        unclassified += int(e.get("unclassified_lines") or 0)
+    return {
+        **{k: str(v) for k, v in total.items()},
+        "unclassified_lines": unclassified,
+        "complete": unclassified == 0,
+    }
 
 
 # ── Bank: deterministic generation ────────────────────────────────────────
@@ -502,6 +657,12 @@ def serialize(entry: ProposedEntry) -> dict:
         "status_changed_at": entry.status_changed_at.isoformat() if entry.status_changed_at else None,
         "saved_at": entry.saved_at.isoformat() if entry.saved_at else None,
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        # Provenance the card shows without opening the full trace.
+        "dismiss_reason": entry.dismiss_reason,
+        "posted_qbo_doc": entry.posted_qbo_doc,
+        "posted_confirmed_at": (
+            entry.posted_confirmed_at.isoformat() if entry.posted_confirmed_at else None
+        ),
     }
 
 

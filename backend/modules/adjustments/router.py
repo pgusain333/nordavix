@@ -3,15 +3,23 @@ Adjustments API — review queue + actions for AI-proposed journal entries.
 
   GET    /adjustments                 list proposals (filter by period/source/status/source_ref)
   GET    /adjustments/accounts        chart of accounts for the JE-line editor
+  GET    /adjustments/net-effect      what a period's adjustments do to the statements
+  GET    /adjustments/{id}/trace      the full provenance of one entry
   POST   /adjustments/{id}/accept     reviewer approves the draft        (reviewer+)
   POST   /adjustments/{id}/reopen     pull an approved entry back to open (admin + reviewer)
-  POST   /adjustments/{id}/dismiss    reject / not applicable            (reviewer+)
+  POST   /adjustments/{id}/dismiss    reject, with a required reason     (reviewer+)
   POST   /adjustments/{id}/mark-posted  human booked it in QBO           (reviewer+)
   PATCH  /adjustments/{id}            edit lines/memo before accepting   (preparer+, open only)
 
 Backs both the inline proposed-entry cards (filtered by source_ref) and the
 consolidated review queue. We never write to QuickBooks — accept/post only
 record the review state; the human posts the entry.
+
+Every entry can account for itself: where it came from, what it is made of, who
+decided what and why, what supports it, and what changed as a result. Those are
+the five sections of /trace, and the columns behind them (prepared_by,
+approved_by, dismiss_reason, posted_qbo_doc) exist so the row can answer without
+anyone reconstructing it from memory.
 """
 import logging
 import uuid
@@ -27,6 +35,7 @@ from core.db.base import current_request_readonly
 from core.db.session import get_db
 from models.account import Account
 from models.account_review_status import AccountReviewStatus
+from models.audit_log import AuditLog
 from models.closed_period import ClosedPeriod
 from models.proposed_entry import ProposedEntry
 from models.qbo_connection import QboConnection
@@ -36,10 +45,14 @@ from models.variance import Variance
 from modules.adjustments.service import (
     VALID_SOURCES,
     VALID_STATUSES,
+    blocks_self_approval,
     build_qbo_je_csv,
     close_only,
+    combine_effects,
+    entry_subject,
     lines_balanced,
     match_entry_to_qbo,
+    net_effect,
     normalize_lines,
     period_accounts,
     serialize,
@@ -148,6 +161,7 @@ async def _transition(
     action: str,
     enforce_maker_checker: bool = False,
     clear_saved: bool = False,
+    reason: str | None = None,
 ) -> dict:
     entry = await _load(db, entry_id)
     if await _is_closed(db, tenant_id, entry.period_end):
@@ -165,15 +179,15 @@ async def _transition(
             status_code=409,
             detail="This entry is part of a saved batch and is locked — saved adjustments can't be dismissed.",
         )
-    # Maker/checker: the user who last prepared/edited this draft can't also be
-    # the one who signs it off. status_changed_by holds the last human to modify
-    # the entry (the edit endpoint stamps it too). Admins bypass — master access
-    # for solo firms — mirroring the recon subledger control.
-    if (
-        enforce_maker_checker
-        and user.role != "admin"
-        and entry.status_changed_by is not None
-        and entry.status_changed_by == user.id
+    # Maker/checker: the user who prepared/edited this draft can't also be the
+    # one who signs it off. Reads prepared_by, which ONLY the edit path writes —
+    # it used to read status_changed_by, which every transition also stamped, so
+    # approving an entry overwrote the very fact the control depends on and a
+    # reviewer who reopened an entry was then blocked from re-approving it.
+    # Admins bypass — master access for solo firms — mirroring the recon
+    # subledger control.
+    if enforce_maker_checker and blocks_self_approval(
+        prepared_by=entry.prepared_by, user_id=user.id, role=user.role,
     ):
         raise HTTPException(
             status_code=403,
@@ -193,6 +207,19 @@ async def _transition(
     entry.status = new_status
     entry.status_changed_at = datetime.now(UTC)
     entry.status_changed_by = user.id
+
+    # Who approved is its own fact, kept apart from who prepared. Reopening
+    # withdraws the approval, so the id goes with it — leaving it behind would
+    # let a re-approved entry cite a sign-off that no longer happened.
+    if new_status == "accepted":
+        entry.approved_by = user.id
+    elif new_status == "open":
+        entry.approved_by = None
+    if new_status == "dismissed":
+        entry.dismiss_reason = reason
+    elif new_status == "open":
+        entry.dismiss_reason = None      # reopened for another look
+
     await write_audit_event(
         db,
         tenant_id=tenant_id,
@@ -200,16 +227,17 @@ async def _transition(
         action=action,
         entity_type="proposed_entry",
         entity_id=entry.id,
-        metadata={"source": entry.source, "status_before": prev, "status_after": new_status},
+        metadata={
+            "source": entry.source, "status_before": prev, "status_after": new_status,
+            **({"reason": reason} if reason else {}),
+        },
     )
 
-    # Knowledge graph: an accepted/posted JE explains its recon/variance and
-    # affects its accounts; open/dismissed ones don't. Keeps edges in sync with
-    # the human's decision (best-effort; never blocks the transition).
-    if new_status in ("accepted", "posted"):
-        await sync_entry_graph(db, entry, present=True)
-    elif new_status in ("open", "dismissed"):
-        await sync_entry_graph(db, entry, present=False)
+    # Knowledge graph: derived from the status we just set, so the edges cannot
+    # disagree with the row. Dismissed entries KEEP a `considered_for` edge —
+    # what was weighed and rejected is part of the record (best-effort; never
+    # blocks the transition).
+    await sync_entry_graph(db, entry)
 
     await db.commit()
     await db.refresh(entry)
@@ -231,17 +259,39 @@ async def accept_proposal(
     )
 
 
+# Short enough not to be a chore, long enough that a stray keystroke isn't a
+# reason. Whether the words are any good is a human matter — the product's job
+# is to make sure the question was asked.
+MIN_DISMISS_REASON = 3
+
+
 @router.post("/{entry_id}/dismiss")
 async def dismiss_proposal(
     entry_id: str,
     tenant_id: CurrentTenantId,
     user: User = Depends(require_role("reviewer")),
+    payload: dict = Body(default_factory=dict),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Reject the draft (not applicable / wrong). Reviewer+ — killing a
-    proposed entry is a review decision, the mirror image of accepting it."""
+    proposed entry is a review decision, the mirror image of accepting it.
+
+    A reason is REQUIRED. A dismissed entry is a decision not to book something
+    the product found, and that decision outlives the person who made it: it is
+    what a reviewer re-reads, what the passed-adjustments schedule aggregates,
+    what an examiner asks about, and what Client Memory learns this firm's
+    conventions from. Without it the record says only that six things were
+    rejected, which is the same as saying nothing.
+    """
+    reason = str(payload.get("reason") or "").strip()[:500]
+    if len(reason) < MIN_DISMISS_REASON:
+        raise HTTPException(
+            status_code=422,
+            detail="Say why this entry isn't being booked — the reason is kept with the close record.",
+        )
     return await _transition(
-        db, tenant_id, user, entry_id, new_status="dismissed", action="adjustment.dismiss"
+        db, tenant_id, user, entry_id, new_status="dismissed",
+        action="adjustment.dismiss", reason=reason,
     )
 
 
@@ -328,10 +378,13 @@ async def edit_proposal(
     if "memo" in payload:
         entry.memo = (str(payload["memo"]).strip()[:500] or None) if payload["memo"] else None
 
-    # Record the last human to substantively modify this draft so the approval
-    # gate can enforce maker/checker (the editor can't self-approve). This field
-    # is not serialized to the client; the full audit trail is the event below.
-    entry.status_changed_by = user.id
+    # Record the human who prepared this draft so the approval gate can enforce
+    # maker/checker (the editor can't self-approve). Its own column: writing it
+    # to status_changed_by meant the next transition erased it. An untouched AI
+    # draft leaves prepared_by NULL and stays approvable by anyone — the control
+    # exists to separate two humans, not to block a reviewer from the machine's
+    # work. The full history is the audit event below.
+    entry.prepared_by = user.id
 
     await write_audit_event(
         db,
@@ -394,6 +447,259 @@ async def edit_proposal(
             await db.rollback()
 
     return result
+
+
+# ── Provenance: what an adjustment does, and where it came from ───────────
+
+
+# audit action → what a person did, in words. Unknown actions fall back to the
+# de-prefixed verb rather than being hidden: a trail that silently omits events
+# it doesn't recognise is worse than one that prints an ugly label.
+_DECISION_LABEL = {
+    "adjustment.edit":            "Edited",
+    "adjustment.accept":          "Approved",
+    "adjustment.dismiss":         "Not booked",
+    "adjustment.posted":          "Marked posted",
+    "adjustment.reopen":          "Reopened for another look",
+    "adjustment.detected_posted": "Found in QuickBooks",
+    "adjustment.save":            "Locked into the saved batch",
+}
+
+
+async def _display_names(db: AsyncSession, ids: set[uuid.UUID]) -> dict[str, str]:
+    """user_id → display name. Clerk profile when available, email otherwise —
+    the same resolution the audit trail uses. A trace names a handful of people,
+    so this stays a plain loop."""
+    if not ids:
+        return {}
+    from core.auth.clerk_users import _format_display_name, get_clerk_user
+
+    users = list((await db.execute(select(User).where(User.id.in_(list(ids))))).scalars().all())
+    out: dict[str, str] = {}
+    for u in users:
+        name = u.email
+        if u.clerk_user_id:
+            try:
+                clerk = await get_clerk_user(u.clerk_user_id)
+                if clerk:
+                    name = _format_display_name(clerk) or u.email
+            except Exception:
+                logger.debug("clerk lookup failed for %s", u.clerk_user_id, exc_info=True)
+        out[str(u.id)] = name
+    return out
+
+
+async def _subject_label(db: AsyncSession, entry: ProposedEntry, accounts: list[dict]) -> dict | None:
+    """The close object this entry was drafted about, named in English.
+
+    Mirrors service.entry_subject — that function decides WHICH object, this one
+    says what it is. Returns None for producers with no close-object subject
+    (the assistant), rather than a placeholder that implies a link exists.
+    """
+    node = entry_subject(entry)
+    if node is None:
+        return None
+    label = None
+    if entry.source == "flux":
+        try:
+            v = (await db.execute(
+                select(Variance).where(Variance.id == uuid.UUID(entry.source_ref))
+            )).scalar_one_or_none()
+            if v is not None:
+                acct = (await db.execute(
+                    select(Account).where(Account.id == v.account_id)
+                )).scalar_one_or_none()
+                name = acct.account_name if acct else "an account"
+                label = f"{name} — variance of {float(v.dollar_variance):,.2f}"
+        except (ValueError, TypeError):
+            pass
+    elif entry.source == "gl_accuracy":
+        try:
+            from models.gl_accuracy_finding import GlAccuracyFinding
+            f = (await db.execute(
+                select(GlAccuracyFinding).where(GlAccuracyFinding.id == uuid.UUID(entry.source_ref))
+            )).scalar_one_or_none()
+            if f is not None:
+                label = f.title or f"{f.vendor} — {f.posted_account_name or 'posted account'}"
+        except (ValueError, TypeError):
+            pass
+    else:
+        match = next((a for a in accounts if a.get("qbo_account_id") == entry.source_ref), None)
+        if match:
+            label = f"{match.get('account_name')} reconciliation"
+
+    return {
+        "type": node.type,
+        "id": node.id,
+        # Naming a subject we couldn't load would assert a link that may not
+        # resolve; say so instead.
+        "label": label or "No longer available",
+        "resolved": label is not None,
+    }
+
+
+@router.get("/net-effect")
+async def period_net_effect(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """What this period's adjustments do to the financial statements.
+
+    Split by outcome, because the two halves answer different questions. What
+    is BOOKED (accepted + posted) is the difference between the GL and the
+    financials you will hand over. What was PASSED (dismissed) is the
+    uncorrected-difference schedule an auditor keeps by hand: each item was
+    immaterial on its own, and the only way to know whether they matter is to
+    add them up. Three passed items at $340, $290 and $410 are $1,040.
+    """
+    pe = _parse_period(period_end)
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
+
+    rows = (await db.execute(
+        close_only(select(ProposedEntry).where(ProposedEntry.period_end == pe))
+    )).scalars().all()
+    accounts = await period_accounts(db, tenant_id, pe)
+    type_by_account = {
+        a["qbo_account_id"]: a.get("account_type") or ""
+        for a in accounts if a.get("qbo_account_id")
+    }
+
+    def _roll(subset):
+        return combine_effects([
+            net_effect(r.lines, type_by_account=type_by_account) for r in subset
+        ])
+
+    booked = [r for r in rows if r.status in ("accepted", "posted")]
+    passed = [r for r in rows if r.status == "dismissed"]
+    return {
+        "period_end": pe.isoformat(),
+        "booked": {"count": len(booked), **_roll(booked)},
+        "passed": {
+            "count": len(passed),
+            **_roll(passed),
+            # A passed item with no recorded reason is the gap this schedule
+            # exists to close; surfacing the count keeps it visible.
+            "without_reason": sum(1 for r in passed if not (r.dismiss_reason or "").strip()),
+        },
+        "open_count": sum(1 for r in rows if r.status == "open"),
+    }
+
+
+@router.get("/{entry_id}/trace")
+async def entry_trace(
+    entry_id: str,
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Everything behind one adjusting entry, in five answers.
+
+      origin    what produced this, and from what
+      basis     the lines it is made of, against real accounts
+      decisions who did what, when, and why
+      support   what justifies it
+      effect    what changed because of it
+
+    The same five questions every close object should answer. This is a READ of
+    facts already stored — the audit log, the row's own stamps, the graph, the
+    chart of accounts — assembled in one place rather than a second copy of
+    them, so it cannot drift from what it describes.
+    """
+    entry = await _load(db, entry_id)
+    accounts = await period_accounts(db, tenant_id, entry.period_end)
+    by_qbo = {a["qbo_account_id"]: a for a in accounts if a.get("qbo_account_id")}
+    type_by_account = {k: (v.get("account_type") or "") for k, v in by_qbo.items()}
+
+    # ── decisions ────────────────────────────────────────────────────────
+    events = (await db.execute(
+        select(AuditLog)
+        .where(AuditLog.entity_type == "proposed_entry", AuditLog.entity_id == entry.id)
+        .order_by(AuditLog.created_at.asc())
+    )).scalars().all()
+    names = await _display_names(
+        db,
+        {e.user_id for e in events if e.user_id}
+        | {x for x in (entry.prepared_by, entry.approved_by, entry.created_by) if x},
+    )
+    decisions = [
+        {
+            "at": e.created_at.isoformat() if e.created_at else None,
+            "action": e.action,
+            "label": _DECISION_LABEL.get(e.action, e.action.split(".")[-1].replace("_", " ").capitalize()),
+            "by": names.get(str(e.user_id)) if e.user_id else "Nordavix",
+            "reason": (e.event_data or {}).get("reason"),
+        }
+        for e in events
+    ]
+
+    # ── support ──────────────────────────────────────────────────────────
+    # The offset convention this entry's account pairing would draw on. Looked
+    # up the same way the producers do, so what the trace shows is what the
+    # product would actually apply.
+    memory_fact = None
+    try:
+        fact = await memory.active_offset_fact(
+            db, source=entry.source, source_ref=entry.source_ref,
+        )
+        if fact is not None:
+            memory_fact = {"id": str(fact.id), "title": fact.title, "kind": fact.kind}
+    except Exception:
+        logger.debug("memory lookup failed for entry %s", entry.id, exc_info=True)
+
+    # ── effect ───────────────────────────────────────────────────────────
+    edges: list[dict] = []
+    try:
+        from core.db.base import tenant_scope
+        from core.graph import Node, neighbors
+
+        with tenant_scope(entry.tenant_id):
+            for n in await neighbors(db, Node("journal_entry", str(entry.id))):
+                edges.append({"relation": n.relation, "type": n.node.type, "id": n.node.id})
+    except Exception:
+        logger.debug("graph read failed for entry %s", entry.id, exc_info=True)
+
+    return {
+        "id": str(entry.id),
+        "origin": {
+            "source": entry.source,
+            "drafted_by": names.get(str(entry.created_by)) if entry.created_by else "Nordavix",
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+            "confidence": entry.confidence,
+            "rationale": entry.rationale,
+            "subject": await _subject_label(db, entry, accounts),
+        },
+        "basis": {
+            "period_end": entry.period_end.isoformat(),
+            "lines": [
+                {
+                    **ln,
+                    "account_type": type_by_account.get(str(ln.get("account_qbo_id")))
+                    if ln.get("account_qbo_id") else None,
+                    "known_account": str(ln.get("account_qbo_id")) in by_qbo
+                    if ln.get("account_qbo_id") else False,
+                }
+                for ln in (entry.lines or [])
+            ],
+        },
+        "decisions": decisions,
+        "prepared_by": names.get(str(entry.prepared_by)) if entry.prepared_by else None,
+        "approved_by": names.get(str(entry.approved_by)) if entry.approved_by else None,
+        "dismiss_reason": entry.dismiss_reason,
+        "support": {"rationale": entry.rationale, "memory_fact": memory_fact},
+        "effect": {
+            **net_effect(entry.lines, type_by_account=type_by_account),
+            # Only a BOOKED entry moves the statements. Showing the arithmetic
+            # for a draft or a passed item as though it had landed is the
+            # difference between "what this would do" and "what happened".
+            "applied": entry.status in ("accepted", "posted"),
+            "posted_qbo_doc": entry.posted_qbo_doc,
+            "posted_confirmed_at": (
+                entry.posted_confirmed_at.isoformat() if entry.posted_confirmed_at else None
+            ),
+            "edges": edges,
+        },
+    }
 
 
 # ── Save batch + QBO CSV export ───────────────────────────────────────────
@@ -665,6 +971,16 @@ async def check_posted(
     for e in saved:
         doc = match_entry_to_qbo(e, qbo_jes)
         found = doc is not None
+        if found:
+            # Keep the proof, not just the verdict. This is an OBSERVATION —
+            # we read QuickBooks and found the entry — which is a different and
+            # stronger fact than a human ticking "I posted it" via mark-posted,
+            # so it gets its own columns and mark-posted never fills them.
+            # It used to be returned to the browser and stored nowhere, which
+            # left the most defensible fact in this module living in component
+            # state until the period dropdown changed.
+            e.posted_qbo_doc = str(doc)[:100]
+            e.posted_confirmed_at = now
         if found and e.status != "posted":
             e.status = "posted"
             e.status_changed_at = now
@@ -678,11 +994,12 @@ async def check_posted(
                 entity_id=e.id,
                 metadata={"qbo_doc": doc},
             )
+            await sync_entry_graph(db, e)
         results.append({
             "id": str(e.id),
             "description": e.description,
             "posted": found or e.status == "posted",
-            "qbo_doc": doc,
+            "qbo_doc": doc or e.posted_qbo_doc,
         })
 
     all_posted = bool(results) and all(r["posted"] for r in results)

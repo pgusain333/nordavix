@@ -23,11 +23,19 @@ Sources (where the draft came from):
 Lifecycle:
   open       — fresh draft, awaiting review
   accepted   — a reviewer approved it as the right entry to post
-  posted     — the human booked it in QBO and marked it done
-  dismissed  — rejected / not applicable
+  posted     — the entry is in QBO (asserted by a human, or observed by the
+               posting check — see posted_qbo_doc)
+  dismissed  — rejected / not applicable, with a required reason
 A reviewer/admin can reopen an `accepted` entry back to `open` (to change an
 account, then re-approve) — even after it's been saved, which pulls it back
 out of the saved batch.
+
+Provenance. Every entry answers five questions, and the columns exist so that
+it can: where it came from (source / source_ref), what it was computed from
+(lines), who decided what and why (prepared_by, approved_by, dismiss_reason,
+plus the audit log), what supports it (rationale, the Client Memory fact its
+edit taught), and what it changed (posted_qbo_doc, the graph edges, and the
+net effect derived from lines). See modules/adjustments/router.entry_trace.
 
 Idempotency: regenerating the source (re-run AI, re-pull bank GL) replaces
 only the OPEN proposals for a given (tenant_id, source, source_ref,
@@ -79,7 +87,24 @@ class ProposedEntry(TenantBase):
     # open | accepted | posted | dismissed
     status:            Mapped[str] = mapped_column(String(20), nullable=False, default="open", index=True)
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The last human to touch the row, in any way. Kept for continuity, but it
+    # is NOT the maker/checker input any more — see prepared_by below.
     status_changed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
+    # Why the reviewer chose not to book it. Required on dismiss: a passed
+    # adjustment with no reason cannot be reviewed, cannot be defended to an
+    # examiner, and teaches Client Memory nothing.
+    dismiss_reason: Mapped[str | None] = mapped_column(String(500))
+
+    # ── Who prepared, who approved ──────────────────────────────────────
+    # These were one column (status_changed_by), which meant the row could not
+    # say who prepared an entry once a reviewer had approved it — the approver's
+    # id overwrote the preparer's. The maker/checker gate READ that column, so
+    # the control's own action destroyed the control's input: a reviewer who
+    # reopened an entry could no longer re-approve it, and after any transition
+    # "who made this" survived only in the audit log.
+    prepared_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
     # ── Saved batch ─────────────────────────────────────────────────────
     # Stamped when a fully-approved period is "Saved": the entry is locked
@@ -87,6 +112,18 @@ class ProposedEntry(TenantBase):
     # check. NULL = not yet saved. See modules/adjustments (save_batch).
     saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     saved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
+    # ── Posting confirmation ────────────────────────────────────────────
+    # Stamped when check_posted MATCHES this entry against a real journal entry
+    # in QuickBooks: the doc number it was found as, and when we confirmed it.
+    # Previously the match result was returned to the browser and never stored,
+    # so the most audit-valuable fact in this module ("this adjustment is in the
+    # books, as JE-1043, confirmed on 16 Aug") lived in React state until the
+    # user changed the period dropdown. `mark-posted` leaves these NULL — that
+    # is a human's assertion, not an observation, and the two are not the same
+    # evidence.
+    posted_qbo_doc:      Mapped[str | None] = mapped_column(String(100))
+    posted_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # ── Audit ───────────────────────────────────────────────────────────
     # NULL = system / AI generated (deterministic bank, agentic AI runs)

@@ -44,6 +44,22 @@ const CONFIDENCE: Record<string, { label: string; bg: string; color: string }> =
   low:    { label: "Low confidence",    bg: "var(--surface-2)",           color: "var(--text-muted)" },
 }
 
+/** Matches the server's floor. Short enough not to be a chore, long enough
+ *  that a stray keystroke isn't a reason. */
+const MIN_REASON = 3
+
+/** The reasons a proposed entry actually gets passed on, offered as one tap.
+ *  They are a starting point, not a closed list — the field stays editable,
+ *  because "below materiality" and "below materiality, but watch it next month"
+ *  are different records. */
+const DISMISS_REASONS = [
+  "Below materiality",
+  "Already booked in QuickBooks",
+  "Client will correct at source",
+  "Treatment is correct as posted",
+  "Duplicate of another entry",
+]
+
 const STATUS_BADGE: Record<string, { label: string; bg: string; color: string }> = {
   accepted:  { label: "Approved", bg: "var(--green-subtle)",  color: "var(--green)" },
   posted:    { label: "Posted",   bg: "rgba(60, 90, 118,0.10)", color: "#3c5a76" },
@@ -71,9 +87,16 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
     mutationFn: () => adjustmentsApi.accept(entry.id),
     ...optimisticAdjust(qc, (e) => e.id === entry.id, { status: "accepted" }),
   })
+  // Dismiss takes a reason and the server refuses a blank one. A decision not
+  // to book something the product found outlives whoever made it: it is what
+  // the passed-adjustments total is built from, what a reviewer re-reads, and
+  // what an examiner asks about.
+  const [dismissing, setDismissing] = useState(false)
+  const [reason, setReason] = useState("")
   const dismissMut = useMutation({
-    mutationFn: () => adjustmentsApi.dismiss(entry.id),
+    mutationFn: (why: string) => adjustmentsApi.dismiss(entry.id, why),
     ...optimisticAdjust(qc, (e) => e.id === entry.id, { status: "dismissed" }),
+    onSuccess: () => { setDismissing(false); setReason("") },
   })
   // Reopen → Open tab. Un-approves an accepted entry so its accounts can be
   // re-pointed, then re-approved. Works even on a saved entry — reopening pulls
@@ -297,6 +320,81 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
         </div>
       )}
 
+      {/* Why it wasn't booked — the record, once the decision is made. */}
+      {entry.status === "dismissed" && entry.dismiss_reason && (
+        <div className="px-3 py-2" style={{ borderTop: "1px solid var(--border)" }}>
+          <p className="text-[10px] leading-snug" style={{ color: "var(--text-2)" }}>
+            <span className="font-semibold">Not booked — </span>{entry.dismiss_reason}
+          </p>
+        </div>
+      )}
+
+      {/* Asking why, before it's gone. Inline rather than a modal: the entry
+          being judged stays on screen while the reason is written. */}
+      {dismissing && !preview && (
+        <div className="px-3 py-2.5" style={{ borderTop: "1px solid var(--border)", background: "var(--surface-2)" }}>
+          <p className="text-[10.5px] font-semibold mb-1.5" style={{ color: "var(--text)" }}>
+            Why isn't this being booked?
+          </p>
+          <div className="flex flex-wrap gap-1 mb-1.5">
+            {DISMISS_REASONS.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setReason(r)}
+                className="rounded-full px-2 py-0.5 text-[10px] transition-colors"
+                style={{
+                  background: reason === r ? "var(--green-subtle)" : "var(--surface)",
+                  color:      reason === r ? "var(--green)" : "var(--text-muted)",
+                  border:     `1px solid ${reason === r ? "transparent" : "var(--border)"}`,
+                }}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <input
+            autoFocus
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") { setDismissing(false); setReason("") }
+              if (e.key === "Enter" && reason.trim().length >= MIN_REASON) dismissMut.mutate(reason.trim())
+            }}
+            placeholder="Or write your own — this is kept with the close record"
+            maxLength={500}
+            className="w-full rounded-lg px-2.5 py-1.5 text-[11.5px] outline-none"
+            style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", color: "var(--text)" }}
+          />
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              type="button"
+              onClick={() => { setDismissing(false); setReason("") }}
+              className="rounded-md px-2 py-1 text-[11px] font-semibold"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Cancel
+            </button>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={() => dismissMut.mutate(reason.trim())}
+              disabled={reason.trim().length < MIN_REASON || dismissMut.isPending}
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors disabled:opacity-40"
+              style={{ background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border-strong)" }}
+            >
+              <ThumbsDown size={12} strokeWidth={2.2} />
+              {dismissMut.isPending ? "Recording…" : "Don't book it"}
+            </button>
+          </div>
+          {dismissMut.isError && (
+            <p className="text-[10px] mt-1.5" style={{ color: "#8a6326" }}>
+              Couldn't record that — try again.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Actions — suppressed in preview (the host owns the actions) */}
       {!preview && (
       <div className="px-3 py-2 flex items-center gap-2 flex-wrap" style={{ borderTop: "1px solid var(--border)" }}>
@@ -328,13 +426,13 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
         {showDismiss && (
           <button
             type="button"
-            onClick={() => dismissMut.mutate()}
+            onClick={() => setDismissing(true)}
             disabled={busy}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50"
             style={{ background: "transparent", color: "var(--text-muted)" }}
           >
             <ThumbsDown size={12} strokeWidth={2} />
-            Dismiss
+            Don't book
           </button>
         )}
         {showApprove && (

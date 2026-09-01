@@ -18,7 +18,7 @@ import { formatDate } from "@/core/lib/dates"
 import { workspaceApi } from "@/modules/workspace/api"
 import { adjustmentsApi, type AdjustmentStatus, type CheckPostedResult, type ProposedEntry, type ProposedEntryList } from "../api"
 import { ProposedEntryCard } from "../components/ProposedEntryCard"
-import { RelatedPanel } from "@/modules/graph/RelatedPanel"
+import { EntryTrace } from "../components/EntryTrace"
 import { patchAdjustments } from "../optimistic"
 
 const SOURCE_META: Record<string, { label: string; hint: string }> = {
@@ -286,6 +286,9 @@ export function AdjustmentsPage() {
           </div>
         )}
 
+        {/* What this period's adjustments do to the statements */}
+        {period && <NetEffectStrip periodEnd={period} />}
+
         {/* Posting-check result */}
         {period && checkResult && checkResult.period_end === period && (
           <div className="rounded-xl p-3"
@@ -411,43 +414,146 @@ export function AdjustmentsPage() {
   )
 }
 
-// ── One queue row: the entry card + a lazy "Related" disclosure ──────────────
-// The graph panel mounts only when opened, and only for accepted/posted entries
-// (open/dismissed drafts have no edges yet — a JE's edges are written on accept).
+// ── What the period's adjustments do to the financial statements ─────────────
+//
+// Two halves that answer different questions. BOOKED is the difference between
+// the general ledger and the financials you will hand over — the first thing a
+// reviewer asks of an approved batch and, until now, a figure nobody could see
+// without re-adding the entries by hand.
+//
+// PASSED is the uncorrected-difference schedule an auditor keeps on paper. Each
+// item was immaterial on its own — that is why it was passed — so the only way
+// to know whether they matter is to total them. Three at $340, $290 and $410
+// are $1,040, and no close product has ever added them up.
+function NetEffectStrip({ periodEnd }: { periodEnd: string }) {
+  const { data } = useQuery({
+    queryKey: ["adjustments", "net-effect", periodEnd],
+    queryFn:  () => adjustmentsApi.netEffect(periodEnd),
+    staleTime: 15_000,
+  })
+  if (!data) return null
+  const { booked, passed } = data
+  if (booked.count === 0 && passed.count === 0) return null
+
+  const n = (s: string) => parseFloat(s) || 0
+  const money = (s: string) => {
+    const v = n(s)
+    return `${v < 0 ? "−" : v > 0 ? "+" : ""}$${Math.abs(v).toLocaleString(undefined, {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    })}`
+  }
+  const moves: [string, string][] = ([
+    ["Net income", booked.net_income],
+    ["Assets", booked.assets],
+    ["Liabilities & equity", booked.liabilities_equity],
+  ] as [string, string][]).filter(([, v]) => n(v) !== 0)
+
+  return (
+    <div className="rounded-xl px-3.5 py-3"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+          Booked
+        </span>
+        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+          {booked.count} {booked.count === 1 ? "entry" : "entries"}
+        </span>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 ml-auto">
+          {moves.length === 0 ? (
+            <span className="text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+              No net movement
+            </span>
+          ) : moves.map(([label, v]) => (
+            <span key={label} className="text-[11.5px]">
+              <span style={{ color: "var(--text-muted)" }}>{label}</span>{" "}
+              <span className="font-semibold tabular-nums text-theme">{money(v)}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {!booked.complete && (
+        <p className="text-[10.5px] mt-1.5 flex items-start gap-1.5" style={{ color: "#8a6326" }}>
+          <AlertCircle size={11} strokeWidth={2} className="shrink-0 mt-0.5" />
+          {booked.unclassified_lines} line{booked.unclassified_lines === 1 ? "" : "s"} couldn't
+          be matched to an account in this period's chart, so this is part of the movement,
+          not all of it.
+        </p>
+      )}
+
+      {passed.count > 0 && (
+        <div className="mt-2.5 pt-2.5" style={{ borderTop: "1px solid var(--border)" }}>
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Passed
+            </span>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              {passed.count} not booked
+            </span>
+            <span className="text-[11.5px] ml-auto">
+              <span style={{ color: "var(--text-muted)" }}>Would have moved net income</span>{" "}
+              <span className="font-semibold tabular-nums text-theme">{money(passed.net_income)}</span>
+            </span>
+          </div>
+          {!passed.complete && (
+            <p className="text-[10.5px] mt-1" style={{ color: "#8a6326" }}>
+              {passed.unclassified_lines} line{passed.unclassified_lines === 1 ? "" : "s"} here
+              couldn't be classified, so the real total is larger than this.
+            </p>
+          )}
+          {passed.without_reason > 0 && (
+            <p className="text-[10.5px] mt-1" style={{ color: "#8a6326" }}>
+              {passed.without_reason} of these {passed.without_reason === 1 ? "has" : "have"} no
+              recorded reason — they were passed before Nordavix asked for one.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ── One queue row: the entry card + a lazy provenance disclosure ─────────────
+//
+// The trail mounts only when opened, and for EVERY status. It used to be a
+// "Related" graph panel gated on accepted/posted, which meant the two entries a
+// reviewer most needs to account for — an open draft and one that was passed —
+// were the two that could explain nothing about themselves.
 function EntryRow({ entry, canReview, canEdit }: {
   entry:     ProposedEntry
   canReview: boolean
   canEdit:   boolean
 }) {
-  const [showRelated, setShowRelated] = useState(false)
-  const hasGraph = entry.status === "accepted" || entry.status === "posted"
+  const [showTrail, setShowTrail] = useState(false)
   return (
     <div>
       <div className="flex items-center gap-1.5 mb-1 text-[10px] uppercase tracking-wide"
         style={{ color: "var(--text-muted)" }}>
         <span>Period {formatDate(entry.period_end)}</span>
+        {entry.posted_qbo_doc && (
+          <span className="inline-flex items-center gap-1 normal-case" style={{ color: "var(--green)" }}>
+            <CheckCircle2 size={10} strokeWidth={2.4} />
+            In QuickBooks as {entry.posted_qbo_doc}
+          </span>
+        )}
       </div>
       <ProposedEntryCard entry={entry} canReview={canReview} canEdit={canEdit} />
-      {hasGraph && (
-        <>
-          <button
-            type="button"
-            onClick={() => setShowRelated((v) => !v)}
-            className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium transition-opacity hover:opacity-80"
-            style={{ color: "var(--text-muted)" }}
-          >
-            <Network size={12} strokeWidth={2} />
-            {showRelated ? "Hide related" : "Related"}
-            <ChevronDown size={12} strokeWidth={2}
-              style={{ transform: showRelated ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
-          </button>
-          {showRelated && (
-            <div className="mt-2 rounded-xl p-3"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              <RelatedPanel nodeType="journal_entry" nodeId={entry.id} periodEnd={entry.period_end} />
-            </div>
-          )}
-        </>
+      <button
+        type="button"
+        onClick={() => setShowTrail((v) => !v)}
+        className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium transition-opacity hover:opacity-80"
+        style={{ color: "var(--text-muted)" }}
+      >
+        <Network size={12} strokeWidth={2} />
+        {showTrail ? "Hide trail" : "Where this came from"}
+        <ChevronDown size={12} strokeWidth={2}
+          style={{ transform: showTrail ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+      </button>
+      {showTrail && (
+        <div className="mt-2">
+          <EntryTrace entryId={entry.id} />
+        </div>
       )}
     </div>
   )

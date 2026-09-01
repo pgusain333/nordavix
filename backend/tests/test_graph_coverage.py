@@ -1,6 +1,6 @@
 """The graph must not promise connections the product never makes.
 
-`core/graph/schema.py` is a controlled vocabulary — ten node types and fourteen
+`core/graph/schema.py` is a controlled vocabulary — ten node types and sixteen
 relations, validated on every write. That discipline is what stops the
 relationships table filling with junk. It also creates a quieter failure: a node
 type or a relation can sit in the schema, fully specified and reviewed, with
