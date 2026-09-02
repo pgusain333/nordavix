@@ -1,5 +1,5 @@
 /**
- * "With and without" — the financial statements as they are, and as these
+ * Effect on the financials — the statements as they are, and as these
  * adjustments will leave them.
  *
  * The point of an adjustment is to change the statements. The queue showed a
@@ -10,9 +10,12 @@
  * Three things it will not do, because a rail that flatters is worse than no
  * rail at all:
  *
- *   It labels the P&L as YEAR TO DATE, because that is what the GL snapshot
- *   holds — the trial balance behind it starts at 1 January. A monthly heading
- *   over a YTD number is the entire class of bug this module keeps producing.
+ *   It names the P&L's basis, always. The GL snapshot holds YEAR TO DATE
+ *   figures (its trial balance starts at 1 January), so "month" is that
+ *   differenced against the prior month — and when the prior month has never
+ *   been synced there is nothing to difference, so the lines come back empty
+ *   and say why. A monthly heading over a YTD number is the entire class of
+ *   bug this module keeps producing.
  *
  *   It will not add an entry that QuickBooks already contains, and when it
  *   cannot tell — an entry confirmed posted after the snapshot was taken — it
@@ -30,6 +33,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { AlertCircle, RefreshCw } from "lucide-react"
 
 import { MOTION, EASE } from "@/core/motion"
+import { formatDate } from "@/core/lib/dates"
 import { adjustmentsApi, EFFECT_LINES, type EffectLine } from "../api"
 
 /** Materiality for evaluating what was passed. A firm-level setting one day;
@@ -41,16 +45,22 @@ const LABEL: Record<EffectLine, string> = {
   cogs:               "Cost of revenue",
   gross_profit:       "Gross profit",
   opex:               "Operating expenses",
+  operating_income:   "Operating income",
+  other_income:       "Other income",
+  other_expense:      "Other expense",
   net_income:         "Net income",
   assets:             "Total assets",
   liabilities_equity: "Liabilities & equity",
 }
-const SUBTOTAL: EffectLine[] = ["gross_profit"]
+const SUBTOTAL: EffectLine[] = ["gross_profit", "operating_income"]
 const TOTAL: EffectLine[] = ["net_income"]
 /** Where the income statement ends and the balance sheet begins. */
 const BALANCE_SHEET_FROM: EffectLine = "assets"
+/** Point-in-time under every basis — a balance is not period activity, so
+ *  these two lines don't change when the P&L basis does. */
+const POINT_IN_TIME: EffectLine[] = ["assets", "liabilities_equity"]
 
-const n = (s: string | undefined) => Number.parseFloat(s ?? "0") || 0
+const n = (s: string | null | undefined) => Number.parseFloat(s ?? "0") || 0
 const money = (v: number) =>
   Math.round(Math.abs(v)).toLocaleString(undefined, { maximumFractionDigits: 0 })
 const signed = (v: number) =>
@@ -64,10 +74,13 @@ export function StatementRail({ periodEnd, onTrace }: {
 }) {
   const reduce = useReducedMotion()
   const [lit, setLit] = useState<EffectLine | null>(null)
+  // The month being closed is what a reviewer working it is asking about, so
+  // that's the default. Year to date is one click away for the wider picture.
+  const [basis, setBasis] = useState<"month" | "ytd">("month")
 
   const { data } = useQuery({
-    queryKey: ["adjustments", "net-effect", periodEnd],
-    queryFn:  () => adjustmentsApi.netEffect(periodEnd),
+    queryKey: ["adjustments", "net-effect", periodEnd, basis],
+    queryFn:  () => adjustmentsApi.netEffect(periodEnd, basis),
     staleTime: 15_000,
   })
 
@@ -95,11 +108,39 @@ export function StatementRail({ periodEnd, onTrace }: {
         style={{ background: "var(--surface)", border: "1px solid var(--border)",
                  boxShadow: "var(--card-shadow)" }}>
         <div className="px-3.5 pt-3 pb-2">
-          <h3 className="text-[13px] font-semibold text-theme">With and without</h3>
+          <div className="flex items-start gap-2">
+            <h3 className="text-[13px] font-semibold text-theme flex-1 min-w-0">
+              Effect on the financials
+            </h3>
+            {/* Which P&L basis. The balance sheet is unaffected either way, so
+                the control sits with the heading rather than over the table. */}
+            <div className="inline-flex rounded-lg overflow-hidden shrink-0"
+              style={{ border: "1px solid var(--border-strong)" }}>
+              {(["month", "ytd"] as const).map((b) => (
+                <button key={b} type="button" onClick={() => setBasis(b)}
+                  aria-pressed={basis === b}
+                  className="px-2 py-0.5 text-[10px] font-bold"
+                  style={{
+                    background: basis === b ? "var(--green-subtle)" : "var(--surface)",
+                    color:      basis === b ? "var(--green)" : "var(--text-muted)",
+                    transition: reduce ? "none" : "background .14s, color .14s",
+                  }}>
+                  {b === "month" ? "Month" : "YTD"}
+                </button>
+              ))}
+            </div>
+          </div>
           <p className="text-[10.5px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            {baseline
-              ? <>Profit &amp; loss is <b>year to date</b>; balance sheet is at {periodEnd}.</>
-              : "This period hasn't been synced from QuickBooks yet."}
+            {!baseline
+              ? "This period hasn't been synced from QuickBooks yet."
+              : baseline.pl_basis === "unavailable"
+                ? <>Profit &amp; loss can't be shown for the month — {
+                    baseline.prior_period_end
+                      ? <>{formatDate(baseline.prior_period_end)} hasn't been synced, so there's nothing to measure this month against.</>
+                      : <>the prior month hasn't been synced.</>}</>
+                : baseline.pl_basis === "month"
+                  ? <>Profit &amp; loss is <b>this month only</b>; balance sheet is at {formatDate(periodEnd)}.</>
+                  : <>Profit &amp; loss is <b>year to date</b>; balance sheet is at {formatDate(periodEnd)}.</>}
           </p>
         </div>
 
@@ -122,12 +163,19 @@ export function StatementRail({ periodEnd, onTrace }: {
                 </thead>
                 <tbody>
                   {EFFECT_LINES.map((line) => {
+                    // A P&L line with no basis to stand on comes back null.
+                    // Rendering it as 0 would put a figure on a statement that
+                    // nobody computed — the exact failure the "unavailable"
+                    // basis exists to avoid.
+                    // A P&L line with no basis to stand on comes back null;
+                    // the balance sheet is point-in-time and always present.
+                    const missing = baseline[line] == null && !POINT_IN_TIME.includes(line)
                     const before = n(baseline[line])
                     const after = n(adjusted[line])
                     const delta = after - before
                     const isTotal = TOTAL.includes(line)
                     const isSub = SUBTOTAL.includes(line)
-                    const movers = contributors?.[line] ?? []
+                    const movers = missing ? [] : (contributors?.[line] ?? [])
                     return (
                       <tr key={line}>
                         <td className="px-2 py-1 whitespace-nowrap"
@@ -151,7 +199,7 @@ export function StatementRail({ periodEnd, onTrace }: {
                                 ? "2px solid var(--border-strong)"
                                 : isSub ? "1px solid var(--border)" : undefined,
                             }}>
-                            {money(v)}
+                            {missing ? <span style={{ color: "var(--text-muted)" }}>—</span> : money(v)}
                           </td>
                         ))}
                         <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap"
@@ -178,7 +226,7 @@ export function StatementRail({ periodEnd, onTrace }: {
                                 : delta > 0 ? "var(--green)" : "#A0503F",
                               transition: reduce ? "none" : "background .14s",
                             }}>
-                            {signed(delta)}
+                            {missing ? "—" : signed(delta)}
                           </button>
                         </td>
                       </tr>

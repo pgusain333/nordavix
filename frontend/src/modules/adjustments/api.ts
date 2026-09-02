@@ -76,19 +76,29 @@ export interface NetEffect {
   complete:           boolean
 }
 
-/** The statement lines the rail shows, in reading order. */
+/** The statement lines the rail shows, in the order a P&L is read. */
 export const EFFECT_LINES = [
-  "revenue", "cogs", "gross_profit", "opex", "net_income",
+  "revenue", "cogs", "gross_profit", "opex", "operating_income",
+  "other_income", "other_expense", "net_income",
   "assets", "liabilities_equity",
 ] as const
 export type EffectLine = (typeof EFFECT_LINES)[number]
 
-/** The GL as last read from QuickBooks. `pl_basis` is "ytd" — the trial
- *  balance behind the snapshot starts at 1 January, so the P&L figures are
- *  year to date and the UI must say so. The balance sheet is point-in-time. */
-export type StatementTotals = Record<EffectLine, string> & {
-  captured_at: string | null
-  pl_basis:    "ytd"
+/** Which basis the P&L figures are on.
+ *  - "month" — this month's own activity
+ *  - "ytd"   — year to date through the period end
+ *  - "unavailable" — month was asked for but the prior month isn't synced, so
+ *    there is nothing to difference against. The figures come back null rather
+ *    than falling back to YTD under a monthly heading. */
+export type PlBasis = "month" | "ytd" | "unavailable"
+
+/** The GL as last read from QuickBooks. P&L lines are null when
+ *  `pl_basis === "unavailable"`. The balance sheet is point-in-time under
+ *  every basis — a balance is not period activity. */
+export type StatementTotals = Record<EffectLine, string | null> & {
+  captured_at:      string | null
+  pl_basis:         PlBasis
+  prior_period_end: string | null
 }
 
 export interface PeriodNetEffect {
@@ -96,7 +106,7 @@ export interface PeriodNetEffect {
   /** null when the period has never been synced — an unsynced period and an
    *  empty one are different answers. */
   baseline:   StatementTotals | null
-  adjusted:   Record<EffectLine, string> | null
+  adjusted:   Record<EffectLine, string | null> | null
   /** Only the entries not already inside the baseline. */
   applied:    NetEffect & { count: number }
   /** Booked, confirmed in QBO before the snapshot — already in the baseline. */
@@ -296,10 +306,11 @@ async function trace(id: string): Promise<EntryTrace> {
 }
 
 /** What this period's adjustments do to the statements — split into what was
- *  booked and what was passed. */
-async function netEffect(periodEnd: string): Promise<PeriodNetEffect> {
+ *  booked and what was passed. `basis` defaults to the month being closed,
+ *  which is what a reviewer working that month is actually asking about. */
+async function netEffect(periodEnd: string, basis: "month" | "ytd" = "month"): Promise<PeriodNetEffect> {
   const { data } = await apiClient.get<PeriodNetEffect>("/api/adjustments/net-effect", {
-    params: { period_end: periodEnd },
+    params: { period_end: periodEnd, basis },
   })
   return data
 }

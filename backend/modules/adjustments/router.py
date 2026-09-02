@@ -44,6 +44,7 @@ from models.trial_balance import TrialBalance
 from models.user import User
 from models.variance import Variance
 from modules.adjustments.service import (
+    EFFECT_LINES,
     VALID_SOURCES,
     VALID_STATUSES,
     baseline_disposition,
@@ -544,6 +545,7 @@ async def _subject_label(db: AsyncSession, entry: ProposedEntry, accounts: list[
 async def period_net_effect(
     tenant_id: CurrentTenantId,
     period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    basis: str = Query("month", description="month | ytd — the P&L basis"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """What this period's adjustments do to the financial statements.
@@ -578,7 +580,9 @@ async def period_net_effect(
     passed = [r for r in rows if r.status == "dismissed"]
 
     from modules.financials.internal import statement_totals
-    baseline = await statement_totals(db, tenant_id, pe)
+    baseline = await statement_totals(
+        db, tenant_id, pe, basis="month" if basis == "month" else "ytd",
+    )
 
     # ── Which booked entries are NOT already in that baseline ────────────
     # The snapshot is a read of QuickBooks. An entry the user has posted there
@@ -605,32 +609,43 @@ async def period_net_effect(
             stale += 1
 
     applied = combine_effects([_eff(r) for r in apply_to_baseline])
+    # `cash` is a component of assets, not a statement line of its own.
+    STATEMENT_LINES = tuple(k for k in EFFECT_LINES if k != "cash")
+
     adjusted = None
     if baseline is not None:
         adjusted = {
-            k: str(Decimal(str(baseline[k])) + Decimal(applied[k]))
-            for k in ("revenue", "cogs", "gross_profit", "opex", "net_income",
-                      "assets", "liabilities_equity")
+            # A None baseline line (month basis with no prior snapshot) has no
+            # adjusted value either — adding to an unknown gives an unknown,
+            # and rendering the delta alone as though it were the figure would
+            # be the same lie in a different place.
+            k: (None if baseline.get(k) is None
+                else str(Decimal(str(baseline[k])) + Decimal(applied[k])))
+            for k in STATEMENT_LINES
         }
 
     # Which entries move each line — the click target in the rail.
-    contributors: dict[str, list[str]] = {}
-    for line in ("revenue", "cogs", "gross_profit", "opex", "net_income",
-                 "assets", "liabilities_equity"):
-        contributors[line] = [
+    contributors: dict[str, list[str]] = {
+        line: [
             str(r.id) for r in apply_to_baseline
             if Decimal(_eff(r)[line]) != Decimal("0")
         ]
+        for line in STATEMENT_LINES
+    }
 
     return {
         "period_end": pe.isoformat(),
         "baseline": (
-            {**{k: str(v) for k, v in baseline.items() if k not in ("captured_at", "pl_basis")},
+            {**{k: (None if v is None else str(v))
+                for k, v in baseline.items()
+                if k not in ("captured_at", "pl_basis", "prior_period_end")},
              "captured_at": captured.isoformat() if captured else None,
-             # P&L rows in the snapshot are YEAR TO DATE, not the month — the
-             # trial balance behind them starts at 1 January. The rail has to
-             # say so; a monthly label over a YTD number is the whole bug.
-             "pl_basis": baseline["pl_basis"]}
+             # "month" | "ytd" | "unavailable". The snapshot's P&L rows are
+             # year to date; month differences them against the prior month,
+             # and says "unavailable" rather than serving a YTD figure under a
+             # monthly heading when that prior month isn't synced.
+             "pl_basis": baseline["pl_basis"],
+             "prior_period_end": baseline.get("prior_period_end")}
             if baseline else None
         ),
         "adjusted": adjusted,

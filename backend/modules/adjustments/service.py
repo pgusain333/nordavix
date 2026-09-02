@@ -437,10 +437,17 @@ async def sync_entry_graph(db: AsyncSession, entry: ProposedEntry) -> None:
 # QBO's account_type vocabulary, grouped by where the account lands. The P&L
 # sets match modules/insights/service (INCOME_TYPES … OTHER_EXPENSE_TYPES); the
 # balance-sheet split is stated here because no other module needs it.
-_INCOME_TYPES = frozenset({"Income", "Other Income"})
+# Split the way a P&L is actually read: operating income and expense are
+# separated from the "other" lines that sit below operating income, so the
+# statement can foot Revenue → Gross profit → Operating income → Net income
+# rather than collapsing everything into one revenue and one expense figure.
+_INCOME_TYPES = frozenset({"Income"})
+_OTHER_INCOME_TYPES = frozenset({"Other Income"})
 _COGS_TYPES = frozenset({"Cost of Goods Sold"})
-_OPEX_TYPES = frozenset({"Expense", "Other Expense"})
-_PL_TYPES = _INCOME_TYPES | _COGS_TYPES | _OPEX_TYPES
+_OPEX_TYPES = frozenset({"Expense"})
+_OTHER_EXPENSE_TYPES = frozenset({"Other Expense"})
+_PL_TYPES = (_INCOME_TYPES | _OTHER_INCOME_TYPES | _COGS_TYPES
+             | _OPEX_TYPES | _OTHER_EXPENSE_TYPES)
 _ASSET_TYPES = frozenset({
     "Bank", "Accounts Receivable", "Other Current Asset", "Fixed Asset", "Other Asset",
 })
@@ -471,7 +478,8 @@ def net_effect(lines, *, type_by_account: dict[str, str]) -> dict:
     a confident total that doesn't describe the entry. `complete` is the caller's
     signal that the figures may be read as the whole story.
     """
-    revenue = cogs = opex = assets = liab_equity = cash = ZERO
+    revenue = other_income = cogs = opex = other_expense = ZERO
+    assets = liab_equity = cash = ZERO
     unclassified = 0
 
     for ln in lines or []:
@@ -488,10 +496,14 @@ def net_effect(lines, *, type_by_account: dict[str, str]) -> dict:
         # deltas can be added straight onto a statement figure.
         if atype in _INCOME_TYPES:
             revenue += credit - debit
+        elif atype in _OTHER_INCOME_TYPES:
+            other_income += credit - debit
         elif atype in _COGS_TYPES:
             cogs += debit - credit
         elif atype in _OPEX_TYPES:
             opex += debit - credit
+        elif atype in _OTHER_EXPENSE_TYPES:
+            other_expense += debit - credit
         elif atype in _ASSET_TYPES:
             assets += debit - credit
             if atype in _CASH_TYPES:
@@ -501,14 +513,22 @@ def net_effect(lines, *, type_by_account: dict[str, str]) -> dict:
         else:
             unclassified += 1
 
+    # Subtotals are DERIVED from the lines above them, never accumulated
+    # alongside, so a statement cannot foot to something its own totals
+    # disagree with. This is the order a P&L is read in.
+    gross_profit = revenue - cogs
+    operating_income = gross_profit - opex
+    net_income = operating_income + other_income - other_expense
+
     return {
         "revenue": str(revenue),
         "cogs": str(cogs),
-        "gross_profit": str(revenue - cogs),
+        "gross_profit": str(gross_profit),
         "opex": str(opex),
-        # Derived from the three lines above rather than accumulated separately,
-        # so the statement cannot foot to something the net income disagrees with.
-        "net_income": str(revenue - cogs - opex),
+        "operating_income": str(operating_income),
+        "other_income": str(other_income),
+        "other_expense": str(other_expense),
+        "net_income": str(net_income),
         "assets": str(assets),
         "liabilities_equity": str(liab_equity),
         "cash": str(cash),
@@ -517,8 +537,10 @@ def net_effect(lines, *, type_by_account: dict[str, str]) -> dict:
     }
 
 
-# The statement lines the rail shows, and which are summed vs derived.
-EFFECT_LINES = ("revenue", "cogs", "gross_profit", "opex", "net_income",
+# Every statement line the rail can show, in reading order. Subtotals included:
+# they roll up across a batch the same way the lines they derive from do.
+EFFECT_LINES = ("revenue", "cogs", "gross_profit", "opex", "operating_income",
+                "other_income", "other_expense", "net_income",
                 "assets", "liabilities_equity", "cash")
 
 

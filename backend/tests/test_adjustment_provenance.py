@@ -320,6 +320,46 @@ def test_the_balance_sheet_still_ties_with_the_finer_lines():
     assert D(e["assets"]) == D(e["liabilities_equity"]) + D(e["net_income"])
 
 
+def test_the_pl_foots_in_the_order_it_is_read():
+    """Revenue − COGS = gross profit; − opex = operating income; + other income
+    − other expense = net income. Every subtotal is DERIVED from the lines above
+    it, so a statement cannot foot to something its own totals disagree with."""
+    types = {**TYPES, "9": "Cost of Goods Sold", "10": "Other Income", "11": "Other Expense"}
+    e = net_effect(
+        [line(SALES, credit="1000.00"), line("9", debit="300.00"),
+         line(RENT, debit="200.00"), line("10", credit="50.00"),
+         line("11", debit="25.00"), line(AR, debit="475.00")],
+        type_by_account=types,
+    )
+    assert D(e["gross_profit"]) == D(e["revenue"]) - D(e["cogs"])
+    assert D(e["operating_income"]) == D(e["gross_profit"]) - D(e["opex"])
+    assert D(e["net_income"]) == (
+        D(e["operating_income"]) + D(e["other_income"]) - D(e["other_expense"])
+    )
+    assert D(e["net_income"]) == D("525.00")
+
+
+def test_other_income_sits_below_operating_income_not_in_revenue():
+    """Interest income is not revenue. Folding it into the top line would
+    overstate the business's actual sales — and it used to, because Income and
+    Other Income shared a bucket."""
+    e = net_effect([line("10", credit="500.00"), line(CASH, debit="500.00")],
+                   type_by_account={**TYPES, "10": "Other Income"})
+    assert D(e["revenue"]) == D("0.00")
+    assert D(e["other_income"]) == D("500.00")
+    assert D(e["operating_income"]) == D("0.00")
+    assert D(e["net_income"]) == D("500.00")
+
+
+def test_other_expense_sits_below_operating_income_too():
+    """Interest paid is not an operating cost."""
+    e = net_effect([line("11", debit="120.00"), line(CASH, credit="120.00")],
+                   type_by_account={**TYPES, "11": "Other Expense"})
+    assert D(e["opex"]) == D("0.00")
+    assert D(e["operating_income"]) == D("0.00")
+    assert D(e["net_income"]) == D("-120.00")
+
+
 def test_gross_profit_rolls_up_across_a_batch():
     a = effect(line(SALES, credit="500.00"), line(AR, debit="500.00"))
     b = net_effect([line("9", debit="200.00"), line(AP, credit="200.00")],

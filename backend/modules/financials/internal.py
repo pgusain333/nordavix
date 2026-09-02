@@ -359,8 +359,15 @@ def _compute_net_income(rows: list[GlBalanceSnapshot]) -> Decimal:
     return income + other_inc - cogs - expense - other_exp
 
 
+def _prior_month_end(period_end: date) -> date:
+    """The last day of the month before this one."""
+    first = date(period_end.year, period_end.month, 1)
+    prior = first - timedelta(days=1)
+    return prior
+
+
 async def statement_totals(
-    db: AsyncSession, tenant_id: uuid.UUID, period_end: date,
+    db: AsyncSession, tenant_id: uuid.UUID, period_end: date, *, basis: str = "ytd",
 ) -> dict | None:
     """The period's statement lines as single figures, presented-positive.
 
@@ -370,12 +377,20 @@ async def statement_totals(
     Income Statement two clicks away. That is the whole reason this lives here
     rather than in the module that wanted it.
 
-    IMPORTANT — the P&L figures are YEAR TO DATE, not the month. The snapshot's
-    trial balance is pulled with start_date = 1 January of the period_end's
-    year (see core/gl_snapshot), so P&L rows carry YTD activity while balance
-    sheet rows are point-in-time. Callers must label it as such. Presenting
-    these as a month would be a figure that looks authoritative while its basis
-    is silently different.
+    The snapshot's trial balance is pulled with start_date = 1 January of the
+    period_end's year (see core/gl_snapshot), so its P&L rows carry YEAR TO
+    DATE activity while balance sheet rows are point-in-time.
+
+    basis="month" differences that against the prior month's snapshot to get
+    the month's own activity. When the prior snapshot is missing the P&L lines
+    come back None and `pl_basis` says "unavailable" — the earlier version of
+    this idea returned the YTD figure under a monthly heading whenever a prior
+    month hadn't been synced, which is the failure this whole module keeps
+    circling: a number that looks authoritative while its basis is silently
+    different. January needs no prior: its YTD and its month are the same.
+
+    Balance-sheet lines are point-in-time under BOTH bases and are never
+    differenced — "total assets for the month of June" is not a quantity.
 
     Returns None when the period has no snapshot — an empty statement and an
     unsynced one are not the same answer.
@@ -384,27 +399,50 @@ async def statement_totals(
     if not rows:
         return None
 
-    revenue      = _presented_sum(rows, _INCOME_TYPES)
-    other_income = _presented_sum(rows, _OTHER_INCOME_TYPES)
-    cogs         = _presented_sum(rows, _COGS_TYPES)
-    opex         = _presented_sum(rows, _EXPENSE_TYPES)
-    other_exp    = _presented_sum(rows, _OTHER_EXPENSE_TYPES)
-    captured = [r.captured_at for r in rows if getattr(r, "captured_at", None)]
+    def _pl(rs) -> dict:
+        revenue = _presented_sum(rs, _INCOME_TYPES)
+        cogs    = _presented_sum(rs, _COGS_TYPES)
+        opex    = _presented_sum(rs, _EXPENSE_TYPES)
+        gross   = revenue - cogs
+        return {
+            "revenue": revenue, "cogs": cogs, "gross_profit": gross,
+            "opex": opex, "operating_income": gross - opex,
+            "other_income":  _presented_sum(rs, _OTHER_INCOME_TYPES),
+            "other_expense": _presented_sum(rs, _OTHER_EXPENSE_TYPES),
+            "net_income":    _compute_net_income(rs),
+        }
 
+    pl = _pl(rows)
+    pl_basis = "ytd"
+
+    if basis == "month":
+        # January's year-to-date IS January, so it needs no prior month.
+        if period_end.month == 1:
+            pl_basis = "month"
+        else:
+            prior_rows = await _load_snapshot(db, tenant_id, _prior_month_end(period_end))
+            if prior_rows:
+                prior = _pl(prior_rows)
+                pl = {k: v - prior[k] for k, v in pl.items()}
+                pl_basis = "month"
+            else:
+                # Refuse rather than hand back a YTD figure under a monthly
+                # heading. The caller renders the gap and says why.
+                pl = dict.fromkeys(pl, None)
+                pl_basis = "unavailable"
+
+    captured = [r.captured_at for r in rows if getattr(r, "captured_at", None)]
     return {
-        "revenue":            revenue,
-        "other_income":       other_income,
-        "cogs":               cogs,
-        "gross_profit":       revenue - cogs,
-        "opex":               opex,
-        "other_expense":      other_exp,
-        "net_income":         _compute_net_income(rows),
+        **pl,
+        # Point-in-time under both bases — a balance is not period activity.
         "assets":             _presented_sum(rows, _ASSET_TYPES),
         "liabilities_equity": (_presented_sum(rows, _LIABILITY_TYPES)
                                + _presented_sum(rows, _EQUITY_TYPES)),
         # What the caller is standing on, so the UI can say which read this was.
         "captured_at":        max(captured) if captured else None,
-        "pl_basis":           "ytd",
+        "pl_basis":           pl_basis,
+        "prior_period_end":   (None if period_end.month == 1
+                               else _prior_month_end(period_end).isoformat()),
     }
 
 
