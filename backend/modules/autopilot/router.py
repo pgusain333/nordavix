@@ -160,14 +160,23 @@ async def put_config(
     config.pbc_recipient_email = (body.pbc_recipient_email or "").strip().lower() or None
     config.run_review          = body.run_review
     config.attach_reports      = body.attach_reports
-    config.continuous_enabled  = body.continuous_enabled
-    config.check_hour          = body.check_hour
-    config.continuous_email    = body.continuous_email
-    config.updated_by          = user.id
-
+    # Stamp when the WHEN changes — the hour or the zone, not the other
+    # toggles. The daily guard discards scheduled checks older than this, so a
+    # new time takes effect today rather than waiting until tomorrow because
+    # the old time had already run. Turning continuous close ON counts too: a
+    # workspace that enables it at lunchtime should be checked at its chosen
+    # hour today, not skipped because some earlier scan happened to succeed.
     # The timezone lives on the tenant. Rejected rather than silently coerced:
     # a workspace that thinks it is checking at 9am local and is actually on UTC
-    # is the exact failure this feature cannot afford.
+    # is the exact failure this feature cannot afford. Read BEFORE the write so
+    # the schedule-moved test below can see what it was.
+    tenant_row = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    tz_before = tenant_row.timezone if tenant_row is not None else None
+    tz_after = tz_before
+
     if body.timezone is not None:
         tz = body.timezone.strip()
         if tz:
@@ -179,12 +188,22 @@ async def put_config(
                     status_code=400,
                     detail=f"'{tz}' isn't a recognised timezone. Use an IANA name like America/New_York.",
                 )
-        tenant_row = (await db.execute(
-            select(Tenant).where(Tenant.id == tenant_id),
-            execution_options={"skip_tenant_filter": True},
-        )).scalar_one_or_none()
+        tz_after = tz or None
         if tenant_row is not None:
-            tenant_row.timezone = tz or None
+            tenant_row.timezone = tz_after
+
+    schedule_moved = (
+        config.check_hour != body.check_hour
+        or tz_before != tz_after
+        or (body.continuous_enabled and not config.continuous_enabled)
+    )
+
+    config.continuous_enabled  = body.continuous_enabled
+    config.check_hour          = body.check_hour
+    config.continuous_email    = body.continuous_email
+    config.updated_by          = user.id
+    if schedule_moved:
+        config.schedule_changed_at = datetime.now(UTC)
     await write_audit_event(
         db, tenant_id=tenant_id, user_id=user.id,
         action="autopilot.config_updated", entity_type="workspace", entity_id=None,

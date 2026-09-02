@@ -51,6 +51,14 @@ class AutopilotConfig(TenantBase):
     continuous_email: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false",
     )
+    # When the WHEN last changed — the hour or the timezone, not the other
+    # settings. The daily guard discards scheduled checks older than this, so
+    # moving the check from 10:00 to 14:00 at lunchtime runs at 14:00 today
+    # instead of silently waiting until tomorrow because 10:00 had already gone.
+    # See modules/gl_accuracy/schedule.effective_last_scan.
+    schedule_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
     # Optional step toggles. Sync + agentic preparer are the core and always
     # run when enabled; these gate the AI-spend / outward-facing extras.
     run_flux: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

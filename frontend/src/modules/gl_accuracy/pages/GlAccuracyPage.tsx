@@ -20,7 +20,7 @@ import { Button, Spinner } from "@/core/ui/components"
 import { SkeletonPage } from "@/core/ui/Skeleton"
 import { formatDate } from "@/core/lib/dates"
 import { useSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
-import { TZ_GROUPS, browserZone, isListedZone, timeInZone, zoneLabel } from "@/core/lib/timezones"
+import { TZ_GROUPS, browserZone, hourInYourZone, isListedZone, timeInZone, zoneLabel } from "@/core/lib/timezones"
 import { closeApi } from "@/modules/close/api"
 import { workspaceApi } from "@/modules/workspace/api"
 import { ProposedEntryCard } from "@/modules/adjustments/components/ProposedEntryCard"
@@ -41,6 +41,16 @@ import { autopilotApi, type AutopilotState } from "@/modules/autopilot/api"
  *
  *  The config is Autopilot's row (one automation config per workspace); this is
  *  just the surface for the part of it that belongs beside the findings. */
+/** "Saved 12:04" in the reader's own clock, or nothing when never saved. */
+function savedAtLabel(iso: string | null | undefined): string {
+  if (!iso) return ""
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  return `Saved ${d.toLocaleString(undefined, {
+    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+  })}`
+}
+
 function ContinuousSettings() {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -48,8 +58,15 @@ function ContinuousSettings() {
     queryKey: ["autopilot"], queryFn: autopilotApi.getState, staleTime: 5 * 60_000,
   })
   const cfg = state?.config
+  // ── Draft state, saved on demand ──────────────────────────────────────
+  // Every control used to PUT the whole config the instant it moved: four
+  // separate writes, each racing the GET that was still in flight, and a
+  // timezone dropdown that committed a zone the moment it was scrolled past.
+  // A schedule is a set of choices that only make sense together — an hour and
+  // a zone are one decision — so they are held here and written once.
   const [hour, setHour] = useState<number | null>(null)
   const [tz, setTz] = useState<string | null>(null)
+  const [mail, setMail] = useState<boolean | null>(null)
   // Set when the API accepted the save but plainly didn't understand it. See
   // the onSuccess guard — this is the "your backend is behind" case, which
   // otherwise looks exactly like a broken checkbox.
@@ -155,6 +172,22 @@ function ContinuousSettings() {
   // Wait for the query, but not for a row to exist.
   if (!state) return null
   const on = base.continuous_enabled
+  const effMail = mail ?? !!base.continuous_email
+
+  // Nothing to save until something actually differs from what's stored.
+  const dirty =
+    effHour !== (base.check_hour ?? 9)
+    || effTz !== (base.timezone ?? browserTz)
+    || effMail !== !!base.continuous_email
+
+  // The saved schedule, in the user's own clock as well as the workspace's.
+  // "09:00" is unambiguous only when those two are the same zone — a firm in
+  // Mumbai keeping books on New York time reads 09:00 and pictures morning.
+  const savedTz = base.timezone ?? browserTz
+  const savedTzSuffix = savedTz === browserTz ? "" : ` ${zoneLabel(savedTz)}`
+  const yourTime = savedTz === browserTz
+    ? null
+    : hourInYourZone(base.check_hour ?? 9, savedTz, browserTz)
 
   return (
     <div className="mb-4">
@@ -163,7 +196,9 @@ function ContinuousSettings() {
         style={{ color: "var(--text-muted)" }}>
         <Settings size={12} strokeWidth={2} />
         {on
-          ? `Checking daily at ${String(effHour).padStart(2, "0")}:00${base.continuous_email ? " · emailing" : ""}`
+          ? `Checking daily at ${String(base.check_hour ?? 9).padStart(2, "0")}:00${savedTzSuffix}`
+            + (yourTime ? ` · ${yourTime} your time` : "")
+            + (base.continuous_email ? " · emailing" : "")
           : "Set up daily checks"}
         <ChevronDown size={12} strokeWidth={2.2}
           style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease" }} />
@@ -197,7 +232,7 @@ function ContinuousSettings() {
                 <span className="block text-[10px] font-bold uppercase tracking-wider mb-1"
                   style={{ color: "var(--text-muted)" }}>Check at</span>
                 <select value={effHour}
-                  onChange={(e) => { const h = Number(e.target.value); setHour(h); save.mutate({ h }) }}
+                  onChange={(e) => setHour(Number(e.target.value))}
                   className="w-full rounded-lg px-2 py-1.5 text-[12.5px] outline-none"
                   style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}>
                   {Array.from({ length: 24 }, (_, h) => (
@@ -209,7 +244,7 @@ function ContinuousSettings() {
                 <span className="block text-[10px] font-bold uppercase tracking-wider mb-1"
                   style={{ color: "var(--text-muted)" }}>Timezone</span>
                 <select value={effTz}
-                  onChange={(e) => { const z = e.target.value; setTz(z); save.mutate({ z }) }}
+                  onChange={(e) => setTz(e.target.value)}
                   className="w-full rounded-lg px-2 py-1.5 text-[12.5px] outline-none"
                   style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}>
                   {/* The browser's own zone first, and included even when the
@@ -235,6 +270,16 @@ function ContinuousSettings() {
                     ? <>It&apos;s {timeInZone(effTz)} there now · {effTz}</>
                     : effTz}
                 </span>
+                {/* The hour chosen, translated to the reader's own clock. A
+                    firm in Mumbai keeping books on New York time picks 09:00
+                    and pictures morning; without this line nothing on screen
+                    says it lands at 18:30 where they are. */}
+                {effTz !== browserTz && hourInYourZone(effHour, effTz, browserTz) && (
+                  <span className="block text-[10.5px] mt-0.5" style={{ color: "var(--text-2)" }}>
+                    That&apos;s <b>{hourInYourZone(effHour, effTz, browserTz)}</b> your time
+                    ({zoneLabel(browserTz)}).
+                  </span>
+                )}
               </label>
             </div>
           )}
@@ -242,8 +287,8 @@ function ContinuousSettings() {
           {on && (
             <label className="flex items-start gap-2.5 cursor-pointer pt-1"
               style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-              <input type="checkbox" checked={!!base.continuous_email} className="mt-0.5"
-                onChange={(e) => save.mutate({ mail: e.target.checked })} />
+              <input type="checkbox" checked={effMail} className="mt-0.5"
+                onChange={(e) => setMail(e.target.checked)} />
               <span className="min-w-0">
                 <span className="block text-[13px] font-semibold text-theme">
                   Email me when something new is caught
@@ -266,6 +311,46 @@ function ContinuousSettings() {
           ) : apiBehind ? (
             <p className="text-[11.5px]" style={{ color: "var(--warn)" }}>{apiBehind}</p>
           ) : null}
+
+          {/* One explicit save for the whole schedule. The on/off switch above
+              still writes immediately — it is a single decision with nothing to
+              coordinate — but the hour, the zone and the email opt-in are one
+              choice and are committed together. */}
+          {on && (
+            <div className="flex items-center gap-2 pt-1"
+              style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+              <span className="text-[10.5px] min-w-0" style={{ color: "var(--text-muted)" }}>
+                {save.isPending ? "Saving…"
+                  : dirty ? "Unsaved changes"
+                  : savedAtLabel(base.updated_at)}
+              </span>
+              <div className="flex-1" />
+              {dirty && (
+                <button type="button"
+                  onClick={() => { setHour(null); setTz(null); setMail(null) }}
+                  className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold"
+                  style={{ color: "var(--text-muted)" }}>
+                  Discard
+                </button>
+              )}
+              <button type="button"
+                disabled={!dirty || save.isPending}
+                onClick={() => save.mutate({ h: effHour, z: effTz, mail: effMail })}
+                className="rounded-lg px-3 py-1.5 text-[11px] font-bold disabled:opacity-40"
+                style={{ background: "var(--green)", color: "white" }}>
+                {save.isPending ? "Saving…" : "Save schedule"}
+              </button>
+            </div>
+          )}
+          {/* Changing the time re-opens today. Said plainly, because the old
+              behaviour — a new time doing nothing until tomorrow — was
+              indistinguishable from the feature being broken. */}
+          {on && dirty && effHour !== (base.check_hour ?? 9) && (
+            <p className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+              Saving a new time checks these books again today, even if today&apos;s
+              check has already run.
+            </p>
+          )}
         </div>
       )}
     </div>

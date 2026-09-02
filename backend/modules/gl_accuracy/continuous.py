@@ -119,6 +119,7 @@ async def run_continuous_sweep(now_utc: datetime | None = None) -> dict:
                 if not is_due(
                     timezone=tenant.timezone,
                     check_hour=cfg.check_hour,
+                    schedule_changed_at=cfg.schedule_changed_at,
                     last_ok_scan_at=last_ok,
                     now_utc=now,
                 ):

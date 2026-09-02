@@ -349,3 +349,92 @@ def test_the_run_time_is_never_more_than_an_hour_after_the_chosen_hour():
         local = local_now(due, IST)
         # Either the chosen hour, or the catch-up window it legitimately lands in.
         assert 11 <= local.hour <= 11 + 3, f"{h}Z -> {local}"
+
+
+# ── Changing the time takes effect today, not tomorrow ────────────────────
+#
+# The once-a-day guard is what makes the hourly sweep idempotent, and it is
+# right. But it had no idea when the SCHEDULE last changed, so moving the check
+# from 10:00 to 14:00 at lunchtime did nothing until the next day: the 10:00 run
+# had already happened, the guard read "checked today", and 14:00 was skipped.
+# From the outside that is indistinguishable from the feature being broken.
+
+from zoneinfo import ZoneInfo
+
+from modules.gl_accuracy.schedule import effective_last_scan
+
+NY = "America/New_York"
+
+
+def _utc(y, m, d, h, mi=0):
+    return datetime(y, m, d, h, mi, tzinfo=UTC)
+
+
+def test_a_scan_from_before_the_change_stops_counting():
+    ran   = _utc(2026, 9, 1, 14, 0)     # 10:00 New York
+    moved = _utc(2026, 9, 1, 16, 0)     # user edits the time at 12:00 NY
+    assert effective_last_scan(ran, moved) is None
+
+
+def test_a_scan_after_the_change_still_counts():
+    moved = _utc(2026, 9, 1, 14, 0)
+    ran   = _utc(2026, 9, 1, 18, 0)
+    assert effective_last_scan(ran, moved) == ran
+
+
+def test_a_scan_at_the_exact_moment_of_the_change_counts():
+    """Only STRICTLY earlier runs are discarded — a tie is not evidence that
+    the check predated the schedule."""
+    t = _utc(2026, 9, 1, 14, 0)
+    assert effective_last_scan(t, t) == t
+
+
+def test_a_workspace_that_never_changed_its_schedule_is_unaffected():
+    """NULL for every existing row, which must read as 'never changed' rather
+    than 'changed at the beginning of time' — the latter would discard every
+    scan ever and re-check every workspace on deploy."""
+    ran = _utc(2026, 9, 1, 14, 0)
+    assert effective_last_scan(ran, None) == ran
+
+
+def test_no_scan_stays_no_scan():
+    assert effective_last_scan(None, _utc(2026, 9, 1, 14, 0)) is None
+
+
+def test_moving_the_hour_forward_makes_today_due_again():
+    """THE WHOLE POINT. 10:00 already ran; the user moves the check to 14:00 at
+    noon. At 14:00 the same day it must fire."""
+    ran_at_ten = _utc(2026, 9, 1, 14, 0)          # 10:00 NY
+    moved_at_noon = _utc(2026, 9, 1, 16, 0)       # 12:00 NY
+    two_pm_ny = _utc(2026, 9, 1, 18, 5)           # 14:05 NY
+
+    # Without the stamp, the day is already spent.
+    assert is_due(timezone=NY, check_hour=14,
+                  last_ok_scan_at=ran_at_ten, now_utc=two_pm_ny) is False
+    # With it, the new time is honoured the same day.
+    assert is_due(timezone=NY, check_hour=14, last_ok_scan_at=ran_at_ten,
+                  now_utc=two_pm_ny, schedule_changed_at=moved_at_noon) is True
+
+
+def test_it_still_only_fires_once_after_the_change():
+    """Re-checking must not become re-checking repeatedly. Once a run happens
+    under the new schedule, the guard closes again."""
+    moved = _utc(2026, 9, 1, 16, 0)
+    ran_under_new = _utc(2026, 9, 1, 18, 10)      # 14:10 NY
+    later_same_day = _utc(2026, 9, 1, 19, 5)      # 15:05 NY, still in the window
+    assert is_due(timezone=NY, check_hour=14, last_ok_scan_at=ran_under_new,
+                  now_utc=later_same_day, schedule_changed_at=moved) is False
+
+
+def test_the_next_due_time_reflects_the_change_too():
+    """The rail must not promise tomorrow for a check that will run in ten
+    minutes — the number on screen and the sweep's decision come from the same
+    rule, so they cannot disagree."""
+    ran_at_ten = _utc(2026, 9, 1, 14, 0)
+    moved_at_noon = _utc(2026, 9, 1, 16, 0)
+    just_before_two = _utc(2026, 9, 1, 17, 55)    # 13:55 NY
+
+    nxt = next_due_at(timezone=NY, check_hour=14, last_ok_scan_at=ran_at_ten,
+                      now_utc=just_before_two, schedule_changed_at=moved_at_noon)
+    assert nxt is not None
+    assert nxt.astimezone(ZoneInfo(NY)).date() == date(2026, 9, 1)

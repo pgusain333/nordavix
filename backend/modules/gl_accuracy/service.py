@@ -642,6 +642,7 @@ async def schedule_health(db: AsyncSession, tenant_id: uuid.UUID, period_end: da
     )).scalar_one_or_none()
 
     nxt = next_due_at(timezone=tz, check_hour=cfg.check_hour,
+                      schedule_changed_at=cfg.schedule_changed_at,
                       last_ok_scan_at=last_scheduled, now_utc=now)
     return {
         "enabled": enabled,

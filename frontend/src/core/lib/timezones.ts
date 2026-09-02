@@ -167,3 +167,36 @@ export function timeInZone(tz: string, at: Date = new Date()): string | null {
     return null
   }
 }
+
+/** An hour chosen in one zone, read on the clock of another.
+ *
+ *  "09:00" is unambiguous only when the workspace's zone and the reader's are
+ *  the same. A firm in Mumbai keeping books on New York time picks 09:00 and
+ *  pictures morning; it lands at 18:30 where they are, and nothing on screen
+ *  used to say so.
+ *
+ *  Resolved against TODAY's date rather than a fixed one, so the answer follows
+ *  daylight saving instead of being right for half the year. Returns null when
+ *  either zone is unknown — a wrong translation is worse than none.
+ */
+export function hourInYourZone(
+  hour: number, fromTz: string, toTz: string, on: Date = new Date(),
+): string | null {
+  try {
+    // Build the chosen local time in `fromTz` by finding that zone's current
+    // offset, then render the same instant in `toTz`.
+    const ymd = new Intl.DateTimeFormat("en-CA", {
+      timeZone: fromTz, year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(on)
+    const guess = new Date(`${ymd}T${String(hour).padStart(2, "0")}:00:00Z`)
+    // How far `fromTz` is from UTC at that moment.
+    const asSeen = new Date(guess.toLocaleString("en-US", { timeZone: fromTz }))
+    const asUtc = new Date(guess.toLocaleString("en-US", { timeZone: "UTC" }))
+    const instant = new Date(guess.getTime() - (asSeen.getTime() - asUtc.getTime()))
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: toTz, hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(instant)
+  } catch {
+    return null
+  }
+}

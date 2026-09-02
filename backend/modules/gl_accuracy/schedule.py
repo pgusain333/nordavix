@@ -111,12 +111,40 @@ def next_tick_at(after: datetime) -> datetime:
     return t if t >= after else t + timedelta(hours=1)
 
 
+def effective_last_scan(
+    last_ok_scan_at: datetime | None,
+    schedule_changed_at: datetime | None,
+) -> datetime | None:
+    """The last scheduled check that counts against the CURRENT schedule.
+
+    A check that ran before the schedule was changed does not satisfy the new
+    one. Move the daily check from 10:00 to 14:00 at lunchtime and the 10:00 run
+    has already happened — the once-a-day guard would then read "checked today"
+    and skip 14:00 entirely, so a setting the user just chose does nothing until
+    tomorrow. Nothing on screen would explain the delay, because from the
+    outside it looks exactly like the feature not working.
+
+    Changing when you want to be checked is a request to be checked then. So
+    scans older than the change are discarded for this purpose only — they stay
+    in the run history, they simply stop answering a question about a schedule
+    that did not exist when they ran.
+    """
+    if last_ok_scan_at is None or schedule_changed_at is None:
+        return last_ok_scan_at
+    if last_ok_scan_at.tzinfo is None:
+        last_ok_scan_at = last_ok_scan_at.replace(tzinfo=UTC)
+    if schedule_changed_at.tzinfo is None:
+        schedule_changed_at = schedule_changed_at.replace(tzinfo=UTC)
+    return None if last_ok_scan_at < schedule_changed_at else last_ok_scan_at
+
+
 def next_due_at(
     *,
     timezone: str | None,
     check_hour: int,
     last_ok_scan_at: datetime | None,
     now_utc: datetime,
+    schedule_changed_at: datetime | None = None,
 ) -> datetime | None:
     """When this workspace will next actually be CHECKED, as a UTC instant.
 
@@ -136,6 +164,7 @@ def next_due_at(
     """
     if check_hour is None or not (0 <= int(check_hour) <= 23):
         return None
+    last_ok_scan_at = effective_last_scan(last_ok_scan_at, schedule_changed_at)
     if is_due(timezone=timezone, check_hour=check_hour,
               last_ok_scan_at=last_ok_scan_at, now_utc=now_utc):
         return next_tick_at(now_utc)
@@ -162,6 +191,7 @@ def is_due(
     check_hour: int,
     last_ok_scan_at: datetime | None,
     now_utc: datetime,
+    schedule_changed_at: datetime | None = None,
 ) -> bool:
     """Should this workspace be checked on this hourly tick?
 
@@ -169,7 +199,9 @@ def is_due(
 
       * the local clock has reached the chosen hour and is still within the
         catch-up window;
-      * the SCHEDULE has not already completed a check today, on that clock.
+      * the SCHEDULE has not already completed a check today, on that clock —
+        counting only checks that ran under the CURRENT schedule, so changing
+        the time takes effect the same day rather than tomorrow.
 
     The second is what makes the sweep idempotent, and it must be fed only by
     scheduled runs — see `_last_ok_scan_at`. Fed by any successful scan, a
@@ -188,6 +220,8 @@ def is_due(
     """
     if check_hour is None or not (0 <= int(check_hour) <= 23):
         return False
+    # A check from before the schedule changed doesn't satisfy the new one.
+    last_ok_scan_at = effective_last_scan(last_ok_scan_at, schedule_changed_at)
     start = int(check_hour)
     # The window cannot wrap past midnight, and deliberately doesn't: the lower
     # bound alone rules out every hour before the chosen one, so a 23:00 check
