@@ -26,6 +26,7 @@ from core.auth.dependencies import CurrentTenantId
 from core.db.session import get_db
 from models.insights_snapshot import InsightsSnapshot
 from models.period_sync import PeriodSync
+from models.tenant import Tenant
 from modules.insights.service import cache_is_fresh, compute_overview, window_is_perishable
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,14 @@ async def get_overview(
     # Compared against the period's CURRENT sync stamp rather than cleared by
     # the writers: a cache that heals itself cannot be broken by a future write
     # path forgetting to call an invalidation hook.
+    # Which year this period belongs to. NULL means December, which is what
+    # every workspace was implicitly on — so this changes nothing until a firm
+    # sets it, and everything for the one that does.
+    fye = (await db.execute(
+        select(Tenant.fiscal_year_end).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+
     if not refresh:
         saved = (await db.execute(_snapshot_query(pe, ps))).scalar_one_or_none()
         if saved is not None:
@@ -98,7 +107,7 @@ async def get_overview(
             # wanted was missing. The payload records which actually happened,
             # so ask it rather than predicting.
             if cache_is_fresh(payload, current_iso,
-                              live_sourced=(window_is_perishable(ps, pe)
+                              live_sourced=(window_is_perishable(ps, pe, fiscal_year_end=fye)
                                             or payload.get("pl_source") == "live"),
                               computed_at=saved.computed_at):
                 payload["saved_at"] = saved.computed_at.isoformat()

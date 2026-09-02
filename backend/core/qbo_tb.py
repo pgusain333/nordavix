@@ -28,6 +28,7 @@ from typing import TypedDict
 import httpx
 
 from core.config import settings
+from core.fiscal import fiscal_year_start
 from core.qbo_http import request_with_retry
 from models.qbo_connection import QboConnection
 
@@ -48,6 +49,7 @@ async def fetch_trial_balance(
     period_end: date,
     *,
     period_start: date | None = None,
+    fiscal_year_end: str | None = None,
     accounting_method: str = "Accrual",
 ) -> dict:
     """
@@ -69,7 +71,12 @@ async def fetch_trial_balance(
     async with AsyncSessionLocal() as session:
         token = await _refresh_token_if_needed(conn, session)
 
-    start = period_start or date(period_end.year, 1, 1)
+    # Defaults to the first day of the period's FISCAL year, not 1 January.
+    # The P&L rows this report returns are year-to-date from `start`, so on a
+    # June year end a January start would report six months of the PREVIOUS
+    # fiscal year as this year's performance — silently, and in every figure
+    # derived from the snapshot afterwards.
+    start = period_start or fiscal_year_start(period_end, fiscal_year_end)
     params = {
         "start_date":          start.isoformat(),
         "end_date":            period_end.isoformat(),
@@ -96,6 +103,7 @@ async def fetch_profit_and_loss(
     period_end: date,
     *,
     period_start: date | None = None,
+    fiscal_year_end: str | None = None,
     accounting_method: str = "Accrual",
 ) -> dict:
     """
@@ -115,7 +123,12 @@ async def fetch_profit_and_loss(
     async with AsyncSessionLocal() as session:
         token = await _refresh_token_if_needed(conn, session)
 
-    start = period_start or date(period_end.year, 1, 1)
+    # Defaults to the first day of the period's FISCAL year, not 1 January.
+    # The P&L rows this report returns are year-to-date from `start`, so on a
+    # June year end a January start would report six months of the PREVIOUS
+    # fiscal year as this year's performance — silently, and in every figure
+    # derived from the snapshot afterwards.
+    start = period_start or fiscal_year_start(period_end, fiscal_year_end)
     params = {
         "start_date":        start.isoformat(),
         "end_date":          period_end.isoformat(),

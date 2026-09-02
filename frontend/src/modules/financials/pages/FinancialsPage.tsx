@@ -46,6 +46,7 @@ import {
 import { Button, Spinner } from "@/core/ui/components"
 import { SkeletonCard } from "@/core/ui/Skeleton"
 import { DatePicker } from "@/core/ui/DatePicker"
+import { TieOutCard } from "../components/TieOutCard"
 import { PageHeader } from "@/core/ui/PageHeader"
 import { toISODate, formatDate } from "@/core/lib/dates"
 import { readSelectedPeriod, usePublishSelectedPeriod } from "@/core/hooks/useSelectedPeriod"
@@ -696,6 +697,9 @@ export function FinancialsPage() {
                       )}
                       <KpiStrip stmt={stmt} />
                       <StatementView stmt={stmt} />
+                      {/* Under the statement, because it is a claim ABOUT the
+                          statement — read after the figures, not before them. */}
+                      <TieOutCard periodEnd={periodEnd} />
                     </>
                   ) : null}
                 </motion.div>

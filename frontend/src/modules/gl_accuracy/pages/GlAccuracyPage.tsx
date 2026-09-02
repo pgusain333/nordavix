@@ -25,6 +25,7 @@ import { closeApi } from "@/modules/close/api"
 import { workspaceApi } from "@/modules/workspace/api"
 import { ProposedEntryCard } from "@/modules/adjustments/components/ProposedEntryCard"
 import { RelatedPanel } from "@/modules/graph/RelatedPanel"
+import { RepeatOffenders } from "../components/RepeatOffenders"
 import type { ProposedEntry } from "@/modules/adjustments/api"
 import { glAccuracyApi, type GlFinding, type GlMonitoring, type GlSchedule } from "@/modules/gl_accuracy/api"
 import { autopilotApi, type AutopilotState } from "@/modules/autopilot/api"
@@ -404,6 +405,7 @@ function ContinuousRail({ m, sched, scanning, recent, reduce, periodEnd, canRevi
         canReview={canReview} onChanged={onChanged} />
       <div className="px-4 py-3" style={{ borderTop: "1px solid var(--border)" }}>
         <ContinuousSettings />
+        <RepeatOffenders />
       </div>
     </motion.div>
   )

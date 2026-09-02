@@ -37,6 +37,7 @@ import {
 import { MemorySection } from "@/modules/memory/MemorySection"
 import { AutopilotSection } from "@/modules/autopilot/AutopilotSection"
 import { Spinner } from "@/core/ui/components"
+import { FiscalYearCard } from "../components/FiscalYearCard"
 import { SkeletonBlock } from "@/core/ui/Skeleton"
 import { ThemeToggle } from "@/core/theme/ThemeToggle"
 import { DatePicker } from "@/core/ui/DatePicker"
@@ -357,6 +358,9 @@ function CompanySection() {
       description={`Profile, address, tax info, and accounting defaults for ${organization.name}. Powers AI commentary, future audit-firm integrations, and materiality defaults.`}
       icon={Building2}
     >
+      <div className="mb-5">
+        <FiscalYearCard canEdit />
+      </div>
       <CompanyForm
         key={organization.id}
         mode="edit"

@@ -186,6 +186,13 @@ export function AdjustmentsPage() {
   const downloadMut = useMutation({
     mutationFn: () => adjustmentsApi.downloadCsv(period),
   })
+  // The memo is the deliverable — what was booked, what wasn't and why, and
+  // what it did to the statements. Available whenever there is anything to
+  // report, not gated on the batch being saved: a reviewer asking "what did we
+  // decide" should not have to lock the batch first.
+  const memoMut = useMutation({
+    mutationFn: () => adjustmentsApi.downloadMemo(period),
+  })
 
   const [checkResult, setCheckResult] = useState<CheckPostedResult | null>(null)
   const checkMut = useMutation({
@@ -296,6 +303,16 @@ export function AdjustmentsPage() {
                       {saveMut.isPending ? "Saving…" : allSaved ? "Saved" : "Save batch"}
                     </button>
                   )}
+                  <button
+                    onClick={() => memoMut.mutate()}
+                    disabled={base.length === 0 || memoMut.isPending}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40"
+                    style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border-strong)" }}
+                    title="What was booked, what wasn't and why, and what it did to the statements"
+                  >
+                    <FileText size={13} strokeWidth={2.2} />
+                    {memoMut.isPending ? "Building…" : "Adjustments memo"}
+                  </button>
                   <button
                     onClick={() => downloadMut.mutate()}
                     disabled={importableCount === 0 || downloadMut.isPending}

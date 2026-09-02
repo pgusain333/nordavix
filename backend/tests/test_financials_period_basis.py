@@ -48,7 +48,7 @@ def test_a_mid_year_range_is_end_minus_beginning():
     """March = YTD through March (450k) − YTD through February (280k)."""
     end = [_Snap("1", INCOME, "450000")]
     beg = [_Snap("1", INCOME, "280000")]
-    out = _period_pl_rows(end, beg, same_fiscal_year=True)
+    out = _period_pl_rows(end, beg, within_one_fiscal_year=True)
     assert by_id(out)["1"] == Decimal("170000"), "the reported figure"
 
 
@@ -57,7 +57,7 @@ def test_a_january_start_uses_the_end_balance_as_is():
     through March already IS January-to-March."""
     end = [_Snap("1", INCOME, "450000")]
     beg = [_Snap("1", INCOME, "1200000")]      # last year's full-year total
-    out = _period_pl_rows(end, beg, same_fiscal_year=False)
+    out = _period_pl_rows(end, beg, within_one_fiscal_year=False)
     assert by_id(out)["1"] == Decimal("450000")
 
 
@@ -66,22 +66,22 @@ def test_balance_sheet_accounts_are_never_differenced():
     turn a balance into a movement."""
     end = [_Snap("2", BANK, "90000")]
     beg = [_Snap("2", BANK, "60000")]
-    out = _period_pl_rows(end, beg, same_fiscal_year=True)
+    out = _period_pl_rows(end, beg, within_one_fiscal_year=True)
     assert by_id(out)["2"] == Decimal("90000")
 
 
 def test_an_account_absent_from_the_beginning_snapshot_subtracts_nothing():
     """An income account opened in March has no February balance; its whole
     year-to-date IS its March activity."""
-    out = _period_pl_rows([_Snap("3", INCOME, "12000")], [], same_fiscal_year=True)
+    out = _period_pl_rows([_Snap("3", INCOME, "12000")], [], within_one_fiscal_year=True)
     assert by_id(out)["3"] == Decimal("12000")
 
 
 def test_an_empty_beginning_snapshot_with_same_year_still_differences():
     """Guard on the None-vs-empty distinction: `beg_rows=None` and `beg_rows=[]`
     must behave identically, since load_snapshot_on_or_before returns []."""
-    a = _period_pl_rows([_Snap("1", INCOME, "450000")], None, same_fiscal_year=True)
-    b = _period_pl_rows([_Snap("1", INCOME, "450000")], [], same_fiscal_year=True)
+    a = _period_pl_rows([_Snap("1", INCOME, "450000")], None, within_one_fiscal_year=True)
+    b = _period_pl_rows([_Snap("1", INCOME, "450000")], [], within_one_fiscal_year=True)
     assert by_id(a) == by_id(b)
 
 

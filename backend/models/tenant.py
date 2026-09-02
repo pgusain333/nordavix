@@ -42,6 +42,13 @@ class Tenant(TimestampMixin, Base):
     # twice a year, and a monitoring feature that drifts an hour every March is
     # worse than one that never claimed a time. NULL = UTC.
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The client's fiscal year end as "MM-DD". NULL means 31 December, which is
+    # what every workspace was implicitly on: year-to-date figures were pulled
+    # from 1 January, "the first month of the year" meant January, and a window
+    # crossing 31 December was refused as spanning two years. All three are
+    # wrong for a June year end, and wrong quietly. Same convention as Nordavix
+    # Allocate's alloc_settings.fiscal_year_end. See core/fiscal.
+    fiscal_year_end: Mapped[str | None] = mapped_column(String(5), nullable=True)
     books_seeded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Soft-delete lifecycle ───────────────────────────────────────────────

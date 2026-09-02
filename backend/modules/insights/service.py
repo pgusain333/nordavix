@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.fiscal import is_first_month_of_fiscal_year, same_fiscal_year
 from models.gl_balance_snapshot import GlBalanceSnapshot
 from models.period_sync import PeriodSync
 from models.qbo_connection import QboConnection
@@ -691,6 +692,7 @@ def health_score(
 
 def window_is_perishable(
     period_start: date | None, period_end: date, today: date | None = None,
+    fiscal_year_end: str | None = None,
 ) -> bool:
     """Does this window's answer keep moving after we compute it?
 
@@ -724,7 +726,7 @@ def window_is_perishable(
     # stamp like every other view — including a multi-month range, which is
     # just one snapshot minus another. Only a window that genuinely needs a
     # live report is perishable.
-    derivable, _opening = snapshot_window_opening(period_start, period_end)
+    derivable, _opening = snapshot_window_opening(period_start, period_end, fiscal_year_end)
     return not derivable
 
 
@@ -1074,7 +1076,7 @@ def pl_reconciliation_warning(
 
 
 def snapshot_window_opening(
-    period_start: date, period_end: date,
+    period_start: date, period_end: date, fiscal_year_end: str | None = None,
 ) -> tuple[bool, date | None]:
     """Can this window be read off stored snapshots, and what is its opening?
 
@@ -1098,8 +1100,11 @@ def snapshot_window_opening(
 
       * a window that doesn't start on the 1st or end on a month end. Snapshots
         are taken at month ends; nothing in them describes 12 May.
-      * a window spanning a year boundary. Year-to-date RESETS on 1 January, so
-        YTD(Feb 2026) − YTD(Nov 2025) is not a quantity.
+      * a window spanning a FISCAL year boundary. Year-to-date resets when the
+        year turns, so YTD(Feb) − YTD(Nov) across that line is not a quantity.
+        Which line depends on the client: a June year end turns on 1 July, and
+        a window running May → August crosses it while looking entirely
+        ordinary on a calendar.
       * a start after the end.
 
     Pure, so the decision can be argued with rather than trusted.
@@ -1110,10 +1115,10 @@ def snapshot_window_opening(
         return False, None
     if period_start > period_end:
         return False, None
-    if period_start.year != period_end.year:
+    if not same_fiscal_year(period_start, period_end, fiscal_year_end):
         return False, None
-    if period_start.month == 1:
-        return True, None
+    if is_first_month_of_fiscal_year(period_start, fiscal_year_end):
+        return True, None      # the year-to-date IS the window
     return True, _prior_month_end(period_start)
 
 

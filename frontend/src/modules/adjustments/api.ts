@@ -68,6 +68,9 @@ export interface NetEffect {
   cogs:               string
   gross_profit:       string
   opex:               string
+  operating_income:   string
+  other_income:       string
+  other_expense:      string
   net_income:         string
   assets:             string
   liabilities_equity: string
@@ -298,6 +301,23 @@ async function checkPosted(periodEnd: string): Promise<CheckPostedResult> {
   return data
 }
 
+/** The period's adjustments as a document — what was booked, what wasn't and
+ *  why, and what it all did to the statements. The passed-adjustments schedule
+ *  is a real deliverable; auditors keep it by hand. */
+async function downloadMemo(periodEnd: string, basis: "month" | "ytd" = "month"): Promise<void> {
+  const res = await apiClient.get("/api/adjustments/memo.pdf", {
+    params: { period_end: periodEnd, basis }, responseType: "blob",
+  })
+  const url = URL.createObjectURL(res.data as Blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `nordavix_adjustments_${periodEnd}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 /** Everything behind one entry: where it came from, what it's made of, who
  *  decided what and why, what supports it, and what changed as a result. */
 async function trace(id: string): Promise<EntryTrace> {
@@ -317,7 +337,7 @@ async function netEffect(periodEnd: string, basis: "month" | "ytd" = "month"): P
 
 export const adjustmentsApi = {
   list, accounts, accept, dismiss, markPosted, reopen, edit, save, downloadCsv,
-  checkPosted, trace, netEffect,
+  checkPosted, trace, netEffect, downloadMemo,
 }
 
 /** Plain-text rendering of a proposed entry for the clipboard, so the user can

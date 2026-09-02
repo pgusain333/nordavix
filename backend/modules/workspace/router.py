@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1010,3 +1011,73 @@ async def get_command_center(
         })
 
     return {"companies": companies, "generated_at": datetime.now(UTC).isoformat()}
+
+
+# ── Fiscal year ────────────────────────────────────────────────────────────
+
+
+@router.get("/fiscal-year")
+async def get_fiscal_year(
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The client's year end, as "MM-DD". NULL means 31 December."""
+    t = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    return {"fiscal_year_end": (t.fiscal_year_end if t else None)}
+
+
+class FiscalYearBody(BaseModel):
+    # "MM-DD", or null / "" for the calendar year.
+    fiscal_year_end: str | None = None
+
+
+@router.put("/fiscal-year", dependencies=[Depends(require_role("admin"))])
+async def set_fiscal_year(
+    body: FiscalYearBody,
+    tenant_id: CurrentTenantId,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Set the client's fiscal year end.
+
+    This changes what YEAR-TO-DATE MEANS for the workspace: the trial balance
+    behind every snapshot is pulled from the fiscal year start, so periods
+    captured under the old year end were computed on a different basis. The
+    response says so, and the settings screen repeats it — silently mixing two
+    bases is precisely the defect this field exists to remove.
+    """
+    from core.fiscal import parse_fye
+
+    raw = (body.fiscal_year_end or "").strip() or None
+    if raw is not None:
+        m, d = parse_fye(raw)
+        if f"{m:02d}-{d:02d}" != raw:
+            raise HTTPException(
+                status_code=422,
+                detail="Year end must be MM-DD, e.g. 06-30 for a June year end.",
+            )
+
+    t = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    if t is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    changed = (t.fiscal_year_end or None) != raw
+    t.fiscal_year_end = raw
+    await write_audit_event(
+        db, tenant_id=tenant_id, user_id=user.id,
+        action="workspace.fiscal_year_set", entity_type="tenant", entity_id=tenant_id,
+        metadata={"fiscal_year_end": raw or "12-31"},
+    )
+    await db.commit()
+    return {
+        "fiscal_year_end": raw,
+        # Only true when it actually moved — a no-op save shouldn't send anyone
+        # off to re-sync twelve months for nothing.
+        "resync_recommended": changed,
+    }

@@ -33,6 +33,11 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.fiscal import (
+    fiscal_year_start,
+    is_first_month_of_fiscal_year,
+    same_fiscal_year,
+)
 from models.gl_balance_snapshot import GlBalanceSnapshot
 
 # QBO account-type groupings
@@ -128,6 +133,7 @@ class _PLRow:
 
 def can_derive_period(
     *, period_start: date, beg_date: date | None, period_end: date,
+    fiscal_year_end: str | None = None,
 ) -> bool:
     """Can this range be built from Nordavix's own snapshots?
 
@@ -136,22 +142,31 @@ def can_derive_period(
     SAME fiscal year — December's carries last year's totals and subtracting it
     would be arithmetic across a P&L reset.
 
-    A range starting 1 January needs none: year-to-date already IS the period.
+    A range starting on the fiscal year's first day needs none: year-to-date
+    already IS the period.
+
+    This said "same fiscal year" and compared CALENDAR years — `beg_date.year ==
+    period_end.year` — and treated 1 January as the reset. Correct for the
+    default December year end and wrong for every other one, in the direction
+    that produces a number rather than an error: a June-year-end client
+    differencing across 1 January would subtract two totals from the same
+    fiscal year and call the result a range, or refuse a range that was
+    perfectly derivable.
 
     False means the caller must fall back to a live ProfitAndLoss rather than
     print a year-to-date figure under a range heading. Pure, so the rule is
     tested directly instead of through a reimplementation of it — a test that
     restates the logic passes happily while the real code is broken.
     """
-    same_year = beg_date is not None and beg_date.year == period_end.year
-    is_jan1 = period_start.month == 1 and period_start.day == 1
-    return is_jan1 or same_year
+    same_year = beg_date is not None and same_fiscal_year(beg_date, period_end, fiscal_year_end)
+    starts_the_year = period_start == fiscal_year_start(period_end, fiscal_year_end)
+    return starts_the_year or same_year
 
 
 def _period_pl_rows(
     end_rows: list[GlBalanceSnapshot],
     beg_rows: list[GlBalanceSnapshot] | None,
-    same_fiscal_year: bool,
+    within_one_fiscal_year: bool,
 ) -> list[_PLRow]:
     """Convert end-of-period snapshot rows into period-activity rows for the
     income statement.
@@ -166,7 +181,7 @@ def _period_pl_rows(
     out: list[_PLRow] = []
     for r in end_rows:
         bal = r.balance
-        if same_fiscal_year and r.account_type in _PL_TYPES:
+        if within_one_fiscal_year and r.account_type in _PL_TYPES:
             bal = r.balance - beg_by_id.get(r.qbo_account_id, Decimal("0"))
         out.append(_PLRow(
             qbo_account_id=r.qbo_account_id,
@@ -367,7 +382,8 @@ def _prior_month_end(period_end: date) -> date:
 
 
 async def statement_totals(
-    db: AsyncSession, tenant_id: uuid.UUID, period_end: date, *, basis: str = "ytd",
+    db: AsyncSession, tenant_id: uuid.UUID, period_end: date, *,
+    basis: str = "ytd", fiscal_year_end: str | None = None,
 ) -> dict | None:
     """The period's statement lines as single figures, presented-positive.
 
@@ -416,8 +432,12 @@ async def statement_totals(
     pl_basis = "ytd"
 
     if basis == "month":
-        # January's year-to-date IS January, so it needs no prior month.
-        if period_end.month == 1:
+        # The fiscal year's OPENING month needs no prior: its year-to-date is
+        # its month. Hardcoded to January before, which made a June-year-end
+        # client's July fall back to differencing against June — the last month
+        # of the previous fiscal year, and therefore a subtraction of two
+        # unrelated running totals.
+        if is_first_month_of_fiscal_year(period_end, fiscal_year_end):
             pl_basis = "month"
         else:
             prior_rows = await _load_snapshot(db, tenant_id, _prior_month_end(period_end))
@@ -441,7 +461,7 @@ async def statement_totals(
         # What the caller is standing on, so the UI can say which read this was.
         "captured_at":        max(captured) if captured else None,
         "pl_basis":           pl_basis,
-        "prior_period_end":   (None if period_end.month == 1
+        "prior_period_end":   (None if is_first_month_of_fiscal_year(period_end, fiscal_year_end)
                                else _prior_month_end(period_end).isoformat()),
     }
 

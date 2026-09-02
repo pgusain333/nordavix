@@ -579,9 +579,15 @@ async def period_net_effect(
     booked = [r for r in rows if r.status in ("accepted", "posted")]
     passed = [r for r in rows if r.status == "dismissed"]
 
+    from models.tenant import Tenant
     from modules.financials.internal import statement_totals
+    _t = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
     baseline = await statement_totals(
         db, tenant_id, pe, basis="month" if basis == "month" else "ytd",
+        fiscal_year_end=(_t.fiscal_year_end if _t else None),
     )
 
     # ── Which booked entries are NOT already in that baseline ────────────
@@ -1102,3 +1108,94 @@ async def check_posted(
         "reopened_accounts": reopened,
         "reopened_flux_accounts": reopened_flux,
     }
+
+
+@router.get("/memo.pdf")
+async def adjustments_memo(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    basis: str = Query("month", description="month | ytd"),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The period's adjustments as a document a firm can hand to someone.
+
+    Everything this module knows lived on a screen only the firm saw. The
+    passed-adjustments schedule in particular is a real deliverable — auditors
+    keep it by hand — and it has never been something a product produced.
+    """
+    from models.tenant import Tenant
+    from modules.adjustments.memo import AdjustmentsMemoContext, render_adjustments_memo
+
+    pe = _parse_period(period_end)
+    if pe is None:
+        raise HTTPException(status_code=400, detail="period_end is required (YYYY-MM-DD).")
+
+    effect = await period_net_effect(tenant_id, period_end, basis, db)
+    rows = (await db.execute(
+        close_only(select(ProposedEntry).where(ProposedEntry.period_end == pe))
+    )).scalars().all()
+
+    names = await _display_names(
+        db, {x for r in rows for x in (r.prepared_by, r.approved_by) if x},
+    )
+
+    def _amount(r) -> Decimal:
+        return max((Decimal(str(ln.get("debit") or 0)) for ln in (r.lines or [])),
+                   default=Decimal("0"))
+
+    baseline = effect.get("baseline") or {}
+    adjusted = effect.get("adjusted") or {}
+    labels = {
+        "revenue": "Revenue", "cogs": "Cost of revenue", "gross_profit": "Gross profit",
+        "opex": "Operating expenses", "operating_income": "Operating income",
+        "other_income": "Other income", "other_expense": "Other expense",
+        "net_income": "Net income", "assets": "Total assets",
+        "liabilities_equity": "Liabilities & equity",
+    }
+    effect_lines = [
+        {"label": label,
+         "before": baseline.get(key), "after": adjusted.get(key),
+         "change": (None if baseline.get(key) is None or adjusted.get(key) is None
+                    else Decimal(adjusted[key]) - Decimal(baseline[key]))}
+        for key, label in labels.items()
+        if baseline.get(key) is not None
+    ]
+
+    tenant = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+
+    passed = effect.get("passed") or {}
+    ni = Decimal(str(adjusted.get("net_income") or "0"))
+    passed_ni = Decimal(str(passed.get("net_income") or "0"))
+    pct = float(abs(passed_ni) / abs(ni) * 100) if ni else None
+
+    ctx = AdjustmentsMemoContext(
+        company=(tenant.name if tenant else "This workspace"),
+        period_label=pe.strftime("%B %Y"), period_end=pe,
+        generated_at=datetime.now(UTC),
+        pl_basis=str(baseline.get("pl_basis") or "ytd"),
+        effect_lines=effect_lines,
+        booked=[
+            {"description": r.description,
+             "prepared_by": names.get(str(r.prepared_by)) if r.prepared_by else None,
+             "approved_by": names.get(str(r.approved_by)) if r.approved_by else None,
+             "posted_qbo_doc": r.posted_qbo_doc, "amount": _amount(r)}
+            for r in rows if r.status in ("accepted", "posted")
+        ],
+        passed=[
+            {"description": r.description, "reason": r.dismiss_reason, "amount": _amount(r)}
+            for r in rows if r.status == "dismissed"
+        ],
+        passed_total=str(passed_ni),
+        passed_pct_of_income=pct,
+        materiality_pct=5.0,
+        passed_without_reason=int(passed.get("without_reason") or 0),
+    )
+    return Response(
+        content=render_adjustments_memo(ctx),
+        media_type="application/pdf",
+        headers={"Content-Disposition":
+                 f'attachment; filename="nordavix_adjustments_{pe.isoformat()}.pdf"'},
+    )

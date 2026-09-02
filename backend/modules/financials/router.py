@@ -30,7 +30,7 @@ import io
 import logging
 import re
 from calendar import monthrange
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -44,6 +44,7 @@ from core.audit.log import write_audit_event
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
 from core.email.sender import send_email
+from core.fiscal import fiscal_year_start
 from models.closed_period import ClosedPeriod
 from models.qbo_connection import QboConnection
 from models.tenant import Tenant
@@ -205,8 +206,11 @@ def _prior_month_period(pe: date) -> tuple[date, date]:
     return date(y, m, 1), date(y, m, monthrange(y, m)[1])
 
 
-def _ytd_start(pe: date) -> date:
-    return date(pe.year, 1, 1)
+def _ytd_start(pe: date, fiscal_year_end: str | None = None) -> date:
+    """First day of the period's FISCAL year — 1 January only for the default
+    December year end. Hardcoded to January before, which reported months of
+    the previous fiscal year as this year's for anyone else."""
+    return fiscal_year_start(pe, fiscal_year_end)
 
 
 # ── QBO report parser ──────────────────────────────────────────────────────
@@ -1081,3 +1085,67 @@ async def send_executive_report(
     if not sent:
         raise HTTPException(status_code=502, detail="Email isn't configured, or the send failed. Check email settings.")
     return {"sent": True, "recipient": recipient, "period_label": data.period_label}
+
+
+# ── Tie-out: does our picture match QuickBooks' own? ───────────────────────
+
+
+@router.get("/tie-out")
+async def tie_out(
+    tenant_id: CurrentTenantId,
+    period_end: str = Query(..., description="Period end YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Compare Nordavix's derived statements against QuickBooks' own reports.
+
+    Nordavix builds its figures from the GL snapshot and reasons over them
+    locally. `statement_validation` already checks that reasoning is internally
+    consistent — but a snapshot that missed an account, or a classification the
+    two systems disagree about, is internally perfect and externally wrong.
+
+    So this asks the other question, and answers it either way. "These tie to
+    QuickBooks exactly" is the strongest sentence an accounting product can put
+    on a screen and Nordavix could not previously say it at all.
+    """
+    from datetime import date as _date
+
+    from models.tenant import Tenant
+    from modules.financials.internal import statement_totals
+    from modules.financials.tieout import compare, qbo_totals
+
+    try:
+        pe = _date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD")
+
+    tenant = (await db.execute(
+        select(Tenant).where(Tenant.id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    fye = tenant.fiscal_year_end if tenant else None
+
+    ours = await statement_totals(db, tenant_id, pe, basis="ytd", fiscal_year_end=fye)
+    if ours is None:
+        return {
+            "period_end": pe.isoformat(), "ties": None, "lines": [],
+            "comparable": 0, "differing": 0, "largest_difference": None,
+            "error": "This period hasn't been synced from QuickBooks yet, so there's nothing to compare.",
+        }
+
+    conn = (await db.execute(
+        select(QboConnection).where(QboConnection.tenant_id == tenant_id),
+        execution_options={"skip_tenant_filter": True},
+    )).scalar_one_or_none()
+    theirs, err = await qbo_totals(conn, db, pe, fiscal_year_end=fye)
+
+    result = compare(ours, theirs)
+    return {
+        "period_end": pe.isoformat(),
+        "checked_at": datetime.now(UTC).isoformat(),
+        # Both sides are year-to-date: the snapshot holds YTD P&L, so pulling a
+        # monthly figure from QuickBooks would manufacture a difference and then
+        # report it as a problem with the books.
+        "basis": "ytd",
+        **result,
+        "error": err,
+    }

@@ -11,6 +11,7 @@ Deterministic + evidence-grounded; confirm-first; never writes to QuickBooks.
 import logging
 import uuid
 from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -262,3 +263,42 @@ async def acknowledge(
     await db.commit()
     await db.refresh(finding)
     return service.serialize_finding(finding)
+
+
+@router.get("/repeats")
+async def repeat_offenders(
+    tenant_id: CurrentTenantId,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Patterns that keep coming back.
+
+    Risk Radar reports instances; every scan starts from the transactions in
+    front of it, so a vendor miscoded four months running is reported four
+    times as though it were new. It isn't — it's one unfixed cause, and fixing
+    the cause stops the finding recurring forever.
+    """
+    from modules.gl_accuracy.repeats import (
+        REPEAT_AFTER_PERIODS,
+        Occurrence,
+        find_repeats,
+        summarise,
+    )
+
+    rows = (await db.execute(
+        select(GlAccuracyFinding).order_by(GlAccuracyFinding.period_end.desc())
+    )).scalars().all()
+    occurrences = [
+        Occurrence(
+            period_end=f.period_end, vendor=f.vendor or "",
+            posted_account_name=f.posted_account_name,
+            suggested_account_name=f.suggested_account_name,
+            amount=Decimal(str(f.amount or 0)), status=f.status,
+        )
+        for f in rows
+    ]
+    repeats = find_repeats(occurrences)
+    return {
+        "items": repeats,
+        "summary": summarise(repeats),
+        "min_periods": REPEAT_AFTER_PERIODS,
+    }
