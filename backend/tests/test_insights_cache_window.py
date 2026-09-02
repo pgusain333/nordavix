@@ -24,6 +24,7 @@ from modules.insights.service import (
     INSIGHTS_PAYLOAD_VERSION,
     LIVE_CACHE_TTL_SECONDS,
     cache_is_fresh,
+    snapshot_window_opening,
     window_is_perishable,
 )
 
@@ -84,9 +85,16 @@ def test_a_cross_month_range_is_perishable():
     assert w(date(2026, 5, 15), date(2026, 6, 14)) is True
 
 
-def test_a_multi_month_range_is_perishable():
-    """A quarter is not a calendar month, however tidy its edges."""
-    assert w(date(2026, 4, 1), date(2026, 6, 30)) is True
+def test_a_month_aligned_quarter_is_NOT_perishable():
+    """This assertion used to say the opposite, and the assertion was wrong.
+
+    The first version of this rule only spared a single calendar month, because
+    it was thinking about the shape of the window. What actually matters is
+    whether the figures can be read off stored month-end snapshots — and a
+    quarter that starts on the 1st and ends on a month end is one snapshot
+    minus another, exactly as sound as a single month and needing no live
+    report either."""
+    assert w(date(2026, 4, 1), date(2026, 6, 30)) is False
 
 
 def test_perishability_is_about_the_window_not_the_presence_of_a_start():
@@ -94,6 +102,50 @@ def test_perishability_is_about_the_window_not_the_presence_of_a_start():
     them is a custom range. The old flag could not tell them apart."""
     assert w(date(2026, 6, 1), date(2026, 6, 30)) is False
     assert w(date(2026, 6, 1), date(2026, 6, 10)) is True
+
+
+# ── Which windows can be read off snapshots, and what they open from ──────
+
+def test_a_month_aligned_range_opens_from_the_month_before_it():
+    """The one thing such a window needs from outside is its opening balance.
+    May–June opens from 30 April, and once that snapshot exists there is
+    nothing left to fetch."""
+    assert snapshot_window_opening(date(2026, 5, 1), date(2026, 6, 30)) == (True, date(2026, 4, 30))
+
+
+def test_a_window_starting_in_january_needs_no_opening():
+    """Year-to-date at the end IS the window. Subtracting December of the prior
+    year would be subtracting a different year's running total."""
+    assert snapshot_window_opening(date(2026, 1, 1), date(2026, 3, 31)) == (True, None)
+
+
+def test_a_year_boundary_cannot_be_differenced():
+    """THE ONE THAT WOULD BE SILENTLY WRONG. Year-to-date RESETS on 1 January,
+    so YTD(Feb 2026) minus YTD(Oct 2025) is not a quantity — it is two
+    unrelated running totals subtracted from each other. It has to fall back to
+    a live report rather than produce a confident number."""
+    assert snapshot_window_opening(date(2025, 11, 1), date(2026, 2, 28)) == (False, None)
+
+
+@pytest.mark.parametrize(("start", "end"), [
+    (date(2026, 5, 5), date(2026, 6, 30)),    # doesn't start on the 1st
+    (date(2026, 5, 1), date(2026, 6, 12)),    # doesn't end on a month end
+    (date(2026, 5, 5), date(2026, 6, 12)),    # neither
+])
+def test_a_window_off_the_month_grid_needs_a_live_report(start, end):
+    """Snapshots are taken at month ends. Nothing in them describes 12 June, so
+    a window touching it is the case the live call genuinely exists for."""
+    assert snapshot_window_opening(start, end) == (False, None)
+
+
+def test_a_backwards_window_is_refused():
+    assert snapshot_window_opening(date(2026, 6, 30), date(2026, 5, 1)) == (False, None)
+
+
+def test_february_and_the_short_months_are_month_ends_too():
+    assert snapshot_window_opening(date(2026, 2, 1), date(2026, 2, 28))[0] is True
+    assert snapshot_window_opening(date(2024, 2, 1), date(2024, 2, 29))[0] is True
+    assert snapshot_window_opening(date(2026, 2, 1), date(2026, 2, 27))[0] is False
 
 
 # ── And the cache actually honours it ─────────────────────────────────────

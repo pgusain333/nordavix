@@ -284,6 +284,9 @@ export interface InsightsOverview {
   period_start:     string | null
   period_label:     string
   custom_range:     boolean
+  /** Where this window's P&L came from. "snapshots" means it was differenced
+   *  from saved month-end rows and nothing was pulled from QuickBooks. */
+  pl_source?:       "snapshots" | "live"
   custom_pl_error:  string | null
   qbo_connected:    boolean
   data_status?:     DataStatus

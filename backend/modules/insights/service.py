@@ -267,6 +267,16 @@ def _risk_for(metric: str, value: float | None) -> str:
 
 # ── snapshot loader ──────────────────────────────────────────────────────────
 
+async def _rows_at(db: AsyncSession, tenant_id, period_end: date) -> list[GlBalanceSnapshot]:
+    """One month-end's snapshot rows, for a date outside the charted history.
+
+    A window's opening balance is frequently the month before the history the
+    charts draw, so it isn't in the bulk load. One small query beats a live
+    QuickBooks report by orders of magnitude.
+    """
+    return (await _load_snapshots(db, tenant_id, [period_end])).get(period_end, [])
+
+
 async def _load_snapshots(
     db: AsyncSession,
     tenant_id,
@@ -710,12 +720,12 @@ def window_is_perishable(
         return True                      # the window hasn't finished
     if period_start is None:
         return False                     # a plain month view
-    last_day = calendar.monthrange(period_end.year, period_end.month)[1]
-    is_whole_month = (
-        period_start == date(period_end.year, period_end.month, 1)
-        and period_end.day == last_day
-    )
-    return not is_whole_month
+    # Anything readable off stored month-end snapshots is governed by the sync
+    # stamp like every other view — including a multi-month range, which is
+    # just one snapshot minus another. Only a window that genuinely needs a
+    # live report is perishable.
+    derivable, _opening = snapshot_window_opening(period_start, period_end)
+    return not derivable
 
 
 def cache_is_fresh(
@@ -1061,6 +1071,103 @@ def pl_reconciliation_warning(
         f"gives {derived:,.2f} but QuickBooks reports net income of {net:,.2f}. "
         f"Some figures on this page may be understated."
     )
+
+
+def snapshot_window_opening(
+    period_start: date, period_end: date,
+) -> tuple[bool, date | None]:
+    """Can this window be read off stored snapshots, and what is its opening?
+
+    A month-end snapshot holds YEAR-TO-DATE profit and loss, so the activity in
+    any window that starts on the 1st and ends on a month end is simply one
+    snapshot minus another:
+
+        P&L(May 1 – Jun 30)  =  YTD(Jun 30) − YTD(Apr 30)
+
+    That is two rows we already have, and no call to QuickBooks at all. The
+    only thing the window genuinely needs from outside is its OPENING balance —
+    the month-end before it starts — and once that snapshot exists there is
+    nothing left to fetch.
+
+    Returns (derivable, opening_period_end). `opening_period_end` is None when
+    the window starts on 1 January: year-to-date at the end IS the window, so
+    there is no opening to subtract.
+
+    Refuses in three cases, each because the subtraction would be wrong rather
+    than merely unavailable:
+
+      * a window that doesn't start on the 1st or end on a month end. Snapshots
+        are taken at month ends; nothing in them describes 12 May.
+      * a window spanning a year boundary. Year-to-date RESETS on 1 January, so
+        YTD(Feb 2026) − YTD(Nov 2025) is not a quantity.
+      * a start after the end.
+
+    Pure, so the decision can be argued with rather than trusted.
+    """
+    if period_start.day != 1:
+        return False, None
+    if period_end != _last_day_of_month(period_end):
+        return False, None
+    if period_start > period_end:
+        return False, None
+    if period_start.year != period_end.year:
+        return False, None
+    if period_start.month == 1:
+        return True, None
+    return True, _prior_month_end(period_start)
+
+
+def pl_from_snapshots(end_rows, opening_rows) -> dict:
+    """The same P&L summary `_parse_pl_summary` returns, differenced from two
+    year-to-date snapshots instead of pulled live.
+
+    Shape must match exactly — callers downstream read `revenue`, `cogs`,
+    `opex`, `other_income`, `other_expense`, `net_income` and
+    `expense_by_account` without caring which way the figures arrived.
+    """
+    def _total(rows, types) -> Decimal:
+        return sum(
+            (_signed_presentation(r.account_type, r.balance)
+             for r in rows if r.account_type in types),
+            ZERO,
+        )
+
+    opening = opening_rows or []
+
+    def _diff(types) -> Decimal:
+        return _total(end_rows, types) - _total(opening, types)
+
+    revenue       = _diff(INCOME_TYPES)
+    cogs          = _diff(COGS_TYPES)
+    opex          = _diff(EXPENSE_TYPES)
+    other_income  = _diff(OTHER_INCOME_TYPES)
+    other_expense = _diff(OTHER_EXPENSE_TYPES)
+
+    # Per-account expense detail, differenced the same way. An account present
+    # at the open and gone by the end still yields its (negative) movement, so
+    # the breakdown foots to the same opex total above.
+    open_map: dict[str, Decimal] = {}
+    for r in opening:
+        if r.account_type in ALL_EXPENSE_TYPES:
+            open_map[r.account_name] = (
+                open_map.get(r.account_name, ZERO)
+                + _signed_presentation(r.account_type, r.balance)
+            )
+    by_account: dict[str, Decimal] = dict(open_map and {k: -v for k, v in open_map.items()} or {})
+    for r in end_rows:
+        if r.account_type in ALL_EXPENSE_TYPES:
+            by_account[r.account_name] = (
+                by_account.get(r.account_name, ZERO)
+                + _signed_presentation(r.account_type, r.balance)
+            )
+
+    return {
+        "revenue": revenue, "cogs": cogs, "opex": opex,
+        "other_income": other_income, "other_expense": other_expense,
+        "net_income": revenue + other_income - cogs - opex - other_expense,
+        "expense_by_account": {k: v for k, v in by_account.items() if v != ZERO},
+        "parse_warning": None,
+    }
 
 
 async def _fetch_pl_summary(
@@ -1759,20 +1866,66 @@ async def compute_overview(
     custom_pl: dict | None = None
     custom_pl_prior: dict | None = None
     custom_pl_error: str | None = None
+    # Where the window's figures actually came from, so the UI can say so
+    # instead of asserting a live call it may not have made.
+    pl_source = "snapshots"
     # Set when the selected window loaded but its comparative did not: the prior
     # column is then genuinely unknown, not zero and not last calendar month.
     custom_prior_unavailable = False
     if period_start is not None:
-        custom_pl, custom_pl_error = await _fetch_pl_summary(qbo_conn, db, period_start, period_end)
-        # Same-length window immediately preceding. (period_end - period_start)
-        # gives days-between; we add 1 to get inclusive day count, then mirror
-        # that span backwards from the day before period_start.
-        custom_span_days = (period_end - period_start).days
-        custom_prior_end   = period_start - timedelta(days=1)
-        custom_prior_start = custom_prior_end - timedelta(days=custom_span_days)
-        custom_pl_prior, custom_prior_error = await _fetch_pl_summary(
-            qbo_conn, db, custom_prior_start, custom_prior_end,
-        )
+        # ── Snapshots first; QuickBooks only when they can't answer ────────
+        # A window that starts on the 1st and ends on a month end is one saved
+        # snapshot minus another — the same rows the charts already read. Every
+        # ordinary month view, and every month-aligned range, therefore costs
+        # ZERO live calls instead of two. This used to go straight to QBO for
+        # any window at all, which is why the page always felt slow: the page
+        # sends a period_start on every view, so "custom range" was every view.
+        #
+        # The only thing such a window needs from outside is its OPENING
+        # balance, and once that month-end snapshot exists there is nothing
+        # left to fetch.
+        derivable, opening_pe = snapshot_window_opening(period_start, period_end)
+        if derivable:
+            end_rows = snaps_by_pe.get(period_end) or await _rows_at(db, tenant_id, period_end)
+            open_rows = (
+                None if opening_pe is None
+                else (snaps_by_pe.get(opening_pe) or await _rows_at(db, tenant_id, opening_pe))
+            )
+            if end_rows and (opening_pe is None or open_rows):
+                custom_pl = pl_from_snapshots(end_rows, open_rows)
+                pl_source = "snapshots"     # nothing was fetched from QuickBooks
+        if custom_pl is None:
+            pl_source = "live"
+            custom_pl, custom_pl_error = await _fetch_pl_summary(qbo_conn, db, period_start, period_end)
+
+        # The comparative. For a month-aligned window it is the equally long
+        # month-aligned window immediately before, which is derivable the same
+        # way; otherwise it mirrors the window's day count backwards.
+        custom_prior_error = None
+        if derivable:
+            months = ((period_end.year * 12 + period_end.month)
+                      - (period_start.year * 12 + period_start.month) + 1)
+            custom_prior_end   = _prior_month_end(period_start)
+            custom_prior_start = _add_months(custom_prior_end.replace(day=1), -(months - 1))
+        else:
+            custom_span_days = (period_end - period_start).days
+            custom_prior_end   = period_start - timedelta(days=1)
+            custom_prior_start = custom_prior_end - timedelta(days=custom_span_days)
+
+        prior_derivable, prior_opening_pe = snapshot_window_opening(custom_prior_start, custom_prior_end)
+        if prior_derivable:
+            pend_rows = snaps_by_pe.get(custom_prior_end) or await _rows_at(db, tenant_id, custom_prior_end)
+            popen_rows = (
+                None if prior_opening_pe is None
+                else (snaps_by_pe.get(prior_opening_pe) or await _rows_at(db, tenant_id, prior_opening_pe))
+            )
+            if pend_rows and (prior_opening_pe is None or popen_rows):
+                custom_pl_prior = pl_from_snapshots(pend_rows, popen_rows)
+        if custom_pl_prior is None:
+            pl_source = "live"
+            custom_pl_prior, custom_prior_error = await _fetch_pl_summary(
+                qbo_conn, db, custom_prior_start, custom_prior_end,
+            )
         # The two windows are separate QBO calls and can fail independently. If
         # the selected window loaded but its comparative didn't, the code below
         # would fall back to the prior CALENDAR MONTH — so a quarter would be
@@ -2914,6 +3067,9 @@ async def compute_overview(
         # (not aligned to a calendar month). Frontend uses this to decide
         # whether to show the "custom-range fallback" banner.
         "custom_range":   custom_range_active,
+        # "snapshots" when the window was read off saved month-end rows and
+        # nothing was pulled from QuickBooks; "live" when it wasn't.
+        "pl_source":      pl_source,
         "is_full_month":  is_full_month,
         "custom_pl_error": custom_pl_error,
         # Whether the period has balances to report at all — lets the UI show a

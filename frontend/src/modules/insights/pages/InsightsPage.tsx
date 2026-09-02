@@ -345,6 +345,7 @@ export function InsightsPage() {
         onGenerate={generate}
         isFetching={isFetching}
         loadedLabel={data?.period_label}
+        plSource={data?.pl_source}
         savedAt={data?.saved_at}
         onSync={sync}
         isSyncing={syncing}
@@ -419,7 +420,7 @@ export function InsightsPage() {
 function Header({
   mode, setMode, periodEnd, setPeriodEnd, periodStart, setPeriodStart,
   onGenerate, isFetching, loadedLabel,
-  savedAt, onSync, isSyncing, syncError,
+  savedAt, onSync, isSyncing, syncError, plSource,
 }: {
   mode: DateMode; setMode: (m: DateMode) => void
   periodEnd: string; setPeriodEnd: (s: string) => void
@@ -427,6 +428,9 @@ function Header({
   onGenerate: () => void
   isFetching: boolean
   loadedLabel?: string
+  /** Where the loaded window's P&L came from, so the note below the header
+   *  can describe this window rather than custom ranges in the abstract. */
+  plSource?: "snapshots" | "live"
   savedAt?: string
   onSync?: () => void
   isSyncing?: boolean
@@ -525,10 +529,17 @@ function Header({
         </>
       }
     >
-      {mode === "custom" && (
+      {/* Say what actually happened for THIS window, not what custom ranges
+          do in general. A range that starts on the 1st and ends on a month end
+          is read off saved month-end snapshots — one minus another — and costs
+          no QuickBooks call at all; only a window off the month grid needs the
+          live report. The banner used to assert the live call unconditionally,
+          which was both slower-sounding than the truth and, once ranges became
+          snapshot-derived, simply wrong. */}
+      {mode === "custom" && plSource === "live" && (
         <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-          For custom ranges we call QuickBooks ProfitAndLoss live for the exact
-          window — slightly slower than monthly snapshots, but accurate to the day.
+          This range doesn't line up with month ends, so we're reading it from
+          QuickBooks directly — accurate to the day, and a little slower.
         </p>
       )}
     </PageHeader>

@@ -92,8 +92,14 @@ async def get_overview(
             # ordinary month expired in fifteen minutes and recomputed itself
             # live, five sequential QuickBooks calls deep, on essentially every
             # visit. A finished calendar month is not a custom range.
+            # Two ways a payload can be live-sourced, and the second is the
+            # honest one: the window SHAPE may need a live report, or the
+            # computation may have fallen back to one because a snapshot it
+            # wanted was missing. The payload records which actually happened,
+            # so ask it rather than predicting.
             if cache_is_fresh(payload, current_iso,
-                              live_sourced=window_is_perishable(ps, pe),
+                              live_sourced=(window_is_perishable(ps, pe)
+                                            or payload.get("pl_source") == "live"),
                               computed_at=saved.computed_at):
                 payload["saved_at"] = saved.computed_at.isoformat()
                 return payload
