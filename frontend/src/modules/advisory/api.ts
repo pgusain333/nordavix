@@ -144,6 +144,10 @@ async function updateRecommendation(
     status?: RecStatus; client_action?: string | null; outcome_note?: string | null
     priority?: "high" | "medium" | "low"; owner?: string | null
     due_date?: string | null; target_value?: number | null
+    /** Link the metric this advice is meant to move. "" unlinks. Setting it
+     *  also captures what that metric read when the advice was given, so the
+     *  grade measures from the advice rather than from today. */
+    kpi_key?: string | null
   },
 ): Promise<TrackedRec> {
   const { data } = await apiClient.post<TrackedRec>(`/api/advisory/recommendations/${id}`, body)

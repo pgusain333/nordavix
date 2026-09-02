@@ -175,3 +175,29 @@ def test_a_spec_with_no_title_is_dropped():
     assert normalize_rec_spec({"detail": "orphan"}) is None
     assert normalize_rec_spec("   ") is None
     assert normalize_rec_spec(None) is None
+
+
+# ── Linking a metric to advice that already exists ────────────────────────
+#
+# The scorecard said "10 recommendations aren't tied to a metric, so they can't
+# be graded. Link one to start tracking them" — and there was nowhere to do it.
+# kpi_key could only be set at creation, so every item written before that
+# change was permanently ungradable while the page invited you to fix it.
+#
+# Linking one late raises a question creation doesn't: measured from WHEN? The
+# answer has to be the month the advice was given, not today, or a piece of
+# advice that has already worked reads as "no change yet".
+
+def test_a_late_link_still_grades_from_when_the_advice_was_given():
+    """Advised in April at 52 days; linked in September. Measuring from the
+    April reading shows the work that happened in between."""
+    assert grade_progress(baseline=52.0, current=47.0, target=None,
+                          higher_better=False) == "working"
+
+
+def test_measuring_from_today_would_have_erased_that_progress():
+    """The same advice, baselined at today's reading instead of April's. It
+    grades flat — five days of real improvement reported as nothing. This is
+    what makes the baseline choice load-bearing rather than a detail."""
+    assert grade_progress(baseline=47.0, current=47.0, target=None,
+                          higher_better=False) == "flat"

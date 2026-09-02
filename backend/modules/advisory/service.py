@@ -8,7 +8,7 @@ report's ephemeral advice into a status-tracked workflow ("advised X; did Y").
 """
 import logging
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import desc, select
@@ -432,14 +432,62 @@ async def scorecard(db, period_end: date) -> dict:
     }
 
 
+async def baseline_for(db, kpi_key: str, advised_period_end: date) -> tuple[float | None, datetime | None]:
+    """Where the metric stood when the advice was given.
+
+    Linking an OLD recommendation to a metric raises a question creation
+    doesn't: what is it measured from? Answering "wherever the metric is right
+    now" would throw away every month between the advice and today and grade it
+    from a standing start — advice that has already worked would read as "no
+    change yet".
+
+    So the advice's own period is asked first. The KPI series is history, and if
+    it carries a reading for the month the advice was given, that reading IS the
+    baseline and the grading window opens there. Only when that month has no
+    reading — books not synced back that far — does it fall back to today, and
+    it stamps `baseline_at` accordingly so the card's "since advised" run starts
+    where the measurement actually starts rather than where the advice did.
+    """
+    if kpi_key not in _VALID_KEYS:
+        return None, None
+    overview = await kpi_overview(db, None, date.today(), n=60)
+    series = next((k["series"] for k in overview["kpis"] if k["key"] == kpi_key), [])
+    if not series:
+        return None, None
+
+    at_advice = next(
+        (p for p in series if date.fromisoformat(p["period"]) == advised_period_end), None,
+    )
+    if at_advice is not None:
+        return at_advice["value"], datetime.combine(advised_period_end, time.min, tzinfo=UTC)
+    return series[-1]["value"], datetime.now(UTC)
+
+
 async def update_recommendation(db, rec_id, *, status=None, client_action=None,
                                 outcome_note=None, priority=None, owner=None,
-                                target_value=None, due_date=None, user_id) -> dict | None:
+                                target_value=None, due_date=None,
+                                kpi_key=None, user_id) -> dict | None:
     r = (await db.execute(
         select(TrackedRecommendation).where(TrackedRecommendation.id == rec_id)
     )).scalar_one_or_none()
     if r is None:
         return None
+
+    # Linking a metric — the path the scorecard's "link one to start tracking
+    # them" was inviting people to use before it existed. Attaching a metric
+    # also captures what that metric read when the advice was given, because a
+    # recommendation with a key and no baseline is still ungradable, just less
+    # obviously so.
+    if kpi_key is not None:
+        key = kpi_key.strip() or None
+        if key is not None and key not in _VALID_KEYS:
+            raise ValueError("Unknown KPI.")
+        if key != r.kpi_key:
+            r.kpi_key = key
+            if key is None:
+                r.baseline_value, r.baseline_at = None, None
+            else:
+                r.baseline_value, r.baseline_at = await baseline_for(db, key, r.period_end)
     if status is not None:
         if status not in _REC_STATUSES:
             raise ValueError("Invalid status.")

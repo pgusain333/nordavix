@@ -14,7 +14,7 @@
  * and the one a flattering design would round away.
  */
 import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { ArrowRight, CalendarClock, ChevronDown, TrendingDown, TrendingUp, User } from "lucide-react"
 
@@ -60,6 +60,15 @@ export function AdviceCard({ rec, canEdit, onSaved }: {
   const [action, setAction] = useState(rec.client_action ?? "")
   const [outcome, setOutcome] = useState(rec.outcome_note ?? "")
 
+  // Only fetched when there's a metric to pick — an already-linked card has no
+  // use for the catalog.
+  const { data: catalog = [] } = useQuery({
+    queryKey: ["advisory", "catalog"],
+    queryFn:  advisoryApi.getCatalog,
+    staleTime: 30 * 60_000,
+    enabled: !rec.kpi_key && canEdit,
+  })
+
   const save = useMutation({
     mutationFn: (body: Parameters<typeof advisoryApi.updateRecommendation>[1]) =>
       advisoryApi.updateRecommendation(rec.id, body),
@@ -102,6 +111,33 @@ export function AdviceCard({ rec, canEdit, onSaved }: {
             {grade.label}
           </span>
         </div>
+
+        {/* No metric, no grade — and until now no way to fix that. The
+            scorecard told people to "link one to start tracking them" and there
+            was nowhere to do it: kpi_key could only be set when a
+            recommendation was created, so every item that predated the change
+            was permanently ungradable. Copy that promises a control has to be
+            met by the control. */}
+        {!rec.kpi_key && canEdit && (
+          <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              Not tied to a metric
+            </span>
+            <select
+              value=""
+              onChange={(e) => e.target.value && save.mutate({ kpi_key: e.target.value })}
+              disabled={save.isPending}
+              className="rounded-md px-2 py-1 text-[11px] outline-none"
+              style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)",
+                       color: "var(--text)" }}>
+              <option value="">Link a metric…</option>
+              {catalog.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+            </select>
+            <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+              Measured from {rec.period_label}, when this was advised.
+            </span>
+          </div>
+        )}
 
         {/* The hypothesis: metric, from, to. Only drawn when there is one —
             an unlinked recommendation shouldn't be dressed up as measurable. */}

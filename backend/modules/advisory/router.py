@@ -171,6 +171,9 @@ class RecBody(BaseModel):
     owner: str | None = None
     due_date: str | None = None
     target_value: float | None = None
+    # Link (or unlink) the metric this advice is meant to move. Empty string
+    # clears it; omitted leaves it alone.
+    kpi_key: str | None = None
 
 
 @router.post("/recommendations/{rec_id}")
@@ -185,7 +188,7 @@ async def patch_recommendation(
         r = await svc.update_recommendation(
             db, rec_id, status=body.status, client_action=body.client_action,
             outcome_note=body.outcome_note, priority=body.priority,
-            owner=body.owner, target_value=body.target_value,
+            owner=body.owner, target_value=body.target_value, kpi_key=body.kpi_key,
             due_date=_parse_period(body.due_date) if body.due_date else None,
             user_id=user.id,
         )
