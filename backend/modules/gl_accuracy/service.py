@@ -112,6 +112,59 @@ async def _expense_account_ids(db: AsyncSession, tenant_id: uuid.UUID, period_en
     return out
 
 
+_BANK_TYPES = ("bank",)
+
+
+async def _bank_account_ids(db: AsyncSession, tenant_id: uuid.UUID, period_end: date) -> list[str]:
+    """The cash accounts, which the transaction scanner has never looked at.
+
+    `_expense_account_ids` filters to expense and cost of goods, so every
+    transaction-level detector ran on the spend side and stopped. Cash got
+    balance-level reconciliation and nothing about the transactions — which is
+    backwards for the risk, since the bank account is the one where being wrong
+    costs money rather than tidiness.
+    """
+    rows = (await db.execute(
+        select(GlBalanceSnapshot.qbo_account_id, GlBalanceSnapshot.account_type).where(
+            GlBalanceSnapshot.tenant_id == tenant_id,
+            GlBalanceSnapshot.period_end == period_end,
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).all()
+    out: list[str] = []
+    seen: set[str] = set()
+    for qid, atype in rows:
+        if not qid or qid in seen:
+            continue
+        if any(t in (atype or "").lower() for t in _BANK_TYPES):
+            seen.add(qid)
+            out.append(qid)
+    return out
+
+
+async def _statement_lines(db: AsyncSession, tenant_id: uuid.UUID, period_end: date) -> list[dict]:
+    """The bank's OWN record of the period, where it has been uploaded.
+
+    The only place an unrecorded withdrawal can possibly be seen: the general
+    ledger cannot report a transaction it never had.
+    """
+    from models.bank_statement_txn import BankStatementTxn
+
+    rows = (await db.execute(
+        select(BankStatementTxn).where(
+            BankStatementTxn.tenant_id == tenant_id,
+            BankStatementTxn.period_end == period_end,
+        ),
+        execution_options={"skip_tenant_filter": True},
+    )).scalars().all()
+    return [
+        {"qbo_account_id": r.qbo_account_id, "txn_date": r.txn_date,
+         "amount": r.amount, "description": r.description,
+         "bank_ref": r.bank_ref, "match_status": r.match_status}
+        for r in rows
+    ]
+
+
 async def _all_snapshots(db: AsyncSession, tenant_id: uuid.UUID, period_end: date) -> list[dict]:
     """Every account's balance snapshot for the period (all account types) — the
     evidence for the structural detectors (suspense / contra-balance), which need
@@ -416,6 +469,25 @@ async def _scan_body(
         current, history, snapshots=snapshots, exceptions=exceptions,
         opts=opts,
     )
+
+    # ── Cash ───────────────────────────────────────────────────────────────
+    # Bank transactions run through a separate detector suite and then join the
+    # SAME finding pipeline, so a duplicate payment inherits dispositions,
+    # Client Memory, proposed entries, Risk Radar, the continuous-close watch,
+    # the review memo and its graph edges without any of that being rebuilt.
+    from modules.gl_accuracy.bank_engine import as_finding_flag, run_bank_detectors
+
+    bank_ids = await _bank_account_ids(db, tenant_id, accounts_pe) if accounts_pe else []
+    if bank_ids:
+        bank_current = await pull_gl_transactions_multi(
+            conn, db, bank_ids, period_start, period_end)
+        bank_history = await pull_gl_transactions_multi(
+            conn, db, bank_ids, hist_start, hist_end)
+        statement = await _statement_lines(db, tenant_id, period_end)
+        flags += [
+            as_finding_flag(f)
+            for f in run_bank_detectors(bank_current, bank_history, statement)
+        ]
     await _record_suppressions(db, current, history, exceptions, opts, period_end)
     _inserted, newly_seen, new_keys = await _replace_open_findings(
         db, tenant_id, period_end, flags
