@@ -43,8 +43,19 @@ interface AccountDiff {
   difference: string
 }
 
+interface Reconciliation {
+  shown: string
+  unexplained: string
+  total: string
+  /** Whether the account list can be read as the whole story. */
+  complete: boolean
+}
+
 interface TieOut {
   accounts?: AccountDiff[]
+  reconciliation?: Reconciliation
+  diagnosis?: string | null
+  captured_at?: string | null
   period_end: string
   checked_at?: string
   basis?: string
@@ -168,34 +179,103 @@ export function TieOutCard({ periodEnd }: { periodEnd: string }) {
             </div>
           )}
 
-          {/* Which account, not just how much. A verdict of "6,421 somewhere
-              on the balance sheet" sends someone hunting through a chart of
-              accounts by hand — which is the work this screen exists to
-              remove. */}
+          {/* Which accounts, in a table that FOOTS. The first version listed
+              five rows under a headline gap they did not add up to — which
+              reads as the complete explanation, so someone chases those five
+              and concludes the rest doesn't exist. */}
           {verdict === false && (data.accounts?.length ?? 0) > 0 && (
-            <div className="px-3.5 pb-2.5" style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-              <p className="text-[9px] font-bold uppercase tracking-wider mb-1.5"
+            <div className="px-1.5 pb-1.5" style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+              <p className="text-[9px] font-bold uppercase tracking-wider px-2 mb-1"
                 style={{ color: "var(--text-muted)" }}>
                 Accounts behind the difference
               </p>
-              {data.accounts!.map((a) => (
-                <div key={a.account_name + a.status}
-                  className="flex items-baseline gap-2 text-[11.5px] py-0.5">
-                  <span className="min-w-0 flex-1 truncate text-theme">{a.account_name}</span>
-                  <span style={{ color: "var(--text-muted)" }} className="text-[10.5px]">
-                    {a.status === "only_qbo" ? "not in the last sync"
-                      : a.status === "only_ours" ? "not in QuickBooks' report"
-                      : `${money(a.nordavix)} vs ${money(a.quickbooks)}`}
-                  </span>
-                  <span className="tabular-nums font-semibold" style={{ color: "#A0503F" }}>
-                    {money(a.difference)}
-                  </span>
-                </div>
-              ))}
-              {data.accounts!.some((a) => a.status === "only_qbo") && (
-                <p className="text-[10.5px] mt-2" style={{ color: "#8a6326" }}>
-                  Accounts QuickBooks has and the last sync doesn&apos;t usually mean
-                  something posted after this period was synced. Re-sync it and check again.
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11.5px]" style={{ borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["Account", "Nordavix", "QuickBooks", "Difference"].map((h, i) => (
+                        <th key={h} scope="col"
+                          className="text-[9px] font-bold uppercase tracking-wider px-2 py-1 whitespace-nowrap"
+                          style={{ color: "var(--text-muted)",
+                                   textAlign: i === 0 ? "left" : "right",
+                                   borderBottom: "1px solid var(--border)" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.accounts!.map((a) => (
+                      <tr key={a.account_name + a.status}>
+                        <td className="px-2 py-1 text-theme">
+                          {a.account_name}
+                          {a.status !== "differs" && (
+                            <span className="block text-[10px]" style={{ color: "var(--text-muted)" }}>
+                              {a.status === "only_qbo"
+                                ? "not in the last sync"
+                                : "not in QuickBooks' report"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap"
+                          style={{ color: "var(--text-2)" }}>{money(a.nordavix)}</td>
+                        <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap"
+                          style={{ color: "var(--text-2)" }}>{money(a.quickbooks)}</td>
+                        <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap font-semibold"
+                          style={{ color: "#A0503F" }}>{money(a.difference)}</td>
+                      </tr>
+                    ))}
+                    {data.reconciliation && (
+                      <>
+                        <tr>
+                          <td className="px-2 pt-2 text-[11px]" style={{ color: "var(--text-muted)",
+                              borderTop: "1px solid var(--border)" }}>Accounts shown</td>
+                          <td colSpan={2} style={{ borderTop: "1px solid var(--border)" }} />
+                          <td className="px-2 pt-2 text-right tabular-nums"
+                            style={{ color: "var(--text-2)", borderTop: "1px solid var(--border)" }}>
+                            {money(data.reconciliation.shown)}
+                          </td>
+                        </tr>
+                        {!data.reconciliation.complete && (
+                          <tr>
+                            <td className="px-2 py-0.5 text-[11px]" style={{ color: "#8a6326" }}>
+                              Not explained by the above
+                            </td>
+                            <td colSpan={2} />
+                            <td className="px-2 py-0.5 text-right tabular-nums font-semibold"
+                              style={{ color: "#8a6326" }}>
+                              {money(data.reconciliation.unexplained)}
+                            </td>
+                          </tr>
+                        )}
+                        <tr>
+                          <td className="px-2 py-1 text-[11.5px] font-bold text-theme"
+                            style={{ borderTop: "1px solid var(--border-strong)" }}>
+                            Total difference
+                          </td>
+                          <td colSpan={2} style={{ borderTop: "1px solid var(--border-strong)" }} />
+                          <td className="px-2 py-1 text-right tabular-nums font-bold"
+                            style={{ color: "#A0503F", borderTop: "1px solid var(--border-strong)" }}>
+                            {money(data.reconciliation.total)}
+                          </td>
+                        </tr>
+                      </>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* What the SHAPE of it means. Six rows of numbers is data; one
+                  sentence saying whether this is age or an error is an answer. */}
+              {data.diagnosis && (
+                <p className="text-[11px] px-2 mt-2.5 leading-relaxed"
+                  style={{ color: "var(--text-2)" }}>
+                  {data.diagnosis}
+                </p>
+              )}
+              {data.reconciliation && !data.reconciliation.complete && (
+                <p className="text-[10.5px] px-2 mt-1.5" style={{ color: "#8a6326" }}>
+                  The accounts listed don&apos;t add up to the whole difference — the rest
+                  sits in balances under {"$"}1, or in accounts the two systems name
+                  differently.
                 </p>
               )}
             </div>

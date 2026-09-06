@@ -146,3 +146,101 @@ def test_every_compared_line_is_reported_even_when_it_ties(key):
 
 def test_the_tolerance_is_small_enough_to_mean_something():
     assert Decimal("0.01") <= TIE_TOLERANCE <= Decimal("5.00")
+
+
+# ── The account drill-down has to be honest about being partial ───────────
+
+from datetime import UTC, datetime  # noqa: E402
+
+from modules.financials.tieout import (  # noqa: E402
+    account_differences,
+    diagnose,
+    reconcile_accounts,
+)
+
+
+class Row:
+    """A parsed QBO report row, as the balance-sheet fetcher returns them."""
+    def __init__(self, label, value, kind="data"):
+        self.label, self.values, self.kind = label, [Decimal(str(value))], kind
+
+
+def test_quickbooks_net_income_is_not_treated_as_an_account():
+    """THE BUG THIS SHIPPED WITH. QuickBooks prints "Net Income" in the equity
+    section of a balance sheet — current-year earnings not yet closed. Nordavix
+    DERIVES net income rather than storing it, so comparing account-to-account
+    reported the client's whole year of profit as a missing account, dominating
+    the list. Same mismatch already fixed at the totals level, one layer down."""
+    ours = [{"account_name": "Checking", "presented": Decimal("100")}]
+    theirs = [Row("Checking", 100), Row("Net Income", 701445)]
+    assert account_differences(ours, theirs) == []
+
+
+@pytest.mark.parametrize("label", [
+    "Net Income", "Gross Profit", "Net Operating Income", "Total Assets",
+    "Total Liabilities and Equity",
+])
+def test_computed_rows_are_never_accounts(label):
+    ours = []
+    assert account_differences(ours, [Row(label, 50000)]) == []
+
+
+def test_a_real_account_only_quickbooks_has_is_still_reported():
+    """The filter must not swallow the thing the drill-down exists to find."""
+    d = account_differences([], [Row("Equipment Loan", 6421)])
+    assert len(d) == 1 and d[0]["status"] == "only_qbo"
+
+
+# ── Does the list add up to the gap it claims to explain? ─────────────────
+
+def test_a_list_that_does_not_foot_says_so():
+    """THE SECOND BUG. Five accounts summing to -111 were shown under a -6,421
+    headline, presented as the explanation. Someone chases those five and
+    concludes the rest doesn't exist."""
+    accounts = [{"difference": "-111"}]
+    r = reconcile_accounts(accounts, Decimal("-6421"))
+    assert r["complete"] is False
+    assert Decimal(r["unexplained"]) == Decimal("-6310")
+
+
+def test_a_list_that_does_foot_is_marked_complete():
+    accounts = [{"difference": "-6000"}, {"difference": "-421"}]
+    r = reconcile_accounts(accounts, Decimal("-6421"))
+    assert r["complete"] is True
+    assert Decimal(r["unexplained"]) == Decimal("0")
+
+
+def test_rounding_within_tolerance_still_counts_as_footing():
+    r = reconcile_accounts([{"difference": "-6420.40"}], Decimal("-6421"))
+    assert r["complete"] is True
+
+
+# ── Saying what the shape means ───────────────────────────────────────────
+
+NOW = datetime(2026, 9, 5, tzinfo=UTC)
+OLD = datetime(2026, 8, 8, tzinfo=UTC)
+
+
+def test_many_accounts_differing_reads_as_age_not_error():
+    """Nordavix reads a stored snapshot; QuickBooks is read live. Drift between
+    them is expected, and saying so is more useful than six rows of numbers."""
+    accounts = [{"account_name": f"A{i}", "status": "differs"} for i in range(5)]
+    msg = diagnose(accounts, OLD, NOW)
+    assert "moved on" in msg and "28 days ago" in msg
+
+
+def test_one_account_differing_is_the_interesting_case():
+    """Time moves every account a little. Nothing moves exactly one — so a
+    single difference is a specific transaction rather than drift."""
+    msg = diagnose([{"account_name": "Equipment Loan", "status": "differs"}], OLD, NOW)
+    assert "Only Equipment Loan differs" in msg
+
+
+def test_all_new_accounts_reads_as_new_activity():
+    accounts = [{"account_name": "Loan", "status": "only_qbo"},
+                {"account_name": "Van", "status": "only_qbo"}]
+    assert "new activity" in diagnose(accounts, OLD, NOW)
+
+
+def test_nothing_differing_says_nothing():
+    assert diagnose([], OLD, NOW) is None

@@ -1147,7 +1147,7 @@ async def tie_out(
         _load_snapshot,
         _signed_for_display,
     )
-    from modules.financials.tieout import account_differences
+    from modules.financials.tieout import account_differences, diagnose, reconcile_accounts
 
     bs_types = _ASSET_TYPES | _LIABILITY_TYPES | _EQUITY_TYPES
     snapshot_rows = [
@@ -1159,8 +1159,21 @@ async def tie_out(
     accounts = account_differences(snapshot_rows, theirs.pop("_bs_rows", []))
 
     result = compare(ours, theirs)
+    # Does the account list actually add up to the gap it claims to explain?
+    # Frequently it doesn't — names the two systems spell differently, balances
+    # under the tolerance, rows past the cap — and a list that silently doesn't
+    # reads as the complete answer. State the remainder instead.
+    assets_line = next((x for x in result["lines"] if x["key"] == "assets"), None)
+    total_gap = Decimal(assets_line["difference"]) if (
+        assets_line and assets_line.get("difference") is not None) else Decimal("0")
+    checked = datetime.now(UTC)
+    captured = ours.get("captured_at") if isinstance(ours, dict) else None
+
     return {
         "accounts": accounts,
+        "reconciliation": reconcile_accounts(accounts, total_gap),
+        "diagnosis": diagnose(accounts, captured, checked),
+        "captured_at": captured.isoformat() if captured else None,
         "period_end": pe.isoformat(),
         "checked_at": datetime.now(UTC).isoformat(),
         # Both sides are year-to-date: the snapshot holds YTD P&L, so pulling a

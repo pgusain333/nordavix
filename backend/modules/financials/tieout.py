@@ -170,6 +170,22 @@ def _norm(name: str) -> str:
     return " ".join(tail.lower().split())
 
 
+# Rows QuickBooks prints on a balance sheet that are NOT ledger accounts.
+# "Net Income" is the current year's earnings rolled into equity — Nordavix
+# derives that rather than storing it, so comparing it account-to-account
+# reports the whole year's profit as a missing account. Exactly the mismatch
+# already fixed at the totals level, one layer down.
+_NOT_ACCOUNTS = (
+    "net income", "net revenue", "gross profit", "net operating income",
+    "retained earnings - prior", "total",
+)
+
+
+def _is_account_row(label: str) -> bool:
+    norm = _norm(label)
+    return bool(norm) and not any(norm.startswith(x) or norm == x for x in _NOT_ACCOUNTS)
+
+
 def account_differences(
     ours: list[dict], theirs: list, tolerance: Decimal = TIE_TOLERANCE,
 ) -> list[dict]:
@@ -200,9 +216,10 @@ def account_differences(
     for row in theirs:
         if getattr(row, "kind", "") != "data":
             continue
-        key = _norm(getattr(row, "label", ""))
+        label = getattr(row, "label", "")
+        key = _norm(label)
         values = getattr(row, "values", None) or []
-        if not key or not values:
+        if not key or not values or not _is_account_row(label):
             continue
         qbo[key] = qbo.get(key, Decimal("0")) + Decimal(str(values[0]))
 
@@ -229,6 +246,72 @@ def account_differences(
     # Largest gap first — the one most likely to explain the total.
     out.sort(key=lambda r: abs(Decimal(r["difference"])), reverse=True)
     return out[:20]
+
+
+def reconcile_accounts(accounts: list[dict], total_difference: Decimal) -> dict:
+    """Do the accounts shown actually add up to the difference reported?
+
+    They frequently don't, and a list that silently doesn't is worse than no
+    list: it reads as the complete explanation, so someone chases the five
+    accounts on screen and concludes the sixth doesn't exist. Accounts below
+    the tolerance, names the two systems spell differently, and rows past the
+    cap all leak out of the bottom.
+
+    So the remainder is stated. "These five explain 111 of a 6,421 gap" is a
+    useful and honest sentence; five rows under a 6,421 headline, presented as
+    the answer, is not.
+    """
+    shown = sum((Decimal(a["difference"]) for a in accounts), Decimal("0"))
+    unexplained = total_difference - shown
+    return {
+        "shown": str(shown),
+        "unexplained": str(unexplained),
+        "total": str(total_difference),
+        # Whether the list can be read as the whole story.
+        "complete": abs(unexplained) <= TIE_TOLERANCE,
+    }
+
+
+def diagnose(accounts: list[dict], captured_at, checked_at) -> str | None:
+    """What the SHAPE of the differences means, in one sentence.
+
+    Six rows of numbers is data. "Your snapshot is three weeks old and the
+    books have moved on" is an answer, and it is the one that is true most of
+    the time — Nordavix reads a stored snapshot while QuickBooks is read live,
+    so drift between them is expected rather than alarming.
+
+    The distinction that matters: MANY accounts differing is almost always age.
+    ONE account differing while everything else ties is the interesting case,
+    because time moves every account a little and nothing moves exactly one.
+    """
+    if not accounts:
+        return None
+    stale_days = None
+    if captured_at is not None and checked_at is not None:
+        stale_days = (checked_at - captured_at).days
+
+    only_qbo = [a for a in accounts if a["status"] == "only_qbo"]
+    age = (f" The last sync was {stale_days} day{'' if stale_days == 1 else 's'} ago."
+           if stale_days and stale_days > 0 else "")
+
+    if len(accounts) == 1:
+        a = accounts[0]
+        return (
+            f"Only {a['account_name']} differs — everything else ties. A period drifting "
+            f"with age moves many accounts a little; one account alone is usually a "
+            f"specific transaction worth finding.{age}"
+        )
+    if only_qbo and len(only_qbo) == len(accounts):
+        return (
+            f"Every difference is an account QuickBooks has that the last sync doesn't, "
+            f"which is what new activity looks like.{age} Re-sync this period."
+        )
+    return (
+        f"{len(accounts)} accounts differ, which is what a period looks like when the "
+        f"books have moved on since it was last read rather than when something is "
+        f"wrong.{age} Re-sync this period and check again — anything still differing "
+        f"afterwards is worth investigating."
+    )
 
 
 def _totals_from_rows(rows, which: str) -> dict[str, Decimal]:
