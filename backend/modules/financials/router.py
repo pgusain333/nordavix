@@ -1138,8 +1138,29 @@ async def tie_out(
     )).scalar_one_or_none()
     theirs, err = await qbo_totals(conn, db, pe, fiscal_year_end=fye)
 
+    # Balance-sheet accounts as Nordavix holds them, presented-positive so the
+    # two sides are comparable without the reader doing sign arithmetic.
+    from modules.financials.internal import (
+        _ASSET_TYPES,
+        _EQUITY_TYPES,
+        _LIABILITY_TYPES,
+        _load_snapshot,
+        _signed_for_display,
+    )
+    from modules.financials.tieout import account_differences
+
+    bs_types = _ASSET_TYPES | _LIABILITY_TYPES | _EQUITY_TYPES
+    snapshot_rows = [
+        {"account_name": r.account_name,
+         "presented": _signed_for_display(r.account_type, r.balance)}
+        for r in await _load_snapshot(db, tenant_id, pe)
+        if r.account_type in bs_types
+    ]
+    accounts = account_differences(snapshot_rows, theirs.pop("_bs_rows", []))
+
     result = compare(ours, theirs)
     return {
+        "accounts": accounts,
         "period_end": pe.isoformat(),
         "checked_at": datetime.now(UTC).isoformat(),
         # Both sides are year-to-date: the snapshot holds YTD P&L, so pulling a

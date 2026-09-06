@@ -133,7 +133,13 @@ async def qbo_totals(
         logger.exception("Tie-out: QuickBooks report fetch failed for %s", period_end)
         return {}, "Couldn't read the statements from QuickBooks. Try again, or reconnect."
 
-    return {**_totals_from_rows(bs, "bs"), **_totals_from_rows(pl, "pl")}, None
+    return (
+        {**_totals_from_rows(bs, "bs"), **_totals_from_rows(pl, "pl"),
+         # The balance-sheet detail, so a total that disagrees can name the
+         # account rather than leaving someone to hunt through the chart.
+         "_bs_rows": bs},
+        None,
+    )
 
 
 # QBO labels its own summary rows, and the wording varies by locale and by
@@ -151,6 +157,78 @@ _ROW_MATCHERS: list[tuple[str, str, tuple[str, ...]]] = [
     ("revenue",            "pl", ("total income", "total revenue")),
     ("net_income",         "pl", ("net income", "profit for the year", "net profit")),
 ]
+
+
+def _norm(name: str) -> str:
+    """An account name reduced to something two systems can be matched on.
+
+    QuickBooks renders sub-accounts with a colon path and pads for indentation;
+    the snapshot stores the leaf name alone. Lowercased, trimmed, and reduced to
+    the last path segment so "Fixed Assets:Vehicles" meets "Vehicles".
+    """
+    tail = (name or "").split(":")[-1]
+    return " ".join(tail.lower().split())
+
+
+def account_differences(
+    ours: list[dict], theirs: list, tolerance: Decimal = TIE_TOLERANCE,
+) -> list[dict]:
+    """WHICH accounts disagree, not just by how much in total.
+
+    A verdict of "6,421 somewhere on the balance sheet" sends someone hunting
+    through a chart of accounts by hand, which is the work the tie-out was
+    supposed to remove. The totals answer whether to look; this answers where.
+
+    Three kinds of disagreement, kept apart because they mean different things:
+
+      differs     both systems carry the account and disagree on its balance.
+      only_qbo    QuickBooks has it and the snapshot doesn't — the usual shape
+                  when an account was created, or a transaction posted, after
+                  the period was last synced.
+      only_ours   the snapshot has it and QuickBooks' report doesn't, which is
+                  usually an account that netted to zero and was omitted from
+                  their report rather than one that vanished.
+
+    Matched on NAME, which is the only key the two sides share — QuickBooks'
+    report gives labels, not account ids. Imperfect: a renamed account shows as
+    one of each. Reported as two rows rather than silently paired, because
+    guessing at a pairing is how a real difference gets hidden inside a
+    plausible one.
+    """
+    mine = {_norm(a["account_name"]): a for a in ours if a.get("account_name")}
+    qbo: dict[str, Decimal] = {}
+    for row in theirs:
+        if getattr(row, "kind", "") != "data":
+            continue
+        key = _norm(getattr(row, "label", ""))
+        values = getattr(row, "values", None) or []
+        if not key or not values:
+            continue
+        qbo[key] = qbo.get(key, Decimal("0")) + Decimal(str(values[0]))
+
+    out: list[dict] = []
+    for key, acct in mine.items():
+        ours_val = Decimal(str(acct.get("presented", 0)))
+        if key not in qbo:
+            if abs(ours_val) > tolerance:
+                out.append({"account_name": acct["account_name"], "status": "only_ours",
+                            "nordavix": str(ours_val), "quickbooks": None,
+                            "difference": str(ours_val)})
+            continue
+        diff = ours_val - qbo[key]
+        if abs(diff) > tolerance:
+            out.append({"account_name": acct["account_name"], "status": "differs",
+                        "nordavix": str(ours_val), "quickbooks": str(qbo[key]),
+                        "difference": str(diff)})
+    for key, val in qbo.items():
+        if key not in mine and abs(val) > tolerance:
+            out.append({"account_name": key.title(), "status": "only_qbo",
+                        "nordavix": None, "quickbooks": str(val),
+                        "difference": str(-val)})
+
+    # Largest gap first — the one most likely to explain the total.
+    out.sort(key=lambda r: abs(Decimal(r["difference"])), reverse=True)
+    return out[:20]
 
 
 def _totals_from_rows(rows, which: str) -> dict[str, Decimal]:

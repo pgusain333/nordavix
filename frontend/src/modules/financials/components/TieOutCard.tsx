@@ -32,7 +32,19 @@ interface TieOutLine {
   status: "ties" | "differs" | "unavailable"
 }
 
+interface AccountDiff {
+  account_name: string
+  /** differs — both carry it and disagree. only_qbo — QuickBooks has it and
+   *  the snapshot doesn't, the usual shape when something posted after the
+   *  last sync. only_ours — the reverse. */
+  status: "differs" | "only_qbo" | "only_ours"
+  nordavix: string | null
+  quickbooks: string | null
+  difference: string
+}
+
 interface TieOut {
+  accounts?: AccountDiff[]
   period_end: string
   checked_at?: string
   basis?: string
@@ -153,6 +165,39 @@ export function TieOutCard({ periodEnd }: { periodEnd: string }) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Which account, not just how much. A verdict of "6,421 somewhere
+              on the balance sheet" sends someone hunting through a chart of
+              accounts by hand — which is the work this screen exists to
+              remove. */}
+          {verdict === false && (data.accounts?.length ?? 0) > 0 && (
+            <div className="px-3.5 pb-2.5" style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <p className="text-[9px] font-bold uppercase tracking-wider mb-1.5"
+                style={{ color: "var(--text-muted)" }}>
+                Accounts behind the difference
+              </p>
+              {data.accounts!.map((a) => (
+                <div key={a.account_name + a.status}
+                  className="flex items-baseline gap-2 text-[11.5px] py-0.5">
+                  <span className="min-w-0 flex-1 truncate text-theme">{a.account_name}</span>
+                  <span style={{ color: "var(--text-muted)" }} className="text-[10.5px]">
+                    {a.status === "only_qbo" ? "not in the last sync"
+                      : a.status === "only_ours" ? "not in QuickBooks' report"
+                      : `${money(a.nordavix)} vs ${money(a.quickbooks)}`}
+                  </span>
+                  <span className="tabular-nums font-semibold" style={{ color: "#A0503F" }}>
+                    {money(a.difference)}
+                  </span>
+                </div>
+              ))}
+              {data.accounts!.some((a) => a.status === "only_qbo") && (
+                <p className="text-[10.5px] mt-2" style={{ color: "#8a6326" }}>
+                  Accounts QuickBooks has and the last sync doesn&apos;t usually mean
+                  something posted after this period was synced. Re-sync it and check again.
+                </p>
+              )}
             </div>
           )}
 
