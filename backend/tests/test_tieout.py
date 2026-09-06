@@ -16,11 +16,50 @@ import pytest
 
 from modules.financials.tieout import TIE_TOLERANCE, compare
 
+# A real client's figures. Note that `balance_sheet_total` equals `assets` —
+# that is what balancing MEANS, and it is what QuickBooks reports on both
+# lines. `liabilities_equity` is the same figure minus current-year earnings,
+# which is a different question and belongs to the adjustments rail.
 FULL = {
-    "assets": Decimal("763301"), "liabilities_equity": Decimal("763301"),
+    "assets": Decimal("763301"), "balance_sheet_total": Decimal("763301"),
     "revenue": Decimal("772710"), "cogs": Decimal("0"),
     "opex": Decimal("83996"), "net_income": Decimal("688713"),
 }
+
+
+def test_the_two_sides_of_the_balance_sheet_are_compared_like_for_like():
+    """THE BUG THIS SHIPPED WITH, pinned so it cannot come back.
+
+    QuickBooks' "Total Liabilities and Equity" INCLUDES current-year net
+    income — which is why it reports the same number on both balance-sheet
+    lines. Nordavix's `liabilities_equity` deliberately EXCLUDES it, because
+    the adjustments rail is built on the invariant that assets move by
+    liabilities-and-equity plus net income.
+
+    Comparing those two reported the client's entire year of profit as a
+    discrepancy in their books, on the one screen built to catch exactly that
+    kind of mismatch. The tie-out compares `balance_sheet_total` instead.
+    """
+    ours = {
+        "assets": Decimal("763301"),
+        "liabilities_equity": Decimal("74588"),        # excludes earnings
+        "balance_sheet_total": Decimal("763301"),      # includes them
+        "net_income": Decimal("688713"),
+    }
+    theirs = {"assets": Decimal("763301"), "balance_sheet_total": Decimal("763301")}
+    r = compare(ours, theirs)
+    bs_lines = [x for x in r["lines"] if x["source"] == "bs"]
+    assert all(x["status"] == "ties" for x in bs_lines), bs_lines
+    # And the line that must never be the one compared.
+    assert "liabilities_equity" not in {x["key"] for x in r["lines"]}
+
+
+def test_a_balance_sheet_that_does_not_balance_still_reports():
+    """Narrowing what is compared must not make the check toothless — a real
+    imbalance is still a real finding."""
+    ours = {"assets": Decimal("763301"), "balance_sheet_total": Decimal("750000")}
+    theirs = {"assets": Decimal("763301"), "balance_sheet_total": Decimal("763301")}
+    assert compare(ours, theirs)["ties"] is False
 
 
 def test_identical_totals_tie():
@@ -93,7 +132,7 @@ def test_every_line_carries_which_statement_it_came_from():
     places."""
     r = compare(FULL, dict(FULL))
     by_key = {x["key"]: x["source"] for x in r["lines"]}
-    assert by_key["assets"] == "bs" and by_key["liabilities_equity"] == "bs"
+    assert by_key["assets"] == "bs" and by_key["balance_sheet_total"] == "bs"
     assert by_key["revenue"] == "pl" and by_key["net_income"] == "pl"
 
 

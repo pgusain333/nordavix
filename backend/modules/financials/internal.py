@@ -456,8 +456,25 @@ async def statement_totals(
         **pl,
         # Point-in-time under both bases — a balance is not period activity.
         "assets":             _presented_sum(rows, _ASSET_TYPES),
+        # Liabilities and equity WITHOUT current-year earnings. The adjustments
+        # rail is built on this definition — its invariant is
+        # Δassets = ΔL&E + Δnet income — so it stays as it is.
         "liabilities_equity": (_presented_sum(rows, _LIABILITY_TYPES)
                                + _presented_sum(rows, _EQUITY_TYPES)),
+        # The BOTTOM of the balance sheet, which is what QuickBooks means by
+        # "Total Liabilities and Equity" — current-year net income included,
+        # because it has not been closed to retained earnings yet.
+        #
+        # Two lines rather than one because the two callers genuinely want
+        # different figures, and the alternative was what actually happened:
+        # the tie-out compared L&E-without-earnings against QuickBooks'
+        # L&E-with-earnings and reported the whole year's profit as a
+        # discrepancy in the client's books. A figure that looked authoritative
+        # while its basis was silently different — on the very screen built to
+        # catch that.
+        "balance_sheet_total": (_presented_sum(rows, _LIABILITY_TYPES)
+                                + _presented_sum(rows, _EQUITY_TYPES)
+                                + _compute_net_income(rows)),
         # What the caller is standing on, so the UI can say which read this was.
         "captured_at":        max(captured) if captured else None,
         "pl_basis":           pl_basis,

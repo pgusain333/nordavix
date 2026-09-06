@@ -49,8 +49,13 @@ TIE_TOLERANCE = Decimal("1.00")
 # Balance sheet first because it is the one a difference is most alarming in.
 _LINES: list[tuple[str, str, str]] = [
     # (key, label, which QBO report)
-    ("assets",             "Total assets",         "bs"),
-    ("liabilities_equity", "Liabilities & equity", "bs"),
+    ("assets",              "Total assets",                "bs"),
+    # QuickBooks' "Total Liabilities and Equity" INCLUDES current-year net
+    # income; Nordavix's `liabilities_equity` deliberately excludes it (the
+    # adjustments rail needs it that way). Comparing those two reported a
+    # whole year's profit as a discrepancy in the client's books, which is why
+    # this line names the balance-sheet total instead.
+    ("balance_sheet_total", "Total liabilities & equity",  "bs"),
     ("revenue",            "Revenue",              "pl"),
     ("cogs",               "Cost of revenue",      "pl"),
     ("opex",               "Operating expenses",   "pl"),
@@ -138,8 +143,8 @@ async def qbo_totals(
 # swallowed by the "Income" match.
 _ROW_MATCHERS: list[tuple[str, str, tuple[str, ...]]] = [
     ("assets",             "bs", ("total assets",)),
-    ("liabilities_equity", "bs", ("total liabilities and equity",
-                                  "total liabilities & equity")),
+    ("balance_sheet_total", "bs", ("total liabilities and equity",
+                                   "total liabilities & equity")),
     ("cogs",               "pl", ("total cost of goods sold", "total cost of sales",
                                   "total cost of revenue")),
     ("opex",               "pl", ("total expenses", "total operating expenses")),
