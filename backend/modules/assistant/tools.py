@@ -10,7 +10,8 @@ loop under a hard read-only DB guard.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func, select
@@ -26,6 +27,15 @@ from models.trial_balance import TrialBalance
 from models.variance import Variance
 from modules.adjustments.service import parse_ai_entries, period_accounts
 from modules.assistant.people import name_map, workspace_members
+from modules.assistant.trend import (
+    MONTHS_DEFAULT,
+    bridge_to_target,
+    direction,
+    forecast,
+    month_ends_back,
+    rank_levers,
+    total_change_pct,
+)
 from modules.close_workflow.service import build_checklist, linked_status
 from modules.memory.service import account_memory_context
 from modules.recons.overview import read_overview_from_snapshots
@@ -471,6 +481,229 @@ TOOL_DEFS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_trend",
+        "description": (
+            "How a figure has MOVED over the last N months — revenue, gross "
+            "profit, opex, net income, cash, assets, or any single account — "
+            "with the direction (rising / falling / flat / volatile), the "
+            "month-by-month values, the total change, and the best and worst "
+            "months. THE tool for any question about time: 'is revenue growing', "
+            "'is the burn getting worse', 'how has margin moved', 'show me the "
+            "last 6 months', 'what's the trend'. Reads saved month-end snapshots "
+            "only — no QuickBooks call, so it is fast. Call this BEFORE giving "
+            "any opinion on performance: one month is a data point, not a story."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "metric": {
+                    "type": "string",
+                    "description": (
+                        "revenue | cogs | gross_profit | opex | operating_income | "
+                        "net_income | cash | assets | liabilities — or omit and pass "
+                        "`account` for one specific account."
+                    ),
+                },
+                "account": {
+                    "type": "string",
+                    "description": "Account number or name to trend instead of a statement metric.",
+                },
+                "months": {"type": "integer", "description": "How many months back (default 6, max 24)."},
+                "period_end": {"type": "string", "description": "Latest month YYYY-MM-DD; omit for active period."},
+            },
+        },
+    },
+    {
+        "name": "get_forecast",
+        "description": (
+            "Project a metric FORWARD from its own history — revenue, net "
+            "income, opex, or cash — with a high/low band and an honest "
+            "confidence rating. Use for 'what will revenue be', 'where does "
+            "cash land', 'how long is our runway', 'will we be profitable by "
+            "Q4', 'forecast'. It refuses to forecast on fewer than 3 months and "
+            "widens the band on a volatile series rather than pretending to a "
+            "precision the data doesn't have — REPORT the band and the "
+            "confidence, never just the midpoint."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "metric": {
+                    "type": "string",
+                    "description": "revenue | net_income | opex | gross_profit | cash (default revenue).",
+                },
+                "months_ahead": {"type": "integer", "description": "How far forward (default 3, max 12)."},
+                "months_history": {"type": "integer", "description": "History to learn from (default 6, max 24)."},
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+            },
+        },
+    },
+    {
+        "name": "plan_to_target",
+        "description": (
+            "Work out what has to happen for the client to HIT A NUMBER — the "
+            "gap, the required monthly run-rate, how that compares to what "
+            "they're doing now AND to their best month on record, and which "
+            "expense lines are big enough to carry the difference. Use for 'how "
+            "do we get to $2M revenue', 'can we hit $500k profit this year', "
+            "'what do we need to do to break even', 'how do we reach our "
+            "target'. Always report the verdict (on track / stretch / never "
+            "been done) — the arithmetic is easy, the reality check is the "
+            "value. Then turn the levers into specific, ranked actions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "metric": {
+                    "type": "string",
+                    "description": "revenue | net_income | gross_profit | operating_income (default net_income).",
+                },
+                "target": {"type": "number", "description": "The number to hit, in dollars."},
+                "target_kind": {
+                    "type": "string",
+                    "description": (
+                        "'total' = a cumulative goal by a date (e.g. $500k of profit for the "
+                        "year); 'monthly' = a run-rate to reach (e.g. $200k revenue a month). "
+                        "Default 'total'."
+                    ),
+                },
+                "by_period_end": {
+                    "type": "string",
+                    "description": "Deadline YYYY-MM-DD. Omit for the client's fiscal year end.",
+                },
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+            },
+            "required": ["target"],
+        },
+    },
+    {
+        "name": "get_transactions",
+        "description": (
+            "The individual TRANSACTIONS behind an account this period — date, "
+            "type, amount, vendor/customer and memo — plus any bank-statement "
+            "lines and the forensic flags raised on them (duplicate payments, "
+            "round-dollar entries, weekend payments, unrecorded withdrawals). "
+            "Use when the answer needs detail below the balance: 'why did rent "
+            "jump', 'what made up that variance', 'show me the transactions', "
+            "'what did we pay <vendor>', 'is there anything unusual in the bank "
+            "account'. Transaction detail exists only where someone has already "
+            "pulled it (Find reasons on a flux variance, or a bank statement "
+            "upload) — if it comes back empty, say where it would come from."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account": {"type": "string", "description": "Account number or name."},
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+                "min_amount": {"type": "number", "description": "Only transactions at or above this absolute amount."},
+            },
+            "required": ["account"],
+        },
+    },
+    {
+        "name": "get_tie_out",
+        "description": (
+            "Whether the period's numbers hold together — does the balance sheet "
+            "balance (Assets = Liabilities + Equity + net income), does the "
+            "trial balance tie, are any account types falling outside the "
+            "statements, and which accounts have a GL-vs-subledger variance "
+            "that hasn't been cleared. Use for 'does it tie', 'is anything out "
+            "of balance', 'why is the balance sheet off', 'is this period "
+            "clean'. This checks NORDAVIX's own books against themselves; "
+            "comparing them line-by-line against live QuickBooks is the 'Check "
+            "against QuickBooks' button on Financial Statements — point the user "
+            "there if that's what they want."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "get_repeat_issues",
+        "description": (
+            "Problems that keep COMING BACK — the same vendor miscoded to the "
+            "same account across several months. A one-off is a mistake; the "
+            "same mistake three months running is a broken process, and the fix "
+            "is a rule, not another journal entry. Use for 'what keeps going "
+            "wrong', 'recurring errors', 'why does this keep happening', 'what "
+            "should we fix permanently', 'process issues'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."}},
+        },
+    },
+    {
+        "name": "search_everything",
+        "description": (
+            "Find anything in this workspace by name or keyword across accounts, "
+            "risk findings, review exceptions, tasks, adjustments, schedules and "
+            "periods at once. Use when the user names something you can't place "
+            "— a vendor, an account, a task, 'that thing about the truck loan' — "
+            "or when you need to locate which module holds a topic before "
+            "answering. Cheap; prefer it over guessing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "What to look for."}},
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_discussion",
+        "description": (
+            "What the TEAM has said — comment threads left on reconciliations, "
+            "variances and other items, with who wrote each and when. Use for "
+            "'what did the team say about this', 'has anyone looked at this', "
+            "'what questions are open', 'did anyone answer my note', 'what's "
+            "being discussed'. Optionally scoped to one account."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account": {"type": "string", "description": "Optional — narrow to one account's threads."},
+                "period_end": {"type": "string", "description": "YYYY-MM-DD; omit for active period."},
+                "limit": {"type": "integer", "description": "How many comments (default 20, max 60)."},
+            },
+        },
+    },
+    {
+        "name": "ask_user",
+        "description": (
+            "Ask the user ONE clarifying question with tappable options, when "
+            "the answer would materially change what you say and you genuinely "
+            "cannot resolve it yourself. Legitimate uses: which entity/scenario "
+            "they mean, what target or assumption to plan against, which of two "
+            "readings of an ambiguous request they want, how aggressive a "
+            "recommendation should be. NEVER use it for something a tool can "
+            "answer (which month, what an account balance is, who's on the "
+            "team) — look it up instead. Ask at most one question per answer, "
+            "and ALWAYS give your best partial answer in the same turn: the "
+            "question refines a response, it never replaces one."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The single question, one short sentence."},
+                "options": {
+                    "type": "array",
+                    "description": "2-5 tappable answers, each a few words.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "hint": {"type": "string", "description": "Optional half-line of what this choice means."},
+                        },
+                        "required": ["label"],
+                    },
+                },
+                "allow_free_text": {"type": "boolean", "description": "Let them type their own instead (default true)."},
+            },
+            "required": ["question", "options"],
+        },
+    },
+    {
         "name": "make_chart",
         "description": (
             "Render a chart UNDER your answer when a set of numbers is genuinely "
@@ -564,6 +797,85 @@ def _slim_overview(ov: dict) -> dict:
         "totals": ov.get("totals"),
         "tb_check": ov.get("tb_check"),
     }
+
+
+# Statement metrics the cross-period tools can trend or project. Keyed to the
+# names totals_series returns, so a metric can never mean one thing here and
+# another on the Financial Statements screen.
+_TREND_METRICS = {
+    "revenue", "cogs", "gross_profit", "opex", "operating_income",
+    "net_income", "cash", "assets", "liabilities", "equity",
+    "current_assets", "current_liabilities",
+}
+# Metrics that are a BALANCE, not activity. They are never differenced and a
+# "total assets for the month of June" question is a category error.
+_POINT_IN_TIME = {"cash", "assets", "liabilities", "equity",
+                  "current_assets", "current_liabilities"}
+
+
+async def _fiscal_year_end(db: AsyncSession, tenant_id: uuid.UUID) -> str | None:
+    """The client's fiscal year end ('MM-DD'), or None for the calendar default.
+
+    Read directly rather than assumed: a June-year-end client's July is the
+    first month of a fiscal year, and treating it as a mid-year month makes
+    every month-activity figure a subtraction of two unrelated running totals.
+    """
+    try:
+        from models.tenant import Tenant
+        return (await db.execute(
+            select(Tenant.fiscal_year_end).where(Tenant.id == tenant_id),
+            execution_options={"skip_tenant_filter": True},
+        )).scalar_one_or_none()
+    except Exception:
+        return None
+
+
+async def _find_account(db: AsyncSession, period_end: date, q: str):
+    """Resolve a user's account phrase to one snapshot row for the period."""
+    like = f"%{q}%"
+    return (await db.execute(
+        select(GlBalanceSnapshot).where(
+            GlBalanceSnapshot.period_end == period_end,
+            (GlBalanceSnapshot.account_number.ilike(like))
+            | (GlBalanceSnapshot.account_name.ilike(like))
+            | (GlBalanceSnapshot.qbo_account_id == q),
+        ).limit(1)
+    )).scalars().first()
+
+
+async def _metric_series(
+    db: AsyncSession, tenant_id: uuid.UUID, period_end: date, metric: str, months: int,
+) -> tuple[list[dict], str]:
+    """(points, note) for a statement metric across the trailing `months`.
+
+    Months with no snapshot are absent from the list rather than zero — a month
+    nobody synced is not a month of no revenue, and averaging the two together
+    would understate every figure downstream.
+    """
+    from modules.financials.internal import totals_series
+
+    fye = await _fiscal_year_end(db, tenant_id)
+    ends = month_ends_back(period_end, months)
+    rows = await totals_series(db, tenant_id, ends, fiscal_year_end=fye)
+    point_in_time = metric in _POINT_IN_TIME
+    points: list[dict] = []
+    gaps: list[str] = []
+    for r in rows:
+        val = r.get(metric)
+        if val is None or (not point_in_time and r.get("pl_basis") != "month"):
+            gaps.append(r["period_end"].isoformat())
+            continue
+        points.append({"period_end": r["period_end"].isoformat(), "value": float(val)})
+    missing = len(ends) - len(rows)
+    note_bits = []
+    if missing > 0:
+        note_bits.append(f"{missing} of the {len(ends)} months requested have never been synced")
+    if gaps:
+        note_bits.append(
+            f"{len(gaps)} month(s) had no prior period to measure activity against "
+            f"({', '.join(gaps[:3])})"
+        )
+    return points, "; ".join(note_bits)
 
 
 async def dispatch_tool(
@@ -670,6 +982,34 @@ async def dispatch_tool(
             },
         }
 
+    if name == "ask_user":
+        # The copilot could always ASK in prose; what it couldn't do was make
+        # answering cheap. A prose question costs the user a sentence of typing,
+        # so most go unanswered and the answer stays generic.
+        q = (ti.get("question") or "").strip()
+        opts: list[dict] = []
+        for o in (ti.get("options") or []):
+            if isinstance(o, dict) and (o.get("label") or "").strip():
+                opts.append({"label": str(o["label"]).strip()[:80],
+                             "hint": (str(o.get("hint")).strip()[:120] if o.get("hint") else None)})
+            elif isinstance(o, str) and o.strip():
+                opts.append({"label": o.strip()[:80], "hint": None})
+        if not q or len(opts) < 2:
+            return {"ok": False, "error": "A question and at least 2 options are required."}
+        return {"ok": True, "clarify": {
+            "question": q,
+            "options": opts[:5],
+            "allow_free_text": ti.get("allow_free_text") is not False,
+        }}
+
+    if name == "search_everything":
+        from modules.search.service import search as workspace_search
+        q = (ti.get("query") or "").strip()
+        if len(q) < 2:
+            return {"ok": False, "error": "Give me at least two characters to search for."}
+        hits = await workspace_search(db, tenant_id, q, limit=20)
+        return {"query": q, "count": len(hits), "results": hits}
+
     if name == "make_chart":
         ctype = (ti.get("type") or "").strip().lower()
         if ctype not in ("bar", "pie", "line"):
@@ -694,6 +1034,389 @@ async def dispatch_tool(
     pe = _parse_period(ti.get("period_end"), default_period)
     if pe is None:
         return {"error": "No period specified and no active period is set. Ask the user which month (YYYY-MM-DD)."}
+
+    if name == "get_trend":
+        months = int(ti.get("months") or MONTHS_DEFAULT)
+        acct_q = (ti.get("account") or "").strip()
+        metric = (ti.get("metric") or "").strip().lower()
+
+        if acct_q:
+            row = await _find_account(db, pe, acct_q)
+            if row is None:
+                return {"ok": False, "error": f"No account matching '{acct_q}' for {pe.isoformat()}."}
+            ends = month_ends_back(pe, months)
+            brows = (await db.execute(
+                select(GlBalanceSnapshot).where(
+                    GlBalanceSnapshot.qbo_account_id == row.qbo_account_id,
+                    GlBalanceSnapshot.period_end.in_(ends),
+                ).order_by(GlBalanceSnapshot.period_end)
+            )).scalars().all()
+            points = [{"period_end": b.period_end.isoformat(), "value": float(b.balance)} for b in brows]
+            label = f"{row.account_number or ''} {row.account_name or ''}".strip()
+            note = (f"{len(ends) - len(points)} of {len(ends)} months not synced"
+                    if len(points) < len(ends) else "")
+            basis = "Account balance at each month end (point in time)."
+        else:
+            if metric not in _TREND_METRICS:
+                metric = "revenue"
+            points, note = await _metric_series(db, tenant_id, pe, metric, months)
+            label = metric.replace("_", " ")
+            basis = ("Balance at each month end (point in time)."
+                     if metric in _POINT_IN_TIME
+                     else "Each month's own activity, not year-to-date.")
+
+        vals = [p["value"] for p in points]
+        if not points:
+            return {"ok": False, "metric": label, "period_end": pe.isoformat(),
+                    "note": note or "No synced months in this window."}
+        best = max(points, key=lambda p: p["value"])
+        worst = min(points, key=lambda p: p["value"])
+        return {
+            "ok": True,
+            "metric": label,
+            "months": len(points),
+            "basis": basis,
+            "points": points,
+            "direction": direction(vals),
+            "total_change_pct": (round(total_change_pct(vals), 1)
+                                 if total_change_pct(vals) is not None else None),
+            "latest": vals[-1],
+            "average": round(sum(vals) / len(vals), 2),
+            "best_month": {"period_end": best["period_end"], "value": best["value"]},
+            "worst_month": {"period_end": worst["period_end"], "value": worst["value"]},
+            "note": note or None,
+        }
+
+    if name == "get_forecast":
+        metric = (ti.get("metric") or "revenue").strip().lower()
+        if metric not in _TREND_METRICS:
+            metric = "revenue"
+        hist = int(ti.get("months_history") or MONTHS_DEFAULT)
+        ahead = int(ti.get("months_ahead") or 3)
+        points, note = await _metric_series(db, tenant_id, pe, metric, hist)
+        vals = [p["value"] for p in points]
+        fc = forecast(vals, ahead)
+        # Label the projected months so the model quotes "October", not "step 3".
+        if fc.get("ok"):
+            cur = pe
+            for p in fc["points"]:
+                nxt_first = (cur.replace(day=28) + timedelta(days=10)).replace(day=1)
+                cur = ((nxt_first.replace(day=28) + timedelta(days=10)).replace(day=1)
+                       - timedelta(days=1))
+                p["period_end"] = cur.isoformat()
+        return {
+            "metric": metric.replace("_", " "),
+            "from_period": pe.isoformat(),
+            "history": points,
+            "forecast": fc,
+            "note": note or None,
+        }
+
+    if name == "plan_to_target":
+        metric = (ti.get("metric") or "net_income").strip().lower()
+        if metric not in _TREND_METRICS or metric in _POINT_IN_TIME:
+            metric = "net_income"
+        try:
+            target = Decimal(str(ti.get("target")))
+        except Exception:
+            return {"ok": False, "error": "A numeric target is required."}
+        kind = "monthly" if (ti.get("target_kind") or "").strip().lower() == "monthly" else "total"
+
+        fye = await _fiscal_year_end(db, tenant_id)
+        deadline = _parse_period(ti.get("by_period_end"), None)
+        if deadline is None:
+            from core.fiscal import fiscal_year_start
+            fy_start = fiscal_year_start(pe, fye)
+            deadline = (fy_start.replace(year=fy_start.year + 1)
+                        - timedelta(days=1))
+        months_left = max(0, (deadline.year - pe.year) * 12 + (deadline.month - pe.month))
+
+        points, note = await _metric_series(db, tenant_id, pe, metric, 12)
+        vals = [p["value"] for p in points]
+        if not vals:
+            return {"ok": False, "error": (
+                f"No synced months to measure {metric.replace('_', ' ')} against. "
+                "Sync the period first."
+            )}
+        # Current pace = the trailing three months, not the latest one. A single
+        # month is exactly the noise a plan should not be built on.
+        recent = vals[-3:]
+        current_monthly = sum(recent) / len(recent)
+
+        # Fiscal-year-to-date achievement, for a cumulative target.
+        from core.fiscal import same_fiscal_year
+        achieved = sum(
+            p["value"] for p in points
+            if same_fiscal_year(date.fromisoformat(p["period_end"]), pe, fye)
+        )
+
+        bridge = bridge_to_target(
+            target=target,
+            current_monthly=current_monthly,
+            months_remaining=months_left,
+            achieved_to_date=achieved,
+            best_month=max(vals),
+            target_kind=kind,
+        )
+
+        # The levers: the client's own largest expense lines this period, so the
+        # advice is about their cost base rather than a generic checklist.
+        levers: list[dict] = []
+        try:
+            from modules.financials.internal import totals_series  # noqa: F401
+            prior_end = pe.replace(day=1) - timedelta(days=1)
+            cur_rows = (await db.execute(
+                select(GlBalanceSnapshot).where(
+                    GlBalanceSnapshot.period_end == pe,
+                    GlBalanceSnapshot.account_type.in_(["Expense", "Cost of Goods Sold"]),
+                )
+            )).scalars().all()
+            prior_rows = (await db.execute(
+                select(GlBalanceSnapshot).where(
+                    GlBalanceSnapshot.period_end == prior_end,
+                    GlBalanceSnapshot.account_type.in_(["Expense", "Cost of Goods Sold"]),
+                )
+            )).scalars().all()
+            prior_by_id = {r.qbo_account_id: r.balance for r in prior_rows}
+            for r in cur_rows:
+                # Expense snapshots are year-to-date; difference to the month.
+                monthly = r.balance - prior_by_id.get(r.qbo_account_id, Decimal("0"))
+                if monthly > 0:
+                    levers.append({"name": r.account_name or r.account_number or "?",
+                                   "monthly_amount": float(monthly)})
+        except Exception:
+            pass
+
+        monthly_gap = bridge.get("monthly_delta") or 0
+        ranked = rank_levers(levers, monthly_gap if monthly_gap > 0 else 0)[:6]
+
+        return {
+            "ok": True,
+            "metric": metric.replace("_", " "),
+            "as_of": pe.isoformat(),
+            "deadline": deadline.isoformat(),
+            "bridge": bridge,
+            "recent_months": points[-6:],
+            "levers": ranked,
+            "levers_note": (
+                "Each lever shows the percentage cut in THAT line alone that would close "
+                "the monthly gap. Anything over 100% cannot do it by itself; 'structural' "
+                "lines (rent, insurance, interest, depreciation) can't be flexed inside a "
+                "quarter."
+            ),
+            "note": note or None,
+        }
+
+    if name == "get_transactions":
+        acct_q = (ti.get("account") or "").strip()
+        row = await _find_account(db, pe, acct_q)
+        if row is None:
+            return {"ok": False, "error": f"No account matching '{acct_q}' for {pe.isoformat()}."}
+        try:
+            floor = Decimal(str(ti.get("min_amount"))) if ti.get("min_amount") is not None else None
+        except Exception:
+            floor = None
+        label = f"{row.account_number or ''} {row.account_name or ''}".strip()
+
+        # GL transactions pulled by "Find reasons" on a flux variance.
+        from models.variance_transaction import VarianceTransaction
+        gl_txns: list[dict] = []
+        try:
+            vrows = (await db.execute(
+                select(VarianceTransaction, Variance, Account)
+                .join(Variance, Variance.id == VarianceTransaction.variance_id)
+                .join(Account, Account.id == Variance.account_id)
+                .join(TrialBalance, TrialBalance.id == Account.trial_balance_id)
+                .where(TrialBalance.period_current == pe)
+                .where((Account.account_number == row.account_number)
+                       | (Account.account_name == row.account_name))
+                .order_by(VarianceTransaction.txn_date.desc())
+                .limit(60)
+            )).all()
+            for vt, _v, _a in vrows:
+                if floor is not None and abs(vt.amount) < floor:
+                    continue
+                gl_txns.append({
+                    "date": vt.txn_date.isoformat() if vt.txn_date else None,
+                    "type": vt.txn_type, "number": vt.txn_number,
+                    "amount": str(vt.amount), "who": vt.entity_name,
+                    "memo": vt.memo, "reviewed": vt.is_checked,
+                })
+        except Exception:
+            pass
+
+        # The bank's own record, where a statement has been uploaded.
+        bank_txns: list[dict] = []
+        try:
+            from models.bank_statement_txn import BankStatementTxn
+            brows = (await db.execute(
+                select(BankStatementTxn).where(
+                    BankStatementTxn.period_end == pe,
+                    BankStatementTxn.qbo_account_id == row.qbo_account_id,
+                ).order_by(BankStatementTxn.txn_date.desc()).limit(60)
+            )).scalars().all()
+            for b in brows:
+                if floor is not None and abs(b.amount) < floor:
+                    continue
+                bank_txns.append({
+                    "date": b.txn_date.isoformat() if b.txn_date else None,
+                    "amount": str(b.amount), "description": b.description,
+                    "ref": b.bank_ref, "match_status": b.match_status,
+                })
+        except Exception:
+            pass
+
+        # Forensic flags already raised on this account by the bank engine.
+        flags: list[dict] = []
+        try:
+            from modules.gl_accuracy.service import list_findings
+            data = await list_findings(db, pe)
+            for it in (data.get("items") or []):
+                if it.get("posted_account_id") == row.qbo_account_id:
+                    flags.append({"title": it.get("title"), "severity": it.get("severity"),
+                                  "kind": it.get("kind"), "amount": it.get("amount"),
+                                  "vendor": it.get("vendor")})
+            flags = flags[:10]
+        except Exception:
+            pass
+
+        return {
+            "account": label,
+            "period_end": pe.isoformat(),
+            "balance": str(row.balance),
+            "gl_transactions": gl_txns[:30],
+            "bank_transactions": bank_txns[:30],
+            "forensic_flags": flags,
+            "note": (
+                None if (gl_txns or bank_txns or flags) else
+                "No transaction detail stored for this account. Nordavix pulls it on "
+                "demand — 'Find reasons' on the account's flux variance fetches the GL "
+                "transactions, and a bank statement upload brings in the bank's own lines."
+            ),
+        }
+
+    if name == "get_tie_out":
+        from modules.financials.internal import statement_totals, statement_validation
+        fye = await _fiscal_year_end(db, tenant_id)
+        validation = await statement_validation(db, tenant_id, pe)
+        totals = await statement_totals(db, tenant_id, pe, fiscal_year_end=fye)
+        if totals is None:
+            return {"ok": False, "period_end": pe.isoformat(),
+                    "note": "This period has never been synced, so there is nothing to tie."}
+
+        # Reconciliations that carry an uncleared GL-vs-subledger difference.
+        unreconciled: list[dict] = []
+        tb_check = None
+        try:
+            ov = await read_overview_from_snapshots(db, pe)
+            tb_check = ov.get("tb_check")
+            for a in ov.get("accounts", []):
+                try:
+                    var = Decimal(str(a.get("variance") or "0"))
+                except Exception:
+                    continue
+                if abs(var) >= 1 and a.get("review_status") != "approved":
+                    unreconciled.append({
+                        "account": f"{a.get('account_number') or ''} {a.get('account_name') or ''}".strip(),
+                        "gl_balance": a.get("gl_balance"),
+                        "subledger_balance": a.get("subledger_balance"),
+                        "variance": a.get("variance"),
+                        "review_status": a.get("review_status"),
+                    })
+            unreconciled.sort(key=lambda r: abs(Decimal(str(r["variance"] or 0))), reverse=True)
+        except Exception:
+            pass
+
+        return {
+            "period_end": pe.isoformat(),
+            "balance_sheet_balances": validation.get("balanced"),
+            "balance_sheet_difference": validation.get("bs_diff"),
+            "cash_flow_plug": validation.get("cf_plug"),
+            "unclassified_account_types": validation.get("unclassified_types"),
+            "problems": validation.get("messages"),
+            "trial_balance_check": tb_check,
+            "totals": {
+                "assets": str(totals["assets"]),
+                "liabilities_and_equity": str(totals["balance_sheet_total"]),
+                "net_income_ytd": str(totals["net_income"]),
+            },
+            "accounts_with_open_variance": unreconciled[:10],
+            "open_variance_count": len(unreconciled),
+            "compare_to_quickbooks": (
+                "This is Nordavix's books checked against themselves. To compare them "
+                "line-by-line with live QuickBooks, use 'Check against QuickBooks' on "
+                "the Financial Statements screen."
+            ),
+        }
+
+    if name == "get_repeat_issues":
+        from models.gl_accuracy_finding import GlAccuracyFinding
+        from modules.gl_accuracy.repeats import (
+            REPEAT_AFTER_PERIODS,
+            Occurrence,
+            find_repeats,
+            summarise,
+        )
+        # Every period, not just this one — a pattern is only visible across
+        # closes, which is the entire point of the module.
+        rows = (await db.execute(
+            select(GlAccuracyFinding).order_by(GlAccuracyFinding.period_end.desc())
+        )).scalars().all()
+        repeats = find_repeats([
+            Occurrence(
+                period_end=f.period_end, vendor=f.vendor or "",
+                posted_account_name=f.posted_account_name,
+                suggested_account_name=f.suggested_account_name,
+                amount=Decimal(str(f.amount or 0)), status=f.status,
+            )
+            for f in rows
+        ])
+        return {
+            "period_end": pe.isoformat(),
+            "min_periods_to_count": REPEAT_AFTER_PERIODS,
+            "repeats": repeats or [],
+            "count": len(repeats or []),
+            "summary": summarise(repeats or []),
+            "why_it_matters": (
+                "A one-off is a mistake; the same vendor hitting the same wrong account "
+                "for three months is a process failure. The fix is a coding rule or a "
+                "conversation with whoever enters it — not another journal entry."
+            ),
+        }
+
+    if name == "get_discussion":
+        from models.comment import Comment
+        limit = min(int(ti.get("limit") or 20), 60)
+        q = select(Comment).where(Comment.deleted_at.is_(None))
+        acct_q = (ti.get("account") or "").strip()
+        scoped_to = None
+        if acct_q:
+            row = await _find_account(db, pe, acct_q)
+            if row is None:
+                return {"ok": False, "error": f"No account matching '{acct_q}' for {pe.isoformat()}."}
+            scoped_to = f"{row.account_number or ''} {row.account_name or ''}".strip()
+            q = q.where(Comment.entity_id.like(f"{row.qbo_account_id}:%"))
+        rows = list((await db.execute(
+            q.order_by(Comment.created_at.desc()).limit(limit)
+        )).scalars().all())
+        names = await name_map(db, tenant_id)
+        return {
+            "period_end": pe.isoformat(),
+            "scoped_to": scoped_to,
+            "count": len(rows),
+            "comments": [
+                {
+                    "on": c.entity_type,
+                    "ref": c.entity_id,
+                    "who": names.get(str(c.author_user_id)) or "Someone",
+                    "at": c.created_at.isoformat() if c.created_at else None,
+                    "text": c.body,
+                    "mentions": len(c.mentions or []),
+                }
+                for c in rows
+            ],
+            "note": None if rows else "No comments on this workspace yet.",
+        }
 
     if name == "get_close_review":
         from models.close_review import CloseReview
@@ -1107,6 +1830,12 @@ async def dispatch_tool(
         liq = p.get("liquidity") or {}
         prof = p.get("profitability") or {}
         recs = p.get("recommendations") or []
+        cf = p.get("cash_forecast") or {}
+        growth = p.get("growth") or {}
+        be = p.get("breakeven") or {}
+        ar = p.get("receivables") or {}
+        ap = p.get("payables") or {}
+        exp = p.get("expenses") or {}
         return {
             "ok": True,
             "period_end": pe.isoformat(),
@@ -1137,8 +1866,53 @@ async def dispatch_tool(
                 "net_margin_pct": prof.get("net_margin_pct"),
                 "revenue_change_str": prof.get("revenue_change_str"),
             },
+            # Everything below was already computed and saved on every Insights
+            # run, and the copilot was dropping it — so "how do we improve cash"
+            # got a generic answer while the client's own DSO, aging profile and
+            # customer concentration sat one dict key away.
+            "cash_forecast": {
+                "out_of_cash_date": cf.get("out_of_cash_date"),
+                "projected_cash_3mo": cf.get("projected_cash_3mo"),
+                "projected_cash_6mo": cf.get("projected_cash_6mo"),
+                "runway_if_burn_cut_10pct": cf.get("runway_minus_10"),
+                "runway_if_burn_grows_10pct": cf.get("runway_plus_10"),
+            },
+            "growth": {
+                "revenue_growth_mom_pct": growth.get("revenue_growth_mom"),
+                "trend_3mo_growth_pct": growth.get("trend_3mo_growth"),
+                "annualized_run_rate": growth.get("annualized_run_rate"),
+                "expense_growth_mom_pct": growth.get("expense_growth_mom"),
+                "operating_leverage": growth.get("operating_leverage"),
+            },
+            "breakeven": {
+                "break_even_revenue": be.get("break_even_revenue"),
+                "current_revenue": be.get("current_revenue"),
+                "margin_of_safety_pct": be.get("margin_of_safety_pct"),
+                "contribution_margin_pct": be.get("contribution_margin_pct"),
+                "fixed_costs": be.get("fixed_costs"),
+            },
+            "receivables": {
+                "ar_balance": ar.get("ar_balance"),
+                "dso_days": ar.get("dso_days"),
+                "aging": ar.get("aging"),
+                "over_60_days_pct": ar.get("aging_over_60_pct"),
+                "top_customers": (ar.get("top_customers") or [])[:5],
+            },
+            "payables": {
+                "ap_balance": ap.get("ap_balance"),
+                "dpo_days": ap.get("dpo_days"),
+                "aging": ap.get("aging"),
+                "over_60_days_pct": ap.get("aging_over_60_pct"),
+                "top_vendors": (ap.get("top_vendors") or [])[:5],
+            },
+            "expenses": {
+                "total": exp.get("total_expenses"),
+                "top_categories": (exp.get("top_categories") or [])[:6],
+                "biggest_mover_vs_last_month": exp.get("biggest_mom_mover"),
+            },
             "recommendations": [
-                {"priority": r.get("priority"), "title": r.get("title")}
+                {"priority": r.get("priority"), "title": r.get("title"),
+                 "detail": r.get("detail")}
                 for r in recs[:5]
             ],
         }

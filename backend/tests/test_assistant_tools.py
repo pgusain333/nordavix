@@ -99,7 +99,78 @@ AREAS = {
     "advisory":         "get_advisory",
     "client evidence":  "get_evidence_requests",
     "automation":       "get_automation_status",
+    # Cross-period. Everything above answers "what is X, in this one month" —
+    # which is not the shape of a single question anyone asks a controller.
+    "trend over time":  "get_trend",
+    "forecasting":      "get_forecast",
+    "reaching a target": "plan_to_target",
+    # Below the balance, and beside it.
+    "transaction detail": "get_transactions",
+    "tie-out":          "get_tie_out",
+    "recurring problems": "get_repeat_issues",
+    "team discussion":  "get_discussion",
+    "workspace search": "search_everything",
 }
+
+
+def test_the_copilot_can_ask_as_well_as_answer():
+    """It could always ask in prose. What it couldn't do was make answering
+    cheap — a question buried in a paragraph costs a sentence of typing, so
+    most went unanswered and the reply stayed generic."""
+    assert "ask_user" in DECLARED
+
+
+@pytest.mark.asyncio
+async def test_ask_user_rejects_a_question_with_one_option():
+    """A single "option" is not a choice, it is a statement with a button. The
+    model does produce these, and rendering one gives the user a chip whose only
+    effect is to agree with the copilot."""
+    out = await T.dispatch_tool("ask_user", {
+        "question": "Which target should I plan against?",
+        "options": [{"label": "The $2M one"}],
+    }, None, None, None)
+    assert out["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_ask_user_accepts_plain_strings_as_options():
+    """The schema asks for objects; models routinely send bare strings. Failing
+    on that would drop a legitimate question for a formatting reason."""
+    out = await T.dispatch_tool("ask_user", {
+        "question": "Which scenario?",
+        "options": ["Base case", "With the raise"],
+    }, None, None, None)
+    assert out["ok"] is True
+    assert [o["label"] for o in out["clarify"]["options"]] == ["Base case", "With the raise"]
+
+
+@pytest.mark.asyncio
+async def test_ask_user_caps_the_options_it_will_render():
+    out = await T.dispatch_tool("ask_user", {
+        "question": "Which month?",
+        "options": [f"Option {i}" for i in range(12)],
+    }, None, None, None)
+    assert len(out["clarify"]["options"]) == 5
+
+
+def test_asking_is_fenced_against_replacing_the_answer():
+    """The failure mode of a clarifying question is a copilot that interrogates
+    instead of answering. Both fences live in the tool description, because
+    that is what the model reads before deciding to call it."""
+    spec = next(d for d in T.TOOL_DEFS if d["name"] == "ask_user")
+    desc = spec["description"]
+    assert "NEVER" in desc, "nothing stops it asking what a tool could look up"
+    assert "never replaces" in desc, "nothing stops the question becoming the whole answer"
+
+
+def test_a_judgement_of_performance_is_routed_through_time():
+    """The single highest-leverage rule in the prompt: you cannot call a figure
+    good or bad from one month. If this instruction goes missing the Copilot
+    starts grading a business on a data point."""
+    from modules.assistant.service import _SYSTEM_STATIC
+
+    assert "One month is a data point" in _SYSTEM_STATIC
+    assert "get_trend" in _SYSTEM_STATIC
 
 
 @pytest.mark.parametrize("area,tool_name", sorted(AREAS.items()))

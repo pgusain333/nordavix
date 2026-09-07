@@ -49,6 +49,9 @@ class AskResponse(BaseModel):
     actions: list[dict] = []
     # Charts rendered under the answer (bar/pie/line). Phase 3.
     charts: list[dict] = []
+    # One clarifying question with tappable options, when the answer genuinely
+    # turns on something only the user can settle. Null on almost every turn.
+    clarify: dict | None = None
 
 
 class AssistantExportRequest(BaseModel):

@@ -133,6 +133,7 @@ async def ask(
         links=result.get("links", []),
         actions=result.get("actions", []),
         charts=result.get("charts", []),
+        clarify=result.get("clarify"),
     )
 
 

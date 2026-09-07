@@ -381,6 +381,103 @@ def _prior_month_end(period_end: date) -> date:
     return prior
 
 
+def _pl_totals(rows) -> dict:
+    """The P&L lines rolled up from one snapshot, presented-positive.
+
+    Module-level rather than a closure because `totals_series` computes the same
+    figures for a dozen months at once. If a second copy of this arithmetic
+    existed, a trend line could drift from the statement it claims to summarise
+    — the exact failure `statement_totals` was written to prevent.
+    """
+    revenue = _presented_sum(rows, _INCOME_TYPES)
+    cogs    = _presented_sum(rows, _COGS_TYPES)
+    opex    = _presented_sum(rows, _EXPENSE_TYPES)
+    gross   = revenue - cogs
+    return {
+        "revenue": revenue, "cogs": cogs, "gross_profit": gross,
+        "opex": opex, "operating_income": gross - opex,
+        "other_income":  _presented_sum(rows, _OTHER_INCOME_TYPES),
+        "other_expense": _presented_sum(rows, _OTHER_EXPENSE_TYPES),
+        "net_income":    _compute_net_income(rows),
+    }
+
+
+def _bs_totals(rows) -> dict:
+    """Point-in-time balance-sheet totals from one snapshot. Never differenced —
+    "total assets for the month of June" is not a quantity."""
+    return {
+        "assets": _presented_sum(rows, _ASSET_TYPES),
+        "cash":   _presented_sum(rows, _CASH_TYPES),
+        "liabilities": _presented_sum(rows, _LIABILITY_TYPES),
+        "equity":      _presented_sum(rows, _EQUITY_TYPES),
+        "current_assets":      _presented_sum(rows, _CURRENT_ASSET_TYPES),
+        "current_liabilities": _presented_sum(rows, _CURRENT_LIABILITY_TYPES),
+    }
+
+
+async def totals_series(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,  # noqa: ARG001 — tenant filter applied via the session
+    period_ends: list[date],
+    *,
+    fiscal_year_end: str | None = None,
+) -> list[dict]:
+    """Month-activity P&L plus point-in-time BS totals for MANY periods at once.
+
+    Reads every snapshot the window needs — each requested period AND the month
+    before it, for the year-to-date differencing — in a single query, then does
+    the arithmetic in memory. Calling `statement_totals` in a loop would issue
+    two round-trips per month; a twelve-month trend would be twenty-four.
+
+    A month with no snapshot is omitted entirely (it was never synced). A month
+    whose PRIOR is missing is returned with `pl_basis="unavailable"` and null
+    P&L lines rather than its year-to-date figure under a monthly heading — the
+    caller must be able to see the hole rather than read a number that is
+    silently a different quantity from the ones beside it.
+    """
+    if not period_ends:
+        return []
+    wanted = sorted(set(period_ends))
+    needed: set[date] = set(wanted)
+    for pe in wanted:
+        if not is_first_month_of_fiscal_year(pe, fiscal_year_end):
+            needed.add(_prior_month_end(pe))
+
+    rows = list((await db.execute(
+        select(GlBalanceSnapshot).where(GlBalanceSnapshot.period_end.in_(sorted(needed)))
+    )).scalars().all())
+    by_period: dict[date, list] = {}
+    for r in rows:
+        by_period.setdefault(r.period_end, []).append(r)
+
+    out: list[dict] = []
+    for pe in wanted:
+        cur = by_period.get(pe)
+        if not cur:
+            continue  # never synced — not the same answer as "zero"
+        pl = _pl_totals(cur)
+        if is_first_month_of_fiscal_year(pe, fiscal_year_end):
+            pl_basis = "month"
+        else:
+            prior = by_period.get(_prior_month_end(pe))
+            if prior:
+                prior_pl = _pl_totals(prior)
+                pl = {k: v - prior_pl[k] for k, v in pl.items()}
+                pl_basis = "month"
+            else:
+                pl = dict.fromkeys(pl, None)
+                pl_basis = "unavailable"
+        captured = [r.captured_at for r in cur if getattr(r, "captured_at", None)]
+        out.append({
+            "period_end": pe,
+            **pl,
+            **_bs_totals(cur),
+            "pl_basis": pl_basis,
+            "captured_at": max(captured) if captured else None,
+        })
+    return out
+
+
 async def statement_totals(
     db: AsyncSession, tenant_id: uuid.UUID, period_end: date, *,
     basis: str = "ytd", fiscal_year_end: str | None = None,
@@ -415,20 +512,7 @@ async def statement_totals(
     if not rows:
         return None
 
-    def _pl(rs) -> dict:
-        revenue = _presented_sum(rs, _INCOME_TYPES)
-        cogs    = _presented_sum(rs, _COGS_TYPES)
-        opex    = _presented_sum(rs, _EXPENSE_TYPES)
-        gross   = revenue - cogs
-        return {
-            "revenue": revenue, "cogs": cogs, "gross_profit": gross,
-            "opex": opex, "operating_income": gross - opex,
-            "other_income":  _presented_sum(rs, _OTHER_INCOME_TYPES),
-            "other_expense": _presented_sum(rs, _OTHER_EXPENSE_TYPES),
-            "net_income":    _compute_net_income(rs),
-        }
-
-    pl = _pl(rows)
+    pl = _pl_totals(rows)
     pl_basis = "ytd"
 
     if basis == "month":
@@ -442,7 +526,7 @@ async def statement_totals(
         else:
             prior_rows = await _load_snapshot(db, tenant_id, _prior_month_end(period_end))
             if prior_rows:
-                prior = _pl(prior_rows)
+                prior = _pl_totals(prior_rows)
                 pl = {k: v - prior[k] for k, v in pl.items()}
                 pl_basis = "month"
             else:

@@ -36,6 +36,7 @@ from core.ai.usage import record_call
 from core.config import settings
 from core.db.base import current_request_readonly
 from models.assistant_conversation import AssistantMessage, AssistantThread
+from modules.assistant.footing import data_footing
 from modules.assistant.tools import TOOL_DEFS, dispatch_tool, latest_synced_period
 
 logger = logging.getLogger(__name__)
@@ -49,9 +50,17 @@ _OUT = 4.00 / 1_000_000
 _CACHE_READ = 0.08 / 1_000_000
 _CACHE_WRITE = 1.00 / 1_000_000
 
-_MAX_TURNS = 6          # tool round-trips before we force a final answer
-_MAX_TOKENS = 1024
+_MAX_TURNS = 8          # tool round-trips before we force a final answer
+# 1024 truncated any answer carrying a table, a bridge and a plan — which is
+# every question worth asking a controller. The cost of the extra ceiling is
+# only paid by answers that actually use it.
+_MAX_TOKENS = 4096
 _MAX_HISTORY = 8        # prior turns carried for context
+
+# Once a question has needed this many DATA tools it is no longer a lookup —
+# it is a synthesis, and synthesis is the part worth a better model. Gathering
+# stays on the fast model because routing is not where judgement lives.
+_DEEP_AFTER_TOOLS = 3
 
 # Chatty, first-person progress narration shown live while the copilot works
 # (e.g. "Let me check reconciliations…", "Now let me look at flux…"). Read tools
@@ -72,12 +81,28 @@ _STEP_NOUN: dict[str, str] = {
     "get_team": "the team",
     "get_account_guidance": "what you taught us about this account",
     "recall": "past records",
+    "get_trend": "how this has moved over the last few months",
+    "get_forecast": "where this is heading",
+    "get_transactions": "the transactions behind it",
+    "get_tie_out": "whether everything ties",
+    "get_repeat_issues": "what keeps coming back",
+    "get_discussion": "what the team has said",
+    "search_everything": "across the whole workspace",
+    "get_audit_trail": "who did what",
+    "get_close_review": "the reviewing-partner pass",
+    "get_workpapers": "the workpaper binder",
+    "get_advisory": "what we've advised",
+    "get_evidence_requests": "what we're waiting on from the client",
+    "get_automation_status": "whether the automation is running",
+    "get_related": "the story behind this account",
 }
 _STEP_VERB: dict[str, str] = {
     "draft_journal_entry": "Drafting the entry",
     "suggest_action": "Setting up the prepare step",
     "make_chart": "Putting together a chart",
     "suggest_link": "Finding the right screen",
+    "plan_to_target": "Working out what it would take",
+    "ask_user": "One thing I need from you",
 }
 _STEP_CONNECTORS = ("Now let me look at", "Now checking", "Then", "And")
 
@@ -110,7 +135,42 @@ _SYSTEM_STATIC = (
     "- If a tool returns no data (e.g. the month isn't synced), say so plainly and "
     "suggest the next step (e.g. \"run Sync for that month\").\n"
     "- Money is USD. Show variances with their sign and flag anything that doesn't "
-    "tie out.\n\n"
+    "tie out.\n"
+    "- A DATA FOOTING line is given below telling you how trustworthy this period "
+    "is. OBEY IT. If the books are unreconciled or the sync is stale, say so in one "
+    "short sentence BEFORE the numbers — a figure quoted without its footing is the "
+    "single way this product loses a user's trust.\n\n"
+    "HOW A CONTROLLER ANSWERS — follow this order every time:\n"
+    "1. FOOTING. Is the data good enough to answer? If not, lead with that.\n"
+    "2. THE NUMBER. Answer the actual question in one sentence, with the figure, "
+    "the account and the period.\n"
+    "3. IS THAT GOOD OR BAD? You CANNOT know this from one month. Before you judge "
+    "any figure — 'is margin healthy', 'is the burn ok', 'are we doing well' — call "
+    "get_trend. One month is a data point; three is a story. Never call something "
+    "high, low, good or concerning without having looked across time.\n"
+    "4. SO WHAT. What it means for the business, in one or two lines.\n"
+    "5. WHAT TO DO. A short ranked list. Each item needs a DOLLAR figure and a "
+    "place to do it (a screen, or the person who owns it). 'Reduce costs' is not an "
+    "action; 'Contractors ran $45k in June against $28k in April — ask Sarah which "
+    "engagements those cover' is.\n"
+    "6. WHAT WOULD CHANGE THIS. When your answer rests on an assumption — a "
+    "run-rate holding, a receivable landing, a month not yet closed — name it in one "
+    "line. Controllers say what would make them wrong.\n"
+    "Not every question needs all six. A balance lookup needs step 2. A question "
+    "about performance, health, targets or 'what should we do' needs all of them.\n\n"
+    "FORECASTS & TARGETS — the honesty rules, which are not optional:\n"
+    "- get_forecast returns a band and a confidence. QUOTE THE BAND. Reporting the "
+    "midpoint alone claims a precision the data does not have.\n"
+    "- If a forecast reports method 'average' the series was too volatile for a "
+    "trend line. Say that — it is itself the finding.\n"
+    "- plan_to_target returns a `reachable` verdict measured against the client's "
+    "OWN best month. Lead with it. If it says 'unprecedented', the honest answer is "
+    "that the target requires beating their record and repeating it — say so, then "
+    "give the levers. Never dress an impossible target as a plan.\n"
+    "- Levers come back with the percentage cut each line would need. A line "
+    "needing more than 100% cannot close the gap alone; a 'structural' line (rent, "
+    "insurance, interest, depreciation) cannot be flexed inside a quarter. Rank on "
+    "what is actually actionable, not on what is merely large.\n\n"
     "BEYOND THE CLOSE — KNOWLEDGE & ADVISORY (you DO answer these — never deflect them "
     "as 'outside my scope' or 'not my wheelhouse'):\n"
     "- General accounting / GAAP / bookkeeping / tax knowledge from your own expertise "
@@ -184,9 +244,36 @@ _SYSTEM_STATIC = (
     "anything watching the books / when did continuous close last check → "
     "get_automation_status. Continuous close tracks the CURRENT calendar month; "
     "Risk Radar covers the month being closed — always say which month you mean.\n"
+    "- ANY question about time — is it growing / shrinking / getting worse, what's "
+    "the trend, how has X moved, last N months → get_trend (reads saved snapshots, "
+    "so it's fast; call it freely)\n"
+    "- what WILL happen / projection / where does cash land / how long is runway / "
+    "will we be profitable → get_forecast\n"
+    "- how do we hit <number> / can we reach <target> / what would it take / how do "
+    "we get to break-even → plan_to_target\n"
+    "- why did an account move / show me the transactions / what did we pay <vendor> "
+    "/ anything unusual in the bank → get_transactions\n"
+    "- does it tie / is anything out of balance / is this period clean → get_tie_out\n"
+    "- what keeps going wrong / recurring errors / what should we fix permanently → "
+    "get_repeat_issues\n"
+    "- what did the team say / is anyone looking at this / open questions → "
+    "get_discussion\n"
+    "- you can't place something the user named (a vendor, an account, 'that thing "
+    "about the truck loan') → search_everything, then answer\n"
     "- point the user to a screen → suggest_link\n"
     "Use the active period below unless the user names another month; don't ask "
     "which month when an active period is set.\n\n"
+    "ASKING THE USER — you have ask_user, which puts tappable options under your "
+    "answer:\n"
+    "- Use it ONLY when the answer would materially change and no tool can settle "
+    "it: which target to plan against, which of two readings of an ambiguous request, "
+    "how aggressive a recommendation should be, which scenario they mean.\n"
+    "- NEVER use it for anything a tool can answer. Which month, what a balance is, "
+    "who's on the team, whether something is reconciled — look it up.\n"
+    "- One question per answer, maximum.\n"
+    "- ALWAYS answer first with your best reading, THEN ask. The question refines "
+    "your answer; it never replaces it. An answer that is only a question is a "
+    "failure.\n\n"
     "BE A PROACTIVE FINANCE COPILOT:\n"
     "- ALWAYS give an answer. If a tool returns no data, say what's missing and the "
     "next step — never reply that you couldn't finish.\n"
@@ -223,8 +310,19 @@ _SYSTEM_STATIC = (
     "- Risk Radar: likely misclassifications, errors and things to review.\n"
     "- Close: what's blocking the close, the checklist, task assignments, progress, "
     "and whether you're ready to close.\n"
-    "- Financials: balance sheet / income statement / cash-flow figures.\n"
-    "- Insights: financial health — cash, runway, margins, liquidity, growth.\n"
+    "- Financials: balance sheet / income statement / cash-flow figures, and "
+    "whether the period ties.\n"
+    "- Insights: financial health — cash, runway, margins, liquidity, growth, "
+    "break-even, AR/AP aging, DSO/DPO, customer and vendor concentration.\n"
+    "- Trends & forecasting: how any figure has moved over months, where it is "
+    "heading, and with what confidence.\n"
+    "- Target planning: what it would take to hit a revenue or profit number — the "
+    "required run-rate, whether they've ever done it, and which cost lines could "
+    "carry the gap.\n"
+    "- Transaction-level detail: the entries behind a balance, bank lines, and the "
+    "forensic flags raised on them (duplicates, round dollars, weekend payments).\n"
+    "- Recurring problems: what keeps coming back and what rule would stop it.\n"
+    "- Team discussion: what colleagues have said and what's unanswered.\n"
     "- Tax & business advisory: tax-planning / implications and strategy questions "
     "(profitability, pricing, growth, cost control, cash) — answered against this "
     "client's actual numbers, with a planning-not-formal-advice caveat.\n"
@@ -268,17 +366,33 @@ _SYSTEM_STATIC = (
 # Tools whose result the model ATTACHES to its answer (a button / chart / draft)
 # rather than reasoning further over. A turn that calls only these — with text —
 # IS the final answer, so that text must be shown, not dropped as preamble.
-_OUTPUT_TOOLS = {"suggest_link", "suggest_action", "make_chart", "draft_journal_entry"}
+_OUTPUT_TOOLS = {"suggest_link", "suggest_action", "make_chart", "draft_journal_entry",
+                 "ask_user"}
+
+
+def _model_for(data_calls: int) -> str:
+    """Which model runs the next turn.
+
+    Gathering is routing — a fast model does it as well as a slow one. Once a
+    question has needed several sources, the remaining work is judgement:
+    reconciling what the tools said, deciding what matters, and being willing
+    to say the target isn't reachable. That is worth the better model, and only
+    the questions that earn it pay for it.
+    """
+    return (settings.assistant_deep_model if data_calls >= _DEEP_AFTER_TOOLS
+            else settings.assistant_model)
 
 
 def _system_blocks(
     period_end: date | None,
     user_role: str | None = None,
     user_powers: list[str] | None = None,
+    footing: dict | None = None,
 ) -> list[dict]:
     """System as cache-friendly blocks: a big cached static block + a tiny dynamic
-    one carrying the active period and the asking user's role (kept out of the
-    cached prefix so they can vary per request without busting the cache)."""
+    one carrying the active period, the asking user's role, and how trustworthy
+    this period's data is (kept out of the cached prefix so they can vary per
+    request without busting the cache)."""
     pe = period_end.isoformat() if period_end else "none synced yet"
     role = user_role or "preparer"
     powers = [p for p in (user_powers or []) if p]
@@ -288,6 +402,9 @@ def _system_blocks(
         f"You are assisting a user whose role is {role}.{powers_txt} "
         f"Tailor what you surface and offer to this role, and respect the segregation-of-duties gates."
     )
+    if footing:
+        from modules.assistant.footing import describe
+        ctx += "\n\n" + describe(footing)
     return [
         {"type": "text", "text": _SYSTEM_STATIC, "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": ctx},
@@ -396,20 +513,23 @@ async def answer_question_stream(
     links: list[dict] = []
     actions: list[dict] = []
     charts: list[dict] = []
+    clarify: dict | None = None
     final_answer: str | None = None
 
     ro_token = current_request_readonly.set(True)
     try:
         if period_end is None:
             period_end = await latest_synced_period(db)
-        system = _system_blocks(period_end, user_role, user_powers)
+        footing = await data_footing(db, tenant_id, period_end)
+        system = _system_blocks(period_end, user_role, user_powers, footing)
         tools = _cached_tools()
-        step_no = 0  # how many progress lines shown so far — drives the wording
+        step_no = 0    # how many progress lines shown so far — drives the wording
+        data_calls = 0  # data tools used; past a threshold we synthesize on the deep model
 
         for _turn in range(_MAX_TURNS):
             turn_text: list[str] = []
             async with _aclient.messages.stream(
-                model=settings.assistant_model,
+                model=_model_for(data_calls),
                 max_tokens=_MAX_TOKENS,
                 system=system,
                 tools=tools,
@@ -445,6 +565,8 @@ async def answer_question_stream(
                             pass
                         out = {"error": f"tool failed: {exc}"}
                     sources.append({"tool": block.name, "input": block.input})
+                    if block.name not in _OUTPUT_TOOLS:
+                        data_calls += 1
                     if isinstance(out, dict) and out.get("ok"):
                         if block.name == "draft_journal_entry" and out.get("draft"):
                             drafts.append(out["draft"])
@@ -454,6 +576,11 @@ async def answer_question_stream(
                             actions.append(out["action"])
                         elif block.name == "make_chart" and out.get("chart"):
                             charts.append(out["chart"])
+                        elif block.name == "ask_user" and out.get("clarify"):
+                            # One question per answer. A second would stack two
+                            # sets of chips under one reply, and the user would
+                            # have no way to answer both.
+                            clarify = clarify or out["clarify"]
                     results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -509,8 +636,16 @@ async def answer_question_stream(
             except Exception:  # pragma: no cover — last-resort synthesis must not crash the turn
                 logger.exception("assistant forced-synthesis failed")
 
+        if clarify:
+            yield {"type": "clarify", **clarify}
+
         if not final_answer:
-            if actions:
+            if clarify:
+                final_answer = (
+                    "I can go further on this, but the answer changes depending on your "
+                    "call below — pick one and I'll take it from there."
+                )
+            elif actions:
                 final_answer = (
                     "Here's a one-click action for that — it only prepares (you approve "
                     "after). Check the details below and click Run when you're ready."
@@ -531,6 +666,8 @@ async def answer_question_stream(
             "links": links,
             "actions": actions,
             "charts": charts,
+            "clarify": clarify,
+            "footing": footing,
         }
     finally:
         current_request_readonly.reset(ro_token)
@@ -555,6 +692,7 @@ async def answer_question(
     links: list[dict] = []
     actions: list[dict] = []
     charts: list[dict] = []
+    clarify: dict | None = None
     async for ev in answer_question_stream(
         db=db, tenant_id=tenant_id, question=question, period_end=period_end, history=history,
         user_role=user_role, user_powers=user_powers, attachments=attachments,
@@ -566,6 +704,7 @@ async def answer_question(
             links = ev["links"]
             actions = ev.get("actions", [])
             charts = ev.get("charts", [])
+            clarify = ev.get("clarify")
     return {
         "answer": answer or "I couldn't find an answer to that.",
         "sources": sources,
@@ -573,6 +712,7 @@ async def answer_question(
         "links": links,
         "actions": actions,
         "charts": charts,
+        "clarify": clarify,
     }
 
 

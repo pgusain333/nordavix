@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # Haiku is plenty for grounded tool-routing + summarizing tool output.
     # Flip back to anthropic_model here if you ever want chat on Sonnet.
     assistant_model: str = "claude-haiku-4-5-20251001"
+    # …but once a question has needed several sources, the remaining work is
+    # judgement, not routing: reconciling what the tools said, deciding what
+    # actually matters, and being willing to tell a client their target isn't
+    # reachable. That is worth the better model, and only the questions that
+    # earn it pay for it. Set to assistant_model to keep everything on Haiku.
+    assistant_deep_model: str = "claude-sonnet-4-6"
     # NDVX Copilot conversation retention: a chat thread (and its messages) is
     # hard-deleted after this many days of INACTIVITY by the daily retention
     # sweep. Chat is a convenience layer, not a record — the actual recons / JEs /

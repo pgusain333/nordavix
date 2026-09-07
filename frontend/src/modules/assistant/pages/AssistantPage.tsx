@@ -13,8 +13,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { motion } from "framer-motion"
 import {
   Sparkles, ArrowUp, Square, Plus, History, Clock, FileText, ArrowUpRight,
-  Copy, Check, Download, Loader2, Play, AlertTriangle, Wallet, Scale, ClipboardList,
-  Trash2, X, PanelLeftClose, PanelLeftOpen, Paperclip,
+  Copy, Check, Download, Loader2, Play, AlertTriangle, Wallet, Scale,
+  Trash2, X, PanelLeftClose, PanelLeftOpen, Paperclip, TrendingUp, HelpCircle,
 } from "lucide-react"
 import {
   assistantApi,
@@ -24,6 +24,7 @@ import {
   type AssistantAction,
   type AssistantChart,
   type AssistantChartPoint,
+  type AssistantClarify,
   type ThreadSummary,
 } from "@/modules/assistant/api"
 import { Markdown } from "@/modules/assistant/Markdown"
@@ -39,6 +40,8 @@ interface ChatMsg {
   links?: AssistantLink[]
   actions?: AssistantAction[]
   charts?: AssistantChart[]
+  clarify?: AssistantClarify | null // one inline question with tappable answers
+  clarifyAnswered?: boolean         // they picked one — collapse the chips
   exportIntent?: "pdf" | "xlsx" | "both" | null // user asked for a downloadable file
   steps?: string[] // chatty progress lines shown while the answer is being worked on
   error?: boolean
@@ -92,11 +95,14 @@ function detectExportIntent(text: string): "pdf" | "xlsx" | "both" | null {
   return null
 }
 
+// Openers that show what the copilot is FOR. The old four were all lookups —
+// questions whose answer is a single figure — which taught people to treat it
+// as a search box. These are the questions a controller actually gets asked.
 const SUGGESTIONS: { icon: typeof Wallet; text: string }[] = [
   { icon: AlertTriangle, text: "What's blocking the close this month?" },
-  { icon: ClipboardList, text: "Which accounts are unreconciled?" },
-  { icon: Wallet, text: "What's our cash balance?" },
-  { icon: Scale, text: "Are there any accounts that don't tie out?" },
+  { icon: TrendingUp, text: "How is the business doing over the last 6 months?" },
+  { icon: Wallet, text: "How long is our runway, and what would extend it?" },
+  { icon: Scale, text: "What are the three things I should fix this month?" },
 ]
 
 const TOOL_LABEL: Record<string, string> = {
@@ -116,6 +122,21 @@ const TOOL_LABEL: Record<string, string> = {
   recall: "Past records",
   draft_journal_entry: "Drafted entry",
   suggest_link: "Link",
+  get_trend: "Trend",
+  get_forecast: "Forecast",
+  plan_to_target: "Target plan",
+  get_transactions: "Transactions",
+  get_tie_out: "Tie-out",
+  get_repeat_issues: "Repeat issues",
+  get_discussion: "Team discussion",
+  search_everything: "Workspace search",
+  get_audit_trail: "Audit trail",
+  get_close_review: "Close review",
+  get_workpapers: "Workpapers",
+  get_advisory: "Advisory",
+  get_evidence_requests: "Client requests",
+  get_automation_status: "Automation",
+  get_related: "Connections",
 }
 
 function sourceLabels(sources: AssistantSource[] | null | undefined): string[] {
@@ -262,6 +283,11 @@ export default function AssistantPage() {
             // A data-fetch turn streamed "let me check…" preamble — clear it so the
             // real answer streams into a clean bubble.
             patchLast((m) => ({ ...m, content: "" }))
+          } else if (ev.type === "clarify") {
+            patchLast((m) => ({
+              ...m,
+              clarify: { question: ev.question, options: ev.options, allow_free_text: ev.allow_free_text },
+            }))
           } else if (ev.type === "result") {
             patchLast((m) => ({
               ...m,
@@ -271,6 +297,9 @@ export default function AssistantPage() {
               links: ev.links,
               actions: ev.actions,
               charts: ev.charts,
+              // The clarify event arrives first; don't let a result without one
+              // wipe the question the user is looking at.
+              clarify: ev.clarify ?? m.clarify ?? null,
             }))
           } else if (ev.type === "done") {
             if (ev.thread_id) {
@@ -666,7 +695,15 @@ export default function AssistantPage() {
             <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto max-w-4xl space-y-5 px-1 pb-4">
                 {messages.map((m, i) => (
-                  <MessageBubble key={i} msg={m} />
+                  <MessageBubble
+                    key={i}
+                    msg={m}
+                    onClarify={(answer) => {
+                      setMessages((prev) => prev.map((p, pi) =>
+                        pi === i ? { ...p, clarifyAnswered: true } : p))
+                      void send(answer)
+                    }}
+                  />
                 ))}
                 <div ref={bottomRef} />
               </div>
@@ -764,7 +801,7 @@ function ThreadRow({
   )
 }
 
-function MessageBubble({ msg }: { msg: ChatMsg }) {
+function MessageBubble({ msg, onClarify }: { msg: ChatMsg; onClarify?: (answer: string) => void }) {
   const isUser = msg.role === "user"
   const navigate = useNavigate()
   const labels = sourceLabels(msg.sources)
@@ -1052,6 +1089,10 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
           </div>
         )}
 
+        {msg.clarify && !msg.clarifyAnswered && !msg.streaming && (
+          <ClarifyBlock clarify={msg.clarify} onAnswer={onClarify} />
+        )}
+
         {msg.actions?.map((a, ai) => (
           <ActionChip key={ai} action={a} />
         ))}
@@ -1060,6 +1101,102 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
           <ChartView key={ci} chart={c} />
         ))}
       </div>
+    </motion.div>
+  )
+}
+
+/** One inline question with tappable answers.
+ *
+ *  The copilot could always ask in prose; what it couldn't do was make
+ *  answering cheap. A question buried in a paragraph costs the user a sentence
+ *  of typing, so most went unanswered and the reply stayed generic. Tapping a
+ *  chip sends it as the next turn — the conversation continues rather than
+ *  restarting.
+ */
+function ClarifyBlock({
+  clarify,
+  onAnswer,
+}: {
+  clarify: AssistantClarify
+  onAnswer?: (answer: string) => void
+}) {
+  const [custom, setCustom] = useState("")
+  const [typing, setTyping] = useState(false)
+
+  function submit(value: string) {
+    const v = value.trim()
+    if (v) onAnswer?.(v)
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="mt-3 rounded-xl p-3"
+      style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}
+    >
+      <div className="flex items-start gap-2">
+        <HelpCircle size={15} className="mt-[2px] shrink-0" style={{ color: "var(--green)" }} />
+        <p className="text-[13px] font-medium leading-snug" style={{ color: "var(--text)" }}>
+          {clarify.question}
+        </p>
+      </div>
+
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
+        {clarify.options.map((o, i) => (
+          <button
+            key={i}
+            onClick={() => submit(o.label)}
+            title={o.hint || undefined}
+            className="rounded-lg px-2.5 py-1.5 text-left text-[12.5px] font-medium transition-colors"
+            style={{ border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)" }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--green)")}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+          >
+            {o.label}
+            {o.hint && (
+              <span className="ml-1.5 font-normal" style={{ color: "var(--text-muted)" }}>
+                {o.hint}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {clarify.allow_free_text && (
+        <div className="mt-2">
+          {typing ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                autoFocus
+                value={custom}
+                onChange={(e) => setCustom(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") submit(custom) }}
+                placeholder="Something else…"
+                className="flex-1 rounded-lg px-2.5 py-1.5 text-[12.5px] outline-none"
+                style={{ border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)" }}
+              />
+              <button
+                onClick={() => submit(custom)}
+                disabled={!custom.trim()}
+                className="rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium disabled:opacity-40"
+                style={{ background: "var(--green)", color: "#fff" }}
+              >
+                Send
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setTyping(true)}
+              className="text-[12px] underline-offset-2 hover:underline"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Something else…
+            </button>
+          )}
+        </div>
+      )}
     </motion.div>
   )
 }

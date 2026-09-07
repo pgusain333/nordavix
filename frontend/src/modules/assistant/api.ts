@@ -59,6 +59,20 @@ export interface AssistantChart {
   data: AssistantChartPoint[]
 }
 
+export interface AssistantClarifyOption {
+  label: string
+  hint?: string | null
+}
+
+/** One clarifying question the copilot asks inline, rendered as tappable chips
+ *  under its answer. Only appears when the answer genuinely turns on something
+ *  no tool can settle — never for something it could have looked up. */
+export interface AssistantClarify {
+  question: string
+  options: AssistantClarifyOption[]
+  allow_free_text: boolean
+}
+
 export interface AskResponse {
   answer: string
   sources: AssistantSource[]
@@ -67,6 +81,7 @@ export interface AskResponse {
   links: AssistantLink[]
   actions: AssistantAction[]
   charts: AssistantChart[]
+  clarify: AssistantClarify | null
 }
 
 export interface AssistantTurn {
@@ -79,7 +94,8 @@ export type StreamEvent =
   | { type: "step"; label: string }
   | { type: "delta"; text: string }
   | { type: "reset" }
-  | { type: "result"; answer: string; sources: AssistantSource[]; drafts: AssistantDraft[]; links: AssistantLink[]; actions: AssistantAction[]; charts: AssistantChart[] }
+  | { type: "clarify"; question: string; options: AssistantClarifyOption[]; allow_free_text: boolean }
+  | { type: "result"; answer: string; sources: AssistantSource[]; drafts: AssistantDraft[]; links: AssistantLink[]; actions: AssistantAction[]; charts: AssistantChart[]; clarify: AssistantClarify | null }
   | { type: "done"; thread_id: string | null }
   | { type: "error"; message: string }
 
