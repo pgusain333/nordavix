@@ -2,45 +2,71 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── CSS design tokens — light mode ("cream & pine") ──────────────────────────
-   Brand system matched 1:1 to the marketing site's "finance editorial" look:
-   warm cream canvas, paper surfaces, deep pine ink text, ONE brand green for
-   actions, and lime reserved for AI moments (the --accent family). Tokens only
-   — every component reads these vars, so this restyles the whole app with zero
-   logic changes. */
+/* ── CSS design tokens — light mode ("pine neutral") ──────────────────────────
+   A near-neutral ground with roughly two percent of the brand green mixed into
+   the grey, white cards, deep pine ink, ONE brand green for actions.
+
+   This was warm cream (#F4F1E9 canvas, #FCFBF7 paper) to match the marketing
+   site. Two problems with that. The dark theme below is neutral near-black, so
+   the app had one personality by day and another by night — nobody chose that,
+   the two blocks drifted. And cream at that hex is the most-copied palette in
+   circulation; it read as a default even though it wasn't one.
+
+   The green in the grey is the part worth keeping deliberate. A pure cool grey
+   (#F5F6F7, the Linear ground) is perfectly correct and would leave the pine
+   rail and the green buttons sitting on a surface that merely tolerates them.
+   At this bias you cannot name the difference in isolation, and next to the
+   rail the whole screen resolves as one object.
+
+   Tokens only — every component reads these vars, so this restyles the whole
+   app with zero logic changes. */
 :root {
-  --bg:           #F4F1E9;   /* warm cream — marketing CREAM */
-  --surface:      #FCFBF7;   /* paper cards — marketing PAPER */
-  --surface-2:    #F0EDE3;   /* inset panels / table headers */
-  --border:       #E6E2D5;
-  --border-strong:#CFC9B8;
-  --text:         #11271F;   /* pine ink */
-  --text-2:       #46584F;
-  --text-muted:   #7C8A82;
+  --bg:           #F4F7F5;   /* neutral ground, faintly pine */
+  --surface:      #FFFFFF;   /* cards */
+  --surface-2:    #EDF2EF;   /* inset panels / table headers */
+  --border:       #DFE7E2;
+  --border-strong:#C4D2CB;
+  --text:         #0E1613;   /* pine ink */
+  --text-2:       #40514A;
+  --text-muted:   #6E7F77;
   --green:        #2E7A55;   /* primary action green (marketing GREEN) */
   --green-light:  #4FA07A;
-  --green-subtle: #E7F0E9;
+  --green-subtle: #DEEDE4;
   /* ── Semantic palette — deliberately low-saturation so long close sessions
      don't fatigue the eyes. Each meaning has one muted text color, one subtle
      tint background, and a soft border. Used for status badges, pills, alerts,
-     charts — color carries meaning, never decoration. */
-  --positive:        #2E7A55;  /* success / approved / favorable (= brand green) */
-  --positive-subtle: #E7F0E9;
-  --positive-border: #C9DDD0;
+     charts — color carries meaning, never decoration.
+
+     The green and blue tints moved when the ground did. On cream, --surface-2
+     was warm (#F0EDE3) and every tint separated from it by hue alone. A pine
+     ground makes --surface-2 cool and faintly green, which put the green tint
+     six RGB points away from the table header behind it and the blue tint
+     four: an "Approved" pill on a table header was very nearly invisible. The
+     tints are deepened enough to read, which then costs text contrast — hence
+     --positive parting company with --green below. */
+  --positive:        #2A7050;  /* success / approved / favorable. A shade deeper
+                                  than --green: on the deepened tint the brand
+                                  hex lands at 4.3:1, under AA for the small
+                                  semibold text a pill is made of. This clears
+                                  it at 4.9:1 and is indistinguishable side by
+                                  side. Buttons keep --green — untouched. */
+  --positive-subtle: #DEEDE4;
+  --positive-border: #BFD8C8;
   --danger:          #A8544A;  /* error / overdue / unfavorable — muted brick */
-  --danger-subtle:   #F4E8E4;
+  --danger-subtle:   #F4E8E4;  /* warm; still separates from a cool --surface-2 */
   --danger-border:   #E5CEC7;
   --warn:            #96702F;  /* warning / in-progress / needs review — muted ochre */
   --warn-subtle:     #F4ECDC;
   --warn-border:     #E6D8BB;
   --info:            #3C5A76;  /* informational / neutral status — muted slate-blue */
-  --info-subtle:     #E9EEF3;
-  --info-border:     #D3DEE8;
-  --accent:          #2E7A55;  /* AI moments — fold into the brand green; the
+  --info-subtle:     #DCE7F2;
+  --info-border:     #C3D5E6;
+  --accent:          #2A7050;  /* AI moments — fold into the brand green; the
                                   Sparkles icon carries the "AI" meaning, color
-                                  stays calm ("colorful only when necessary") */
-  --accent-subtle:   #E7F0E9;
-  --accent-border:   #C9DDD0;
+                                  stays calm ("colorful only when necessary").
+                                  Tracks --positive for the same contrast reason. */
+  --accent-subtle:   #DEEDE4;
+  --accent-border:   #BFD8C8;
   /* Sidebar — deep pine rail, cream text, brand-green active pill. Identical
      in light + dark so the rail is a consistent brand anchor (matches the
      marketing site's pine bands). */
