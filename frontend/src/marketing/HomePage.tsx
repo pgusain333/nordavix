@@ -3,9 +3,10 @@
  *
  * Art direction: "finance editorial" — the confident big-SaaS look (Ramp /
  * Mercury / Linear lineage), deliberately NOT the generic AI-gradient site.
- *   · Deep pine ink (#0C2620) as the dominant dark, warm cream (#F4F1E9)
- *     for the product sections — a two-world rhythm: dark statement bands,
- *     light "show the work" bands.
+ *   · Deep pine ink (#0C2620) as the dominant dark, a pine-neutral ground
+ *     (#F4F7F5) for the product sections — a two-world rhythm: dark statement
+ *     bands, light "show the work" bands. Cream survives as the TEXT on the
+ *     dark bands, which is the job it was always best at.
  *   · ONE loud accent: electric lime (#D4F361). Everything else is quiet.
  *   · Type system: Fraunces (editorial serif) for display headlines,
  *     Plus Jakarta Sans for body, JetBrains Mono for eyebrows / metrics /
@@ -43,13 +44,18 @@ const D_TXT2  = "rgba(244,241,233,0.66)"
 const D_TXT3  = "rgba(244,241,233,0.42)"
 const LIME    = "#9CC4AD"   // THE accent — soft sage (electric lime retired: too loud for a finance brand)
 const SAGE    = "#7FB89B"   // quiet support on dark
-const CREAM   = "#F4F1E9"   // light section base
-const PAPER   = "#FCFBF7"   // cards on cream
+// Cream did two jobs here and only one of them moved. As TEXT on pine (D_TXT
+// above, and the rail in the app) it is warm paper on dark ink and still the
+// best thing on the page. As the light section GROUND it was #F4F1E9, which
+// left the marketing site warm while the app went pine-neutral. Only the
+// ground and the ink on it change; every dark band is untouched.
+const CREAM   = "#F4F7F5"   // light section base — pine neutral, matches the app
+const PAPER   = "#FFFFFF"   // cards on the light ground
 const L_LINE  = "rgba(12,38,32,0.10)"     // hairline on light
 const L_LINE2 = "rgba(12,38,32,0.16)"
-const L_TXT   = "#11271F"   // text on light — pine
-const L_TXT2  = "#46584F"
-const L_TXT3  = "#7C8A82"
+const L_TXT   = "#0E1613"   // text on light — pine
+const L_TXT2  = "#40514A"
+const L_TXT3  = "#6E7F77"
 const GREEN   = "#2E7A55"   // semantic ok (on light)
 const AMBER   = "#B07F3C"   // semantic pending (on light)
 const RED     = "#A8544A"   // semantic gap (on light)

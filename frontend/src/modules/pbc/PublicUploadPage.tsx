@@ -17,7 +17,8 @@ import { useParams } from "react-router-dom"
 const API = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? ""
 
 const PINE  = "#0C2620"
-const CREAM = "#F4F1E9"
+const CREAM = "#F4F1E9"   // text on pine — warm paper on dark ink, unchanged
+const GROUND = "#F4F7F5"  // the page behind the card — pine neutral, matches the app
 const SAGE  = "#9CC4AD"
 const INK   = "#14181A"
 const SERIF = '"Fraunces", Georgia, serif'
@@ -84,9 +85,9 @@ export function PublicUploadPage() {
 
   return (
     <div className="min-h-screen flex flex-col items-center px-4 py-8 sm:py-14"
-      style={{ background: CREAM }}>
+      style={{ background: GROUND }}>
       <div className="w-full max-w-[480px] rounded-2xl overflow-hidden bg-white"
-        style={{ border: "1px solid #E6E4DF", boxShadow: "0 18px 50px -20px rgba(12,38,32,0.25)" }}>
+        style={{ border: "1px solid #DFE7E2", boxShadow: "0 18px 50px -20px rgba(12,38,32,0.25)" }}>
 
         {/* Pine brand band — visual continuity with the email */}
         <div className="px-7 py-4 flex items-center justify-between" style={{ background: PINE }}>
@@ -129,7 +130,7 @@ export function PublicUploadPage() {
               </h1>
               {req.note && (
                 <p className="text-[13.5px] mt-3 leading-relaxed rounded-lg px-3.5 py-3"
-                  style={{ color: "#3C4146", background: "#FAFAF8", border: "1px solid #E6E4DF" }}>
+                  style={{ color: "#3C4146", background: "#EDF2EF", border: "1px solid #DFE7E2" }}>
                   {req.note}
                 </p>
               )}
@@ -160,8 +161,8 @@ export function PublicUploadPage() {
                   onDrop={(e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length) void upload(e.dataTransfer.files) }}
                   className="mt-6 rounded-xl px-6 py-9 text-center cursor-pointer transition-colors select-none"
                   style={{
-                    border: `1.5px dashed ${dragOver ? "#2E7A55" : "#C9C5BA"}`,
-                    background: dragOver ? "#EAF4EE" : "#FCFBF7",
+                    border: `1.5px dashed ${dragOver ? "#2E7A55" : "#C4D2CB"}`,
+                    background: dragOver ? "#DEEDE4" : "#FFFFFF",
                   }}
                 >
                   <input ref={inputRef} type="file" multiple className="hidden"
@@ -189,7 +190,7 @@ export function PublicUploadPage() {
                   <ul className="space-y-1.5">
                     {req.files.map((f, i) => (
                       <li key={i} className="flex items-center gap-2 text-[13px] rounded-lg px-3 py-2"
-                        style={{ background: "#EAF4EE", color: "#1d5038" }}>
+                        style={{ background: "#DEEDE4", color: "#2A7050" }}>
                         <span aria-hidden className="font-bold" style={{ color: "#2E7A55" }}>✓</span>
                         <span className="truncate">{f.file_name}</span>
                       </li>
@@ -206,7 +207,7 @@ export function PublicUploadPage() {
         </div>
 
         {/* Trust footer */}
-        <div className="px-7 py-3.5" style={{ borderTop: "1px solid #E6E4DF" }}>
+        <div className="px-7 py-3.5" style={{ borderTop: "1px solid #DFE7E2" }}>
           <p className="text-[10.5px] leading-relaxed" style={{ color: "#8A8F98" }}>
             Files go directly to {req?.company ?? "your accountant"}'s secure Nordavix
             workspace — encrypted in transit and at rest. No account needed.
