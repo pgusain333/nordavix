@@ -135,6 +135,48 @@ def _serialize_common(row) -> dict:
     }
 
 
+def _prepaid_period_view(row, p_start: _date, p_end: _date) -> dict:
+    """One prepaid's figures FOR A GIVEN PERIOD, for the items table.
+
+    `period_status` is the field that matters. The table's chip showed
+    is_active — a property of the RECORD — so a policy beginning next quarter
+    read "Active" in this month's list alongside a monthly rate it was not yet
+    charging. Whether an item is active is not the question a period view is
+    asking; whether it touched THIS period is.
+
+      not_started — begins after this period. Contributes nothing, and the
+                    monthly rate shown beside it is what it WILL charge.
+      amortizing  — inside its window; the period figures are real.
+      completed   — finished on or before this period; nothing left on the BS.
+      inactive    — the record itself is switched off.
+    """
+    if not row.is_active:
+        status = "inactive"
+    elif row.start_date > p_end:
+        status = "not_started"
+    elif row.end_date < p_start:
+        status = "completed"
+    else:
+        status = "amortizing"
+
+    if status in ("not_started", "inactive"):
+        period_amort = Decimal("0")
+        unamortized = Decimal("0") if status == "not_started" else             calc._prepaid_unamortized_as_of(row, p_end)
+    else:
+        period_amort = calc._prepaid_period_expense(row, p_start, p_end)
+        unamortized = calc._prepaid_unamortized_as_of(row, p_end)
+
+    return {
+        "period_status":             status,
+        "period_amortization":       str(_q_money(period_amort)),
+        "unamortized_at_period_end": str(_q_money(unamortized)),
+        "amortized_to_date":         str(_q_money(
+            calc._prepaid_amortized_through(row, p_end)
+            if status not in ("not_started",) else Decimal("0")
+        )),
+    }
+
+
 def _serialize(schedule_type: str, row) -> dict:
     out = _serialize_common(row)
     if schedule_type == "prepaid":
@@ -447,6 +489,10 @@ async def list_items(
     db: AsyncSession = Depends(get_db),
     qbo_account_id: str | None = Query(default=None),
     include_inactive: bool = Query(default=True),
+    period_end: str | None = Query(
+        default=None,
+        description="YYYY-MM-DD. Adds this period's figures to each prepaid.",
+    ),
 ) -> dict:
     Model = _model_for(schedule_type)
     q = select(Model).where(Model.tenant_id == tenant_id)
@@ -455,9 +501,33 @@ async def list_items(
     if not include_inactive:
         q = q.where(Model.is_active == True)  # noqa: E712
     rows = (await db.execute(q)).scalars().all()
+    items = [_serialize(schedule_type, r) for r in rows]
+
+    # The list was period-BLIND: it returned every item on the account with no
+    # reference to the period selected right above it, and its "Active" chip
+    # meant the record was active, not that the item touched this month. So a
+    # policy starting in June sat in a May table showing "Active · $4,000
+    # monthly" while the roll-forward above it reported no amortization at all,
+    # and nothing on screen reconciled the two. Adding the period's own figures
+    # is what makes the table answer the question the page is asking.
+    if schedule_type == "prepaid" and period_end:
+        try:
+            pe = _date.fromisoformat(period_end)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="period_end must be YYYY-MM-DD.",
+            ) from None
+        p_start, p_end = calc._period_bounds(pe)
+        by_id = {str(r.id): r for r in rows}
+        for it in items:
+            row = by_id.get(it.get("id"))
+            if row is None:
+                continue
+            it.update(_prepaid_period_view(row, p_start, p_end))
+
     return {
         "schedule_type": schedule_type,
-        "items":         [_serialize(schedule_type, r) for r in rows],
+        "items":         items,
     }
 
 

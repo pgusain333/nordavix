@@ -17,6 +17,7 @@ Conventions:
 """
 from __future__ import annotations
 
+import logging
 from calendar import monthrange
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -31,6 +32,8 @@ from models.schedule import (
     ScheduleLoan,
     SchedulePrepaid,
 )
+
+logger = logging.getLogger(__name__)
 
 ZERO = Decimal("0.00")
 
@@ -211,9 +214,32 @@ def _prepaid_amortized_through(item: SchedulePrepaid, as_of: date) -> Decimal:
 
 
 def _prepaid_unamortized_as_of(item: SchedulePrepaid, as_of: date) -> Decimal:
-    """How much of the prepaid total is still on the BS as of `as_of`."""
+    """How much of the prepaid total is still on the BS as of `as_of`.
+
+    A prepaid that has not STARTED by `as_of` is not on the balance sheet yet,
+    so it contributes nothing. This returned the item's FULL total instead —
+    a June policy sat on the May balance sheet at its whole cost.
+
+    The damage was not theoretical. Every caller here asks the same question
+    ("what is on the books at this date") and every one of them was wrong for a
+    future-dated item: the roll-forward's ending balance, the reconciliation's
+    closing balance, the period workbook, and the straight-line period expense.
+    On a May close with a $48,000 policy starting 1 June, the roll-forward read
+
+        beginning 30,000 · additions 0 · amortization 0 · ending 75,000
+
+    — the real $3,000 of May amortization came out NEGATIVE (30,000 − 75,000),
+    hit the never-negative clamp below, and was reported as zero. The screen
+    then showed a $45,000 "other" movement to make the waterfall tie. And
+    because committing pushes that ending balance into the recon as the
+    subledger, the May prepaid reconciliation was out by the full 48,000.
+
+    `roll_prepaids` already guarded its BEGINNING balance against exactly this,
+    with a comment explaining why. Its ENDING balance had no such guard, which
+    is what happens when a caller works around a helper instead of fixing it.
+    """
     if as_of < item.start_date:
-        return Decimal(item.total_amount)
+        return ZERO
     if as_of >= item.end_date:
         return ZERO
     amortized = _prepaid_amortized_through(item, as_of)
@@ -277,24 +303,17 @@ def roll_prepaids(items: Iterable[SchedulePrepaid], period_end: date) -> Snapsho
     for it in items:
         if not it.is_active:
             continue
-        # Beginning balance = unamortized portion ALREADY on the books at
-        # the end of the prior period. CRITICAL guard: an item that starts
-        # THIS period (or later) was not yet on the balance sheet then, so
-        # its beginning is ZERO and its full cost flows in via `additions`.
+        # Both ends now come straight from the helper, which returns ZERO for
+        # an item that has not started by the date asked about.
         #
-        # Without this guard, _prepaid_unamortized_as_of returns the FULL
-        # total for a not-yet-started item (its "as_of < start_date"
-        # branch returns total, NOT zero — unlike the accrual/lease/loan
-        # balance helpers which return zero before their start). That full
-        # total then double-counts against `additions`, inflating
-        # period_expense: a $12,000 Jan-start prepaid showed
-        #   beginning 12,000 + additions 12,000 − ending 11,000 = 13,000
-        # of "amortization" in its first month instead of the correct
-        #   beginning 0 + additions 12,000 − ending 11,000 = 1,000.
-        if it.start_date > prior_period_end:
-            beg = ZERO
-        else:
-            beg = _prepaid_unamortized_as_of(it, prior_period_end)
+        # This used to carry a local guard on `beg` alone, because the helper
+        # returned an unstarted item's FULL total: a $12,000 January prepaid
+        # otherwise showed beginning 12,000 + additions 12,000 − ending 11,000
+        # = 13,000 of first-month amortization instead of 1,000. Patching the
+        # caller left `end` reading the same broken helper, which is how a
+        # June policy ended up on the May balance sheet at full cost. The
+        # helper is fixed; the workaround goes with it.
+        beg = _prepaid_unamortized_as_of(it, prior_period_end)
         end = _prepaid_unamortized_as_of(it, p_end)
         beginning += beg
         ending += end
@@ -303,10 +322,27 @@ def roll_prepaids(items: Iterable[SchedulePrepaid], period_end: date) -> Snapsho
             additions += Decimal(it.total_amount)
         if end > ZERO or beg > ZERO or (p_start <= it.start_date <= p_end):
             active_count += 1
-    # Expense = balance drop NOT explained by new additions
+    # Expense = balance drop NOT explained by new additions.
     period_expense = (beginning + additions) - ending
     if period_expense < ZERO:
-        period_expense = ZERO  # safety: never negative
+        # This is now unreachable by construction: a continuing item
+        # contributes its amortization, one starting this period contributes
+        # (total − remaining), one already over contributes its last sliver,
+        # and one that has not started contributes nothing to any of the three
+        # terms. Every case is >= 0.
+        #
+        # It stays as a floor because a wrong sign on a balance sheet is worse
+        # than a wrong magnitude — but it no longer stays SILENT. Clamping
+        # quietly is what turned the future-dated-prepaid bug into "amortization
+        # $0" on screen instead of an obviously broken negative, and nobody saw
+        # it for as long as the clamp was doing its job.
+        logger.error(
+            "prepaid roll-forward produced negative expense for %s: "
+            "beginning=%s additions=%s ending=%s — clamped to zero, but the "
+            "components do not explain the balance movement",
+            period_end, beginning, additions, ending,
+        )
+        period_expense = ZERO
     return SnapshotMath(
         beginning_balance=beginning,
         additions=additions,

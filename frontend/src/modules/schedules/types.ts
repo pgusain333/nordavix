@@ -63,12 +63,22 @@ interface CommonItem {
 
 export type PrepaidAmortMethod = "daily_rate" | "straight_line"
 
+/** Where an item sits relative to the PERIOD being viewed — not whether the
+ *  record is switched on. A policy beginning next quarter is `not_started`
+ *  here while still being is_active. */
+export type PrepaidPeriodStatus = "not_started" | "amortizing" | "completed" | "inactive"
+
 export interface PrepaidItem extends CommonItem {
   invoice_date:        string | null
   total_amount:        string
   start_date:          string
   end_date:            string
   amortization_method: PrepaidAmortMethod
+  /** Present only when the list was fetched with a period_end. */
+  period_status?:             PrepaidPeriodStatus
+  period_amortization?:       string
+  unamortized_at_period_end?: string
+  amortized_to_date?:         string
 }
 
 export interface AccrualItem extends CommonItem {

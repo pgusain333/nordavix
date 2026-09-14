@@ -35,7 +35,7 @@ import { useIsPeriodClosed } from "@/core/hooks/useIsPeriodClosed"
 import { schedulesApi } from "@/modules/schedules/api"
 import { memoryApi } from "@/modules/memory/api"
 import { formatDate, toISODate } from "@/core/lib/dates"
-import type { PrepaidAlertItem, PrepaidAmortMethod, PrepaidCandidate, PrepaidItem } from "@/modules/schedules/types"
+import type { PrepaidAlertItem, PrepaidAmortMethod, PrepaidCandidate, PrepaidItem, PrepaidPeriodStatus } from "@/modules/schedules/types"
 
 /**
  * Pre-fill payload for the New Prepaid dialog when the user is creating
@@ -146,6 +146,33 @@ function StatusChip({ active }: { active: boolean }) {
   )
 }
 
+/** Where the item sits relative to THIS period.
+ *
+ *  The chip here used to read is_active, which is a property of the record.
+ *  So a policy starting next quarter showed "Active" in this month's table,
+ *  beside a monthly rate it was not charging yet — while the roll-forward
+ *  above reported no amortization. Two true statements that read as a
+ *  contradiction, because neither said which period it was talking about. */
+const PERIOD_STATUS: Record<PrepaidPeriodStatus, { label: string; fg: string; bg: string }> = {
+  amortizing:  { label: "Amortizing",  fg: "var(--green)",      bg: "var(--green-subtle)" },
+  not_started: { label: "Not started", fg: "var(--info)",       bg: "var(--info-subtle)" },
+  completed:   { label: "Completed",   fg: "var(--text-2)",     bg: "var(--surface-2)" },
+  inactive:    { label: "Inactive",    fg: "var(--text-muted)", bg: "var(--surface-2)" },
+}
+
+function PeriodStatusChip({ item }: { item: PrepaidItem }) {
+  // No period on the payload (an older cache, or a list fetched without one)
+  // → fall back to the record chip rather than inventing a period answer.
+  if (!item.period_status) return <StatusChip active={item.is_active} />
+  const s = PERIOD_STATUS[item.period_status]
+  return (
+    <span className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-semibold whitespace-nowrap"
+      style={{ color: s.fg, background: s.bg }}>
+      {s.label}
+    </span>
+  )
+}
+
 const PREPAID_COLUMNS: Column<PrepaidItem>[] = [
   {
     key: "description", header: "Description", width: "auto", hideable: false,
@@ -215,10 +242,45 @@ const PREPAID_COLUMNS: Column<PrepaidItem>[] = [
     ),
   },
   {
-    key: "status", header: "Status", width: "92px",
-    sortValue: (it) => (it.is_active ? "active" : "inactive"),
-    text: (it) => (it.is_active ? "Active" : "Inactive"),
-    cell: (it) => <StatusChip active={it.is_active} />,
+    // The column that connects this table to the roll-forward above it: these
+    // values sum to the chart's amortization bar. Before, nothing on the page
+    // let you check one against the other.
+    key: "period_amort", header: "This period", width: "118px", align: "right",
+    sortValue: (it) => parseFloat(it.period_amortization ?? "0") || 0,
+    text: (it) => (it.period_amortization ? fmt(it.period_amortization) : ""),
+    cell: (it) => {
+      if (it.period_amortization === undefined) return <span style={{ color: "var(--text-muted)" }}>—</span>
+      const zero = (parseFloat(it.period_amortization) || 0) === 0
+      return (
+        <span className="tabular-nums text-[13px]"
+          style={zero ? { color: "var(--text-muted)" } : undefined}>
+          {fmt(it.period_amortization)}
+        </span>
+      )
+    },
+  },
+  {
+    key: "period_balance", header: "At period end", width: "126px", align: "right",
+    sortValue: (it) => parseFloat(it.unamortized_at_period_end ?? "0") || 0,
+    text: (it) => (it.unamortized_at_period_end ? fmt(it.unamortized_at_period_end) : ""),
+    cell: (it) => {
+      if (it.unamortized_at_period_end === undefined) return <span style={{ color: "var(--text-muted)" }}>—</span>
+      const zero = (parseFloat(it.unamortized_at_period_end) || 0) === 0
+      return (
+        <span className="tabular-nums text-[13px]"
+          style={zero ? { color: "var(--text-muted)" } : undefined}>
+          {fmt(it.unamortized_at_period_end)}
+        </span>
+      )
+    },
+  },
+  {
+    key: "status", header: "In this period", width: "104px",
+    sortValue: (it) => it.period_status ?? (it.is_active ? "active" : "inactive"),
+    text: (it) => (it.period_status
+      ? PERIOD_STATUS[it.period_status].label
+      : (it.is_active ? "Active" : "Inactive")),
+    cell: (it) => <PeriodStatusChip item={it} />,
   },
 ]
 
@@ -289,9 +351,15 @@ export function PrepaidsPage() {
   /** Which item's amortization-schedule drawer is open (null = closed). */
   const [amortizationItem, setAmortizationItem] = useState<PrepaidItem | null>(null)
 
+  // periodEnd is part of the key AND the request: the table shows each item's
+  // figures FOR the period selected above it, so a period change has to refetch
+  // rather than re-render the previous month's numbers under a new heading.
   const { data: itemsResp, isLoading: itemsLoading } = useQuery({
-    queryKey: ["schedules", "prepaid", "items", filterAccount],
-    queryFn:  () => schedulesApi.listItems("prepaid", { qbo_account_id: filterAccount || undefined }),
+    queryKey: ["schedules", "prepaid", "items", filterAccount, periodEnd],
+    queryFn:  () => schedulesApi.listItems("prepaid", {
+      qbo_account_id: filterAccount || undefined,
+      period_end:     periodEnd,
+    }),
   })
   const items = itemsResp?.items ?? []
 

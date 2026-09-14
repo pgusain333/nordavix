@@ -59,7 +59,7 @@ async function getOverview(periodEnd: string): Promise<Overview> {
 
 async function listItems<T extends ScheduleType>(
   type: T,
-  opts: { qbo_account_id?: string; include_inactive?: boolean } = {},
+  opts: { qbo_account_id?: string; include_inactive?: boolean; period_end?: string } = {},
 ): Promise<{ schedule_type: T; items: ItemMap[T][] }> {
   const { data } = await apiClient.get<{ schedule_type: T; items: ItemMap[T][] }>(
     `/api/schedules/${type}`,
@@ -67,6 +67,7 @@ async function listItems<T extends ScheduleType>(
       params: {
         qbo_account_id:   opts.qbo_account_id,
         include_inactive: opts.include_inactive ?? true,
+        period_end:       opts.period_end,
       },
     },
   )
