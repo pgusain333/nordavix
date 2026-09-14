@@ -174,7 +174,7 @@ export function DashboardHome() {
   const { data: books } = useBooksStatus()
 
   // Recons overview — drives recon KPIs and the status panel
-  const { data: overview, isError: overviewErr, refetch: refetchOverview } = useQuery({
+  const { data: overview, isError: overviewErr, isFetching: overviewBusy, refetch: refetchOverview } = useQuery({
     queryKey: ["recons-overview", period],
     queryFn:  () => reconsApi.getOverview(period),
     enabled:  !!qbo && books?.seeded === true,
@@ -186,7 +186,7 @@ export function DashboardHome() {
 
   // Month-end close tracker — one entry per month from books_start
   // through current. Drives the close-status timeline component below.
-  const { data: tracker, isError: trackerErr, refetch: refetchTracker } = useQuery({
+  const { data: tracker, isError: trackerErr, isFetching: trackerBusy, refetch: refetchTracker } = useQuery({
     queryKey: ["period-tracker"],
     queryFn:  reconsApi.listPeriodTracker,
     enabled:  books?.seeded === true,
@@ -197,7 +197,7 @@ export function DashboardHome() {
   })
 
   // Flux trial balances — list of recent analyses
-  const { data: trialBalances, isError: tbErr, refetch: refetchTb } = useQuery({
+  const { data: trialBalances, isError: tbErr, isFetching: tbBusy, refetch: refetchTb } = useQuery({
     queryKey: ["flux-trial-balances"],
     queryFn:  fluxApi.listTrialBalances,
     // Feeds flux approval state in the close-progress bar. Invalidated on flux
@@ -565,14 +565,23 @@ export function DashboardHome() {
       <div className="flex-1 px-4 sm:px-8 py-5 max-w-7xl w-full mx-auto space-y-5">
         {/* Inline error banner — surfaces a failed dashboard load instead of
             silently showing empty cards, with a one-click retry. */}
-        {(overviewErr || trackerErr || tbErr) && (
+        {/* Only once the retries have actually given up. React Query keeps
+            `error` set through a refetch, so gating on isError alone made this
+            banner flash during any recovery — most visibly right after a
+            company switch, where it announced a QuickBooks problem that did
+            not exist and then vanished on its own. A failure still being
+            retried is not yet something to tell someone about. */}
+        {((overviewErr && !overviewBusy) || (trackerErr && !trackerBusy) || (tbErr && !tbBusy)) && (
           <div className="rounded-xl px-4 py-3 flex items-start gap-2.5"
             style={{ background: "#f7eeec", border: "1px solid #ecd7d3" }}>
             <AlertCircle size={15} strokeWidth={2} className="shrink-0 mt-0.5" style={{ color: "#9b3d37" }} />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold" style={{ color: "#86332e" }}>Some dashboard data couldn&apos;t load</p>
               <p className="text-xs mt-0.5" style={{ color: "#86332e" }}>
-                Your connection or QuickBooks may have hiccuped. Your data is safe — try again.
+                {/* These three reads hit Nordavix, not QuickBooks. Naming QBO
+                    here sent people to re-check a connection that was fine. */}
+                Nothing was lost — your data is safe. Try again, and if it keeps
+                happening the sync may need a re-run.
               </p>
             </div>
             <button

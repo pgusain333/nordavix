@@ -13,9 +13,11 @@
 import { useEffect, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useOrganization, useOrganizationList, useSession } from "@clerk/clerk-react"
+import { useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import { Building2, Check, ChevronDown, LayoutGrid, Plus } from "lucide-react"
 import { Spinner } from "@/core/ui/components"
+import { clearApiTokenCache } from "@/core/api/client"
 
 interface Props {
   /** Called after a successful switch so the LeftNav can close its
@@ -30,6 +32,7 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { organization } = useOrganization()
+  const queryClient = useQueryClient()
 
   // Switching COMPANY shouldn't switch PRODUCT. Landing a §471(c) preparer on
   // the month-end close dashboard because they changed client is a different
@@ -77,11 +80,25 @@ export function WorkspaceSwitcher({ onAfterSwitch, variant = "menu" }: Props) {
     setSwitching(orgId)
     try {
       await setActive({ organization: orgId })
-      // Force-mint a JWT with the new org_id before navigating so the
-      // dashboard's first /api/* request doesn't fire with a stale token.
+
+      // Everything below must happen BEFORE navigate(), and that ordering is
+      // the whole fix. ClerkProvider does the same three things when it
+      // notices organization.id changed — but its effect runs after React has
+      // re-rendered, which is after navigate() has already mounted the
+      // dashboard and fired its queries. Those first requests were signed with
+      // apiClient's in-memory token, which caches for 4 seconds and still held
+      // the PREVIOUS org's JWT. The backend rejected them, the dashboard
+      // rendered "Some dashboard data couldn't load — your connection or
+      // QuickBooks may have hiccuped", and then ClerkProvider's effect finally
+      // ran, wiped the cache and refetched successfully. Hence a scary banner
+      // that blamed QuickBooks for an auth race and cleared itself a moment
+      // later. Doing it here closes the window instead of racing it.
+      clearApiTokenCache()
+      queryClient.removeQueries()
       if (session) {
         try { await session.getToken({ skipCache: true }) } catch { /* harmless */ }
       }
+
       navigate(productHome)
       onAfterSwitch?.()
     } finally {

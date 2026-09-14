@@ -186,7 +186,11 @@ def build_answer_pdf(*, question: str, answer: str, charts: list[dict], company:
     h2 = ParagraphStyle("h2", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=11, textColor=_INK, spaceBefore=10, spaceAfter=6)
 
     story: list = [
-        Paragraph(_esc(company or "Nordavix"), brand),
+        # The workspace name, verbatim. It fell back to "Nordavix" — putting
+        # the vendor's name where the client's belongs, on a page the client
+        # reads. The caller resolves it; an empty one means we genuinely
+        # don't know, and a neutral word is the honest answer.
+        Paragraph(_esc((company or "").strip() or "Workspace"), brand),
         Paragraph(f"NDVX Copilot · generated {date.today().isoformat()}", sub),
         HRFlowable(width="100%", thickness=1, color=_RULE, spaceAfter=10),
     ]
@@ -266,7 +270,15 @@ def _extract_tables_and_prose(answer: str) -> tuple[str, list[dict]]:
     return "\n".join(prose).strip(), tables
 
 
-def build_answer_xlsx(*, question: str, answer: str, charts: list[dict]) -> bytes:
+def build_answer_xlsx(
+    *, question: str, answer: str, charts: list[dict], company: str | None = None,
+) -> bytes:
+    """The same answer as a workbook.
+
+    It carried no company name at all — the PDF had one and this did not, so
+    the same answer exported two ways came back as two different documents,
+    and the spreadsheet a client received named nobody.
+    """
     from openpyxl import Workbook
     from openpyxl.chart import BarChart, LineChart, PieChart, Reference
     from openpyxl.styles import Alignment, Font
@@ -288,9 +300,9 @@ def build_answer_xlsx(*, question: str, answer: str, charts: list[dict]) -> byte
     wb = Workbook()
     ws = wb.active
     ws.title = "Answer"
-    ws["A1"] = "NDVX Copilot"
+    ws["A1"] = (company or "").strip() or "Workspace"
     ws["A1"].font = Font(bold=True, size=14)
-    ws["A2"] = f"Generated {date.today().isoformat()}"
+    ws["A2"] = f"NDVX Copilot · generated {date.today().isoformat()}"
     ws["A2"].font = Font(size=9, color="808080")
     row = 4
     if question:

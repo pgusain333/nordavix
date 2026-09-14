@@ -307,6 +307,21 @@ function CompanySection() {
   const [error,      setError]      = useState<string | null>(null)
   const [savedAt,    setSavedAt]    = useState<number | null>(null)
 
+  // The company name is the workspace's identity: it prints on every export,
+  // every client PDF and every magic-link email. Once it is set, changing it
+  // is an admin act. This section had no gate at all — a preparer got an
+  // editable field and, because Clerk rejects the write server-side, a
+  // generic "Could not save changes" with nothing to do about it. The fiscal
+  // year end below was worse: `canEdit` was hardcoded true, and it decides how
+  // every month's P&L is derived.
+  const { data: me } = useQuery({
+    queryKey: ["me"],
+    queryFn:  workspaceApi.getMe,
+    staleTime: 10 * 60_000,
+    enabled:  !!organization,
+  })
+  const isAdmin = me?.role === "admin"
+
   const initialMeta: CompanyMeta = useMemo(
     () => (organization ? readMeta(organization.id) : {}),
     [organization?.id],
@@ -359,11 +374,12 @@ function CompanySection() {
       icon={Building2}
     >
       <div className="mb-5">
-        <FiscalYearCard canEdit />
+        <FiscalYearCard canEdit={isAdmin} />
       </div>
       <CompanyForm
         key={organization.id}
         mode="edit"
+        canEditName={isAdmin}
         initialName={organization.name ?? ""}
         initialMeta={initialMeta}
         submitting={submitting}

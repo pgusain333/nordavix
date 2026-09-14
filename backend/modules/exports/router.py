@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.session import get_db
+from core.tenancy.company import company_name as company_name_of
 from modules.exports.financials_workbook import (
     FINANCIAL_SHEET_LABELS,
     build_financials_workbook,
@@ -70,21 +71,11 @@ async def export_period_workbook(
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
 
-    # Resolve workspace + user display info for the cover sheet
-    company_name = "Workspace"
-    try:
-        from sqlalchemy import select
-
-        from models.tenant import Tenant
-        t = (await db.execute(
-            select(Tenant).where(Tenant.id == tenant_id),
-            execution_options={"skip_tenant_filter": True},
-        )).scalar_one_or_none()
-        if t and getattr(t, "name", None):
-            company_name = t.name
-    except Exception:
-        # Cover sheet falls back to "Workspace" — non-fatal
-        pass
+    # Resolve workspace + user display info for the cover sheet. Via the shared
+    # accessor, not Tenant.name: the row can still hold the raw Clerk org id and
+    # this read had no guard at all — "org_2abc…" went straight onto the cover
+    # of a workbook someone hands an auditor.
+    company_name = await company_name_of(db, tenant_id, fallback="Workspace")
 
     generated_by = "Unknown user"
     try:
@@ -162,19 +153,7 @@ async def export_schedule_workbook(
     except ValueError:
         raise HTTPException(status_code=400, detail="period_end must be YYYY-MM-DD.")
 
-    company_name = "Workspace"
-    try:
-        from sqlalchemy import select
-
-        from models.tenant import Tenant
-        t = (await db.execute(
-            select(Tenant).where(Tenant.id == tenant_id),
-            execution_options={"skip_tenant_filter": True},
-        )).scalar_one_or_none()
-        if t and getattr(t, "name", None):
-            company_name = t.name
-    except Exception:
-        pass
+    company_name = await company_name_of(db, tenant_id, fallback="Workspace")
 
     generated_by = "Unknown user"
     try:
@@ -217,19 +196,7 @@ async def export_schedule_workbook(
 
 async def _resolve_company_and_user(db: AsyncSession, tenant_id, user) -> tuple[str, str]:
     """Company name (workspace) + generated-by display for the cover sheet."""
-    company_name = "Workspace"
-    try:
-        from sqlalchemy import select
-
-        from models.tenant import Tenant
-        t = (await db.execute(
-            select(Tenant).where(Tenant.id == tenant_id),
-            execution_options={"skip_tenant_filter": True},
-        )).scalar_one_or_none()
-        if t and getattr(t, "name", None):
-            company_name = t.name
-    except Exception:
-        pass
+    company_name = await company_name_of(db, tenant_id, fallback="Workspace")
     generated_by = "Unknown user"
     try:
         if user:

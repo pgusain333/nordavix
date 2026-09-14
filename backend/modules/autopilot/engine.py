@@ -446,7 +446,11 @@ async def run_autopilot_for_tenant(
             if recipients:
                 from core.config import settings
                 link = f"{settings.web_url}/app/reconciliations"
-                company = tenant.name if tenant.name and not tenant.name.startswith("org_") else "Your company"
+                # Was: substitute "Your company" whenever the name was still a
+                # raw Clerk org id. That hid the placeholder instead of fixing
+                # it, in an email the client reads.
+                from core.tenancy.company import company_name as _company_name
+                company = await _company_name(db, tenant.id, fallback="Your company")
                 # Optionally attach the Financial Package PDF (IS/BS/CF from the
                 # synced snapshot). Fully fenced — a render failure degrades the
                 # digest to no-attachment, never crashes the run.

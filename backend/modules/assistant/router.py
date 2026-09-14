@@ -20,9 +20,9 @@ from core.ai.guard import enforce_ai_limits
 from core.auth.dependencies import CurrentTenantId, CurrentUser
 from core.db.base import current_request_readonly
 from core.db.session import get_db
+from core.tenancy.company import company_name
 from models.assistant_conversation import AssistantMessage, AssistantThread
 from models.proposed_entry import ProposedEntry
-from models.tenant import Tenant
 from modules.assistant.export import build_answer_pdf, build_answer_xlsx
 from modules.assistant.schemas import (
     AskRequest,
@@ -211,17 +211,13 @@ async def export_answer(
 ) -> Response:
     """Export one Copilot answer (its text + any charts) as a branded PDF or Excel
     file. Pure formatting of content the client already has — no AI spend. The only
-    DB read is the workspace name (for branding); Tenant isn't tenant-scoped, so we
-    filter by the caller's own id."""
-    company = "Nordavix"
-    try:
-        tenant = (await db.execute(
-            select(Tenant).where(Tenant.id == tenant_id)
-        )).scalar_one_or_none()
-        if tenant and tenant.name:
-            company = tenant.name
-    except Exception:
-        logger.exception("assistant export: workspace name lookup failed")
+    DB read is the workspace name (for branding).
+
+    The name comes from the shared accessor rather than Tenant.name directly: the
+    row can still hold the raw Clerk org id, and this document is the last place
+    that should surface. It used to fall back to "Nordavix" — printing the vendor's
+    name where the client's belongs, on a page the client reads."""
+    company = await company_name(db, tenant_id, fallback="Workspace")
 
     try:
         if body.format == "pdf":
@@ -232,7 +228,8 @@ async def export_answer(
             media, ext = "application/pdf", "pdf"
         else:
             data = build_answer_xlsx(
-                question=body.question, answer=body.answer, charts=body.charts,
+                question=body.question, answer=body.answer,
+                charts=body.charts, company=company,
             )
             media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ext = "xlsx"

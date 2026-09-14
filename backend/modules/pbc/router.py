@@ -42,7 +42,6 @@ from core.email.sender import send_email
 from core.storage import r2 as r2_storage
 from models.evidence_request import EvidenceRequest
 from models.subledger_evidence import SubledgerEvidence
-from models.tenant import Tenant
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +68,15 @@ def _is_expired(req: EvidenceRequest) -> bool:
 
 
 async def _company_name(db: AsyncSession, tenant_id: uuid.UUID) -> str:
-    t = (await db.execute(
-        select(Tenant).where(Tenant.id == tenant_id),
-        execution_options={"skip_tenant_filter": True},
-    )).scalar_one_or_none()
-    return (t.name if t and t.name and not t.name.startswith("org_") else None) or "Your accountant"
+    """The firm's name, for the client-facing magic link.
+
+    This hid an unhealed placeholder behind "Your accountant" rather than
+    resolving it, so a client got a nameless request from a firm that has a
+    name. The shared accessor heals it; the fallback stays for the case where
+    Clerk genuinely cannot be reached.
+    """
+    from core.tenancy.company import company_name
+    return await company_name(db, tenant_id, fallback="Your accountant")
 
 
 def _request_email_html(*, company: str, title: str, note: str | None,

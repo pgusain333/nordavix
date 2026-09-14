@@ -159,10 +159,18 @@ export interface CompanyFormProps {
   onSubmit:       (name: string, meta: CompanyMeta) => void
   /** Called when the user hits Cancel (omit to hide the cancel button). */
   onCancel?:      () => void
+  /** Whether this user may change the company NAME. Only admins may, once the
+   *  workspace exists — the name prints on every export, client PDF and
+   *  magic-link email, so renaming it is a governance act, not a preference.
+   *  The rest of the profile stays editable by anyone who can reach this form.
+   *  Defaults true so the create flow (where the user is naming their own new
+   *  workspace) is unaffected. */
+  canEditName?:   boolean
 }
 
 export function CompanyForm({
   mode, initialName, initialMeta, submitting, error, statusText, onSubmit, onCancel,
+  canEditName = true,
 }: CompanyFormProps) {
   // Section 1: Company
   const [name,          setName]          = useState(initialName)
@@ -268,13 +276,26 @@ export function CompanyForm({
 
       {/* ── Section 1: Company ─────────────────────────────────── */}
       <Section title="Company" icon={<Building2 size={13} strokeWidth={1.8} />}>
-        <Field label="Company name *" icon={<Building2 size={12} strokeWidth={1.8} />}>
-          <input
-            type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Acme Accounting, Smith CPA"
-            disabled={submitting} className="cf-input" required
-          />
-        </Field>
+        {canEditName ? (
+          <Field label="Company name *" icon={<Building2 size={12} strokeWidth={1.8} />}>
+            <input
+              type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Acme Accounting, Smith CPA"
+              disabled={submitting} className="cf-input" required
+            />
+          </Field>
+        ) : (
+          /* Read-only for non-admins. An editable field that always fails is
+             worse than no field: it invites the attempt and then explains
+             nothing. Say who can change it instead. */
+          <Field label="Company name" icon={<Building2 size={12} strokeWidth={1.8} />}>
+            <p className="text-sm font-medium" style={{ color: "var(--text)" }}>{name}</p>
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+              Only an admin can rename the company. It appears on every export and
+              client document, so it stays put once set.
+            </p>
+          </Field>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Legal name (if different)" icon={<Landmark size={12} strokeWidth={1.8} />}>
             <input value={legalName} onChange={(e) => setLegalName(e.target.value)}
