@@ -99,6 +99,26 @@ export type StreamEvent =
   | { type: "done"; thread_id: string | null }
   | { type: "error"; message: string }
 
+/** What the screen was showing when the question was asked. Sent with the
+ *  question so the model starts the turn already knowing which account and
+ *  which month, instead of spending tool calls rediscovering what was on
+ *  screen a second ago. */
+export interface CopilotSubject {
+  kind: "account"
+  id: string
+  period_end: string
+}
+
+/** What the ask bar renders BEFORE anyone asks anything. No model call —
+ *  these come from state the drawer already had, which is why they can be
+ *  fetched on every open. */
+export interface SubjectContext {
+  resolved: boolean
+  label: string | null
+  headline: string | null
+  suggestions: string[]
+}
+
 export interface ThreadSummary {
   id: string
   title: string
@@ -136,6 +156,19 @@ export const assistantApi = {
   },
 
   /**
+   * The ask bar's opening state for one object: its label, where it stands,
+   * and the two or three questions worth asking. Cheap by design — derived
+   * from data the screen already rendered, no model call — so it can run on
+   * every drawer open.
+   */
+  subjectContext: async (s: CopilotSubject): Promise<SubjectContext> => {
+    const { data } = await apiClient.get("/api/assistant/subject", {
+      params: { kind: s.kind, id: s.id, period_end: s.period_end },
+    })
+    return data as SubjectContext
+  },
+
+  /**
    * Streaming ask — same inputs as `ask`, but reads Server-Sent events and calls
    * `onEvent` for each (step / delta / reset / result / done / error). Uses fetch
    * (not axios) so we can read the response body as it arrives. Pass an
@@ -149,6 +182,7 @@ export const assistantApi = {
     onEvent: (ev: StreamEvent) => void,
     signal?: AbortSignal,
     attachments?: AskAttachment[],
+    subject?: CopilotSubject | null,
   ): Promise<void> => {
     const res = await fetch(`${API_BASE_URL}/api/assistant/ask/stream`, {
       method: "POST",
@@ -159,6 +193,7 @@ export const assistantApi = {
         history,
         thread_id: threadId || null,
         attachments: attachments && attachments.length ? attachments : undefined,
+        subject: subject ?? undefined,
       }),
       signal,
     })

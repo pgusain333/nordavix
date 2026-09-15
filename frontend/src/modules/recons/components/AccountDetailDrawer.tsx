@@ -53,6 +53,7 @@ import { reconsApi } from "@/modules/recons/api"
 import { GlFlagChip } from "@/modules/gl_accuracy/components/GlFlagChip"
 import { RelatedPanel } from "@/modules/graph/RelatedPanel"
 import { ConclusionCard } from "@/modules/recons/components/ConclusionCard"
+import { AskBar } from "@/modules/assistant/AskBar"
 
 const TABS = [
   { id: "summary",     label: "Summary",     icon: Sparkles },
@@ -469,6 +470,16 @@ export function AccountDetailDrawer({
                 ))}
               </div>
             </div>
+
+            {/* Ask the Copilot about THIS account. Sits directly above the
+                action footer because that is where the eye already is when
+                you have run out of answers and are deciding whether to sign.
+                Carries the subject, so it never has to ask which account or
+                which month — see modules/assistant/subject.py. */}
+            <AskBar
+              subject={{ kind: "account", id: account.qbo_id, period_end: periodEnd }}
+              fallbackLabel={`${account.account_number || ""} ${account.account_name || ""}`.trim()}
+            />
 
             {/* Sticky action footer — sits below the scrollable body,
                 always visible. Parent decides which buttons render

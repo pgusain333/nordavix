@@ -18,6 +18,17 @@ class Attachment(BaseModel):
     data: str = Field(..., max_length=9_500_000)  # ~6 MB raw ceiling
 
 
+class SubjectRef(BaseModel):
+    """What the screen was showing when the question was asked.
+
+    Sent by any detail view so the model starts the turn already knowing which
+    account and which month, instead of spending tool calls rediscovering what
+    was rendered a second ago."""
+    kind: str = Field(..., max_length=32)        # "account" today
+    id:   str = Field(..., max_length=100)
+    period_end: date | None = None
+
+
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     period_end: date | None = None  # active period for context; tools default to it
@@ -25,6 +36,8 @@ class AskRequest(BaseModel):
     thread_id: uuid.UUID | None = None  # continue an existing conversation
     # Ephemeral attachments for THIS turn only (never stored). Parsed → model context.
     attachments: list[Attachment] | None = Field(None, max_length=3)
+    # The object the user is looking at, when they asked from a detail view.
+    subject: SubjectRef | None = None
 
 
 class AskSource(BaseModel):

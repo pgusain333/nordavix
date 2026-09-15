@@ -388,6 +388,7 @@ def _system_blocks(
     user_role: str | None = None,
     user_powers: list[str] | None = None,
     footing: dict | None = None,
+    subject: dict | None = None,
 ) -> list[dict]:
     """System as cache-friendly blocks: a big cached static block + a tiny dynamic
     one carrying the active period, the asking user's role, and how trustworthy
@@ -405,6 +406,12 @@ def _system_blocks(
     if footing:
         from modules.assistant.footing import describe
         ctx += "\n\n" + describe(footing)
+    if subject:
+        # Last, so it is the most recent thing the model reads before the
+        # question — and it outranks the period footing, because the user is
+        # asking about THIS object, not about the month in general.
+        from modules.assistant.subject import describe as describe_subject
+        ctx += "\n\n" + describe_subject(subject)
     return [
         {"type": "text", "text": _SYSTEM_STATIC, "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": ctx},
@@ -482,6 +489,7 @@ async def answer_question_stream(
     user_role: str | None = None,
     user_powers: list[str] | None = None,
     attachments: list | None = None,
+    subject_ref: dict | None = None,
 ) -> AsyncIterator[dict]:
     """Run the grounded tool-use loop, STREAMING events as they happen.
 
@@ -521,7 +529,20 @@ async def answer_question_stream(
         if period_end is None:
             period_end = await latest_synced_period(db)
         footing = await data_footing(db, tenant_id, period_end)
-        system = _system_blocks(period_end, user_role, user_powers, footing)
+        # The object the user was looking at, when they asked from a detail
+        # view. Resolved ONCE into the prompt, which is the whole point: a
+        # contextual question used to spend three or four tool calls just
+        # working out which account and which month were meant.
+        subject = None
+        if subject_ref:
+            from modules.assistant.subject import resolve as resolve_subject
+            subject = await resolve_subject(
+                db, tenant_id,
+                str(subject_ref.get("kind") or ""),
+                str(subject_ref.get("id") or ""),
+                subject_ref.get("period_end") or period_end,
+            )
+        system = _system_blocks(period_end, user_role, user_powers, footing, subject)
         tools = _cached_tools()
         step_no = 0    # how many progress lines shown so far — drives the wording
         data_calls = 0  # data tools used; past a threshold we synthesize on the deep model
@@ -683,6 +704,7 @@ async def answer_question(
     user_role: str | None = None,
     user_powers: list[str] | None = None,
     attachments: list | None = None,
+    subject_ref: dict | None = None,
 ) -> dict:
     """Non-streaming convenience wrapper (drains the stream into one dict). Kept for
     the JSON /ask endpoint and any caller that wants the whole answer at once."""
@@ -696,6 +718,7 @@ async def answer_question(
     async for ev in answer_question_stream(
         db=db, tenant_id=tenant_id, question=question, period_end=period_end, history=history,
         user_role=user_role, user_powers=user_powers, attachments=attachments,
+        subject_ref=subject_ref,
     ):
         if ev.get("type") == "result":
             answer = ev["answer"]

@@ -90,6 +90,7 @@ async def ask(
             user_role=user.role,
             user_powers=getattr(user, "delegated_powers", None),
             attachments=body.attachments,
+            subject_ref=body.subject.model_dump() if body.subject else None,
         )
     except Exception:
         logger.exception("assistant ask failed for tenant %s", tenant_id)
@@ -162,6 +163,7 @@ async def ask_stream(
                 user_role=user.role,
                 user_powers=getattr(user, "delegated_powers", None),
                 attachments=body.attachments,
+                subject_ref=body.subject.model_dump() if body.subject else None,
             ):
                 if ev.get("type") == "result":
                     answer = ev.get("answer", "")
@@ -201,6 +203,37 @@ async def ask_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+@router.get("/subject")
+async def subject_context(
+    tenant_id: CurrentTenantId,
+    kind: str,
+    id: str,  # noqa: A002 — the query param is named `id` on purpose
+    period_end: date,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """What the ask bar shows before anyone has asked anything.
+
+    A label, one line of where this object stands, and the two or three
+    questions worth asking about it — all derived from state the screen already
+    rendered. NO model call: the chips are the reason the feature gets used, so
+    they must be free enough to render on every drawer open. An assistant that
+    opens on an empty input is the one people learn to ignore.
+    """
+    from modules.assistant.subject import headline_for, resolve, suggestions_for
+
+    state = await resolve(db, tenant_id, kind, id, period_end)
+    if state is None:
+        # Not resolvable (wrong kind, unsynced period, account not in this
+        # period). The bar still renders — just without the smart part.
+        return {"resolved": False, "label": None, "headline": None, "suggestions": []}
+    return {
+        "resolved":    True,
+        "label":       state.get("label"),
+        "headline":    headline_for(state),
+        "suggestions": suggestions_for(state),
+    }
 
 
 @router.post("/export")
