@@ -27,6 +27,7 @@ import {
   type AssistantClarify,
   type ThreadSummary,
 } from "@/modules/assistant/api"
+import { CopilotMark } from "@/modules/assistant/CopilotMark"
 import { Markdown } from "@/modules/assistant/Markdown"
 import { reconsApi } from "@/modules/recons/api"
 import { api as fluxApi } from "@/modules/flux/api"
@@ -153,21 +154,10 @@ function sourceLabels(sources: AssistantSource[] | null | undefined): string[] {
   return out
 }
 
-/** The brand mark used in the hero and on each assistant bubble. */
-function BrandMark({ size = 28, box = 56 }: { size?: number; box?: number }) {
-  return (
-    <div
-      className="flex items-center justify-center rounded-2xl shadow-sm"
-      style={{
-        height: box,
-        width: box,
-        background: "linear-gradient(145deg, var(--green), color-mix(in srgb, var(--green) 60%, #0a0f0d))",
-        color: "#fff",
-      }}
-    >
-      <Sparkles size={size} strokeWidth={1.7} />
-    </div>
-  )
+/** The hero mark. Defined once in CopilotMark so the page and the in-place
+ *  ask bar cannot drift apart — a brand declared twice always does. */
+function BrandMark({ box = 56 }: { box?: number }) {
+  return <CopilotMark size={box} />
 }
 
 export default function AssistantPage() {

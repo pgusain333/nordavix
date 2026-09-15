@@ -1,5 +1,5 @@
 /**
- * AskBar — the Copilot, where the question actually occurs.
+ * AskBar — NDVX Copilot, where the question actually occurs.
  *
  * The Copilot lives on its own page, so asking about the account already on
  * your screen meant leaving it, retyping which account and which month, and
@@ -12,24 +12,36 @@
  * period, the balance, the variance and the status. The obvious questions cost
  * ZERO tool calls.
  *
- * Two deliberate choices:
+ * ── Three window states ───────────────────────────────────────────────────
+ * min   a single branded strip. The Copilot is present and out of the way.
+ * dock  the default: chips, the ask field, and the conversation so far.
+ * max   the conversation takes the room, for a long answer or a real thread.
  *
- *  - It never opens on an empty input. The chips come from `/subject`, which
- *    is derived from state the drawer already had and costs no model call. An
- *    assistant that shows a blinking cursor is the one people learn to ignore.
+ * The choice PERSISTS per user. Someone who keeps it minimized has told us
+ * something, and re-expanding on every drawer open would keep overruling them.
+ * A conversation in flight suppresses the stored preference for that account
+ * only — collapsing a panel mid-answer hides the thing you just asked for.
  *
- *  - Nothing runs until someone types or taps. No warming, no speculative
- *    answer — a live assistant on every drawer would multiply spend on
- *    questions nobody asked.
+ * ── Motion ────────────────────────────────────────────────────────────────
+ * One heartbeat, from core/motion: FAST for affordances, DEFAULT for content,
+ * SLOW for the window moves — the only gestures large enough to deserve being
+ * watched. Heights animate on a single expo-out curve so the panel arrives
+ * rather than snapping, and `prefers-reduced-motion` drops all of it to a
+ * cross-fade without losing a state or a control.
  *
- * One component for every surface that will mount it (flux variance, risk
- * finding, adjustment). Only the subject kind changes.
+ * Two deliberate product choices, unchanged:
+ *  - It never opens on an empty input. Chips come from /subject, which reads
+ *    state the drawer already had and makes no model call.
+ *  - Nothing runs until someone types or taps. No warming.
  */
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { AnimatePresence, motion } from "framer-motion"
-import { ArrowUp, Loader2, Sparkles, Square, X } from "lucide-react"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import {
+  ArrowUp, ChevronDown, Maximize2, Minimize2, Minus, Square, X,
+} from "lucide-react"
 
+import { MOTION } from "@/core/motion"
 import {
   assistantApi,
   type AssistantAction,
@@ -38,7 +50,35 @@ import {
   type AssistantLink,
   type CopilotSubject,
 } from "@/modules/assistant/api"
+import { CopilotMark, CopilotWordmark } from "@/modules/assistant/CopilotMark"
 import { Markdown } from "@/modules/assistant/Markdown"
+
+/** Expo-out. Sharp departure, long soft landing — the curve that makes a
+ *  panel feel like it arrives under its own weight instead of stopping. Used
+ *  across the app's larger moves, so the Copilot shares their timing. */
+const GLIDE = [0.22, 1, 0.36, 1] as const
+
+type WindowState = "min" | "dock" | "max"
+
+const STORE_KEY = "ndvx_askbar_state"
+
+/** Conversation height per state. Capped in vh so a long thread never pushes
+ *  the drawer's action footer off screen — the footer is how work gets signed,
+ *  and the Copilot must never be in front of it. */
+const CONV_MAX: Record<WindowState, string> = {
+  min:  "0px",
+  dock: "min(42vh, 380px)",
+  max:  "min(68vh, 720px)",
+}
+
+function loadState(): WindowState {
+  try {
+    const v = localStorage.getItem(STORE_KEY)
+    return v === "min" || v === "max" || v === "dock" ? v : "dock"
+  } catch {
+    return "dock"
+  }
+}
 
 interface Turn {
   role:    "user" | "assistant"
@@ -54,18 +94,19 @@ interface Turn {
 
 interface Props {
   subject: CopilotSubject
-  /** Shown in the subject chip while /subject is still resolving, so the bar
-   *  never renders a nameless pill. */
+  /** Shown in the subject chip while /subject resolves, so the header never
+   *  renders a nameless pill. */
   fallbackLabel?: string
-  /** Deep-link to the full Copilot page carrying this conversation onward. */
+  /** Deep-link to the full Copilot page carrying this thread onward. */
   onOpenFull?: (seed: string) => void
 }
 
 export function AskBar({ subject, fallbackLabel, onOpenFull }: Props) {
-  const [turns, setTurns]   = useState<Turn[]>([])
-  const [input, setInput]   = useState("")
-  const [busy, setBusy]     = useState(false)
-  const [open, setOpen]     = useState(false)   // has the user engaged at all
+  const reduce = useReducedMotion()
+  const [turns, setTurns] = useState<Turn[]>([])
+  const [input, setInput] = useState("")
+  const [busy, setBusy]   = useState(false)
+  const [win, setWin]     = useState<WindowState>(loadState)
   const inputRef  = useRef<HTMLTextAreaElement>(null)
   const abortRef  = useRef<AbortController | null>(null)
   const threadRef = useRef<string | null>(null)
@@ -79,35 +120,48 @@ export function AskBar({ subject, fallbackLabel, onOpenFull }: Props) {
     staleTime: 60_000,
   })
 
-  // Switching to a different account is a different question. Reset rather
-  // than letting the previous account's answer sit under a new heading.
+  useEffect(() => {
+    try { localStorage.setItem(STORE_KEY, win) } catch { /* private mode */ }
+  }, [win])
+
+  // A different account is a different question. Reset rather than leaving the
+  // previous account's answer sitting under a new heading. The WINDOW state is
+  // deliberately kept — it's a preference about the panel, not about the row.
   const key = `${subject.kind}:${subject.id}:${subject.period_end}`
   const lastKey = useRef(key)
   useEffect(() => {
     if (lastKey.current === key) return
     lastKey.current = key
     abortRef.current?.abort()
-    setTurns([]); setInput(""); setBusy(false); setOpen(false)
+    setTurns([]); setInput(""); setBusy(false)
     threadRef.current = null
   }, [key])
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
+  // Follow the answer as it streams, but never yank the page for a user who
+  // asked not to be moved.
   useEffect(() => {
-    if (turns.length) bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
-  }, [turns])
+    if (!turns.length || win === "min") return
+    bottomRef.current?.scrollIntoView({
+      behavior: reduce ? "auto" : "smooth", block: "end",
+    })
+  }, [turns, win, reduce])
 
-  function patchLast(fn: (t: Turn) => Turn) {
+  const patchLast = useCallback((fn: (t: Turn) => Turn) => {
     setTurns((prev) => (prev.length ? [...prev.slice(0, -1), fn(prev[prev.length - 1])] : prev))
-  }
+  }, [])
 
-  async function send(text: string) {
+  const send = useCallback(async (text: string) => {
     const q = text.trim()
     if (!q || busy) return
-    setOpen(true)
+    // Asking from a minimized panel is a request to see the answer.
+    setWin((w) => (w === "min" ? "dock" : w))
     const history = turns.filter((t) => !t.error).map((t) => ({ role: t.role, content: t.content }))
-    setTurns((prev) => [...prev, { role: "user", content: q },
-                                 { role: "assistant", content: "", streaming: true, step: null }])
+    setTurns((prev) => [...prev,
+      { role: "user", content: q },
+      { role: "assistant", content: "", streaming: true, step: null },
+    ])
     setInput("")
     setBusy(true)
     const ctrl = new AbortController()
@@ -146,155 +200,401 @@ export function AskBar({ subject, fallbackLabel, onOpenFull }: Props) {
       setBusy(false)
       patchLast((t) => ({ ...t, streaming: false }))
     }
-  }
+  }, [busy, turns, subject, patchLast])
 
   const label = ctx?.label ?? fallbackLabel ?? "this account"
   const chips = ctx?.suggestions ?? []
+  const open  = win !== "min"
+
+  // Auto-grow the field up to a ceiling, so a long question is readable while
+  // typing without the panel walking up the screen.
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${Math.min(el.scrollHeight, 104)}px`
+  }, [input])
+
+  const dur = useMemo(() => ({
+    win:  reduce ? 0 : MOTION.SLOW,
+    body: reduce ? 0 : MOTION.DEFAULT,
+    tick: reduce ? 0 : MOTION.FAST,
+  }), [reduce])
 
   return (
-    <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg)" }}>
-      {/* ── Conversation ─────────────────────────────────────────────── */}
-      <AnimatePresence initial={false}>
-        {open && turns.length > 0 && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-            style={{ overflow: "hidden" }}
+    <motion.div
+      layout={!reduce}
+      transition={{ duration: dur.win, ease: GLIDE }}
+      style={{
+        borderTop: "1px solid var(--border)",
+        background: "var(--bg)",
+        // A whisper of lift so the panel reads as sitting above the body it
+        // overlays, without a hard shadow line across the drawer.
+        boxShadow: open ? "0 -10px 28px -22px rgba(12,38,32,0.45)" : "none",
+      }}
+    >
+      {/* ── Branded header — always present, always the same height ────── */}
+      <div
+        className="flex items-center gap-2.5 px-5"
+        style={{ height: 42, cursor: win === "min" ? "pointer" : "default" }}
+        onClick={win === "min" ? () => setWin("dock") : undefined}
+        role={win === "min" ? "button" : undefined}
+        tabIndex={win === "min" ? 0 : undefined}
+        onKeyDown={win === "min" ? (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setWin("dock") }
+        } : undefined}
+        aria-label={win === "min" ? "Open NDVX Copilot" : undefined}
+      >
+        {open ? <CopilotWordmark size={19} muted /> : (
+          <span className="inline-flex items-center gap-2 min-w-0">
+            <CopilotMark size={19} />
+            <span className="text-[12px] font-semibold truncate" style={{ color: "var(--text-2)" }}>
+              Ask NDVX Copilot about {label}
+            </span>
+          </span>
+        )}
+
+        {/* Subject chip — the panel says what it is about before you ask. */}
+        {open && (
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.span
+              key={label}
+              initial={{ opacity: 0, y: -3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 3 }}
+              transition={{ duration: dur.tick, ease: "easeOut" }}
+              className="rounded-md px-2 py-0.5 text-[10.5px] font-mono truncate max-w-[190px]"
+              style={{
+                background: "var(--surface-2)", border: "1px solid var(--border)",
+                color: "var(--text-2)",
+              }}
+              title={ctx?.headline ?? undefined}
+            >
+              {label}
+            </motion.span>
+          </AnimatePresence>
+        )}
+
+        {/* Unread marker when collapsed over a live thread. */}
+        {!open && turns.length > 0 && (
+          <span className="ml-auto inline-flex items-center gap-1.5 text-[10.5px] font-semibold"
+            style={{ color: "var(--green)" }}>
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--green)" }} />
+            {Math.ceil(turns.length / 2)}
+          </span>
+        )}
+
+        <div className={`flex items-center gap-0.5 ${!open && turns.length > 0 ? "" : "ml-auto"}`}>
+          {/* Maximize only once there is a conversation to give the room to.
+              Empty, it toggled state and visibly did nothing — a window control
+              that does nothing is worse than not having one. Kept visible while
+              already maximized so there is always a way back. */}
+          {open && (turns.length > 0 || win === "max") && (
+            <WinBtn
+              label={win === "max" ? "Restore" : "Maximize"}
+              onClick={() => setWin(win === "max" ? "dock" : "max")}
+              dur={dur.tick}
+            >
+              {win === "max"
+                ? <Minimize2 size={13} strokeWidth={2} />
+                : <Maximize2 size={13} strokeWidth={2} />}
+            </WinBtn>
+          )}
+          <WinBtn
+            label={open ? "Minimize" : "Open"}
+            onClick={() => setWin(open ? "min" : "dock")}
+            dur={dur.tick}
           >
-            <div className="px-4 pt-3 pb-1 max-h-[46vh] overflow-y-auto flex flex-col gap-3">
+            {open
+              ? <Minus size={14} strokeWidth={2.2} />
+              : <ChevronDown size={14} strokeWidth={2.2} style={{ transform: "rotate(180deg)" }} />}
+          </WinBtn>
+        </div>
+      </div>
+
+      {/* ── Body — one collapse, so min/dock/max is a single smooth move ── */}
+      <motion.div
+        initial={false}
+        animate={{ height: open ? "auto" : 0, opacity: open ? 1 : 0 }}
+        transition={{ duration: dur.win, ease: GLIDE }}
+        style={{ overflow: "hidden" }}
+      >
+        {/* Conversation */}
+        <AnimatePresence initial={false}>
+          {turns.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: dur.body, ease: "easeOut" }}
+              className="px-5 overflow-y-auto flex flex-col gap-4"
+              style={{ maxHeight: CONV_MAX[win], paddingBottom: 4 }}
+            >
               {turns.map((t, i) =>
                 t.role === "user" ? (
-                  <div key={i} className="self-end max-w-[85%] rounded-xl rounded-br-sm px-3 py-1.5 text-[13px]"
-                    style={{ background: "var(--surface-2)", color: "var(--text)" }}>
+                  <motion.div
+                    key={i}
+                    initial={reduce ? false : { opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: dur.body, ease: GLIDE }}
+                    className="self-end max-w-[86%] rounded-2xl rounded-br-md px-3.5 py-2 text-[13px] leading-relaxed"
+                    style={{ background: "var(--surface-2)", color: "var(--text)" }}
+                  >
                     {t.content}
-                  </div>
+                  </motion.div>
                 ) : (
-                  <div key={i} className="text-[13px] leading-relaxed"
-                    style={{ color: t.error ? "var(--danger)" : "var(--text)" }}>
-                    {t.step && !t.content && (
-                      <span className="inline-flex items-center gap-1.5 text-[12px]"
-                        style={{ color: "var(--text-muted)" }}>
-                        <Loader2 size={12} className="animate-spin" /> {t.step}
-                      </span>
-                    )}
-                    {t.content && <Markdown text={t.content} />}
-                    {t.streaming && !t.content && !t.step && (
-                      <span className="inline-flex items-center gap-1.5 text-[12px]"
-                        style={{ color: "var(--text-muted)" }}>
-                        <Loader2 size={12} className="animate-spin" /> Thinking…
-                      </span>
-                    )}
-                    {!!t.links?.length && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {t.links.map((l, li) => (
-                          <a key={li} href={l.path}
-                            className="rounded-lg px-2.5 py-1 text-[12px] font-medium"
-                            style={{ border: "1px solid var(--border)", color: "var(--text)" }}>
-                            {l.label}
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                    {!!t.drafts?.length && (
-                      <p className="mt-2 text-[12px]" style={{ color: "var(--text-muted)" }}>
-                        Drafted {t.drafts.length === 1 ? "an entry" : `${t.drafts.length} entries`} —
-                        waiting in Adjustments for a reviewer.
-                      </p>
-                    )}
-                  </div>
+                  <motion.div
+                    key={i}
+                    initial={reduce ? false : { opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: dur.body, ease: GLIDE }}
+                    className="flex gap-2.5"
+                  >
+                    <CopilotMark size={20} className="mt-px" />
+                    <div className="min-w-0 flex-1 text-[13px] leading-[1.62]"
+                      style={{ color: t.error ? "var(--danger)" : "var(--text)" }}>
+                      {!t.content && (t.step || t.streaming) && (
+                        <Thinking label={t.step ?? "Thinking"} reduce={!!reduce} />
+                      )}
+                      {t.content && <Markdown text={t.content} />}
+                      {!!t.links?.length && (
+                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                          {t.links.map((l, li) => (
+                            <a key={li} href={l.path}
+                              className="rounded-lg px-2.5 py-1 text-[12px] font-medium transition-colors"
+                              style={{ border: "1px solid var(--border)", color: "var(--text)" }}>
+                              {l.label}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      {!!t.drafts?.length && (
+                        <p className="mt-2 text-[12px]" style={{ color: "var(--text-muted)" }}>
+                          Drafted {t.drafts.length === 1 ? "an entry" : `${t.drafts.length} entries`} —
+                          waiting in Adjustments for a reviewer.
+                        </p>
+                      )}
+                    </div>
+                  </motion.div>
                 ),
               )}
               <div ref={bottomRef} />
-            </div>
-          </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Composer */}
+        <div className="px-5 pt-3 pb-4">
+          {/* Chips only before the thread starts — after that the next question
+              comes from what was just said, not from a suggestion computed
+              before any of it. They stagger in so the row assembles rather
+              than appearing, which is the one place a flourish earns its keep:
+              it draws the eye to the thing that makes this usable. */}
+          <AnimatePresence initial={false}>
+            {!turns.length && chips.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: dur.body, ease: GLIDE }}
+                className="flex flex-wrap gap-1.5 overflow-hidden"
+                style={{ marginBottom: 10 }}
+              >
+                {chips.map((c, i) => (
+                  <motion.button
+                    key={c}
+                    initial={reduce ? false : { opacity: 0, y: 5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: dur.body, ease: GLIDE, delay: reduce ? 0 : i * 0.045 }}
+                    whileHover={reduce ? undefined : { y: -1 }}
+                    whileTap={reduce ? undefined : { scale: 0.97 }}
+                    onClick={() => void send(c)}
+                    disabled={busy}
+                    className="rounded-full px-3 py-1.5 text-[11.5px] disabled:opacity-50"
+                    style={{
+                      background: i === 0 ? "var(--green-subtle)" : "var(--surface)",
+                      border: `1px solid ${i === 0 ? "var(--positive-border)" : "var(--border)"}`,
+                      color: i === 0 ? "var(--positive)" : "var(--text)",
+                      fontWeight: i === 0 ? 650 : 450,
+                    }}
+                  >
+                    {c}
+                  </motion.button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <Composer
+            inputRef={inputRef}
+            value={input}
+            onChange={setInput}
+            onSubmit={() => void send(input)}
+            onStop={() => abortRef.current?.abort()}
+            busy={busy}
+            placeholder={turns.length ? "Ask a follow-up…" : `Ask about ${label}…`}
+            reduce={!!reduce}
+            dur={dur.tick}
+          />
+
+          <div className="mt-2 flex items-center justify-between gap-3 min-h-[16px]">
+            <span className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
+              {ctx?.headline ?? ""}
+            </span>
+            <AnimatePresence initial={false}>
+              {turns.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  transition={{ duration: dur.tick }}
+                  className="flex items-center gap-2.5 shrink-0"
+                >
+                  {onOpenFull && (
+                    <button onClick={() => onOpenFull(turns[0]?.content ?? "")}
+                      className="text-[11px] transition-opacity hover:opacity-70"
+                      style={{ color: "var(--text-muted)" }}>
+                      Open in Copilot
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setTurns([]); threadRef.current = null }}
+                    className="inline-flex items-center gap-1 text-[11px] transition-opacity hover:opacity-70"
+                    style={{ color: "var(--text-muted)" }}>
+                    <X size={11} /> Clear
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// ── Pieces ───────────────────────────────────────────────────────────────────
+
+/** A window control. 24px hit area, no border at rest — chrome you notice only
+ *  when you reach for it. */
+function WinBtn({
+  label, onClick, dur, children,
+}: {
+  label: string
+  onClick: () => void
+  dur: number
+  children: React.ReactNode
+}) {
+  return (
+    <motion.button
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      whileHover={{ backgroundColor: "var(--surface-2)" }}
+      whileTap={{ scale: 0.92 }}
+      transition={{ duration: dur, ease: "easeOut" }}
+      className="h-6 w-6 rounded-md inline-flex items-center justify-center"
+      style={{ color: "var(--text-muted)", background: "transparent" }}
+    >
+      {children}
+    </motion.button>
+  )
+}
+
+/** Three dots breathing in sequence. A spinner says "blocked"; this says
+ *  "working", which is what is actually happening. */
+function Thinking({ label, reduce }: { label: string; reduce: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-[12px]" style={{ color: "var(--text-muted)" }}>
+      <span className="inline-flex items-center gap-[3px]">
+        {[0, 1, 2].map((i) => (
+          <motion.span
+            key={i}
+            className="h-[3px] w-[3px] rounded-full"
+            style={{ background: "var(--text-muted)" }}
+            animate={reduce ? undefined : { opacity: [0.25, 1, 0.25] }}
+            transition={reduce ? undefined : {
+              duration: 1.15, repeat: Infinity, ease: "easeInOut", delay: i * 0.16,
+            }}
+          />
+        ))}
+      </span>
+      {label}
+    </span>
+  )
+}
+
+function Composer({
+  inputRef, value, onChange, onSubmit, onStop, busy, placeholder, reduce, dur,
+}: {
+  inputRef: React.RefObject<HTMLTextAreaElement | null>
+  value: string
+  onChange: (v: string) => void
+  onSubmit: () => void
+  onStop: () => void
+  busy: boolean
+  placeholder: string
+  reduce: boolean
+  dur: number
+}) {
+  const [focus, setFocus] = useState(false)
+  return (
+    <div
+      className="flex items-end gap-2 rounded-xl px-3 py-2 transition-colors"
+      style={{
+        background: "var(--surface)",
+        border: `1px solid ${focus ? "var(--green)" : "var(--border)"}`,
+        boxShadow: focus ? "0 0 0 3px color-mix(in srgb, var(--green) 12%, transparent)" : "none",
+      }}
+    >
+      <textarea
+        ref={inputRef as React.Ref<HTMLTextAreaElement>}
+        rows={1}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocus(true)}
+        onBlur={() => setFocus(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSubmit() }
+        }}
+        placeholder={placeholder}
+        className="flex-1 resize-none bg-transparent text-[13px] leading-relaxed outline-none py-1"
+        style={{ color: "var(--text)", maxHeight: 104 }}
+      />
+      <AnimatePresence mode="popLayout" initial={false}>
+        {busy ? (
+          <motion.button
+            key="stop"
+            initial={reduce ? false : { opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={reduce ? undefined : { opacity: 0, scale: 0.8 }}
+            transition={{ duration: dur, ease: "easeOut" }}
+            whileTap={reduce ? undefined : { scale: 0.92 }}
+            onClick={onStop}
+            title="Stop"
+            aria-label="Stop"
+            className="shrink-0 h-7 w-7 rounded-lg flex items-center justify-center"
+            style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
+          >
+            <Square size={11} strokeWidth={2.6} />
+          </motion.button>
+        ) : (
+          <motion.button
+            key="send"
+            initial={reduce ? false : { opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={reduce ? undefined : { opacity: 0, scale: 0.8 }}
+            transition={{ duration: dur, ease: "easeOut" }}
+            whileTap={reduce ? undefined : { scale: 0.92 }}
+            onClick={onSubmit}
+            disabled={!value.trim()}
+            title="Ask"
+            aria-label="Ask"
+            className="shrink-0 h-7 w-7 rounded-lg flex items-center justify-center disabled:opacity-30"
+            style={{ background: "var(--green)", color: "#fff" }}
+          >
+            <ArrowUp size={14} strokeWidth={2.5} />
+          </motion.button>
         )}
       </AnimatePresence>
-
-      {/* ── Bar ──────────────────────────────────────────────────────── */}
-      <div className="px-4 py-3">
-        {/* Chips only before the conversation starts — once there are turns,
-            the next question comes from what was just said, not from a
-            suggestion computed before any of it. */}
-        {!turns.length && chips.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {chips.map((c, i) => (
-              <button key={i} onClick={() => void send(c)} disabled={busy}
-                className="rounded-full px-2.5 py-1 text-[11.5px] transition-colors disabled:opacity-50"
-                style={{
-                  background: "var(--surface)",
-                  border: `1px solid ${i === 0 ? "var(--green)" : "var(--border)"}`,
-                  color: i === 0 ? "var(--green)" : "var(--text)",
-                  fontWeight: i === 0 ? 600 : 400,
-                }}>
-                {c}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="flex items-end gap-2 rounded-xl px-2.5 py-2"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <Sparkles size={15} strokeWidth={1.9} className="shrink-0 mb-1"
-            style={{ color: "var(--green)" }} />
-          <span className="shrink-0 mb-1 rounded px-1.5 py-px text-[10.5px] font-mono truncate max-w-[180px]"
-            style={{ background: "var(--surface-2)", border: "1px solid var(--border)",
-                     color: "var(--text-2)" }}
-            title={ctx?.headline ?? undefined}>
-            {label}
-          </span>
-          <textarea
-            ref={inputRef}
-            rows={1}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(input) }
-            }}
-            placeholder={turns.length ? "Ask a follow-up…" : `Ask about ${label}…`}
-            className="flex-1 resize-none bg-transparent text-[13px] outline-none py-1 max-h-24"
-            style={{ color: "var(--text)" }}
-          />
-          {busy ? (
-            <button onClick={() => abortRef.current?.abort()}
-              className="shrink-0 h-7 w-7 rounded-lg flex items-center justify-center"
-              style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
-              title="Stop">
-              <Square size={12} strokeWidth={2.4} />
-            </button>
-          ) : (
-            <button onClick={() => void send(input)} disabled={!input.trim()}
-              className="shrink-0 h-7 w-7 rounded-lg flex items-center justify-center disabled:opacity-35"
-              style={{ background: "var(--green)", color: "#fff" }}
-              title="Ask">
-              <ArrowUp size={14} strokeWidth={2.4} />
-            </button>
-          )}
-        </div>
-
-        <div className="mt-1.5 flex items-center justify-between gap-3">
-          <span className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
-            {ctx?.headline ?? " "}
-          </span>
-          {turns.length > 0 && (
-            <div className="flex items-center gap-2 shrink-0">
-              {onOpenFull && (
-                <button onClick={() => onOpenFull(turns[0]?.content ?? "")}
-                  className="text-[11px] underline-offset-2 hover:underline"
-                  style={{ color: "var(--text-muted)" }}>
-                  Open in Copilot
-                </button>
-              )}
-              <button onClick={() => { setTurns([]); setOpen(false); threadRef.current = null }}
-                className="inline-flex items-center gap-1 text-[11px]"
-                style={{ color: "var(--text-muted)" }}>
-                <X size={11} /> Clear
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   )
 }
