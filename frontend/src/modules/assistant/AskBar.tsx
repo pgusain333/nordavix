@@ -13,14 +13,20 @@
  * ZERO tool calls.
  *
  * ── Three window states ───────────────────────────────────────────────────
- * min   a single branded strip. The Copilot is present and out of the way.
- * dock  the default: chips, the ask field, and the conversation so far.
+ * min   THE DEFAULT: a single branded strip, present and out of the way.
+ * dock  chips, the ask field, and the conversation so far.
  * max   the conversation takes the room, for a long answer or a real thread.
  *
- * The choice PERSISTS per user. Someone who keeps it minimized has told us
- * something, and re-expanding on every drawer open would keep overruling them.
- * A conversation in flight suppresses the stored preference for that account
- * only — collapsing a panel mid-answer hides the thing you just asked for.
+ * It starts minimized because the Copilot is a second opinion, not the work.
+ * These are screens whose job is to get an account signed off, a variance
+ * explained, an entry approved — opening expanded puts an unasked assistant
+ * between someone and the thing they came to do. The strip still names itself
+ * and the account, so it reads as an offer rather than something to dismiss.
+ *
+ * The choice then PERSISTS per user. Someone who opens it has told us
+ * something, and re-collapsing on every drawer open would keep overruling
+ * them. Asking from the strip opens it, because that is a request to see the
+ * answer.
  *
  * ── Motion ────────────────────────────────────────────────────────────────
  * One heartbeat, from core/motion: FAST for affordances, DEFAULT for content,
@@ -61,7 +67,21 @@ const GLIDE = [0.22, 1, 0.36, 1] as const
 
 type WindowState = "min" | "dock" | "max"
 
-const STORE_KEY = "ndvx_askbar_state"
+/** Versioned. The default moved from `dock` to `min`, and a stored `dock` from
+ *  before that decision would have kept overriding it — leaving the change
+ *  invisible to exactly the people who had already used the feature. A new key
+ *  starts everyone on the new default; anyone who opens it still has their
+ *  choice remembered from then on. */
+const STORE_KEY = "ndvx_askbar_state_v2"
+
+/** Minimized. The Copilot is a second opinion, not the work — on a drawer whose
+ *  job is to get an account signed off, opening expanded puts an unasked
+ *  assistant between someone and the thing they came to do. The collapsed strip
+ *  still names itself and the account, so it reads as an offer rather than
+ *  something to dismiss. One tap opens it, and from then on the choice sticks.
+ *
+ *  The full Copilot page is untouched: there, talking IS the work. */
+const DEFAULT_STATE: WindowState = "min"
 
 /** Conversation height per state. Capped in vh so a long thread never pushes
  *  the drawer's action footer off screen — the footer is how work gets signed,
@@ -75,9 +95,9 @@ const CONV_MAX: Record<WindowState, string> = {
 function loadState(): WindowState {
   try {
     const v = localStorage.getItem(STORE_KEY)
-    return v === "min" || v === "max" || v === "dock" ? v : "dock"
+    return v === "min" || v === "max" || v === "dock" ? v : DEFAULT_STATE
   } catch {
-    return "dock"
+    return DEFAULT_STATE
   }
 }
 

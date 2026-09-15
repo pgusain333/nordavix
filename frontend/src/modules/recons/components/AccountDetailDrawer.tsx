@@ -392,8 +392,17 @@ export function AccountDetailDrawer({
             {/* "Review Suggestions" callout — visible whenever there's
                 something in the Suggestions tab the user hasn't opened
                 yet. Hidden once they click into Suggestions. Disappears
-                entirely when no suggestions exist for this account. */}
-            {hasSuggestions && !hasViewedSuggestionsTab && tab !== "suggestions" && (
+                entirely when no suggestions exist for this account.
+
+                NOT on Summary for a schedule-backed account. The banner's own
+                text says the balance breakdown is already in the build-up —
+                and on Summary the build-up is what the user is looking at. A
+                notice explaining that the thing on screen is on screen is
+                noise sitting above the work, on the one tab where it has
+                nothing to add. It still appears on the other tabs, where the
+                build-up isn't visible and the pointer is worth making. */}
+            {hasSuggestions && !hasViewedSuggestionsTab && tab !== "suggestions"
+              && !(tab === "summary" && account.subledger_is_schedule) && (
               <div
                 className="px-4 py-2 text-[11px] flex items-start gap-2"
                 style={{
