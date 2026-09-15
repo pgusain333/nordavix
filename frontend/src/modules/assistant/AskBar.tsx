@@ -50,6 +50,7 @@ import {
   type AssistantLink,
   type CopilotSubject,
 } from "@/modules/assistant/api"
+import { ASK_EVENT, registerAskBar } from "@/modules/assistant/askBus"
 import { CopilotMark, CopilotWordmark } from "@/modules/assistant/CopilotMark"
 import { Markdown } from "@/modules/assistant/Markdown"
 
@@ -174,6 +175,29 @@ export function AskBar({ subject, fallbackLabel, onOpenFull }: Props) {
   }, [key])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // Register while mounted so a selection made anywhere on this screen comes
+  // HERE — which already knows the account — instead of to a blank Copilot
+  // page the user would have to re-explain themselves to.
+  useEffect(() => registerAskBar(), [])
+
+  // A selection handed over by SelectionAsk. Pre-filled, not sent: a
+  // highlighted "14,368" is not a question, and spending an answer on an
+  // ambiguous prompt teaches people the feature guesses.
+  useEffect(() => {
+    function onAsk(e: Event) {
+      const text = (e as CustomEvent<{ text?: string }>).detail?.text
+      if (!text) return
+      setWin((w) => (w === "min" ? "dock" : w))
+      setInput((prev) => {
+        const seed = `About "${text}" — `
+        return prev.trim() ? `${prev.trimEnd()} ${text}` : seed
+      })
+      window.setTimeout(() => inputRef.current?.focus(), 60)
+    }
+    window.addEventListener(ASK_EVENT, onAsk)
+    return () => window.removeEventListener(ASK_EVENT, onAsk)
+  }, [])
 
   // Follow the answer as it streams, but never yank the page for a user who
   // asked not to be moved.

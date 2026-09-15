@@ -10,6 +10,7 @@ import { NotificationToaster } from "@/modules/notifications/NotificationToaster
 import { NotificationBell } from "@/modules/notifications/NotificationBell"
 import { DemoModeProvider, DemoBanner } from "@/core/demo/DemoModeProvider"
 import { BrandSplash } from "@/core/brand/BrandSplash"
+import { SelectionAsk } from "@/modules/assistant/SelectionAsk"
 
 interface ThreePaneLayoutProps {
   children: ReactNode
@@ -38,6 +39,11 @@ export function ThreePaneLayout({ children }: ThreePaneLayoutProps) {
 
   return (
     <DemoModeProvider>
+    {/* Select anything, ask about it. One handler for the whole app — it
+        routes a selection to the ask bar on THIS screen when there is one
+        (that bar already knows the account), and to the Copilot page when
+        there isn't. */}
+    <SelectionAsk />
     <div className="flex h-screen overflow-hidden bg-theme">
       <ClerkApiWirer />
       <BrandSplash />

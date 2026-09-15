@@ -199,6 +199,26 @@ export default function AssistantPage() {
     try { localStorage.setItem("ndvx_copilot_sidebar", sidebarOpen ? "1" : "0") } catch { /* ignore */ }
   }, [sidebarOpen])
 
+  // A question carried in the link — from select-to-ask on a screen with no
+  // ask bar of its own, or from a digest email or notification pointing at the
+  // answer rather than the page. Lands in the composer focused rather than
+  // sending: the seed is usually a fragment the user still has to finish, and
+  // spending an answer on half a question teaches people the feature guesses.
+  // Stripped from the URL so a refresh doesn't re-seed over what they typed.
+  const didSeed = useRef(false)
+  useEffect(() => {
+    if (didSeed.current) return
+    didSeed.current = true
+    try {
+      const url = new URL(window.location.href)
+      const q = url.searchParams.get("ask")
+      if (!q) return
+      setInput(q.slice(0, 2000))
+      url.searchParams.delete("ask")
+      history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
+    } catch { /* non-browser — ignore */ }
+  }, [])
+
   // On first open, resume the most recent conversation (already at the bottom),
   // so Copilot feels like returning to where you left off — not a blank restart.
   useEffect(() => {
