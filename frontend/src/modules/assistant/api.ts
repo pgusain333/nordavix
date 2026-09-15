@@ -103,7 +103,11 @@ export type StreamEvent =
  *  question so the model starts the turn already knowing which account and
  *  which month, instead of spending tool calls rediscovering what was on
  *  screen a second ago. */
-export type CopilotSubjectKind = "account" | "variance" | "entry"
+export type CopilotSubjectKind =
+  | "account"       // a reconciliation account
+  | "variance"      // a flux variance
+  | "entry"         // a proposed adjusting entry
+  | "schedule_item" // one schedule line, id as "<type>:<uuid>"
 
 export interface CopilotSubject {
   kind: CopilotSubjectKind

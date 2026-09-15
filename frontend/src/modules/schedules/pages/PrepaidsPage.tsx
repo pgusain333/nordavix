@@ -634,6 +634,7 @@ export function PrepaidsPage() {
         {amortizationItem && (
           <PrepaidAmortizationDrawer
             item={amortizationItem}
+            periodEnd={periodEnd}
             onClose={() => setAmortizationItem(null)}
           />
         )}

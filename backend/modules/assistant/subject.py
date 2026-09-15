@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-SUBJECT_KINDS = ("account", "variance", "entry")
+SUBJECT_KINDS = ("account", "variance", "entry", "schedule_item")
 
 # Variances below this are rounding, not a question worth putting in someone's
 # face as a suggested prompt. Matches the tie-out tolerance used elsewhere.
@@ -297,6 +297,88 @@ def _variance_describe(state: dict) -> str:
 
 # ── Adjusting entry ───────────────────────────────────────────────────────────
 
+def _schedule_suggestions(state: dict) -> list[str]:
+    """A schedule item's questions, led by what the period is doing.
+
+    The bug that prompted this surface was a prepaid showing no amortization in
+    a month it should have had some. Nobody could ask the screen about it —
+    which is exactly the case the first chip now covers, and it phrases itself
+    from the item's own period status rather than assuming there is a figure.
+    """
+    out: list[str] = []
+    status = (state.get("period_status") or "").lower()
+    amt = _dec(state.get("period_amount"))
+
+    if status == "not_started":
+        out.append("Why isn't this hitting this period?")
+    elif status == "completed":
+        out.append("When did this finish?")
+    elif amt:
+        out.append(f"Where does the {_money(amt)} this period come from?")
+    else:
+        out.append("Why is there no charge this period?")
+
+    out.append("Show me the full schedule")
+    if state.get("remaining") is not None:
+        out.append("What's left to amortize?")
+    out.append("Is this set up correctly?")
+
+    seen: set[str] = set()
+    uniq = [x for x in out if not (x in seen or seen.add(x))]
+    return uniq[:_MAX_SUGGESTIONS]
+
+
+_SCHED_STATUS = {
+    "amortizing":  "Amortizing",
+    "not_started": "Not started in this period",
+    "completed":   "Completed",
+    "inactive":    "Inactive",
+}
+
+
+def _schedule_headline(state: dict) -> str:
+    bits = [_SCHED_STATUS.get(state.get("period_status") or "", "Active")]
+    amt = _dec(state.get("period_amount"))
+    bits.append(f"{_money(amt)} this period" if amt else "nothing this period")
+    if state.get("remaining") is not None:
+        bits.append(f"{_money(_dec(state['remaining']))} remaining")
+    return " · ".join(bits)
+
+
+def _schedule_describe(state: dict) -> str:
+    lines = [
+        f"SUBJECT: the user is looking at the {state.get('schedule_type') or 'schedule'} "
+        f"item \"{state.get('label')}\" for the period ending "
+        f"{state.get('period_end')}, and their question is about IT unless they "
+        f"clearly name something else."
+    ]
+    facts = [
+        f"total {state.get('total_amount')}",
+        f"runs {state.get('start_date')} to {state.get('end_date')}",
+        f"method {state.get('method')}",
+        f"THIS period it charges {state.get('period_amount')}",
+        f"remaining at period end {state.get('remaining')}",
+        f"status in this period: {state.get('period_status')}",
+    ]
+    if state.get("account"):
+        facts.append(f"sits in {state['account']}")
+    lines.append("Known already: " + "; ".join(facts) + ".")
+
+    if (state.get("period_status") or "") == "not_started":
+        lines.append(
+            "It has NOT started yet as at this period end, so it is correctly "
+            "charging nothing and correctly contributing nothing to the balance "
+            "sheet. If the user is asking why the roll-forward shows no "
+            "amortization for it, that is the reason — say so plainly rather "
+            "than hunting for a fault."
+        )
+    lines.append(
+        "Only call a tool for something not listed above — the roll-forward "
+        "across the whole account, other items, or the reconciliation it feeds."
+    )
+    return _NL.join(lines)
+
+
 def _entry_suggestions(state: dict) -> list[str]:
     """An adjusting entry's questions.
 
@@ -398,6 +480,7 @@ _BY_KIND = {
     "account":  (_account_suggestions, _account_headline, _account_describe),
     "variance": (_variance_suggestions, _variance_headline, _variance_describe),
     "entry":    (_entry_suggestions, _entry_headline, _entry_describe),
+    "schedule_item": (_schedule_suggestions, _schedule_headline, _schedule_describe),
 }
 
 
@@ -709,6 +792,75 @@ async def resolve_entry(
     }
 
 
+async def resolve_schedule_item(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,  # noqa: ARG001 — scoping is enforced by the session
+    subject_id: str,
+    period_end: date,
+) -> dict | None:
+    """One schedule item, seen through THIS period.
+
+    `subject_id` is "<schedule_type>:<uuid>" — the type has to travel with the
+    id because the five schedule kinds live in five tables, and probing all of
+    them to find one row would be four wasted queries every time a drawer opens.
+
+    Prepaid today, which is where the drawer and the questions are. The bug
+    that prompted this surface was a prepaid reporting no amortization in a
+    month it should have had some; the period figures below are exactly what
+    nobody could interrogate at the time.
+    """
+    from modules.schedules import calc
+
+    stype, _, raw_id = subject_id.partition(":")
+    if stype != "prepaid" or not raw_id:
+        return None
+    try:
+        iid = uuid.UUID(raw_id)
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+    from sqlalchemy import select
+
+    from models.schedule import SchedulePrepaid
+
+    row = (await db.execute(
+        select(SchedulePrepaid).where(SchedulePrepaid.id == iid)
+    )).scalar_one_or_none()
+    if row is None:
+        return None
+
+    p_start, p_end = calc._period_bounds(period_end)
+    if not row.is_active:
+        status = "inactive"
+    elif row.start_date > p_end:
+        status = "not_started"
+    elif row.end_date < p_start:
+        status = "completed"
+    else:
+        status = "amortizing"
+
+    charge = (calc._prepaid_period_expense(row, p_start, p_end)
+              if status == "amortizing" else Decimal("0"))
+    remaining = (calc._prepaid_unamortized_as_of(row, p_end)
+                 if status != "not_started" else Decimal("0"))
+
+    return {
+        "kind":          "schedule_item",
+        "id":            subject_id,
+        "schedule_type": "prepaid",
+        "label":         row.description,
+        "period_end":    period_end.isoformat(),
+        "total_amount":  str(row.total_amount),
+        "start_date":    row.start_date.isoformat(),
+        "end_date":      row.end_date.isoformat(),
+        "method":        calc._prepaid_method(row),
+        "period_amount": f"{charge:.2f}",
+        "remaining":     f"{remaining:.2f}",
+        "period_status": status,
+        "account":       row.qbo_account_id,
+    }
+
+
 async def resolve(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -728,6 +880,8 @@ async def resolve(
             return await resolve_variance(db, tenant_id, subject_id, period_end)
         if kind == "entry":
             return await resolve_entry(db, tenant_id, subject_id, period_end)
+        if kind == "schedule_item":
+            return await resolve_schedule_item(db, tenant_id, subject_id, period_end)
     except Exception:
         logger.exception("subject: resolve failed for %s/%s", kind, subject_id)
     return None

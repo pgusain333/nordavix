@@ -360,3 +360,69 @@ def test_the_preamble_repeats_that_it_never_approves_or_posts():
 def test_a_dismissal_reason_is_carried_so_the_model_can_be_challenged_on_it():
     d = describe(_entry(status='dismissed', dismiss_reason='Already booked in May.'))
     assert "Already booked in May." in d
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Schedule item
+#
+# This surface exists because of a real bug: a prepaid reported no amortization
+# in a month it should have had some, and nobody could ask the screen about it.
+# The first chip is now that question, and the preamble answers the innocent
+# version of it outright.
+
+def _sched(**over) -> dict:
+    base = {
+        "kind": "schedule_item", "schedule_type": "prepaid",
+        "label": "Insurance paid for the year", "period_end": "2026-06-30",
+        "total_amount": "48000.00", "start_date": "2026-06-01",
+        "end_date": "2027-05-31", "method": "straight_line",
+        "period_amount": "4000.00", "remaining": "44000.00",
+        "period_status": "amortizing", "account": "1300",
+    }
+    base.update(over)
+    return base
+
+
+def test_an_amortizing_item_is_asked_where_its_charge_comes_from():
+    assert suggestions_for(_sched())[0] == "Where does the 4,000 this period come from?"
+
+
+def test_an_item_that_has_not_started_is_asked_the_question_people_actually_had():
+    """The exact question from the roll-forward bug, now one tap away."""
+    out = suggestions_for(_sched(period_status='not_started', period_amount='0.00'))
+    assert out[0] == "Why isn't this hitting this period?"
+
+
+def test_a_finished_item_is_asked_when_it_finished_not_why_it_is_quiet():
+    out = suggestions_for(_sched(period_status='completed', period_amount='0.00'))
+    assert out[0] == "When did this finish?"
+
+
+def test_the_schedule_headline_leads_with_this_period_not_the_whole_item():
+    h = headline_for(_sched())
+    assert "Amortizing" in h
+    assert "4,000 this period" in h
+    assert "44,000 remaining" in h
+
+
+def test_a_not_started_item_says_so_rather_than_showing_a_bare_zero():
+    assert "Not started in this period" in headline_for(
+        _sched(period_status='not_started', period_amount='0.00'))
+
+
+def test_the_preamble_carries_the_window_and_the_period_figures():
+    d = describe(_sched())
+    for fact in ("2026-06-01", "2027-05-31", "48000.00", "4000.00", "44000.00"):
+        assert fact in d, fact
+
+
+def test_a_not_started_item_tells_the_model_the_zero_is_correct():
+    """Without this the model hunts for a fault in a schedule that is behaving
+    exactly as it should, and talks the user into a problem they don't have."""
+    d = describe(_sched(period_status='not_started', period_amount='0.00'))
+    assert "correctly charging nothing" in d
+    assert "rather than hunting for a fault" in d
+
+
+def test_an_amortizing_item_is_not_told_its_zero_is_fine():
+    assert "correctly charging nothing" not in describe(_sched())

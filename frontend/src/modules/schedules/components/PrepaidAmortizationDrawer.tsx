@@ -29,10 +29,14 @@ import { motion } from "framer-motion"
 import { X, FileText, CheckCircle2 } from "lucide-react"
 import type { PrepaidItem, PrepaidAmortMethod } from "@/modules/schedules/types"
 import { toISODate } from "@/core/lib/dates"
+import { AskBar } from "@/modules/assistant/AskBar"
 
 interface Props {
   item:     PrepaidItem
   onClose:  () => void
+  /** The period the page is scoped to — the ask bar answers about THIS month,
+   *  not about the item in the abstract. */
+  periodEnd?: string
 }
 
 interface ScheduleRow {
@@ -155,7 +159,7 @@ function buildSchedule(item: PrepaidItem): ScheduleResult {
   return { rows, method, dailyRate, monthlyAmount, totalDays, totalMonths }
 }
 
-export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
+export function PrepaidAmortizationDrawer({ item, onClose, periodEnd }: Props) {
   const { rows, method, dailyRate, monthlyAmount, totalDays, totalMonths } =
     useMemo(() => buildSchedule(item), [item])
   const total = parseFloat(item.total_amount) || 0
@@ -436,6 +440,17 @@ export function PrepaidAmortizationDrawer({ item, onClose }: Props) {
             </p>
           </section>
         </div>
+
+        {/* Ask NDVX Copilot about THIS item, in THIS period. The bug that
+            prompted this surface was a prepaid reporting no amortization in a
+            month it should have had some, and nobody could ask the screen
+            about it. Now the first chip is that question. */}
+        {periodEnd && (
+          <AskBar
+            subject={{ kind: "schedule_item", id: `prepaid:${item.id}`, period_end: periodEnd }}
+            fallbackLabel={item.description}
+          />
+        )}
       </motion.aside>
     </>
   )
