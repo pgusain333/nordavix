@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-SUBJECT_KINDS = ("account", "variance")
+SUBJECT_KINDS = ("account", "variance", "entry")
 
 # Variances below this are rounding, not a question worth putting in someone's
 # face as a suggested prompt. Matches the tie-out tolerance used elsewhere.
@@ -45,6 +45,10 @@ _MATERIAL = Decimal("1.00")
 # At most this many chips. Three fits one line at the drawer's default width,
 # and a wall of suggestions is its own kind of blank page.
 _MAX_SUGGESTIONS = 3
+
+# What joins the preamble's lines. A named constant rather than the literal,
+# so this file stays safe to edit with tooling that mangles escape sequences.
+_NL = chr(10)
 
 _MONTHS = ("January", "February", "March", "April", "May", "June", "July",
            "August", "September", "October", "November", "December")
@@ -291,6 +295,100 @@ def _variance_describe(state: dict) -> str:
     return "\n".join(lines)
 
 
+# ── Adjusting entry ───────────────────────────────────────────────────────────
+
+def _entry_suggestions(state: dict) -> list[str]:
+    """An adjusting entry's questions.
+
+    The queue is a decision surface, not a reading surface: the person looking
+    at this is deciding whether to approve it. So the chips are the things a
+    reviewer wants settled before they sign — is it right, what does it touch,
+    who proposed it and on what basis — and they change with status, because
+    "should I approve this" is not a question about an entry already posted.
+    """
+    out: list[str] = []
+    status = (state.get("status") or "open").lower()
+
+    if status == "open":
+        out.append("Is this entry right?")
+        if state.get("confidence") in ("low", "medium"):
+            out.append(f"Why only {state['confidence']} confidence?")
+        out.append("What does it touch?")
+    elif status == "posted":
+        out.append("What did this change?")
+        out.append("Who approved it?")
+    elif status == "dismissed":
+        out.append("Why was this dismissed?")
+        out.append("Should we reconsider it?")
+    else:  # accepted, awaiting posting
+        out.append("What does it touch?")
+        out.append("Anything left before posting?")
+
+    if state.get("source") and status == "open":
+        out.append("Where did this come from?")
+
+    out.append("Explain this entry in plain English")
+
+    seen: set[str] = set()
+    uniq = [x for x in out if not (x in seen or seen.add(x))]
+    return uniq[:_MAX_SUGGESTIONS]
+
+
+def _entry_headline(state: dict) -> str:
+    bits = [{
+        "open": "Waiting for review", "accepted": "Approved, not posted",
+        "posted": "Posted", "dismissed": "Dismissed",
+    }.get((state.get("status") or "").lower(), (state.get("status") or "").title())]
+    amt = _dec(state.get("amount"))
+    if amt:
+        bits.append(_money(amt))
+    if state.get("source_label"):
+        bits.append(f"from {state['source_label']}")
+    if state.get("confidence"):
+        bits.append(f"{state['confidence']} confidence")
+    return " · ".join(bits)
+
+
+def _entry_describe(state: dict) -> str:
+    lines = [
+        f"SUBJECT: the user is looking at the ADJUSTING ENTRY \"{state.get('label')}\" "
+        f"for {state.get('period_end')} in the Adjustments queue, and their question "
+        f"is about IT unless they clearly name something else."
+    ]
+    facts = [
+        f"status {state.get('status')}",
+        f"proposed by {state.get('source_label') or state.get('source')}",
+        f"{state.get('confidence')} confidence",
+        f"total {state.get('amount')}",
+    ]
+    if state.get("posted_doc"):
+        facts.append(f"posted to QuickBooks as {state['posted_doc']}")
+    lines.append("Known already: " + "; ".join(facts) + ".")
+
+    if state.get("lines"):
+        lines.append("The entry, in full:")
+        for ln in state["lines"]:
+            lines.append(
+                f"  {ln.get('account') or '?'} — "
+                f"Dr {ln.get('debit') or '0'} / Cr {ln.get('credit') or '0'}"
+            )
+    if state.get("rationale"):
+        lines.append(f"The stated rationale: \"{state['rationale']}\"")
+    if state.get("memo"):
+        lines.append(f"Memo: \"{state['memo']}\"")
+    if state.get("dismiss_reason"):
+        lines.append(f"It was dismissed because: \"{state['dismiss_reason']}\"")
+
+    lines.append(
+        "You have the whole entry above, so do NOT go and look it up. If asked "
+        "whether it is right, actually judge it: do the accounts make sense for "
+        "what it claims to do, does it balance, is the period right, and is there "
+        "anything about the rationale that does not follow. Say so plainly. You "
+        "never approve and never post — a human does both."
+    )
+    return _NL.join(lines)
+
+
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 #
 # One entry point per product so every surface calls the same three functions
@@ -299,6 +397,7 @@ def _variance_describe(state: dict) -> str:
 _BY_KIND = {
     "account":  (_account_suggestions, _account_headline, _account_describe),
     "variance": (_variance_suggestions, _variance_headline, _variance_describe),
+    "entry":    (_entry_suggestions, _entry_headline, _entry_describe),
 }
 
 
@@ -536,6 +635,80 @@ async def resolve_variance(
     return state
 
 
+_SOURCE_LABEL = {
+    "recon":       "the reconciliation",
+    "flux":        "flux analysis",
+    "bank_match":  "the bank match",
+    "assistant":   "NDVX Copilot",
+    "gl_accuracy": "Risk Radar",
+    "schedule":    "a schedule",
+    "manual":      "a person",
+}
+
+
+async def resolve_entry(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,  # noqa: ARG001 — scoping is enforced by the session
+    entry_id: str,
+    period_end: date,      # noqa: ARG001 — the entry carries its own period
+) -> dict | None:
+    """One proposed adjusting entry, whole.
+
+    The Adjustments queue is a DECISION surface — the person looking at this is
+    deciding whether to approve it — so the preamble carries the entire entry,
+    every line, the rationale and the memo. Nothing about "is this right"
+    should cost a lookup when the thing being judged is forty characters of
+    JSON.
+    """
+    from decimal import Decimal as D
+
+    from sqlalchemy import select
+
+    from models.proposed_entry import ProposedEntry
+
+    try:
+        eid = uuid.UUID(entry_id)
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+    row = (await db.execute(
+        select(ProposedEntry).where(ProposedEntry.id == eid)
+    )).scalar_one_or_none()
+    if row is None:
+        return None
+
+    lines = []
+    total = D("0")
+    for ln in (row.lines or []):
+        if not isinstance(ln, dict):
+            continue
+        acct = " ".join(str(x) for x in (
+            ln.get("account_number"), ln.get("account_name")) if x).strip()
+        lines.append({
+            "account": acct or ln.get("account_qbo_id") or "?",
+            "debit":   str(ln.get("debit") or "0"),
+            "credit":  str(ln.get("credit") or "0"),
+        })
+        total += _dec(ln.get("debit"))
+
+    return {
+        "kind":           "entry",
+        "id":             entry_id,
+        "label":          row.description,
+        "period_end":     row.period_end.isoformat() if row.period_end else None,
+        "status":         row.status,
+        "source":         row.source,
+        "source_label":   _SOURCE_LABEL.get(row.source, row.source),
+        "confidence":     row.confidence,
+        "amount":         f"{total:.2f}",
+        "lines":          lines,
+        "rationale":      (row.rationale or "").strip()[:600] or None,
+        "memo":           (row.memo or "").strip()[:300] or None,
+        "dismiss_reason": (row.dismiss_reason or "").strip()[:300] or None,
+        "posted_doc":     row.posted_qbo_doc,
+    }
+
+
 async def resolve(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -553,6 +726,8 @@ async def resolve(
             return await resolve_account(db, tenant_id, subject_id, period_end)
         if kind == "variance":
             return await resolve_variance(db, tenant_id, subject_id, period_end)
+        if kind == "entry":
+            return await resolve_entry(db, tenant_id, subject_id, period_end)
     except Exception:
         logger.exception("subject: resolve failed for %s/%s", kind, subject_id)
     return None

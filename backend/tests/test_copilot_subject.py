@@ -275,3 +275,88 @@ def test_an_unknown_kind_falls_back_rather_than_crashing_the_drawer():
     degrade, not throw — the ask bar is mounted inside someone's workpaper."""
     out = suggestions_for({"kind": "something_new", "variance": "0.00"})
     assert isinstance(out, list) and len(out) >= 1
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Adjusting entry
+#
+# The queue is a DECISION surface: whoever opens this is deciding whether to
+# approve it. So the chips are what a reviewer wants settled before they sign,
+# and they change with status, because "should I approve this" is not a
+# question about an entry that was posted last week.
+
+def _entry(**over) -> dict:
+    base = {
+        "kind": "entry", "id": "e1", "label": "Reclass unapplied credits",
+        "period_end": "2026-06-30", "status": "open", "source": "recon",
+        "source_label": "the reconciliation", "confidence": "medium",
+        "amount": "9120.00",
+        "lines": [
+            {"account": "1200 Accounts Receivable", "debit": "9120.00", "credit": "0"},
+            {"account": "2100 Customer Deposits", "debit": "0", "credit": "9120.00"},
+        ],
+        "rationale": "Credits sit in the aging but not the control account.",
+    }
+    base.update(over)
+    return base
+
+
+def test_an_open_entry_is_asked_the_approval_question_first():
+    assert suggestions_for(_entry())[0] == "Is this entry right?"
+
+
+def test_low_confidence_is_offered_for_challenge():
+    """The confidence label is the product's own hedge. A reviewer should be
+    able to ask it to defend the hedge rather than just read it."""
+    assert any("confidence" in s for s in suggestions_for(_entry(confidence='low')))
+
+
+def test_high_confidence_does_not_invite_a_pointless_question():
+    assert not any("confidence" in s for s in suggestions_for(_entry(confidence='high')))
+
+
+def test_a_posted_entry_is_not_asked_whether_to_approve_it():
+    """It is already in QuickBooks. The question becomes what it changed."""
+    out = suggestions_for(_entry(status='posted'))
+    assert "Is this entry right?" not in out
+    assert "What did this change?" in out
+
+
+def test_a_dismissed_entry_is_asked_why_and_whether_to_revisit():
+    out = suggestions_for(_entry(status='dismissed'))
+    assert "Why was this dismissed?" in out
+    assert "Should we reconsider it?" in out
+
+
+def test_the_entry_headline_says_where_it_is_in_the_workflow():
+    h = headline_for(_entry())
+    assert "Waiting for review" in h
+    assert "9,120" in h
+    assert "the reconciliation" in h
+
+
+def test_the_whole_entry_is_in_the_preamble_so_judging_it_costs_no_lookup():
+    """Every line, both sides. The thing being judged is a few hundred bytes;
+    making the model fetch it would be absurd."""
+    d = describe(_entry())
+    assert "1200 Accounts Receivable" in d
+    assert "2100 Customer Deposits" in d
+    assert "9120.00" in d
+
+
+def test_the_model_is_told_to_judge_the_entry_not_summarise_it():
+    d = describe(_entry())
+    assert "actually judge it" in d
+    assert "does it balance" in d
+
+
+def test_the_preamble_repeats_that_it_never_approves_or_posts():
+    """The one guarantee the whole product rests on, restated at the surface
+    where it would be most tempting to cross."""
+    d = describe(_entry())
+    assert "never approve and never post" in d
+
+
+def test_a_dismissal_reason_is_carried_so_the_model_can_be_challenged_on_it():
+    d = describe(_entry(status='dismissed', dismiss_reason='Already booked in May.'))
+    assert "Already booked in May." in d

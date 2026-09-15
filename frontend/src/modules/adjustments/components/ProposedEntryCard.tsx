@@ -24,6 +24,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { Check, Copy, Lock, RotateCcw, Sparkles, ThumbsDown } from "lucide-react"
 
 import { MOTION, EASE } from "@/core/motion"
+import { AskBar } from "@/modules/assistant/AskBar"
 import {
   adjustmentsApi,
   formatJeForClipboard,
@@ -443,6 +444,18 @@ export function ProposedEntryCard({ entry, canReview, canEdit, readOnly, preview
         </motion.div>
       )}
       </AnimatePresence>
+
+      {/* Ask NDVX Copilot about THIS entry. The queue is a decision surface —
+          the person reading this is deciding whether to approve it — so the
+          Copilot sits with the decision rather than a screen away from it. It
+          gets the whole entry in its preamble, so "is this right" costs no
+          lookup. Suppressed in preview, where the host owns the chrome. */}
+      {!preview && entry.period_end && (
+        <AskBar
+          subject={{ kind: "entry", id: entry.id, period_end: entry.period_end }}
+          fallbackLabel={entry.description}
+        />
+      )}
 
       {/* Actions — suppressed in preview (the host owns the actions) */}
       {!preview && (
