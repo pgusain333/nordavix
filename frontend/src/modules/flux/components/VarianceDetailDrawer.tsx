@@ -48,6 +48,7 @@ import { MemoryContextNote } from "@/modules/memory/MemoryContextNote"
 import { ExpectationCapture } from "@/modules/memory/ExpectationCapture"
 import { GlFlagChip } from "@/modules/gl_accuracy/components/GlFlagChip"
 import { RelatedPanel } from "@/modules/graph/RelatedPanel"
+import { AskBar } from "@/modules/assistant/AskBar"
 
 const TABS = [
   { id: "summary",      label: "Summary",      icon: Sparkles },
@@ -349,6 +350,18 @@ export function VarianceDetailDrawer({
                 </div>
               )}
             </div>
+
+            {/* Ask NDVX Copilot about THIS variance. The sharpest fit for the
+                whole idea: a flux drawer exists to answer "why did this move",
+                which is the question the Copilot is best at — and the answer
+                is the deliverable, because the commentary has to be written
+                either way. See modules/assistant/subject.py. */}
+            {periodEnd && (
+              <AskBar
+                subject={{ kind: "variance", id: row.id, period_end: periodEnd }}
+                fallbackLabel={`${row.account_number || ""} ${row.account_name || ""}`.trim()}
+              />
+            )}
 
             {/* Sticky action footer */}
             {renderFooter && (

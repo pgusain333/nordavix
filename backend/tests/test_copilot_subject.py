@@ -177,3 +177,101 @@ def test_a_partly_resolved_subject_still_produces_a_usable_preamble(missing):
     d = describe(st)
     assert "1200 Accounts Receivable" in d
     assert "Do not ask which account" in d
+
+
+# ── Variance ──────────────────────────────────────────────────────────────────
+#
+# A flux drawer asks a different question from a reconciliation drawer. One asks
+# "does this tie"; the other asks "why did it move" and then wants that written
+# down. The chips have to know which room they are in.
+
+def _var(**over) -> dict:
+    base = {
+        "kind": "variance", "id": "v1", "label": "6010 Rent Expense",
+        "period_end": "2026-06-30", "prior_period": "2026-05-31",
+        "current_balance": "48000.00", "prior_balance": "32000.00",
+        "dollar_variance": "16000.00", "pct_variance": "50.0",
+        "is_material": True, "materiality": "5000.00", "review_status": "pending",
+        "anomaly_flags": [], "txn_count": 0,
+    }
+    base.update(over)
+    return base
+
+
+def test_an_unexplained_variance_is_asked_why_it_moved():
+    assert suggestions_for(_var())[0] == "Why did this move 16,000?"
+
+
+def test_an_already_explained_variance_is_not_asked_to_explain_itself_again():
+    """Offering "why did this move" over an explanation someone already wrote
+    is the assistant not reading the room. The useful question becomes whether
+    what they wrote is complete."""
+    out = suggestions_for(_var(commentary="Annual rent review took effect in June."))
+    assert out[0] == "Is this explanation complete?"
+    assert not any("Why did this move" in s for s in out)
+
+
+def test_writing_the_commentary_is_offered_only_when_none_exists():
+    assert "Write the commentary" in suggestions_for(_var())
+    assert "Write the commentary" not in suggestions_for(_var(commentary="Already said."))
+
+
+def test_a_taught_expectation_becomes_its_own_question():
+    """"Is this big" and "is this what we expected" are different questions,
+    and only the second one uses what the firm taught Nordavix."""
+    out = suggestions_for(_var(expected_value="32000.00", expected_basis="monthly rent"))
+    assert "Is this what we expected?" in out
+
+
+def test_transactions_are_offered_only_when_they_have_been_pulled():
+    """Detail exists only where someone ran Find reasons. Offering to walk
+    through transactions that were never fetched is a dead end."""
+    assert any("Walk me through the 7" in s for s in suggestions_for(_var(txn_count=7)))
+    assert not any("Walk me through" in s for s in suggestions_for(_var(txn_count=0)))
+
+
+def test_the_variance_headline_states_the_move_and_whether_it_is_explained():
+    h = headline_for(_var())
+    assert "+16,000" in h
+    assert "material" in h
+    assert "not explained yet" in h
+
+
+def test_a_negative_move_reads_as_a_fall():
+    assert "−" in headline_for(_var(dollar_variance="-9000.00"))
+
+
+def test_the_variance_preamble_carries_both_sides_of_the_comparison():
+    """The prior figure is what makes this the cheapest subject of all — no
+    tool call can be needed to compare two numbers already in the prompt."""
+    d = describe(_var())
+    for fact in ("6010 Rent Expense", "48000.00", "32000.00", "16000.00", "2026-05-31"):
+        assert fact in d, fact
+
+
+def test_an_unexplained_variance_tells_the_model_to_write_something_postable():
+    d = describe(_var())
+    assert "NOTHING has been written" in d
+    assert "pasted into the workpaper" in d
+
+
+def test_existing_commentary_is_quoted_and_the_model_told_not_to_restate_it():
+    d = describe(_var(commentary="Annual rent review took effect in June.",
+                      commentary_edited=True))
+    assert "Annual rent review took effect in June." in d
+    assert "edited by a human" in d
+    assert "do not" in d and "restate" in d
+
+
+def test_the_dispatch_sends_each_kind_to_its_own_wording():
+    """One entry point, two products. If the dispatch broke, a variance would
+    silently get the account's chips — which are about tying out, not moving."""
+    assert "out?" in suggestions_for(_state())[0]
+    assert "move" in suggestions_for(_var())[0]
+
+
+def test_an_unknown_kind_falls_back_rather_than_crashing_the_drawer():
+    """A resolver added on the backend before the frontend knows the kind must
+    degrade, not throw — the ask bar is mounted inside someone's workpaper."""
+    out = suggestions_for({"kind": "something_new", "variance": "0.00"})
+    assert isinstance(out, list) and len(out) >= 1

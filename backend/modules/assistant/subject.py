@@ -20,10 +20,10 @@ it gets resolved here into two products:
                     contextual assistant that opens on an empty input teaches
                     people it is noise, and they stop looking at it.
 
-One kind today (`account`). The shape is deliberately open — a variance, a
-finding and an entry are the same idea with a different resolver, and the point
-of putting it here is that they share the component, the thread and the prompt
-plumbing rather than growing four of each.
+Each kind is a resolver; they share the component, the thread and the prompt
+plumbing rather than growing one of each. A subject is also SERIALISABLE, which
+turns it into an address: a digest email or a notification can link to the
+screen with the question already asked, instead of just to the screen.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-SUBJECT_KINDS = ("account",)
+SUBJECT_KINDS = ("account", "variance")
 
 # Variances below this are rounding, not a question worth putting in someone's
 # face as a suggested prompt. Matches the tie-out tolerance used elsewhere.
@@ -63,8 +63,8 @@ def _money(v: Decimal) -> str:
 
 # ── Suggestions ───────────────────────────────────────────────────────────────
 
-def suggestions_for(state: dict) -> list[str]:
-    """The questions worth asking about this object, most useful first.
+def _account_suggestions(state: dict) -> list[str]:
+    """The questions worth asking about a RECONCILIATION account, best first.
 
     Ordered by what a controller would actually do next, not by what is easy to
     generate. An unexplained variance outranks everything — it is the reason the
@@ -108,7 +108,7 @@ def suggestions_for(state: dict) -> list[str]:
     return uniq[:_MAX_SUGGESTIONS]
 
 
-def headline_for(state: dict) -> str:
+def _account_headline(state: dict) -> str:
     """One line under the ask bar saying where this account stands.
 
     The same discipline as the period footing: say what the answer will be
@@ -130,8 +130,8 @@ def headline_for(state: dict) -> str:
     return " · ".join(bits)
 
 
-def describe(state: dict) -> str:
-    """The context preamble handed to the model with the question.
+def _account_describe(state: dict) -> str:
+    """The account preamble handed to the model with the question.
 
     Written as prose rather than a dict because a model given raw fields
     invents a framing, and the framing is what the user reads. Everything here
@@ -180,6 +180,146 @@ def describe(state: dict) -> str:
         "listed above — the transactions behind it, its history, other accounts."
     )
     return "\n".join(lines)
+
+
+# ── Variance ──────────────────────────────────────────────────────────────────
+
+def _variance_suggestions(state: dict) -> list[str]:
+    """A flux variance's questions.
+
+    Different from an account's because the job is different. A reconciliation
+    drawer asks "does this tie"; a flux drawer asks "why did it move" and then
+    wants that written down. So the order runs explain → write → compare, and
+    the FIRST chip changes depending on whether commentary already exists —
+    offering to "explain this" over an explanation someone wrote is the
+    assistant not reading the room.
+    """
+    out: list[str] = []
+    mv = _dec(state.get("dollar_variance"))
+    has_note = bool(state.get("commentary"))
+
+    if not has_note and abs(mv) >= _MATERIAL:
+        out.append(f"Why did this move {_money(mv)}?")
+    elif has_note:
+        out.append("Is this explanation complete?")
+
+    if state.get("expected_value") is not None:
+        out.append("Is this what we expected?")
+
+    if not has_note:
+        out.append("Write the commentary")
+
+    if state.get("txn_count"):
+        out.append(f"Walk me through the {state['txn_count']} transactions")
+    else:
+        out.append("What drove it?")
+
+    if state.get("anomaly_flags"):
+        out.append("Why was this flagged?")
+
+    out.append("How did this look last year?")
+
+    seen: set[str] = set()
+    uniq = [x for x in out if not (x in seen or seen.add(x))]
+    return uniq[:_MAX_SUGGESTIONS]
+
+
+def _variance_headline(state: dict) -> str:
+    mv = _dec(state.get("dollar_variance"))
+    bits = [f"{'+' if mv >= 0 else '−'}{_money(mv)} vs {state.get('prior_period') or 'prior'}"]
+    pct = state.get("pct_variance")
+    if pct is not None:
+        try:
+            bits.append(f"{float(pct):+.1f}%")
+        except (TypeError, ValueError):
+            pass
+    bits.append("material" if state.get("is_material") else "below materiality")
+    bits.append("explained" if state.get("commentary") else "not explained yet")
+    return " · ".join(bits)
+
+
+def _variance_describe(state: dict) -> str:
+    label = state.get("label") or "this account"
+    lines = [
+        f"SUBJECT: the user is looking at the FLUX VARIANCE on {label} for "
+        f"{state.get('period_end')} and their question is about IT unless they "
+        f"clearly name something else. Do not ask which account or which period "
+        f"— you have both."
+    ]
+    facts = [
+        f"current {state.get('current_balance')}",
+        f"prior ({state.get('prior_period')}) {state.get('prior_balance')}",
+        f"moved {state.get('dollar_variance')}",
+    ]
+    if state.get("pct_variance") is not None:
+        facts.append(f"{state['pct_variance']}%")
+    facts.append("MATERIAL" if state.get("is_material")
+                 else f"below the {state.get('materiality')} materiality threshold")
+    if state.get("fs_line"):
+        facts.append(f"maps to {state['fs_line']}")
+    facts.append(f"review status {state.get('review_status')}")
+    if state.get("anomaly_flags"):
+        facts.append(f"flagged: {', '.join(str(f) for f in state['anomaly_flags'][:4])}")
+    if state.get("txn_count"):
+        facts.append(f"{state['txn_count']} transaction(s) already pulled behind it")
+    lines.append("Known already: " + "; ".join(facts) + ".")
+
+    if state.get("expected_value") is not None:
+        lines.append(
+            f"The firm TAUGHT Nordavix to expect {state['expected_value']} here"
+            + (f" ({state['expected_basis']})" if state.get("expected_basis") else "")
+            + ". Say whether the actual matches that expectation — it is usually "
+              "the real question behind \"is this ok\"."
+        )
+    if state.get("commentary"):
+        lines.append(
+            f"An explanation has ALREADY been written{' and edited by a human' if state.get('commentary_edited') else ''}: "
+            f"\"{state['commentary']}\" — build on it or challenge it; do not "
+            "restate it as though it were new."
+        )
+    else:
+        lines.append(
+            "NOTHING has been written to explain this variance yet. If the user "
+            "asks you to write the commentary, produce something that could be "
+            "pasted into the workpaper as-is: what moved, why, and whether it is "
+            "expected — in two or three sentences, no preamble."
+        )
+    lines.append(
+        "Only call a tool for something not listed above — the transactions "
+        "themselves, prior periods, other accounts."
+    )
+    return "\n".join(lines)
+
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+#
+# One entry point per product so every surface calls the same three functions
+# and a new kind is a branch, not a new API.
+
+_BY_KIND = {
+    "account":  (_account_suggestions, _account_headline, _account_describe),
+    "variance": (_variance_suggestions, _variance_headline, _variance_describe),
+}
+
+
+def _pick(state: dict, idx: int):
+    kind = (state or {}).get("kind") or "account"
+    return _BY_KIND.get(kind, _BY_KIND["account"])[idx]
+
+
+def suggestions_for(state: dict) -> list[str]:
+    """The two or three questions worth asking about this object."""
+    return _pick(state, 0)(state)
+
+
+def headline_for(state: dict) -> str:
+    """One line saying where this object stands, before anyone asks."""
+    return _pick(state, 1)(state)
+
+
+def describe(state: dict) -> str:
+    """The context preamble handed to the model with the question."""
+    return _pick(state, 2)(state)
 
 
 # ── Resolution ────────────────────────────────────────────────────────────────
@@ -308,6 +448,94 @@ async def resolve_account(
     return state
 
 
+async def resolve_variance(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,  # noqa: ARG001 — scoping is enforced by the session
+    variance_id: str,
+    period_end: date,      # noqa: ARG001 — the TB carries the period, not the caller
+) -> dict | None:
+    """One flux variance: what moved, by how much, and what has been said.
+
+    The sharpest fit for the whole idea. A flux drawer exists to answer "why
+    did this move", which is the question the Copilot is best at — and unlike a
+    reconciliation it has the prior period's figure sitting right there, so the
+    comparison needs no lookup at all.
+    """
+    from sqlalchemy import select
+
+    from models.account import Account
+    from models.narrative import Narrative
+    from models.trial_balance import TrialBalance
+    from models.variance import Variance
+
+    try:
+        vid = uuid.UUID(variance_id)
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+    row = (await db.execute(
+        select(Variance, Account, TrialBalance)
+        .join(Account, Account.id == Variance.account_id)
+        .join(TrialBalance, TrialBalance.id == Account.trial_balance_id)
+        .where(Variance.id == vid)
+    )).first()
+    if row is None:
+        return None
+    var, acct, tb = row
+
+    label = f"{acct.account_number or ''} {acct.account_name or ''}".strip() or "this account"
+    state: dict = {
+        "kind":            "variance",
+        "id":              variance_id,
+        "label":           label,
+        "period_end":      tb.period_current.isoformat() if tb.period_current else None,
+        "prior_period":    tb.period_prior.isoformat() if tb.period_prior else None,
+        "fs_line":         acct.fs_line,
+        "current_balance": str(acct.current_balance),
+        "prior_balance":   str(acct.prior_balance),
+        "dollar_variance": str(var.dollar_variance),
+        "pct_variance":    str(var.pct_variance) if var.pct_variance is not None else None,
+        "is_material":     bool(var.is_material),
+        "materiality":     str(tb.materiality_threshold),
+        "review_status":   var.status,
+        "anomaly_flags":   list(var.anomaly_flags or []),
+        # An expectation the firm taught Nordavix, if one matched. "Is this
+        # what we expected" is a different question from "is this big".
+        "expected_value":  str(var.expected_value) if var.expected_value is not None else None,
+        "expected_basis":  var.expected_basis,
+        "pre_explained":   bool(getattr(var, "pre_explained", False)),
+    }
+
+    # The explanation already written for it, if any. Whether one EXISTS is the
+    # difference between "explain this" and "improve what I wrote".
+    try:
+        nar = (await db.execute(
+            select(Narrative).where(Narrative.variance_id == vid)
+            .order_by(Narrative.generated_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        if nar is not None and (nar.content or "").strip():
+            state["commentary"] = nar.content.strip()[:600]
+            state["commentary_edited"] = nar.edited_at is not None
+    except Exception:
+        logger.exception("subject: narrative lookup failed")
+
+    # How many transactions have been pulled behind it — the model should offer
+    # to walk them only when they are actually there.
+    try:
+        from sqlalchemy import func
+
+        from models.variance_transaction import VarianceTransaction
+        state["txn_count"] = (await db.execute(
+            select(func.count()).select_from(VarianceTransaction)
+            .where(VarianceTransaction.variance_id == vid)
+        )).scalar_one_or_none() or 0
+    except Exception:
+        logger.exception("subject: variance-transaction count failed")
+        state["txn_count"] = 0
+
+    return state
+
+
 async def resolve(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -323,6 +551,8 @@ async def resolve(
     try:
         if kind == "account":
             return await resolve_account(db, tenant_id, subject_id, period_end)
+        if kind == "variance":
+            return await resolve_variance(db, tenant_id, subject_id, period_end)
     except Exception:
         logger.exception("subject: resolve failed for %s/%s", kind, subject_id)
     return None

@@ -80,6 +80,42 @@ function loadState(): WindowState {
   }
 }
 
+/** A question carried in the URL.
+ *
+ *  A subject is `{kind, id, period_end}` — serialisable, which makes it an
+ *  ADDRESS rather than just a prop. So the autopilot digest that says "A/R is
+ *  out by 14,368" can link to the drawer with the question already asked, a
+ *  notification becomes a question instead of a destination, and a reviewer can
+ *  send a colleague "look at this and ask why" as one link.
+ *
+ *  Read from `?ask=` (or the hash, since the recon drawer already addresses
+ *  itself with `#acct=`). Consumed once and stripped, so a refresh doesn't
+ *  re-ask and burn another answer.
+ */
+function takeSeededQuestion(subjectId: string): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const url = new URL(window.location.href)
+    const hash = new URLSearchParams(url.hash.replace(/^#/, ""))
+    const q = url.searchParams.get("ask") ?? hash.get("ask")
+    if (!q) return null
+    // Only fire when the link also names the object it meant. Without this, a
+    // link to one account would re-ask its question on whatever the user
+    // navigated to next.
+    const forId = url.searchParams.get("ask_id") ?? hash.get("ask_id")
+    if (forId && forId !== subjectId) return null
+
+    url.searchParams.delete("ask")
+    url.searchParams.delete("ask_id")
+    hash.delete("ask"); hash.delete("ask_id")
+    const h = hash.toString()
+    history.replaceState(null, "", `${url.pathname}${url.search}${h ? `#${h}` : ""}`)
+    return q.slice(0, 500)
+  } catch {
+    return null
+  }
+}
+
 interface Turn {
   role:    "user" | "assistant"
   content: string
@@ -201,6 +237,21 @@ export function AskBar({ subject, fallbackLabel, onOpenFull }: Props) {
       patchLast((t) => ({ ...t, streaming: false }))
     }
   }, [busy, turns, subject, patchLast])
+
+  // A question that arrived in the link. Fired once, after /subject has
+  // resolved so the answer has its context — and guarded by a ref because
+  // StrictMode double-invokes effects and an answer is not free.
+  const seeded = useRef(false)
+  useEffect(() => {
+    if (seeded.current || !ctx) return
+    const q = takeSeededQuestion(subject.id)
+    if (!q) return
+    seeded.current = true
+    void send(q)
+    // send is intentionally omitted: it closes over `turns`, and re-running
+    // this on every turn would re-ask the seeded question mid-conversation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, subject.id])
 
   const label = ctx?.label ?? fallbackLabel ?? "this account"
   const chips = ctx?.suggestions ?? []
