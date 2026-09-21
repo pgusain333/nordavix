@@ -762,10 +762,10 @@ const COPILOT_SCENES: CopilotScene[] = [
 
 // The timeline. A person types in bursts — a beat after each word, a longer
 // one at punctuation — and a steady character rate reads as a machine.
-const CP_TYPE_START = 520
+const CP_TYPE_START = 950
 const CP_CHAR       = 30
-const CP_SEND_GAP   = 420
-const CP_TO_STEPS   = 360
+const CP_SEND_GAP   = 520
+const CP_TO_STEPS   = 750
 const CP_STEP       = 640
 const CP_TO_ANSWER  = 300
 const CP_BUILD      = 1900
@@ -819,21 +819,21 @@ function CpChip({ primary = false, children }: { primary?: boolean; children: Re
 function CpAnswerRecon({ still }: { still: boolean }) {
   const rows: { l: string; v: string; k: "base" | "up" | "down" | "total"; w?: number }[] = [
     { l: "A/R aging (subledger)", v: "720,132", k: "base" },
-    { l: "Invoices dated Jun 30, after the aging pull", v: "+23,488", k: "up", w: 1 },
-    { l: "Unapplied credits sitting in the aging", v: "−9,120", k: "down", w: 9120 / 23488 },
+    { l: "Jun 30 invoices, after the aging pull", v: "+23,488", k: "up", w: 1 },
+    { l: "Unapplied credits in the aging", v: "−9,120", k: "down", w: 9120 / 23488 },
     { l: "GL balance", v: "734,500", k: "total" },
   ]
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       <CpLine i={0} still={still}>
-        <p className="text-[14.5px] leading-relaxed" style={{ color: L_TXT }}>
+        <p className="text-[14px] leading-relaxed" style={{ color: L_TXT }}>
           Two timing items — and they nearly cancel.
         </p>
       </CpLine>
       <CpLine i={1} still={still}>
         <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${L_LINE}` }}>
           {rows.map((r, i) => (
-            <div key={r.l} className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_110px_84px] items-center gap-3 px-3.5 py-2"
+            <div key={r.l} className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_110px_84px] items-center gap-3 px-3.5 py-1.5"
               style={{ background: r.k === "total" ? CREAM : PAPER, borderTop: i ? `1px solid ${L_LINE}` : "none" }}>
               <span className="text-[12.5px]"
                 style={{ color: r.k === "up" || r.k === "down" ? L_TXT2 : L_TXT, fontWeight: r.k === "total" ? 700 : 500 }}>
@@ -860,8 +860,8 @@ function CpAnswerRecon({ still }: { still: boolean }) {
       </CpLine>
       <CpLine i={2} still={still}>
         <p className="text-[14px] leading-relaxed" style={{ color: L_TXT2 }}>
-          Net <b style={{ color: L_TXT, fontFamily: MONO }}>+14,368</b> — fully explained. Neither is an
-          error: the aging was pulled before day-end. Re-pull it and this clears on its own.
+          Net <b style={{ color: L_TXT, fontFamily: MONO }}>+14,368</b>, fully explained — the aging was
+          pulled before day-end. Neither is an error; re-pull it and this clears.
         </p>
       </CpLine>
       <CpLine i={3} still={still}>
@@ -876,7 +876,7 @@ function CpAnswerRecon({ still }: { still: boolean }) {
 
 /** Runway — the forecast as a band that widens with distance, never a point. */
 function CpAnswerForecast({ still }: { still: boolean }) {
-  const W = 520, H = 150, L = 12, R = 12, T = 14, B = 24, N = 15
+  const W = 560, H = 120, L = 12, R = 12, T = 12, B = 22, N = 15
   const x = (i: number) => L + (i * (W - L - R)) / (N - 1)
   const y = (v: number) => T + (1 - v / 1000) * (H - T - B)
   const cash = [952, 884, 816, 748, 680, 612]                  // Jan → Jun, $k
@@ -889,9 +889,9 @@ function CpAnswerForecast({ still }: { still: boolean }) {
   const bandD   = "M" + [...pts(hi, 5), ...pts(lo, 5).reverse()].join(" L") + " Z"
   const d0 = still ? 0 : 0.45
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       <CpLine i={0} still={still}>
-        <p className="text-[14.5px] leading-relaxed" style={{ color: L_TXT }}>
+        <p className="text-[14px] leading-relaxed" style={{ color: L_TXT }}>
           About <b>9 months</b> at today’s burn — call it <b>8 to 10</b>.
         </p>
       </CpLine>
@@ -920,7 +920,7 @@ function CpAnswerForecast({ still }: { still: boolean }) {
             <motion.g initial={still ? false : { opacity: 0 }} animate={{ opacity: 1 }}
               transition={{ duration: 0.4, delay: d0 + 0.7 }}>
               <circle cx={x(5)} cy={y(612)} r={4} fill={L_TXT} />
-              <text x={x(5) + 8} y={y(612) - 8} fontSize={12.5} fontFamily={MONO} fill={L_TXT}>$612k today</text>
+              <text className="hidden sm:inline" x={x(5) + 8} y={y(612) - 8} fontSize={11} fontFamily={MONO} fill={L_TXT}>$612k today</text>
             </motion.g>
             <motion.g initial={still ? false : { opacity: 0 }} animate={{ opacity: 1 }}
               transition={{ duration: 0.4, delay: d0 + 1.75 }}>
@@ -928,10 +928,10 @@ function CpAnswerForecast({ still }: { still: boolean }) {
               {/* Above the band, clear of the dashed line — and saying what the
                   point MEANS, since the axis tick directly below already names
                   the month. It sat on the line and repeated the date. */}
-              <text x={x(14) - 10} y={y(0) - 30} fontSize={12.5} fontFamily={MONO} fill={GREEN} textAnchor="end">cash runs out</text>
+              <text className="hidden sm:inline" x={x(14) - 10} y={y(0) - 30} fontSize={11} fontFamily={MONO} fill={GREEN} textAnchor="end">cash runs out</text>
             </motion.g>
             {[["Jan", 0], ["Jun", 5], ["Mar ’27", 14]].map(([m, i]) => (
-              <text key={m as string} x={x(i as number)} y={H - 6} fontSize={11} fontFamily={MONO} fill={L_TXT3}
+              <text className="hidden sm:inline" key={m as string} x={x(i as number)} y={H - 5} fontSize={10} fontFamily={MONO} fill={L_TXT3}
                 textAnchor={i === 0 ? "start" : i === 14 ? "end" : "middle"}>{m}</text>
             ))}
           </svg>
@@ -979,15 +979,15 @@ function CpAnswerReview({ still }: { still: boolean }) {
   // entry has to fit ~280px there, and it overflowed at the desktop widths.
   const grid = "grid grid-cols-[1fr_66px_66px] sm:grid-cols-[1fr_82px_82px] gap-2 px-3 sm:px-3.5 items-center"
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       <CpLine i={0} still={still}>
-        <p className="text-[14.5px] leading-relaxed" style={{ color: L_TXT }}>
+        <p className="text-[14px] leading-relaxed" style={{ color: L_TXT }}>
           It balances — but it expenses a <b>12-month</b> policy in one month.
         </p>
       </CpLine>
       <CpLine i={1} still={still}>
         <div className="rounded-xl overflow-hidden text-[12.5px]" style={{ border: `1px solid ${L_LINE}`, background: PAPER }}>
-          <div className="flex items-center justify-between px-3.5 py-2"
+          <div className="flex items-center justify-between px-3.5 py-1.5"
             style={{ background: CREAM, borderBottom: `1px solid ${L_LINE}` }}>
             <span style={{ fontFamily: MONO, fontSize: 11, color: L_TXT2 }}>AJE-117<span className="hidden sm:inline"> · Record annual insurance</span></span>
             <AnimatePresence mode="popLayout" initial={false}>
@@ -1003,7 +1003,7 @@ function CpAnswerReview({ still }: { still: boolean }) {
             style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", color: L_TXT3 }}>
             <span>ACCOUNT</span><span className="text-right">DEBIT</span><span className="text-right">CREDIT</span>
           </div>
-          <div className={`${grid} py-2`}
+          <div className={`${grid} py-1.5`}
             style={{ borderTop: `1px solid ${L_LINE}` }}>
             <span style={{ color: L_TXT }}>6300 · Insurance Expense</span>
             <span className={cell} style={{ fontFamily: MONO }}>
@@ -1025,7 +1025,7 @@ function CpAnswerReview({ still }: { still: boolean }) {
                 animate={{ height: "auto", opacity: 1 }}
                 transition={{ duration: 0.55, ease: EASE, delay: still ? 0 : 0.15 }}
                 style={{ overflow: "hidden" }}>
-                <div className={`${grid} py-2`}
+                <div className={`${grid} py-1.5`}
                   style={{ borderTop: `1px solid ${L_LINE}`, background: "rgba(46,122,85,0.07)" }}>
                   <span style={{ color: GREEN, fontWeight: 600 }}>1400 · Prepaid Expenses</span>
                   <span className={cell} style={{ fontFamily: MONO, color: GREEN, fontWeight: 700 }}>11,000.00</span>
@@ -1034,13 +1034,13 @@ function CpAnswerReview({ still }: { still: boolean }) {
               </motion.div>
             )}
           </AnimatePresence>
-          <div className={`${grid} py-2`}
+          <div className={`${grid} py-1.5`}
             style={{ borderTop: `1px solid ${L_LINE}` }}>
             <span style={{ color: L_TXT }}>1000 · Operating Cash</span>
             <span className={cell} style={{ fontFamily: MONO, color: L_TXT3 }}>—</span>
             <span className={cell} style={{ fontFamily: MONO }}>12,000.00</span>
           </div>
-          <div className={`${grid} py-2`}
+          <div className={`${grid} py-1.5`}
             style={{ borderTop: `1px solid ${L_LINE2}`, background: CREAM }}>
             <span className="inline-flex items-center gap-1.5 font-semibold" style={{ color: GREEN }}>
               <CheckCircle2 size={13} strokeWidth={2.4} /> Balanced
@@ -1101,6 +1101,48 @@ function CpCallout({ side, k, children, active, delay }:
             style={{ background: LIME }} />
         </div>
       </motion.div>
+    </motion.div>
+  )
+}
+
+// The flight between the empty state and the conversation. Long enough to be
+// watched — it is the move the section exists to show — and on the page's own
+// expo-out, so it lands the way everything else on the page lands.
+const CP_FLY = { duration: 0.72, ease: EASE }
+const CP_WORD = { fontWeight: 600, letterSpacing: "-0.015em", lineHeight: 1.15, color: L_TXT }
+
+/** The ask field — ONE element that lives in the centre of the empty window
+ *  and docks at the bottom once a question is sent, flown between the two by a
+ *  shared layoutId exactly as the Copilot page moves it.
+ *
+ *  Its children carry `layout` so framer corrects the parent's scale on them:
+ *  the field widens by half again in flight, and without the correction the
+ *  text and the send button stretch with it. The radii live in `style` for the
+ *  same reason — framer can only correct a radius it can read. */
+function CpComposer({ text, placeholder, live, caret }:
+  { text: string; placeholder: string; live: boolean; caret: boolean }) {
+  return (
+    <motion.div layoutId="cp-composer" transition={CP_FLY}
+      className="flex items-center gap-3 px-4 py-2.5 w-full"
+      style={{
+        borderRadius: 16, background: CREAM,
+        border: `1px solid ${live ? GREEN : L_LINE}`,
+        boxShadow: live ? "0 0 0 4px rgba(46,122,85,0.10)" : "0 1px 2px rgba(12,38,32,0.05)",
+      }}>
+      <motion.span layout="position" className="flex-1 min-w-0 text-left text-[14px] leading-snug"
+        style={{ color: text ? L_TXT : L_TXT3 }}>
+        {text || placeholder}
+        {caret && (
+          <motion.span className="inline-block w-[2px] h-[1.05em] ml-[1px] rounded-full"
+            style={{ background: GREEN, verticalAlign: "-0.17em" }}
+            animate={{ opacity: [1, 1, 0, 0] }}
+            transition={{ duration: 1, repeat: Infinity, times: [0, 0.5, 0.5, 1] }} />
+        )}
+      </motion.span>
+      <motion.span layout className="shrink-0 h-8 w-8 grid place-items-center"
+        style={{ borderRadius: 11, background: live ? GREEN : "rgba(12,38,32,0.14)", color: "#fff" }}>
+        <ArrowUp size={15} strokeWidth={2.6} />
+      </motion.span>
     </motion.div>
   )
 }
@@ -1167,7 +1209,7 @@ function CopilotShowcase() {
           transition={reduce ? undefined : { duration: 14, repeat: Infinity, ease: "easeInOut" }} />
       </div>
 
-      <div className="relative max-w-6xl mx-auto px-6 py-24 md:py-36">
+      <div className="relative max-w-6xl mx-auto px-6 py-20 md:py-28">
         <div className="max-w-3xl mx-auto text-center">
           <Reveal><div className="flex justify-center"><Kicker dark>NDVX Copilot</Kicker></div></Reveal>
           <Reveal delay={0.06}>
@@ -1187,7 +1229,7 @@ function CopilotShowcase() {
 
         {/* Scene switcher — a pill that glides between tabs, and a progress line
             that fills over the scene so the loop never feels like it's stalled. */}
-        <Reveal delay={0.16} className="mt-12 flex justify-center">
+        <Reveal delay={0.16} className="mt-10 flex justify-center">
           <div className="inline-flex gap-1 p-1 rounded-full" role="tablist" aria-label="Copilot examples"
             style={{ background: "rgba(244,241,233,0.04)", border: `1px solid ${D_LINE}` }}>
             {COPILOT_SCENES.map((c, i) => (
@@ -1252,11 +1294,22 @@ function CopilotShowcase() {
               style={{ color: L_TXT, background: PAPER, border: `1px solid rgba(244,241,233,0.14)`,
                        boxShadow: "0 70px 140px -50px rgba(0,0,0,0.75), 0 0 0 1px rgba(156,196,173,0.06)" }}>
               {/* header */}
-              <div className="flex items-center gap-3 px-5 h-[54px]" style={{ borderBottom: `1px solid ${L_LINE}` }}>
-                <CopilotMark size={22} />
-                <span className="text-[14px] font-bold tracking-tight" style={{ color: L_TXT }}>
-                  NDVX <span style={{ fontWeight: 500, color: L_TXT3 }}>Copilot</span>
-                </span>
+              <div className="flex items-center gap-3 px-5 h-[50px]" style={{ borderBottom: `1px solid ${L_LINE}` }}>
+                {/* The brand's resting place. Fixed width, so when the lockup
+                    flies up from the centre nothing beside it shifts to make
+                    room — the chip is already where it will stay. */}
+                <div className="w-[128px] shrink-0 h-full flex items-center gap-2.5">
+                  {!typing && (
+                    <>
+                      <motion.span layoutId="cp-mark" transition={CP_FLY} className="inline-flex">
+                        <CopilotMark size={22} />
+                      </motion.span>
+                      <motion.span layoutId="cp-word" transition={CP_FLY} className="text-[14px] whitespace-nowrap" style={CP_WORD}>
+                        NDVX <span style={{ color: GREEN }}>Copilot</span>
+                      </motion.span>
+                    </>
+                  )}
+                </div>
                 <AnimatePresence mode="popLayout" initial={false}>
                   <motion.span key={s.looking}
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
@@ -1272,121 +1325,141 @@ function CopilotShowcase() {
                 </span>
               </div>
 
-              {/* thread — fixed height, so a scene change never moves the page */}
-              <div className="relative h-[580px] sm:h-[480px] overflow-hidden" style={{ background: PAPER }}>
+              {/* Body — one fixed height for every state, so the move between
+                  the empty screen and the conversation never shifts the page. It
+                  does NOT clip: the brand flies in and out through its top edge,
+                  and a clipping box here would cut it off mid-flight. Only the
+                  thread below clips. */}
+              {/* Measured, not guessed: the tightest scene (the runway forecast,
+                  with its chart) clears the dock by 18px here. At 450 it cleared
+                  by 8, which is inside the margin a different font fallback on
+                  someone else's machine could eat. */}
+              <div className="relative h-[560px] sm:h-[460px]" style={{ background: PAPER }}>
                 <AnimatePresence>
                   {typing && (
-                    <motion.div key="empty" className="absolute inset-0 grid place-items-center"
-                      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.2 } }}
-                      transition={{ duration: 0.5 }}>
-                      <div className="text-center">
-                        <div className="flex justify-center opacity-90"><CopilotMark size={40} /></div>
-                        <p className="mt-3 text-[13px]" style={{ color: L_TXT3 }}>Ask about anything on the screen.</p>
-                      </div>
-                    </motion.div>
+                    <motion.div key="glow" aria-hidden
+                      className="pointer-events-none absolute left-1/2 top-[40%] h-56 w-56 rounded-full"
+                      style={{ x: "-50%", y: "-50%", background: "#DEEDE4", filter: "blur(48px)" }}
+                      initial={{ opacity: 0 }} animate={{ opacity: 0.75 }} exit={{ opacity: 0 }}
+                      transition={{ duration: 0.6, ease: EASE }} />
                   )}
                 </AnimatePresence>
 
-                <AnimatePresence initial={false}>
-                  <motion.div key={`${scene}-${epoch}`} className="absolute inset-0 px-5 sm:px-8 pt-7"
-                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    transition={{ duration: 0.4, ease: EASE }}>
-                    {!typing && (
-                      <motion.div
-                        initial={still ? false : { opacity: 0, y: 22, scale: 0.97 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        transition={{ duration: 0.55, ease: EASE }}
-                        className="ml-auto w-fit max-w-[82%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14.5px] leading-snug"
-                        style={{ background: PINE, color: D_TXT }}>
-                        {s.q}
-                      </motion.div>
-                    )}
+                {/* The thread. Reserves the dock's height at the bottom so an
+                    answer can never run under the composer. */}
+                <div className="absolute inset-x-0 top-0 bottom-[70px] overflow-hidden">
+                  <AnimatePresence initial={false}>
+                    <motion.div key={`${scene}-${epoch}`} className="absolute inset-0 px-5 sm:px-8 pt-5"
+                      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                      transition={{ duration: 0.4, ease: EASE }}>
+                      {!typing && (
+                        <motion.div
+                          initial={still ? false : { opacity: 0, y: 18, scale: 0.97 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          transition={{ duration: 0.55, ease: EASE, delay: still ? 0 : 0.22 }}
+                          className="ml-auto w-fit max-w-[82%] rounded-2xl rounded-br-md px-4 py-2 text-[14px] leading-snug"
+                          style={{ background: PINE, color: D_TXT }}>
+                          {s.q}
+                        </motion.div>
+                      )}
 
-                    {working && (
-                      <motion.div className="mt-6 flex gap-3"
-                        initial={still ? false : { opacity: 0 }} animate={{ opacity: 1 }}
-                        transition={{ duration: 0.3 }}>
-                        {/* The avatar gives way on a phone: 38px back to the answer
-                            is the difference between the entry's credit column
-                            fitting and being clipped off the edge. */}
-                        <span className="hidden sm:block shrink-0"><CopilotMark size={26} className="mt-0.5" /></span>
-                        <div className="flex-1 min-w-0 space-y-3">
-                          {phase === "steps" ? (
-                            <div className="space-y-1.5 pt-1">
-                              {s.steps.slice(0, stepN).map((st, i) => {
-                                const current = i === stepN - 1
-                                return (
-                                  <motion.div key={st} className="flex items-center gap-2.5 text-[13px]"
-                                    initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
-                                    transition={{ duration: 0.35, ease: EASE }}
-                                    style={{ color: current ? L_TXT2 : L_TXT3 }}>
-                                    {current ? <CpDots /> : <Check size={13} strokeWidth={2.6} style={{ color: GREEN }} />}
-                                    {st}{current ? "…" : ""}
-                                  </motion.div>
-                                )
-                              })}
-                            </div>
-                          ) : (
-                            <>
-                              <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                                <span className="inline-flex items-center gap-1.5 text-[11.5px]" style={{ color: L_TXT3 }}>
-                                  <Check size={12} strokeWidth={2.6} style={{ color: GREEN }} /> {s.trace}
-                                </span>
-                                {s.footing && (
-                                  <motion.span
-                                    initial={still ? false : { opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }}
-                                    transition={{ duration: 0.4, ease: EASE }}
-                                    className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
-                                    style={s.footing.tone === "warn"
-                                      ? { background: "#F7EEDC", color: "#8E6620", border: "1px solid #E7D6B2" }
-                                      : { background: "#DEEDE4", color: "#2A7050", border: "1px solid #BFD8C8" }}>
-                                    {s.footing.text}
-                                  </motion.span>
-                                )}
+                      {working && (
+                        <motion.div className="mt-4 flex gap-3"
+                          initial={still ? false : { opacity: 0 }} animate={{ opacity: 1 }}
+                          transition={{ duration: 0.3 }}>
+                          {/* The avatar gives way on a phone: 38px back to the answer
+                              is the difference between the entry's credit column
+                              fitting and being clipped off the edge. */}
+                          <span className="hidden sm:block shrink-0"><CopilotMark size={24} className="mt-0.5" /></span>
+                          <div className="flex-1 min-w-0 space-y-2.5">
+                            {phase === "steps" ? (
+                              <div className="space-y-1.5 pt-1">
+                                {s.steps.slice(0, stepN).map((st, i) => {
+                                  const current = i === stepN - 1
+                                  return (
+                                    <motion.div key={st} className="flex items-center gap-2.5 text-[13px]"
+                                      initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
+                                      transition={{ duration: 0.35, ease: EASE }}
+                                      style={{ color: current ? L_TXT2 : L_TXT3 }}>
+                                      {current ? <CpDots /> : <Check size={13} strokeWidth={2.6} style={{ color: GREEN }} />}
+                                      {st}{current ? "…" : ""}
+                                    </motion.div>
+                                  )
+                                })}
                               </div>
-                              {s.render(still)}
-                            </>
-                          )}
-                        </div>
-                      </motion.div>
-                    )}
-                  </motion.div>
-                </AnimatePresence>
-              </div>
-
-              {/* composer — where the question is typed */}
-              <div className="px-5 sm:px-8 pb-6 pt-2" style={{ background: PAPER }}>
-                <div className="flex items-center gap-3 rounded-2xl px-4 py-3 transition-[border-color,box-shadow] duration-300"
-                  style={{
-                    background: CREAM,
-                    border: `1px solid ${typing && typed > 0 ? GREEN : L_LINE}`,
-                    boxShadow: typing && typed > 0 ? "0 0 0 4px rgba(46,122,85,0.10)" : "none",
-                  }}>
-                  <span className="flex-1 min-w-0 text-[14.5px] leading-snug"
-                    style={{ color: typing && typed > 0 ? L_TXT : L_TXT3 }}>
-                    {typing && typed > 0 ? s.q.slice(0, typed) : typing ? "" : "Ask a follow-up…"}
-                    {typing && (
-                      <motion.span className="inline-block w-[2px] h-[1.05em] ml-[1px] rounded-full"
-                        style={{ background: GREEN, verticalAlign: "-0.17em" }}
-                        animate={{ opacity: [1, 1, 0, 0] }}
-                        transition={{ duration: 1, repeat: Infinity, times: [0, 0.5, 0.5, 1] }} />
-                    )}
-                    {typing && typed === 0 && <span style={{ color: L_TXT3 }}>Ask NDVX Copilot…</span>}
-                  </span>
-                  <motion.span className="shrink-0 h-9 w-9 rounded-xl grid place-items-center"
-                    style={{ background: typing && typed > 0 ? GREEN : "rgba(12,38,32,0.14)", color: "#fff" }}
-                    animate={phase === "sent" ? { scale: [1, 0.84, 1.06, 1] } : { scale: 1 }}
-                    transition={{ duration: 0.45, ease: EASE }}>
-                    <ArrowUp size={16} strokeWidth={2.6} />
-                  </motion.span>
+                            ) : (
+                              <>
+                                <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                  <span className="inline-flex items-center gap-1.5 text-[11.5px]" style={{ color: L_TXT3 }}>
+                                    <Check size={12} strokeWidth={2.6} style={{ color: GREEN }} /> {s.trace}
+                                  </span>
+                                  {s.footing && (
+                                    <motion.span
+                                      initial={still ? false : { opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }}
+                                      transition={{ duration: 0.4, ease: EASE }}
+                                      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+                                      style={s.footing.tone === "warn"
+                                        ? { background: "#F7EEDC", color: "#8E6620", border: "1px solid #E7D6B2" }
+                                        : { background: "#DEEDE4", color: "#2A7050", border: "1px solid #BFD8C8" }}>
+                                      {s.footing.text}
+                                    </motion.span>
+                                  )}
+                                </div>
+                                {s.render(still)}
+                              </>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </motion.div>
+                  </AnimatePresence>
                 </div>
+
+                {/* The empty state — the Copilot page's own: the mark, the name,
+                    a line, and the ask field right beneath them. Rendered
+                    without AnimatePresence on purpose. The mark, the name and the
+                    field are each ONE element that exists in exactly one place at
+                    a time, and swapping them in the same render is what lets a
+                    shared layoutId fly them into the header and the dock instead
+                    of fading one copy out while another fades in. */}
+                {typing && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center px-5 sm:px-12 text-center">
+                    <motion.span layoutId="cp-mark" transition={CP_FLY} className="inline-flex">
+                      <CopilotMark size={44} />
+                    </motion.span>
+                    <motion.span layoutId="cp-word" transition={CP_FLY}
+                      className="mt-4 text-[26px] sm:text-[30px] whitespace-nowrap" style={CP_WORD}>
+                      NDVX <span style={{ color: GREEN }}>Copilot</span>
+                    </motion.span>
+                    {/* Fades on its own clock: in once the brand has landed, out
+                        as the question finishes, so it is already gone when the
+                        rest of the screen flies apart on send. */}
+                    <motion.p className="mt-2 max-w-sm text-[13.5px] leading-relaxed" style={{ color: L_TXT3 }}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: typed >= s.q.length ? 0 : 1 }}
+                      transition={{ duration: 0.35, delay: typed === 0 ? 0.5 : 0 }}>
+                      Ask anything about the books you’re looking at.
+                    </motion.p>
+                    <div className="mt-6 w-full max-w-[500px]">
+                      <CpComposer text={s.q.slice(0, typed)} placeholder="Ask NDVX Copilot…"
+                        live={typed > 0} caret />
+                    </div>
+                  </div>
+                )}
+
+                {/* The dock — where the field lands once a question is sent. */}
+                {!typing && (
+                  <div className="absolute inset-x-0 bottom-0 px-5 sm:px-8 pb-4 pt-2.5">
+                    <CpComposer text="" placeholder="Ask a follow-up…" live={false} caret={false} />
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </Reveal>
 
         {/* What it is, in the page's own step-ribbon style. */}
-        <div className="mt-20 grid md:grid-cols-3 gap-x-8 gap-y-10 max-w-5xl mx-auto">
+        <div className="mt-14 grid md:grid-cols-3 gap-x-8 gap-y-10 max-w-5xl mx-auto">
           {[
             { k: "IN PLACE", t: "On every account, variance and entry.", d: "Ask without leaving the screen — highlight any number to ask about it." },
             { k: "FOOTING FIRST", t: "Says what the answer stands on.", d: "Tells you whether the books can carry a figure before it quotes one." },
